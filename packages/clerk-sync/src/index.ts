@@ -38,13 +38,20 @@ export function getClerkDisplayName(user: Pick<ClerkUserProfile, 'first_name' | 
     fallback;
 }
 
-export function getProvisionHandle(user: ClerkUserProfile, handlePrefix = ''): string {
+export function getProvisionHandleCandidates(user: ClerkUserProfile, handlePrefix = ''): string[] {
   const withPrefix = (value: string | undefined | null) =>
     value ? normalizeMatrixOsHandleCandidate(`${handlePrefix}${value}`) : null;
-  const handle = withPrefix(user.username) ??
-    withPrefix(getPrimaryClerkEmail(user)?.split('@')[0]) ??
-    withPrefix(`u-${user.id}`) ??
-    normalizeMatrixOsHandleCandidate(`u-${user.id}`);
+  const candidates = [
+    withPrefix(user.username),
+    withPrefix(getPrimaryClerkEmail(user)?.split('@')[0]),
+    withPrefix(`u-${user.id}`),
+    normalizeMatrixOsHandleCandidate(`u-${user.id}`),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return Array.from(new Set(candidates));
+}
+
+export function getProvisionHandle(user: ClerkUserProfile, handlePrefix = ''): string {
+  const handle = getProvisionHandleCandidates(user, handlePrefix)[0];
   if (!handle) {
     throw new Error('Unable to derive a valid Matrix OS handle');
   }

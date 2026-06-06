@@ -311,6 +311,11 @@ export interface PlatformUserRecord {
   updatedAt: Date;
 }
 
+export interface PlatformHandleConflict {
+  source: 'users' | 'containers' | 'user_machines';
+  clerkUserId: string;
+}
+
 export interface NewPlatformUser {
   clerkId: string;
   handle: string;
@@ -1338,7 +1343,7 @@ export async function ensurePlatformUser(
     .insertInto('users')
     .values(toPlatformUserRow(record))
     .onConflict((oc) => oc.column('clerk_id').doUpdateSet({
-      handle: record.handle,
+      handle: sql`users.handle`,
       display_name: record.displayName,
       email: record.email,
       container_id: sql`
@@ -1359,6 +1364,65 @@ export async function ensurePlatformUser(
     .returningAll()
     .executeTakeFirstOrThrow();
   return mapPlatformUser(row);
+}
+
+export async function getPlatformHandleConflict(
+  db: PlatformDB,
+  handle: string,
+  clerkUserId: string,
+): Promise<PlatformHandleConflict | undefined> {
+  await db.ready;
+  const platformUser = await db.executor
+    .selectFrom('users')
+    .select('clerk_id')
+    .where('handle', '=', handle)
+    .where('clerk_id', '!=', clerkUserId)
+    .executeTakeFirst();
+  if (platformUser) {
+    return { source: 'users', clerkUserId: platformUser.clerk_id };
+  }
+
+  const activeMachine = await db.executor
+    .selectFrom('user_machines')
+    .select('clerk_user_id')
+    .where('handle', '=', handle)
+    .where('deleted_at', 'is', null)
+    .where('clerk_user_id', '!=', clerkUserId)
+    .executeTakeFirst();
+  if (activeMachine) {
+    return { source: 'user_machines', clerkUserId: activeMachine.clerk_user_id };
+  }
+
+  const ownedActiveMachine = await db.executor
+    .selectFrom('user_machines')
+    .select('machine_id')
+    .where('handle', '=', handle)
+    .where('deleted_at', 'is', null)
+    .where('clerk_user_id', '=', clerkUserId)
+    .executeTakeFirst();
+  if (ownedActiveMachine) {
+    return undefined;
+  }
+
+  const legacyContainer = await db.executor
+    .selectFrom('containers')
+    .select('clerk_user_id')
+    .where('handle', '=', handle)
+    .where('clerk_user_id', '!=', clerkUserId)
+    .executeTakeFirst();
+  if (legacyContainer) {
+    return { source: 'containers', clerkUserId: legacyContainer.clerk_user_id };
+  }
+
+  return undefined;
+}
+
+export async function isPlatformHandleAvailableForClerkUser(
+  db: PlatformDB,
+  handle: string,
+  clerkUserId: string,
+): Promise<boolean> {
+  return !(await getPlatformHandleConflict(db, handle, clerkUserId));
 }
 
 export async function getPlatformUserByClerkId(

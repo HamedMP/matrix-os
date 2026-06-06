@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   getPrimaryEmail,
   getProvisionHandle,
+  getProvisionHandleCandidates,
 } from "../../www/src/inngest/provision-user-handle";
 
 function findStepRunRange(source: string, stepName: string): { start: number; end: number } {
@@ -39,6 +40,7 @@ describe("provisionUser", () => {
 
     expect(getPrimaryEmail(user)).toBe("Neo.User@example.com");
     expect(getProvisionHandle(user)).toBe("neo-user");
+    expect(getProvisionHandleCandidates(user)).toEqual(["neo-user", "u-user-2abcdef"]);
     expect(getProvisionHandle({ id: "user_2abcDEF", username: null })).toBe("u-user-2abcdef");
     expect(getProvisionHandle(user, "staging-")).toBe("staging-neo-user");
   });
@@ -78,6 +80,9 @@ describe("provisionUser", () => {
 
     expect(source).toContain('id: "sync-matrix-os-user"');
     expect(source).toContain('`${PLATFORM_API_URL}/users/sync`');
+    expect(source).toContain("for (const candidateHandle of handleCandidates)");
+    expect(source).toContain("res.status === 409");
+    expect(source).toContain("NonRetriableError");
     expect(source).not.toContain("/containers/provision");
     expect(source).not.toContain("verify-running");
     expect(source).not.toContain("wait-for-boot");

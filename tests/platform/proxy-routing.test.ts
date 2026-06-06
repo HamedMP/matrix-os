@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import {
   type PlatformDB,
   deleteContainer,
+  ensurePlatformUser,
   getContainer,
   getPlatformUserByClerkId,
   insertContainer,
@@ -1783,6 +1784,65 @@ describe("platform proxy routing", () => {
       handle: "newuser",
       displayName: "New User",
       email: "new@example.com",
+      containerId: "vps:9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+    });
+  });
+
+  it("selects another handle before provisioning when the preferred handle is already in users", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await ensurePlatformUser(db, {
+      clerkId: "user_existing",
+      handle: "newuser",
+      displayName: "Existing User",
+      email: "existing@example.com",
+      containerId: "vps:existing-machine",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "newuser",
+        first_name: "New",
+        last_name: "User",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(provision.status).toBe(202);
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "new",
+      clerkUserId: "user_new",
+      runtimeSlot: "primary",
+    });
+    await expect(getPlatformUserByClerkId(db, "user_new")).resolves.toMatchObject({
+      clerkId: "user_new",
+      handle: "new",
       containerId: "vps:9f05824c-8d0a-4d83-9cb4-b312d43ff150",
     });
   });

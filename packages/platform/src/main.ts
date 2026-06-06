@@ -31,6 +31,8 @@ import {
   updateContainerStatus,
   listContainers,
   ensurePlatformUser,
+  getPlatformUserByClerkId,
+  isPlatformHandleAvailableForClerkUser,
   getHostBundleRelease,
   getHostBundleReleaseByChannel,
   HostBundleReleaseConflictError,
@@ -988,29 +990,7 @@ async function isProvisionHandleAvailableForClerkUser(
   handle: string,
   clerkUserId: string,
 ): Promise<boolean> {
-  const conflictingActiveHandleMachine = await db.executor
-    .selectFrom('user_machines')
-    .select('clerk_user_id')
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .where('clerk_user_id', '!=', clerkUserId)
-    .executeTakeFirst();
-  if (conflictingActiveHandleMachine) {
-    return false;
-  }
-  // Same-user VPS machines supersede stale docker-era container rows for the same handle.
-  const ownedActiveHandleMachine = await db.executor
-    .selectFrom('user_machines')
-    .select('machine_id')
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .where('clerk_user_id', '=', clerkUserId)
-    .executeTakeFirst();
-  if (ownedActiveHandleMachine) {
-    return true;
-  }
-  const legacyHandleContainer = await getContainer(db, handle);
-  return !legacyHandleContainer || legacyHandleContainer.clerkUserId === clerkUserId;
+  return isPlatformHandleAvailableForClerkUser(db, handle, clerkUserId);
 }
 
 async function selectProvisionIdentityForClerkUser(
@@ -1018,8 +998,11 @@ async function selectProvisionIdentityForClerkUser(
   userId: string,
   env: NodeJS.ProcessEnv,
 ): Promise<ProvisionIdentity | null> {
+  const existing = await getPlatformUserByClerkId(db, userId);
   const { secretKey, profile } = await fetchClerkProvisionProfile(userId, env);
-  const candidates = resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey);
+  const candidates = existing
+    ? [existing.handle, ...resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey)]
+    : resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey);
   for (const handle of candidates) {
     if (await isProvisionHandleAvailableForClerkUser(db, handle, userId)) {
       return {

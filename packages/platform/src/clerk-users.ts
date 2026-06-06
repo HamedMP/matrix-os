@@ -6,7 +6,7 @@ import {
 } from '@matrix-os/clerk-sync';
 import {
   ensurePlatformUser,
-  getPlatformUserByHandle,
+  isPlatformHandleAvailableForClerkUser,
   type NewPlatformUser,
   type PlatformDB,
 } from './db.js';
@@ -75,8 +75,7 @@ async function selectAvailableHandleForClerkUser(
   user: ClerkUserForSync,
 ): Promise<string | null> {
   for (const handle of getClerkUserHandleCandidates(user)) {
-    const existing = await getPlatformUserByHandle(db, handle);
-    if (!existing || existing.clerkId === user.id) return handle;
+    if (await isPlatformHandleAvailableForClerkUser(db, handle, user.id)) return handle;
   }
   return null;
 }

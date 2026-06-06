@@ -7,6 +7,7 @@ import {
 import {
   ensurePlatformUser,
   getPlatformUserByClerkId,
+  insertUserMachine,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
@@ -108,6 +109,40 @@ describe('clerk user sync', () => {
     });
   });
 
+  it('avoids handles already owned by active machines during backfill', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine-existing',
+      clerkUserId: 'user_existing',
+      handle: 'neo',
+      status: 'running',
+      provisionedAt: new Date().toISOString(),
+    });
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([
+        {
+          id: 'user_new',
+          username: 'neo',
+          first_name: 'New',
+          last_name: 'User',
+          email_addresses: [{ id: 'email_1', email_address: 'neo@example.com' }],
+        },
+      ]), { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+
+    const result = await backfillClerkUsersToPlatformDb(db, {
+      clerkSecretKey: 'sk_test',
+      apply: true,
+      fetchFn,
+      logger: { log: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(result).toEqual({ scanned: 1, synced: 1, skipped: 0 });
+    await expect(getPlatformUserByClerkId(db, 'user_new')).resolves.toMatchObject({
+      handle: 'u-user-new',
+      containerId: 'clerk:user_new',
+    });
+  });
+
   it('does not downgrade a provisioned runtime id during backfill', async () => {
     await ensurePlatformUser(db, {
       clerkId: 'user_existing',
@@ -150,6 +185,30 @@ describe('clerk user sync', () => {
     await expect(getPlatformUserByClerkId(db, 'user_existing')).resolves.toMatchObject({
       containerId: 'vps:machine-1',
       displayName: 'Provisioned Neo',
+    });
+  });
+
+  it('keeps the first platform handle stable on repeated Clerk sync', async () => {
+    await ensurePlatformUser(db, {
+      clerkId: 'user_existing',
+      handle: 'neo',
+      displayName: 'Original Neo',
+      email: 'neo@example.com',
+      containerId: 'clerk:user_existing',
+    });
+
+    await ensurePlatformUser(db, {
+      clerkId: 'user_existing',
+      handle: 'new-neo',
+      displayName: 'Renamed Neo',
+      email: 'new-neo@example.com',
+      containerId: 'clerk:user_existing',
+    });
+
+    await expect(getPlatformUserByClerkId(db, 'user_existing')).resolves.toMatchObject({
+      handle: 'neo',
+      displayName: 'Renamed Neo',
+      email: 'new-neo@example.com',
     });
   });
 });
