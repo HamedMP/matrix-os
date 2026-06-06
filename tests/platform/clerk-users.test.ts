@@ -38,7 +38,6 @@ describe('clerk user sync', () => {
 
     expect(getClerkUserHandleCandidates(user)).toEqual([
       'ada-lovelace',
-      'other',
       'u-user-2abcdef',
     ]);
     expect(buildPlatformUserFromClerkUser(user, 'ada-lovelace')).toMatchObject({
@@ -185,6 +184,29 @@ describe('clerk user sync', () => {
     await expect(getPlatformUserByClerkId(db, 'user_existing')).resolves.toMatchObject({
       containerId: 'vps:machine-1',
       displayName: 'Provisioned Neo',
+    });
+  });
+
+  it('preserves an existing container version during later Clerk sync', async () => {
+    await ensurePlatformUser(db, {
+      clerkId: 'user_existing',
+      handle: 'neo',
+      displayName: 'Provisioned Neo',
+      email: 'neo@example.com',
+      containerId: 'vps:machine-1',
+      containerVersion: 'v2026.06.06',
+    });
+
+    await ensurePlatformUser(db, buildPlatformUserFromClerkUser({
+      id: 'user_existing',
+      username: 'neo',
+      first_name: 'Neo',
+      email_addresses: [{ id: 'email_1', email_address: 'neo@example.com' }],
+    }, 'neo'));
+
+    await expect(getPlatformUserByClerkId(db, 'user_existing')).resolves.toMatchObject({
+      containerId: 'vps:machine-1',
+      containerVersion: 'v2026.06.06',
     });
   });
 

@@ -1355,7 +1355,7 @@ export async function ensurePlatformUser(
           ELSE EXCLUDED.container_id
         END
       `,
-      container_version: record.containerVersion ?? null,
+      container_version: sql`COALESCE(EXCLUDED.container_version, users.container_version)`,
       plan: record.plan ?? 'free',
       status: record.status ?? 'active',
       pipedream_external_id: sql`COALESCE(users.pipedream_external_id, EXCLUDED.pipedream_external_id)`,

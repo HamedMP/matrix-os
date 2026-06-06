@@ -1,6 +1,7 @@
 import {
   getClerkDisplayName,
   getPrimaryClerkEmail,
+  getProvisionHandleCandidates,
   normalizeMatrixOsHandleCandidate,
   type ClerkUserProfile,
 } from '@matrix-os/clerk-sync';
@@ -51,13 +52,7 @@ export function buildPlatformUserFromClerkUser(
 }
 
 export function getClerkUserHandleCandidates(user: ClerkUserForSync): string[] {
-  const candidates = [
-    normalizeMatrixOsHandleCandidate(user.username),
-    normalizeMatrixOsHandleCandidate(getPrimaryClerkEmail(user)?.split('@')[0]),
-    normalizeMatrixOsHandleCandidate(user.email_addresses?.[0]?.email_address?.split('@')[0]),
-    fallbackPlatformHandleForClerkUser(user.id),
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  return Array.from(new Set(candidates));
+  return getProvisionHandleCandidates(user);
 }
 
 function isHandleUniqueViolation(err: unknown): boolean {
@@ -134,7 +129,16 @@ export async function backfillClerkUsersToPlatformDb(
           if (isHandleUniqueViolation(err)) {
             const fallback = fallbackPlatformHandleForClerkUser(user.id);
             if (fallback !== handle) {
-              await ensurePlatformUser(db, buildPlatformUserFromClerkUser(user, fallback));
+              try {
+                await ensurePlatformUser(db, buildPlatformUserFromClerkUser(user, fallback));
+              } catch (fallbackErr: unknown) {
+                if (isHandleUniqueViolation(fallbackErr)) {
+                  result.skipped += 1;
+                  logger.warn(`[clerk-users] skipped ${user.id}: fallback handle ${fallback} also collided`);
+                  continue;
+                }
+                throw fallbackErr;
+              }
             } else {
               throw err;
             }
