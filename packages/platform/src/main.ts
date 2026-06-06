@@ -98,6 +98,7 @@ const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 const PLATFORM_JWT_SECRET = process.env.PLATFORM_JWT_SECRET ?? '';
 const DEV_PLATFORM_SECRET = 'dev-secret';
 const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
+const DEFAULT_SYNC_BUCKET = 'matrixos-sync';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
@@ -1363,6 +1364,38 @@ export function checkUnsafeDefaultSecrets(
     );
   }
 
+  return problems;
+}
+
+export function checkHostBundleStorageEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  log: (msg: string) => void = console.warn,
+): string[] {
+  if (env.CUSTOMER_VPS_ENABLED !== 'true') return [];
+  const problems: string[] = [];
+  if (!(env.S3_BUNDLES_ENDPOINT || env.R2_BUNDLES_ENDPOINT || env.S3_BUNDLES_ACCOUNT_ID || env.R2_BUNDLES_ACCOUNT_ID)) {
+    problems.push('S3_BUNDLES_ENDPOINT/R2_BUNDLES_ENDPOINT or S3_BUNDLES_ACCOUNT_ID/R2_BUNDLES_ACCOUNT_ID');
+  }
+  if (!(env.S3_BUNDLES_ACCESS_KEY_ID || env.R2_BUNDLES_ACCESS_KEY_ID)) {
+    problems.push('S3_BUNDLES_ACCESS_KEY_ID/R2_BUNDLES_ACCESS_KEY_ID');
+  }
+  if (!(env.S3_BUNDLES_SECRET_ACCESS_KEY || env.R2_BUNDLES_SECRET_ACCESS_KEY)) {
+    problems.push('S3_BUNDLES_SECRET_ACCESS_KEY/R2_BUNDLES_SECRET_ACCESS_KEY');
+  }
+  const bundleBucket = env.S3_BUNDLES_BUCKET ?? env.R2_BUNDLES_BUCKET;
+  if (!bundleBucket) {
+    problems.push('S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET');
+  } else {
+    const syncBucket = env.S3_BUCKET ?? env.R2_BUCKET ?? DEFAULT_SYNC_BUCKET;
+    if (bundleBucket === syncBucket) {
+      problems.push('S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET must not equal S3_BUCKET/R2_BUCKET');
+    }
+  }
+  if (problems.length > 0) {
+    log(
+      `[platform] CUSTOMER_VPS_ENABLED=true but dedicated host bundle storage is incomplete; refusing to fall back to the sync bucket for signed host bundle URLs. Problems: ${problems.join(', ')}.`,
+    );
+  }
   return problems;
 }
 
@@ -2892,6 +2925,7 @@ export function createApp(deps: {
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !deps.customerVpsService;
   const platformSecret = deps.platformSecret ?? appEnv.PLATFORM_SECRET ?? '';
+  const allowHostBundleSyncStoreFallback = appEnv.CUSTOMER_VPS_ENABLED !== 'true';
   type CachedVpsRuntimeMetrics = {
     machineKey: string;
     expiresAt: number;
@@ -3137,8 +3171,12 @@ export function createApp(deps: {
     });
   });
 
+  function getHostBundleObjectStore(): CustomerVpsObjectStore | undefined {
+    return deps.hostBundleObjectStore ?? (allowHostBundleSyncStoreFallback ? deps.customerVpsObjectStore : undefined);
+  }
+
   async function getSignedBundleUrl(release: HostBundleReleaseRecord): Promise<string> {
-    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    const hostBundleObjectStore = getHostBundleObjectStore();
     if (!hostBundleObjectStore) {
       throw new Error('Host bundle storage unavailable');
     }
@@ -3277,7 +3315,7 @@ export function createApp(deps: {
   // Public, immutable host-service bundles used by customer VPS cloud-init.
   // Metadata comes from Postgres; R2 only stores the bytes.
   app.get('/system-bundles/:imageVersion/:file', async (c) => {
-    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    const hostBundleObjectStore = getHostBundleObjectStore();
     if (!hostBundleObjectStore) {
       return c.json({ error: 'Host bundle storage unavailable' }, 503);
     }
@@ -3398,7 +3436,7 @@ export function createApp(deps: {
   });
 
   app.get('/system-bundles/channels/:channel', async (c) => {
-    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    const hostBundleObjectStore = getHostBundleObjectStore();
     if (!hostBundleObjectStore) {
       return c.json({ error: 'Host bundle storage unavailable' }, 503);
     }
@@ -4864,10 +4902,14 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     }
     throw err;
   }
+  checkHomeMirrorS3Env();
+  const hostBundleStorageProblems = checkHostBundleStorageEnv();
+  if (hostBundleStorageProblems.length > 0) {
+    process.exit(1);
+  }
+
   const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
   await db.ready;
-
-  checkHomeMirrorS3Env();
 
   let docker: Dockerode | undefined;
   let orchestrator: Orchestrator;
