@@ -57,7 +57,7 @@ matrix shell new main          # creates your "main" session
 matrix shell new main --attach # creates and attaches in one step
 ```
 
-`Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `matrix shell connect main`.
+`Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `mos shell attach main`.
 
 ## Profiles
 
@@ -94,8 +94,8 @@ matrix shell new code                   # create a session
 matrix shell new code --attach          # create + attach
 matrix shell new code --layout dev      # create with a saved layout
 matrix shell new agent --cmd "claude"   # create with an inline command
-matrix shell connect code               # reattach to an existing session
-matrix shell connect -c review          # create if missing, then connect
+mos shell attach code                   # reattach to an existing session
+mos shell attach -c review              # create if missing, then attach
 matrix shell rm code --force            # destroy a session
 ```
 
@@ -291,13 +291,13 @@ The sync daemon is installed but not running. Start it with `matrix sync start`.
 
 Your token expired. Run `matrix login` again. Tokens are valid for the duration set by the platform (typically a few hours).
 
-**`matrix shell connect` shows a blank screen**
+**`mos shell attach` shows a blank screen**
 
 Usually means the zellij session exited on your instance. Check `matrix shell ls` — if the session is in the `exited` state, recreate it with `matrix shell new <name>`.
 
 **`session "foo" not found` when connecting**
 
-The session does not exist on your instance. `matrix shell connect` is intentionally strict unless you pass `-c`. Use `matrix shell new foo` or `matrix shell connect -c foo` to create it.
+The session does not exist on your instance. `mos shell attach` is intentionally strict unless you pass `-c`. Use `mos shell new foo` or `mos shell attach -c foo` to create it.
 
 **`matrix port forward` returns `invalid_forward_spec`**
 
@@ -305,7 +305,7 @@ Check the spec shape and port ranges. Valid examples are `3000`, `8080:127.0.0.1
 
 **`matrix port forward` connects but the browser shows connection refused**
 
-The target service must be running on the Matrix computer loopback interface, not on your laptop. Attach with `matrix shell connect <session>` and verify the service is listening on `127.0.0.1:<port>` inside the Matrix computer.
+The target service must be running on the Matrix computer loopback interface, not on your laptop. Attach with `mos shell attach <session>` and verify the service is listening on `127.0.0.1:<port>` inside the Matrix computer.
 
 **Local stack returns connection refused**
 

@@ -61,7 +61,7 @@ try {
     "bin/matrix.mjs",
     "src/cli/index.ts",
     "src/lib/find-tsx-loader.mjs",
-    "src/lib/runtime-prereqs.mjs",
+    "src/lib/node-runtime-guard.mjs",
   ]) {
     if (!files.has(required)) {
       throw new Error(`Packed package is missing ${required}`);

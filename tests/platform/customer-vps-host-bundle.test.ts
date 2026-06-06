@@ -57,6 +57,8 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"');
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway"');
+    expect(script).toContain('tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij');
+    expect(script).toContain('test -x "$STAGE_DIR/bin/zellij"');
     expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
     expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
     expect(script).toContain('matrix-update');
@@ -104,6 +106,7 @@ describe('customer VPS host bundle', () => {
     expect(ownerEnv).toContain('export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"');
     expect(ownerEnv).toContain('matrix_prepend_path_once()');
     expect(ownerEnv).toContain('matrix_prepend_path_once "$HOME/.local/bin"');
+    expect(ownerEnv).toContain('matrix_prepend_path_once "/opt/matrix/bin"');
     expect(ownerEnv).toContain('failed to copy %s to %s; leaving legacy directory in place');
     expect(hermesInstaller).toContain('source /opt/matrix/bin/matrix-owner-env');
     expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"');

@@ -37,15 +37,15 @@ Guide the human through a complete developer onboarding path without collecting 
    - Prefer a named shell so the human, web terminal, and agent can reattach:
 
 ```bash
-matrix shell connect -c setup
+mos shell attach -c setup
 ```
 
    - If the human already has a useful shell session, reuse it instead of forcing the `setup` name.
    - For `zellij_failed`, do not retry the same command repeatedly. Use:
 
 ```bash
-matrix shell ls
-matrix shell connect <session-name>
+mos shell ls
+mos shell attach <session-name>
 ```
 
    - Set the chosen name as `<setup-session>` for every later command. Use `setup` only if that is the session actually chosen.
@@ -97,6 +97,6 @@ curl -fsS http://127.0.0.1:<port>/ >/dev/null
 
 ```bash
 matrix doctor
-matrix shell ls
-matrix shell connect <session-name>
+mos shell ls
+mos shell attach <session-name>
 ```

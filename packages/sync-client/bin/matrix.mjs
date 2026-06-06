@@ -13,16 +13,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { findTsxLoader } from '../src/lib/find-tsx-loader.mjs';
-import { nodeVersionError } from '../src/lib/runtime-prereqs.mjs';
+import { assertSupportedNodeRuntime } from '../src/lib/node-runtime-guard.mjs';
+
+assertSupportedNodeRuntime(process.argv.slice(2), process.version);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(here, '..');
-
-const runtimeError = nodeVersionError();
-if (runtimeError) {
-  console.error(runtimeError);
-  process.exit(1);
-}
 
 const tsxLoader = findTsxLoader(pkgRoot);
 if (!tsxLoader) {

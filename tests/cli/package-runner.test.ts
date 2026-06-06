@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { nodeMajor, nodeVersionError } from "../../packages/sync-client/src/lib/runtime-prereqs.mjs";
+import {
+  formatUnsupportedNodeError,
+  isSupportedNodeVersion,
+  nodeMajor,
+} from "../../packages/sync-client/src/lib/node-runtime-guard.mjs";
 
 describe("published CLI package runners", () => {
   it("keeps package metadata compatible with npx and pnpm dlx", async () => {
@@ -25,7 +29,7 @@ describe("published CLI package runners", () => {
 
   it("reports Node runtime prerequisites before loading the TypeScript CLI", () => {
     expect(nodeMajor("24.14.1")).toBe(24);
-    expect(nodeVersionError("24.0.0")).toBeNull();
-    expect(nodeVersionError("23.11.0")).toContain("matrix CLI requires Node.js 24 or newer");
+    expect(isSupportedNodeVersion("24.0.0")).toBe(true);
+    expect(formatUnsupportedNodeError("23.11.0", false)).toContain("Matrix CLI requires Node.js 24 or newer");
   });
 });

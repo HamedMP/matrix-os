@@ -58,6 +58,7 @@ mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
 chmod 0755 "$STAGE_DIR/bin/zellij"
+test -x "$STAGE_DIR/bin/zellij"
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
 tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"

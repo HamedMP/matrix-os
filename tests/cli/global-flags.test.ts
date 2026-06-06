@@ -80,7 +80,7 @@ describe("CLI leading global flags", () => {
       v: 1,
       error: {
         code: "not_authenticated",
-        message: 'Not logged in for profile "local". Run `matrix login` first.',
+        message: 'Not logged in for profile "local". Run `mos login` first.',
       },
     });
   });

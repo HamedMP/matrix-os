@@ -1649,6 +1649,7 @@ export async function createGateway(config: GatewayConfig) {
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
     layouts: shellLayoutStore,
+    shellBackend: zellijAdapter,
     commandRunner: createShellCommandRunner({ homePath }),
   };
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
