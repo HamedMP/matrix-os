@@ -616,8 +616,13 @@ describe("device routes", () => {
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);
       const html = await res.text();
+      expect(html).toContain(">mos login<");
+      expect(html).toContain('<span class="prompt">mos</span> whoami');
       expect(html).toContain("shell attach -c main");
       expect(html).toContain("run -it -- claude");
+      expect(html).toContain('<span class="prompt">mos</span> doctor');
+      expect(html).not.toContain('<span class="prompt">matrix</span>');
+      expect(html).not.toContain(">matrix login<");
       expect(html).toContain('id="instance-line"');
     });
 

@@ -48,6 +48,19 @@ export function isFetchNetworkError(err: unknown): boolean {
   return err instanceof TypeError;
 }
 
+export function cliFetchError(
+  err: unknown,
+  codes: { timeout: string; network: string; fallback?: string },
+): Error & { code: string } {
+  if (isFetchTimeoutError(err)) {
+    return cliError(codes.timeout);
+  }
+  if (isFetchNetworkError(err)) {
+    return cliError(codes.network);
+  }
+  return cliError(codes.fallback ?? codes.network);
+}
+
 export function formatNdjsonEvent(
   type: string,
   data: Record<string, unknown>,

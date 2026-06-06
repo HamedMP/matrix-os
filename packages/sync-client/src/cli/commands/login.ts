@@ -15,7 +15,12 @@ import {
   type SyncConfig,
 } from "../../lib/config.js";
 import { loadProfiles, saveProfiles, type ProfilesFile } from "../../lib/profiles.js";
-import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
+import {
+  cliFetchError,
+  formatCliError,
+  formatCliErrorMessage,
+  formatCliSuccess,
+} from "../output.js";
 
 function localProfileFromArgs(args: Record<string, unknown>) {
   return {
@@ -50,14 +55,6 @@ function writeLoginError(err: unknown, json: boolean): void {
       ? (err as { code: string }).code
       : "login_failed";
   console.error(json ? formatCliError(code) : `Error: ${formatCliErrorMessage(code)}`);
-}
-
-function classifyPlatformFetchError(err: unknown): Error & { code: string } {
-  return Object.assign(new Error("Request failed"), {
-    code: err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError")
-      ? "request_timeout"
-      : "platform_unreachable",
-  });
 }
 
 export const loginCommand = defineCommand({
@@ -175,7 +172,7 @@ export const loginCommand = defineCommand({
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
-      const safeErr = classifyPlatformFetchError(err);
+      const safeErr = cliFetchError(err, { timeout: "request_timeout", network: "platform_unreachable" });
       const hint = `Your auth token was saved. Re-run \`mos login --profile ${profileName}\` after the platform is reachable.`;
       console.error(json ? formatCliError(safeErr.code) : `Error: ${formatCliErrorMessage(safeErr.code)} ${hint}`);
       process.exitCode = 1;

@@ -291,6 +291,24 @@ describe("shell REST client", () => {
     await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
   });
 
+  it("allowlists terminal websocket error frame codes", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "error", code: "internal_path_leak" }));
+
+    await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
+  });
+
   it("distinguishes remote exit from explicit local detach", async () => {
     const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
     const input = new EventEmitter() as NodeJS.ReadStream;

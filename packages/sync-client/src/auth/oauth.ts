@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { platform } from "node:os";
 import { AuthDataSchema, saveAuth, type AuthData } from "./token-store.js";
+import { cliError, cliFetchError } from "../cli/output.js";
 
 export interface DeviceCodeResponse {
   deviceCode: string;
@@ -28,7 +29,7 @@ export async function requestDeviceCode(
       signal: AbortSignal.timeout(10_000),
     });
   } catch (err: unknown) {
-    throw classifyPlatformFetchError(err);
+    throw cliFetchError(err, { timeout: "request_timeout", network: "platform_unreachable" });
   }
 
   if (!res.ok) {
@@ -38,7 +39,7 @@ export async function requestDeviceCode(
   return (await res.json()) as DeviceCodeResponse;
 }
 
-export function openBrowser(url: string): void {
+export function openBrowser(url: string, userCode?: string): void {
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`Refusing to open non-http(s) verification URL: ${parsed.protocol}`);
@@ -51,7 +52,7 @@ export function openBrowser(url: string): void {
 
   execFile(cmd, args, (err) => {
     if (err) {
-      console.error(`Could not open browser. Visit: ${url}`);
+      console.error(`Could not open browser. Visit: ${url}${userCode ? `\nEnter code: ${userCode}` : ""}`);
     }
   });
 }
@@ -86,7 +87,7 @@ export async function pollForToken(
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err: unknown) {
-      throw classifyPlatformFetchError(err);
+      throw cliFetchError(err, { timeout: "request_timeout", network: "platform_unreachable" });
     }
 
     if (res.ok) {
@@ -113,7 +114,7 @@ export async function pollForToken(
     throw Object.assign(new Error(`Token polling failed with status ${res.status}`), { code: "login_failed" });
   }
 
-  throw Object.assign(new Error("Device authorization timed out"), { code: "request_timeout" });
+  throw cliError("login_failed", "Device authorization timed out");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -133,7 +134,7 @@ export async function login(options: LoginOptions): Promise<AuthData> {
     console.log(`Enter code: ${deviceCode.userCode}\n`);
   }
 
-  openBrowser(deviceCode.verificationUri);
+  openBrowser(deviceCode.verificationUri, deviceCode.userCode);
 
   return pollForToken(
     options,
@@ -142,11 +143,4 @@ export async function login(options: LoginOptions): Promise<AuthData> {
     deviceCode.expiresIn,
     options.tokenStorePath,
   );
-}
-
-function classifyPlatformFetchError(err: unknown): Error & { code: string } {
-  if (err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError")) {
-    return Object.assign(new Error("Request failed"), { code: "request_timeout" });
-  }
-  return Object.assign(new Error("Request failed"), { code: "platform_unreachable" });
 }

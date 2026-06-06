@@ -9,6 +9,7 @@ vi.mock("node:child_process", () => ({
   execFile: execFileMock,
 }));
 import {
+  login,
   openBrowser,
   pollForToken,
   requestDeviceCode,
@@ -95,6 +96,19 @@ describe("openBrowser", () => {
   it("opens http(s) verification URLs via execFile", () => {
     openBrowser("https://platform.matrix-os.com/auth/device?user_code=BCDF-GHJK");
     expect(execFileMock).toHaveBeenCalled();
+  });
+
+  it("prints the user code to stderr if browser open fails", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    execFileMock.mockImplementationOnce((_cmd, _args, callback) => {
+      callback(new Error("xdg-open unavailable"));
+    });
+
+    openBrowser("https://platform.matrix-os.com/auth/device", "BCDF-GHJK");
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Could not open browser. Visit: https://platform.matrix-os.com/auth/device\nEnter code: BCDF-GHJK",
+    );
   });
 
   it("rejects non-http(s) verification URLs", () => {
@@ -201,6 +215,7 @@ describe("pollForToken", () => {
 
     await vi.advanceTimersByTimeAsync(15_000);
     await assertion;
+    await expect(promise).rejects.toMatchObject({ code: "login_failed" });
   });
 
   it("persists the returned token to the configured path", async () => {
@@ -279,5 +294,45 @@ describe("pollForToken", () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
     await assertion;
+  });
+});
+
+describe("login", () => {
+  it("keeps JSON-mode stdout clean while preserving manual device-flow recovery on stderr", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    execFileMock.mockImplementationOnce((_cmd, _args, callback) => {
+      callback(new Error("xdg-open unavailable"));
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            deviceCode: "device-1",
+            userCode: "BCDF-GHJK",
+            verificationUri: "https://platform.matrix-os.com/auth/device",
+            expiresIn: 10,
+            interval: 5,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: "authorization_pending" }), { status: 428 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tokenStorePath = await createTokenStorePath("auth.json");
+    const promise = login({ ...config, tokenStorePath, quiet: true });
+    const assertion = expect(promise).rejects.toMatchObject({ code: "login_failed" });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await assertion;
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Could not open browser. Visit: https://platform.matrix-os.com/auth/device\nEnter code: BCDF-GHJK",
+    );
   });
 });

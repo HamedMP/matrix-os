@@ -570,7 +570,9 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             inputFilter.noteRemoteOutput();
             output.write(msg.data);
           } else if (msg.type === "error") {
-            const code = typeof msg.code === "string" ? msg.code : "attach_failed";
+            const code = typeof msg.code === "string" && SAFE_SHELL_SERVER_ERROR_CODES.has(msg.code)
+              ? msg.code
+              : "attach_failed";
             settle(() => reject(Object.assign(new Error("Request failed"), { code })));
           } else if (msg.type === "exit") {
             settle(() => resolve({ detached: false }));
