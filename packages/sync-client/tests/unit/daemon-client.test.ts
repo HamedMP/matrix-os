@@ -101,6 +101,26 @@ describe("sendCommand", () => {
     });
   });
 
+  it("rejects timed out daemon commands with a safe stable error", async () => {
+    const sock = join(tempDir, ".matrixos", "daemon.sock");
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await listen(server, sock);
+
+    try {
+      await expect(sendCommand("status", {}, 50)).rejects.toMatchObject({
+        code: "daemon_timeout",
+        message: "Sync daemon timed out.",
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await closeServer(server);
+    }
+  });
+
   it("rejects oversized daemon responses before timing out", async () => {
     const sock = join(tempDir, ".matrixos", "daemon.sock");
     const sockets = new Set<Socket>();

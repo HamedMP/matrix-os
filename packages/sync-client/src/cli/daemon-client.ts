@@ -82,7 +82,7 @@ export async function sendCommand(
     };
 
     const timer = setTimeout(() => {
-      fail(new Error("IPC request timed out"));
+      fail(new DaemonClientError("daemon_timeout", "Sync daemon timed out."));
     }, timeout);
 
     socket.on("connect", () => {
