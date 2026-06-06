@@ -926,7 +926,7 @@ public final class AppModel: ObservableObject {
             throw err
         }
         guard generation == openCardGeneration, selectedCard?.id == card.id else {
-            throw OpenCardError.noSession
+            throw OperatorError.noSession
         }
 
         // Existing session → attach by name. No session yet → connect to
