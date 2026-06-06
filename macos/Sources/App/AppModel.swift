@@ -17,9 +17,12 @@ import MatrixBoard
 import MatrixModel
 import MatrixNet
 import MatrixTerminal
+import OSLog
 #if canImport(AppKit)
 import AppKit
 #endif
+
+private let appModelLogger = Logger(subsystem: "com.matrixos.native-shell", category: "AppModel")
 
 /// Within the App module, `ConnectionProfile` means the MatrixNet one (carries
 /// gateway/WS URL resolution). MatrixModel also defines a Keychain-ref profile;
@@ -459,6 +462,7 @@ public final class AppModel: ObservableObject {
                 await self?.loadProjects()
                 if let slug = response.project?.slug { self?.openProject(slug: slug) }
             } catch {
+                appModelLogger.error("Create project request failed: \(String(describing: error), privacy: .private)")
                 await MainActor.run { self?.openError = .createProjectFailed }
             }
         }
@@ -480,6 +484,7 @@ public final class AppModel: ObservableObject {
                 )
                 await self?.refresh()
             } catch {
+                appModelLogger.error("Task status update failed: \(String(describing: error), privacy: .private)")
                 await MainActor.run { self?.openError = .taskMutationFailed }
                 await self?.refresh() // reconcile on failure too
             }
