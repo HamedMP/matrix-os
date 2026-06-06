@@ -177,6 +177,11 @@ struct BrowserPageView: View {
             }
             return url
         }
+        if trimmed.allSatisfy(\.isNumber),
+           let port = Int(trimmed),
+           (1...65_535).contains(port) {
+            return URL(string: "http://localhost:\(port)")
+        }
         return URL(string: "http://\(trimmed)")
     }
 }

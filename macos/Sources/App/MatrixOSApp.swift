@@ -77,7 +77,7 @@ private final class MatrixOSAppDelegate: NSObject, NSApplicationDelegate {
     private static func bringAppForward() {
         NSApp.setActivationPolicy(.regular)
 
-        if let window = NSApp.windows.first {
+        if let window = NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first {
             recoverIfOffscreen(window)
             window.makeKeyAndOrderFront(nil)
         }
