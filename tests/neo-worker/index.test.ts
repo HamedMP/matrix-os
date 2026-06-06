@@ -59,7 +59,10 @@ describe("Neo Worker", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("cdn-cache-control")).toBe("no-store");
     expect(response.headers.get("service-worker-allowed")).toBe("/");
-    await expect(response.text()).resolves.toContain("registration.unregister()");
+    const body = await response.text();
+    expect(body).toContain("registration.unregister()");
+    expect(body).toContain(".catch((err) =>");
+    expect(body).toContain('new Response("offline",');
     expect(fetchMock).not.toHaveBeenCalled();
 
     fetchMock.mockRestore();
