@@ -37,6 +37,15 @@ type SendFn = (msg: GatewayToShell) => void;
 const ONBOARDING_COMPLETE_FILE = "system/onboarding-complete.json";
 const ONBOARDING_STATE_FILE = "system/onboarding-state.json";
 
+const GEMINI_VOICE_UNAVAILABLE_NOTICE =
+  "Voice intro is unavailable — set GEMINI_API_KEY for the spoken onboarding, or continue in text below.";
+const GEMINI_VOICE_CONNECT_FAILED_NOTICE =
+  "Voice intro could not connect — continue in text below, or try again in a moment.";
+
+function sendGeminiVoiceNotice(send: SendFn, message: string): void {
+  send({ type: "notice", code: "gemini_unavailable", message });
+}
+
 const TAIL_TO_DONE: Record<OnboardingStage, OnboardingStage[]> = {
   greeting: ["interview", "extract_profile", "suggest_apps", "done"],
   interview: ["extract_profile", "suggest_apps", "done"],
@@ -226,6 +235,9 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     client.on("disconnected", () => {
       if (gemini !== client) return;
       if (sm.current !== "done") {
+        if (audioMode) {
+          sendGeminiVoiceNotice(send, GEMINI_VOICE_CONNECT_FAILED_NOTICE);
+        }
         send({ type: "mode_change", mode: "text" });
         audioMode = false;
       }
@@ -282,12 +294,16 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         console.error("[onboarding] Gemini Live connection FAILED:", err instanceof Error ? err.message : String(err));
         if (gemini !== client) return;
         gemini = null;
+        sendGeminiVoiceNotice(send, GEMINI_VOICE_CONNECT_FAILED_NOTICE);
         send({ type: "mode_change", mode: "text" });
         audioMode = false;
       }
     } else {
       console.log("[onboarding] No voice mode — Gemini Live connection:", hasVoiceConnection ? "set" : "MISSING");
       audioMode = false;
+      if (audioFormat === "pcm16" && !hasVoiceConnection) {
+        sendGeminiVoiceNotice(send, GEMINI_VOICE_UNAVAILABLE_NOTICE);
+      }
       send({ type: "mode_change", mode: "text" });
     }
   }

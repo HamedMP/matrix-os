@@ -8,9 +8,69 @@ import {
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createOnboardingHandler } from "../../../packages/gateway/src/onboarding/ws-handler.js";
+import type {
+  OnboardingGoalId,
+  OnboardingGoalSummary,
+  ReadinessResponse,
+  SelectGoalsResponse,
+} from "../../../packages/gateway/src/onboarding/activation-contracts.js";
+import type { ReadinessService } from "../../../packages/gateway/src/onboarding/readiness-service.js";
 import type { GatewayToShell } from "../../../packages/gateway/src/onboarding/types.js";
 
+type GoalSeed = Pick<OnboardingGoalSummary, "id" | "selected"> &
+  Partial<Pick<OnboardingGoalSummary, "label" | "description">>;
+
+function mockReadinessResponse(goals: GoalSeed[]): ReadinessResponse {
+  return {
+    overallStatus: "checking",
+    goals: goals.map((goal) => ({
+      id: goal.id,
+      selected: goal.selected,
+      label: goal.label ?? goal.id,
+      description: goal.description ?? `${goal.id} goal`,
+    })),
+    gates: [],
+    systemAgent: "hermes",
+    activeAgents: ["hermes"],
+    agents: [],
+    codingHandoffStatus: null,
+  };
+}
+
+function mockReadinessService(overrides: {
+  getReadiness?: GoalSeed[] | (() => Promise<ReadinessResponse>);
+  selectGoals?: (
+    ownerId: string,
+    goalIds: OnboardingGoalId[],
+  ) => Promise<SelectGoalsResponse>;
+} = {}): Pick<ReadinessService, "getReadiness" | "selectGoals"> {
+  const getReadinessImpl = async (): Promise<ReadinessResponse> => {
+    const seed = overrides.getReadiness;
+    if (Array.isArray(seed)) {
+      return mockReadinessResponse(seed);
+    }
+    if (seed) {
+      return seed();
+    }
+    return mockReadinessResponse([]);
+  };
+
+  const defaultSelectGoals = async (
+    _ownerId: string,
+    _goalIds: OnboardingGoalId[],
+  ): Promise<SelectGoalsResponse> => ({
+    goalIds: ["coding"],
+    steps: [],
+  });
+
+  return {
+    getReadiness: vi.fn(getReadinessImpl),
+    selectGoals: vi.fn(overrides.selectGoals ?? defaultSelectGoals),
+  };
+}
+
 const geminiMock = vi.hoisted(() => ({
+  connectBehavior: "resolve" as "resolve" | "reject",
   clients: [] as Array<{
     on: ReturnType<typeof vi.fn>;
     connect: ReturnType<typeof vi.fn>;
@@ -34,7 +94,11 @@ vi.mock("../../../packages/gateway/src/onboarding/gemini-live.js", () => ({
   createGeminiLiveClient: vi.fn(() => {
     const client = {
       on: vi.fn(),
-      connect: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn().mockImplementation(() => (
+        geminiMock.connectBehavior === "reject"
+          ? Promise.reject(new Error("connection failed"))
+          : Promise.resolve(undefined)
+      )),
       close: vi.fn(),
       sendText: vi.fn(),
       sendAudio: vi.fn(),
@@ -53,6 +117,7 @@ describe("onboarding websocket handler", () => {
     homePath = resolve(mkdtempSync(join(tmpdir(), "onboarding-ws-")));
     mkdirSync(join(homePath, "system"), { recursive: true });
     sent = [];
+    geminiMock.connectBehavior = "resolve";
     geminiMock.clients.length = 0;
     vi.stubEnv("ANTHROPIC_API_KEY", "");
     vi.stubEnv("CLAUDE_CODE_AUTH", "");
@@ -101,19 +166,42 @@ describe("onboarding websocket handler", () => {
     expect(existsSync(join(homePath, "system/onboarding-complete.json"))).toBe(true);
   });
 
+  it("sends a gemini_unavailable notice when voice is requested but no Gemini key is configured", async () => {
+    const h = handler();
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "start", audioFormat: "pcm16" }));
+
+    expect(geminiMock.clients).toHaveLength(0);
+    expect(sent).toContainEqual({ type: "mode_change", mode: "text" });
+    const notice = sent.find((m) => m.type === "notice");
+    expect(notice).toBeDefined();
+    expect(notice).toMatchObject({
+      type: "notice",
+      code: "gemini_unavailable",
+    });
+    expect((notice as { message: string }).message).toMatch(/GEMINI_API_KEY/);
+  });
+
+  it("does not send a gemini_unavailable notice when the user explicitly chose text mode", async () => {
+    const h = handler();
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "start", audioFormat: "text" }));
+
+    expect(sent.find((m) => m.type === "notice")).toBeUndefined();
+  });
+
   it("returns goal steps for websocket goal selection", async () => {
-    const readinessService = {
-      getReadiness: vi.fn(async () => ({
-        goals: [],
-      })),
-      selectGoals: vi.fn(async () => ({
-        goalIds: ["coding" as const],
+    const readinessService = mockReadinessService({
+      selectGoals: async () => ({
+        goalIds: ["coding"],
         steps: [
-          { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding" as const] },
-          { id: "project.selected", required: true, title: "Choose a project", unlocks: ["coding" as const] },
+          { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding"] },
+          { id: "project.selected", required: true, title: "Choose a project", unlocks: ["coding"] },
         ],
-      })),
-    };
+      }),
+    });
     const h = handler("", readinessService);
     await h.onOpen((msg) => sent.push(msg));
 
@@ -132,15 +220,12 @@ describe("onboarding websocket handler", () => {
   });
 
   it("does not persist websocket goal selection without a resolved owner", async () => {
-    const readinessService = {
-      getReadiness: vi.fn(async () => ({
-        goals: [],
-      })),
-      selectGoals: vi.fn(async () => ({
-        goalIds: ["coding" as const],
+    const readinessService = mockReadinessService({
+      selectGoals: async () => ({
+        goalIds: ["coding"],
         steps: [],
-      })),
-    };
+      }),
+    });
     const h = handler("", readinessService, undefined);
     await h.onOpen((msg) => sent.push(msg));
 
@@ -158,21 +243,19 @@ describe("onboarding websocket handler", () => {
   });
 
   it("preserves previously selected goals when websocket goal selection persists", async () => {
-    const readinessService = {
-      getReadiness: vi.fn(async () => ({
-        goals: [
-          { id: "assistant" as const, selected: true },
-          { id: "coding" as const, selected: false },
-        ],
-      })),
-      selectGoals: vi.fn(async () => ({
-        goalIds: ["assistant" as const, "coding" as const],
+    const readinessService = mockReadinessService({
+      getReadiness: [
+        { id: "assistant", selected: true },
+        { id: "coding", selected: false },
+      ],
+      selectGoals: async () => ({
+        goalIds: ["assistant", "coding"],
         steps: [
-          { id: "integrations.capabilities", required: true, title: "Approve assistant capabilities", unlocks: ["assistant" as const] },
-          { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding" as const] },
+          { id: "integrations.capabilities", required: true, title: "Approve assistant capabilities", unlocks: ["assistant"] },
+          { id: "github.connected", required: true, title: "Connect GitHub", unlocks: ["coding"] },
         ],
-      })),
-    };
+      }),
+    });
     const h = handler("", readinessService);
     await h.onOpen((msg) => sent.push(msg));
 
@@ -190,15 +273,13 @@ describe("onboarding websocket handler", () => {
   });
 
   it("serializes rapid websocket goal selections so later writes include earlier goals", async () => {
-    let selected: Array<"assistant" | "coding"> = [];
-    const readinessService = {
-      getReadiness: vi.fn(async () => ({
-        goals: [
-          { id: "assistant" as const, selected: selected.includes("assistant") },
-          { id: "coding" as const, selected: selected.includes("coding") },
-        ],
-      })),
-      selectGoals: vi.fn(async (_ownerId: string, goalIds: Array<"assistant" | "coding">) => {
+    let selected: OnboardingGoalId[] = [];
+    const readinessService = mockReadinessService({
+      getReadiness: async () => mockReadinessResponse([
+        { id: "assistant", selected: selected.includes("assistant") },
+        { id: "coding", selected: selected.includes("coding") },
+      ]),
+      selectGoals: async (_ownerId, goalIds) => {
         selected = goalIds;
         return {
           goalIds,
@@ -209,8 +290,8 @@ describe("onboarding websocket handler", () => {
             unlocks: [id],
           })),
         };
-      }),
-    };
+      },
+    });
     const h = handler("", readinessService);
     await h.onOpen((msg) => sent.push(msg));
 
@@ -222,6 +303,44 @@ describe("onboarding websocket handler", () => {
     expect(readinessService.selectGoals).toHaveBeenNthCalledWith(1, "owner_1", ["assistant"]);
     expect(readinessService.selectGoals).toHaveBeenNthCalledWith(2, "owner_1", ["assistant", "coding"]);
     expect(sent.filter((msg) => msg.type === "goal_selected")).toHaveLength(2);
+  });
+
+  it("sends a gemini_unavailable notice when Gemini Live connect fails", async () => {
+    geminiMock.connectBehavior = "reject";
+    const h = handler("test-gemini-key");
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "start", audioFormat: "pcm16" }));
+
+    expect(sent).toContainEqual({ type: "mode_change", mode: "text" });
+    expect(sent).toContainEqual({
+      type: "notice",
+      code: "gemini_unavailable",
+      message: expect.stringMatching(/could not connect/i),
+    });
+  });
+
+  it("sends a gemini_unavailable notice when Gemini Live disconnects during voice onboarding", async () => {
+    const h = handler("test-gemini-key");
+    await h.onOpen((msg) => sent.push(msg));
+
+    await h.onMessage(JSON.stringify({ type: "start", audioFormat: "pcm16" }));
+    expect(geminiMock.clients).toHaveLength(1);
+
+    const disconnectedHandler = geminiMock.clients[0].on.mock.calls.find(
+      (call) => call[0] === "disconnected",
+    )?.[1] as (() => void) | undefined;
+    expect(disconnectedHandler).toBeDefined();
+
+    sent.length = 0;
+    disconnectedHandler!();
+
+    expect(sent).toContainEqual({ type: "mode_change", mode: "text" });
+    expect(sent).toContainEqual({
+      type: "notice",
+      code: "gemini_unavailable",
+      message: expect.stringMatching(/could not connect/i),
+    });
   });
 
   it("closes an existing Gemini client before handling a duplicate start", async () => {
