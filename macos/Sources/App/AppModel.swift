@@ -84,12 +84,14 @@ public enum AppSection: String, CaseIterable, Sendable {
     case home
     case board
     case shell
+    case browser
 
     public var title: String {
         switch self {
         case .home: return "Home"
         case .board: return "Board"
         case .shell: return "Shell"
+        case .browser: return "Browser"
         }
     }
 
@@ -98,6 +100,7 @@ public enum AppSection: String, CaseIterable, Sendable {
         case .home: return "house"
         case .board: return "rectangle.split.3x1"
         case .shell: return "terminal"
+        case .browser: return "globe"
         }
     }
 }
@@ -1299,36 +1302,24 @@ public final class AppModel: ObservableObject {
         openError = nil
         isCreatingSession = true
         let existingSessionNames = Set(sessions.map(\.name))
+        let name = generatedShellSessionName()
         Task { [weak self] in
             defer { Task { @MainActor in self?.isCreatingSession = false } }
             struct CreateSessionRequest: Encodable {
-                let kind = "shell"
-                let runtimePreference = "zellij"
-                let projectSlug: String
+                let name: String
+                let cwd: String?
             }
             struct CreateSessionResponse: Decodable {
-                struct Session: Decodable {
-                    let name: String
-
-                    private enum CodingKeys: String, CodingKey { case name, id, sessionId }
-
-                    init(from decoder: Decoder) throws {
-                        let container = try decoder.container(keyedBy: CodingKeys.self)
-                        name = try container.decodeIfPresent(String.self, forKey: .name)
-                            ?? container.decodeIfPresent(String.self, forKey: .id)
-                            ?? container.decode(String.self, forKey: .sessionId)
-                    }
-                }
-                let session: Session?
+                let name: String?
             }
             do {
                 let response: CreateSessionResponse = try await client.post(
-                    "/api/sessions",
-                    body: CreateSessionRequest(projectSlug: self?.projectSlug ?? "default")
+                    "/api/terminal/sessions",
+                    body: CreateSessionRequest(name: name, cwd: nil)
                 )
                 await self?.loadSessions()
-                if let name = response.session?.name {
-                    await MainActor.run { self?.openSession(named: name) }
+                if let createdName = response.name {
+                    await MainActor.run { self?.openSession(named: createdName) }
                 } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {
                     await MainActor.run { self?.openSession(named: created.name) }
                 }
@@ -1336,6 +1327,11 @@ public final class AppModel: ObservableObject {
                 await MainActor.run { self?.openError = .createSessionFailed }
             }
         }
+    }
+
+    private func generatedShellSessionName() -> String {
+        let suffix = UUID().uuidString.prefix(8).lowercased()
+        return "shell-\(suffix)"
     }
 
     private func displayName(for card: Card) -> String {

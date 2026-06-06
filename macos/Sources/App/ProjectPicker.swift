@@ -45,22 +45,6 @@ struct ProjectPickerRail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.x2) {
-            if !collapsed {
-                Button { model.openHome() } label: {
-                    Label("Matrix Home", systemImage: "house")
-                        .font(.plexSans(12, weight: model.hasSelectedProject ? .medium : .semibold))
-                        .foregroundStyle(model.hasSelectedProject ? Color.inkSecondary : Color.inkPrimary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, Spacing.x2)
-                        .frame(height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                                .fill(model.hasSelectedProject ? Color.clear : Color.surfaceCardRaised)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-
             if model.projects.isEmpty {
                 emptyProjectState
             } else if collapsed {
@@ -129,7 +113,7 @@ private struct NewProjectSquare: View {
                         .font(.system(size: compact ? 16 : 18, weight: .semibold))
                         .foregroundStyle(Color.signalLive)
                 }
-                .frame(width: compact ? 46 : 54, height: compact ? 46 : 54)
+                .frame(width: compact ? 42 : 54, height: compact ? 42 : 54)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(Color.hairlineDark, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
@@ -140,7 +124,7 @@ private struct NewProjectSquare: View {
                         .foregroundStyle(Color.inkSecondary)
                 }
             }
-            .frame(maxWidth: compact ? 52 : .infinity)
+            .frame(maxWidth: compact ? 46 : .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -165,7 +149,7 @@ private struct ProjectSquareButton: View {
                         .font(.plexMono(compact ? 12 : 14, weight: .semibold))
                         .foregroundStyle(isActive ? Color.canvasVoid : Color.inkPrimary)
                 }
-                .frame(width: compact ? 46 : 54, height: compact ? 46 : 54)
+                .frame(width: compact ? 42 : 54, height: compact ? 42 : 54)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(isActive ? Color.signalLive : Color.hairlineDark, lineWidth: 1)
@@ -179,7 +163,7 @@ private struct ProjectSquareButton: View {
                         .frame(maxWidth: 76)
                 }
             }
-            .frame(maxWidth: compact ? 52 : .infinity)
+            .frame(maxWidth: compact ? 46 : .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

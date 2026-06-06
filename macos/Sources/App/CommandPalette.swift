@@ -48,6 +48,9 @@ struct CommandPalette: View {
             PaletteAction(id: "go-shell", title: "Switch to Shell", symbol: "terminal.fill") {
                 model.section = .shell
             },
+            PaletteAction(id: "go-browser", title: "Switch to Browser", symbol: "globe") {
+                model.section = .browser
+            },
         ] + projectActions
     }
 

@@ -46,6 +46,10 @@ export interface ZellijAdapterDeps {
   spawn?: unknown;
   spawnPty?: PtySpawn;
   timeoutMs?: number;
+  startupDelayMs?: number;
+  retainedPtyTtlMs?: number;
+  maxRetainedPtys?: number;
+  nowMs?: () => number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
 }
@@ -97,6 +101,15 @@ const ZELLIJ_CONTEXT_ENV_KEYS = new Set([
   "ZELLIJ_SESSION_NAME",
   "ZELLIJ_PANE_ID",
 ]);
+const DEFAULT_STARTUP_DELAY_MS = 500;
+const DEFAULT_RETAINED_PTY_TTL_MS = 4 * 60 * 60 * 1000;
+const DEFAULT_MAX_RETAINED_PTYS = 128;
+
+type RetainedCreatePty = {
+  process: ShellAttachProcess;
+  startedAtMs: number;
+  exitDisposable: Disposable | null;
+};
 
 function attachEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env: Record<string, string> = {};
@@ -153,6 +166,32 @@ export function classifyZellijFailure(err: unknown, stderr: string): ZellijFailu
   return diagnostic;
 }
 
+function safeZellijError(
+  err: unknown,
+  stderr = "",
+): ShellSafeError & {
+  cause?: unknown;
+  stderr?: string;
+  diagnostic?: ZellijFailureDiagnostic;
+} {
+  const safe = shellError("zellij_failed", "Shell operation failed", 500) as ShellSafeError & {
+    cause?: unknown;
+    stderr?: string;
+    diagnostic?: ZellijFailureDiagnostic;
+  };
+  safe.cause = err;
+  safe.stderr = sanitizeZellijError(stderr);
+  safe.diagnostic = classifyZellijFailure(err, stderr);
+  return safe;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
 function isNoActiveSessionsFailure(err: unknown): boolean {
   if (!(err instanceof Error)) {
     return false;
@@ -164,8 +203,46 @@ function isNoActiveSessionsFailure(err: unknown): boolean {
 export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter {
   const execFile = deps.execFile ?? nodeExecFile;
   const timeoutMs = deps.timeoutMs ?? 10_000;
+  const startupDelayMs = deps.startupDelayMs ?? DEFAULT_STARTUP_DELAY_MS;
+  const retainedPtyTtlMs = deps.retainedPtyTtlMs ?? DEFAULT_RETAINED_PTY_TTL_MS;
+  const maxRetainedPtys = deps.maxRetainedPtys ?? DEFAULT_MAX_RETAINED_PTYS;
+  const nowMs = deps.nowMs ?? Date.now;
   const cwd = deps.cwd ?? process.cwd();
   const spawnPty = deps.spawnPty ?? defaultPtySpawn();
+  const retainedCreatePtys = new Map<string, RetainedCreatePty>();
+
+  function releaseRetainedCreatePty(name: string, options: { kill?: boolean } = {}): void {
+    const retained = retainedCreatePtys.get(name);
+    if (!retained) {
+      return;
+    }
+    retainedCreatePtys.delete(name);
+    retained.exitDisposable?.dispose();
+    retained.exitDisposable = null;
+    if (options.kill) {
+      retained.process.kill();
+    }
+  }
+
+  function sweepRetainedCreatePtys(): void {
+    const cutoff = nowMs() - retainedPtyTtlMs;
+    for (const [name, retained] of retainedCreatePtys) {
+      if (retained.startedAtMs > cutoff) {
+        continue;
+      }
+      releaseRetainedCreatePty(name, { kill: true });
+    }
+  }
+
+  function evictRetainedCreatePtyIfNeeded(nextName: string): void {
+    if (retainedCreatePtys.has(nextName) || retainedCreatePtys.size < maxRetainedPtys) {
+      return;
+    }
+    const oldest = retainedCreatePtys.keys().next().value as string | undefined;
+    if (oldest) {
+      releaseRetainedCreatePty(oldest, { kill: true });
+    }
+  }
 
   function run(args: string[], timeout = timeoutMs, runCwd?: string): Promise<string> {
     const controller = new AbortController();
@@ -181,14 +258,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         },
         (err, stdout, stderr) => {
           if (err) {
-            const safe = shellError("zellij_failed", "Shell operation failed", 500);
-            (safe as ShellSafeError & { cause?: unknown; stderr?: string }).cause = err;
-            (safe as ShellSafeError & { stderr?: string }).stderr = sanitizeZellijError(
-              typeof stderr === "string" ? stderr : String(stderr ?? ""),
-            );
-            (safe as ShellSafeError & { diagnostic?: ZellijFailureDiagnostic }).diagnostic =
-              classifyZellijFailure(err, typeof stderr === "string" ? stderr : String(stderr ?? ""));
-            reject(safe);
+            reject(safeZellijError(err, typeof stderr === "string" ? stderr : String(stderr ?? "")));
             return;
           }
           resolve(String(stdout));
@@ -215,16 +285,53 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         .filter(Boolean);
     },
     async createSession(options) {
+      sweepRetainedCreatePtys();
+      evictRetainedCreatePtyIfNeeded(options.name);
+      releaseRetainedCreatePty(options.name, { kill: true });
+
       const args = ["--session", options.name];
       if (options.cmd) {
         args.push("--layout-string", initialCommandLayout(options.cmd, options.cwd));
       } else if (options.layout) {
         args.push("--layout", options.layout);
       }
-      args.push("attach", "--create-background", options.name);
-      await run(args, timeoutMs, options.cwd);
+      let pty: ShellAttachProcess;
+      try {
+        pty = spawnPty("zellij", args, {
+          name: "xterm-256color",
+          cols: 120,
+          rows: 40,
+          cwd: options.cwd ?? cwd,
+          env: attachEnv(deps.env),
+        });
+      } catch (err: unknown) {
+        throw safeZellijError(err);
+      }
+      const startup = { exited: null as PtyExitEvent | null };
+      const retained: RetainedCreatePty = {
+        process: pty,
+        startedAtMs: nowMs(),
+        exitDisposable: null,
+      };
+      retainedCreatePtys.set(options.name, retained);
+      const exitDisposable = pty.onExit((event) => {
+        startup.exited = event;
+        releaseRetainedCreatePty(options.name);
+      });
+      retained.exitDisposable = exitDisposable;
+
+      await delay(startupDelayMs);
+      if (startup.exited) {
+        releaseRetainedCreatePty(options.name);
+        const err = Object.assign(new Error("zellij exited during startup"), {
+          code: startup.exited.exitCode,
+          signal: startup.exited.signal == null ? undefined : String(startup.exited.signal),
+        });
+        throw safeZellijError(err);
+      }
     },
     async deleteSession(name, options = {}) {
+      releaseRetainedCreatePty(name, { kill: true });
       const args = ["delete-session", name];
       if (options.force) args.push("--force");
       await run(args);

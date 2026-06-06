@@ -85,6 +85,8 @@ private struct OperatorCommands: Commands {
                 .keyboardShortcut("2", modifiers: .control)
             Button("Shell") { model.section = .shell }
                 .keyboardShortcut("3", modifiers: .control)
+            Button("Browser") { model.section = .browser }
+                .keyboardShortcut("4", modifiers: .control)
             Divider()
             Button("Terminal Panel") { model.switchPanel(.terminal) }
                 .keyboardShortcut("1", modifiers: .command)
