@@ -8,6 +8,7 @@ import {
   resolveSystemUpdateState,
   severityBadgeStyle,
   formatReleaseBuildId,
+  formatReleaseBuildShortId,
   upgradeInstallStatusLine,
 } from "../../shell/src/components/settings/sections/system-update-state.js";
 
@@ -136,6 +137,11 @@ describe("SystemSection version helpers", () => {
   it("formats release build IDs without exposing full commit hashes by default", () => {
     expect(formatReleaseBuildId("0f7e2f12554e1941d10c29b2209e0a6c2d7e2438")).toBe("Build ID 0f7e2f12554e");
     expect(formatReleaseBuildId(undefined)).toBeNull();
+  });
+
+  it("formats short build ID values for labeled fields", () => {
+    expect(formatReleaseBuildShortId("0f7e2f12554e1941d10c29b2209e0a6c2d7e2438")).toBe("0f7e2f12554e");
+    expect(formatReleaseBuildShortId(undefined)).toBeNull();
   });
 
   it("normalizes rotating upgrade install status lines", () => {

@@ -87,8 +87,14 @@ export function severityBadgeStyle(severity?: string): string {
 }
 
 export function formatReleaseBuildId(gitCommit?: string): string | null {
+  const shortId = formatReleaseBuildShortId(gitCommit);
+  if (!shortId) return null;
+  return `Build ID ${shortId}`;
+}
+
+export function formatReleaseBuildShortId(gitCommit?: string): string | null {
   if (!gitCommit) return null;
-  return `Build ID ${gitCommit.slice(0, 12)}`;
+  return gitCommit.slice(0, 12);
 }
 
 export const UPGRADE_INSTALL_STATUS_LINES = [

@@ -83,6 +83,7 @@ interface SystemReleaseList {
 
 import {
   formatReleaseBuildId,
+  formatReleaseBuildShortId,
   releaseActionLabel,
   resolveUpgradeInstallCopy,
   severityBadgeStyle,
@@ -126,10 +127,10 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
 
   useEffect(() => {
     if (!upgrading) return;
-    const jokeTimer = setInterval(() => {
+    const progressMessageTimer = setInterval(() => {
       setUpgradeWaitingIndex((index) => index + 1);
     }, 7_000);
-    return () => clearInterval(jokeTimer);
+    return () => clearInterval(progressMessageTimer);
   }, [upgrading]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-bootstrap useEffect dependency array below; removing useCallback would re-run that effect on every render and refetch system info/health in a loop.
@@ -588,7 +589,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             ["Version", info.version ?? "0.1.0"],
             ["Host Bundle", info.release?.version],
             ["Channel", info.release?.channel],
-            ["Build ID", formatReleaseBuildId(info.release?.gitCommit)],
+            ["Build ID", formatReleaseBuildShortId(info.release?.gitCommit)],
             ["Git Ref", info.release?.gitRef],
             ["Bundle Build Time", info.release?.buildTime],
             ["Installed At", info.release?.installedAt],
