@@ -1,9 +1,9 @@
 import XCTest
 @testable import MatrixModel
 
-final class ConnectionProfileTests: XCTestCase {
+final class StoredConnectionProfileTests: XCTestCase {
     func testRuntimeSlotDefaultsToPrimary() {
-        let profile = ConnectionProfile(
+        let profile = StoredConnectionProfile(
             handle: "hamed",
             gatewayHost: "app.matrix-os.com",
             credentialRef: "matrixos.token.hamed"
@@ -13,7 +13,7 @@ final class ConnectionProfileTests: XCTestCase {
 
     func testProfileStoresOnlyCredentialReference() {
         // The struct must never carry a raw token — only a Keychain key reference.
-        let profile = ConnectionProfile(
+        let profile = StoredConnectionProfile(
             handle: "hamed",
             gatewayHost: "app.matrix-os.com",
             runtimeSlot: "secondary",
@@ -26,12 +26,12 @@ final class ConnectionProfileTests: XCTestCase {
     }
 
     func testProfileRoundTrips() throws {
-        let profile = ConnectionProfile(
+        let profile = StoredConnectionProfile(
             handle: "hamed",
             gatewayHost: "app.matrix-os.com",
             credentialRef: "matrixos.token.hamed"
         )
         let data = try JSONEncoder().encode(profile)
-        XCTAssertEqual(try JSONDecoder().decode(ConnectionProfile.self, from: data), profile)
+        XCTAssertEqual(try JSONDecoder().decode(StoredConnectionProfile.self, from: data), profile)
     }
 }

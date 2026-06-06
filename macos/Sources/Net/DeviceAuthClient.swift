@@ -59,8 +59,8 @@ public struct DeviceAuthClient: DeviceAuthorizing {
 
     public func startDeviceAuth() async throws -> DeviceAuthStart {
         let (data, http) = try await post(path: "/api/auth/device/code", body: EmptyBody())
-        guard GatewayError.from(statusCode: http.statusCode) == nil else {
-            throw GatewayError.from(statusCode: http.statusCode) ?? .server
+        if let mapped = GatewayError.from(statusCode: http.statusCode) {
+            throw mapped
         }
         do {
             return try decoder.decode(DeviceAuthStart.self, from: data)

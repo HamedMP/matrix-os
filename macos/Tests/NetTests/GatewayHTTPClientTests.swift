@@ -36,6 +36,42 @@ final class GatewayHTTPClientTests: XCTestCase {
         XCTAssertEqual(req.url?.path, "/api/workspace/projects")
     }
 
+    func testGetPreservesBaseRuntimeAndRelativeQuery() async throws {
+        MockURLProtocol.setHandler { req in
+            (httpResponse(req.url!, 200), Data("{\"id\":\"abc\",\"count\":3}".utf8))
+        }
+        let client = GatewayHTTPClient(
+            baseURL: URL(string: "https://app.matrix-os.com?runtime=staging")!,
+            tokenProvider: StaticTokenProvider(token: "principal-token"),
+            sessionConfiguration: .mocked()
+        )
+        let _: Sample = try await client.get("/api/files/list?path=projects/matrix-os", as: Sample.self)
+
+        let req = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(req.url?.path, "/api/files/list")
+        let query = req.url?.query ?? ""
+        XCTAssertTrue(query.contains("runtime=staging"), query)
+        XCTAssertTrue(query.contains("path=projects/matrix-os"), query)
+    }
+
+    func testGetAppendsPathBelowBasePathAndPreservesRepeatedQueryItems() async throws {
+        MockURLProtocol.setHandler { req in
+            (httpResponse(req.url!, 200), Data("{\"id\":\"abc\",\"count\":3}".utf8))
+        }
+        let client = GatewayHTTPClient(
+            baseURL: URL(string: "https://app.matrix-os.com/vm/alice?runtime=staging")!,
+            tokenProvider: StaticTokenProvider(token: "principal-token"),
+            sessionConfiguration: .mocked()
+        )
+        let _: Sample = try await client.get("/api/search?tag=one&tag=two", as: Sample.self)
+
+        let req = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(req.url?.path, "/vm/alice/api/search")
+        let items = URLComponents(url: try XCTUnwrap(req.url), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(items.filter { $0.name == "runtime" }.map(\.value), ["staging"])
+        XCTAssertEqual(items.filter { $0.name == "tag" }.map(\.value), ["one", "two"])
+    }
+
     func testTimeoutIsConfiguredOnRequest() async throws {
         MockURLProtocol.setHandler { req in
             (httpResponse(req.url!, 200), Data("{\"id\":\"x\",\"count\":1}".utf8))

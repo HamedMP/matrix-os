@@ -5,7 +5,7 @@ import Foundation
 /// SECURITY: this struct holds only a Keychain *reference* (`credentialRef`),
 /// never the raw token. The token itself lives in the macOS Keychain and is
 /// resolved at request time. Only this reference is ever persisted.
-public struct ConnectionProfile: Codable, Sendable, Equatable {
+public struct StoredConnectionProfile: Codable, Sendable, Equatable {
     public let handle: String
     public let gatewayHost: String
     public let runtimeSlot: String

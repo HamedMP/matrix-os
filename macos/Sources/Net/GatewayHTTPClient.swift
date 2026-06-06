@@ -145,7 +145,30 @@ public struct GatewayHTTPClient: Sendable {
         guard var comps = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
             return nil
         }
-        comps.path = path
+        let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let relativePath = String(parts.first ?? "")
+        comps.path = appendPath(base: comps.path, relative: relativePath)
+        if parts.count == 2,
+           let relative = URLComponents(string: path),
+           let queryItems = relative.queryItems,
+           !queryItems.isEmpty {
+            comps.queryItems = (comps.queryItems ?? []) + queryItems
+        }
         return comps.url
+    }
+
+    private func appendPath(base: String, relative: String) -> String {
+        let cleanBase = base.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let cleanRelative = relative.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        switch (cleanBase.isEmpty, cleanRelative.isEmpty) {
+        case (true, true):
+            return ""
+        case (true, false):
+            return "/\(cleanRelative)"
+        case (false, true):
+            return "/\(cleanBase)"
+        case (false, false):
+            return "/\(cleanBase)/\(cleanRelative)"
+        }
     }
 }
