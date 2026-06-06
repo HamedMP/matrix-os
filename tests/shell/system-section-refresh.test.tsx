@@ -208,17 +208,21 @@ describe("SystemSection release refresh", () => {
       await Promise.resolve();
     });
     expect(screen.getByText("Installing... checking status")).toBeTruthy();
+    expect(screen.getByRole("status")).toBeTruthy();
+    expect(screen.getByText("Installing stable")).toBeTruthy();
     expect(screen.getByText("Installing stable. This can take a few minutes...")).toBeTruthy();
+    expect(screen.getByText("The Matrix picked a new bundle. It still refuses to say whether there is a spoon.")).toBeTruthy();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(8_000);
     });
 
+    expect(screen.getByText("Cloud computing update: this cloud is briefly pretending to be a very serious USB stick.")).toBeTruthy();
     expect(screen.getByText("Installing... checking status")).toBeTruthy();
     expect(screen.getByText("Installing stable. This can take a few minutes...")).toBeTruthy();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(12_000);
     });
 
     expect(screen.getByText("Installed. Reloading...")).toBeTruthy();
@@ -383,6 +387,7 @@ describe("SystemSection release refresh", () => {
     expect(updateStarted).toBe(true);
     expect(screen.getByText("Upgrade is still running. Check again in a minute.")).toBeTruthy();
     expect(screen.queryByText("Installing... checking status")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByText("Switch to stable")).toBeTruthy();
   });
 
