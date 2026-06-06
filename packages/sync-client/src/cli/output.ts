@@ -9,6 +9,7 @@ const GENERIC_MESSAGES: Record<string, string> = {
   attach_failed: "Shell attach failed.",
   attach_timeout: "Shell attach timed out. Try again or run `mos doctor`.",
   login_failed: "Login failed. Run `mos login` to retry.",
+  shell_backend_unavailable: "Shell backend unavailable. Run `mos doctor` for diagnostics.",
   unknown_command: "Request failed",
   unsupported_version: "Request failed",
   auth_expired: "Matrix CLI auth expired. Run `mos login` to refresh your session.",
@@ -34,12 +35,6 @@ export function formatCliError(code: string, message?: string): string {
 
 export function cliError(code: string, message?: string): Error & { code: string } {
   return Object.assign(new Error(message ?? "Request failed"), { code });
-}
-
-export function safeCliErrorCode(err: unknown, fallback = "request_failed"): string {
-  return err instanceof Error && "code" in err && typeof (err as { code?: unknown }).code === "string"
-    ? (err as { code: string }).code
-    : fallback;
 }
 
 export function isFetchTimeoutError(err: unknown): boolean {

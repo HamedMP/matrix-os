@@ -61,6 +61,16 @@ describe("CLI machine-readable output", () => {
     });
   });
 
+  it("formats shell backend dependency failures with safe guidance", () => {
+    expect(JSON.parse(formatCliError("shell_backend_unavailable"))).toEqual({
+      v: 1,
+      error: {
+        code: "shell_backend_unavailable",
+        message: "Shell backend unavailable. Run `mos doctor` for diagnostics.",
+      },
+    });
+  });
+
   it("formats NDJSON stream events", () => {
     expect(formatNdjsonEvent("output", { bytes: "abc" })).toBe(
       `${JSON.stringify({ v: 1, type: "output", data: { bytes: "abc" } })}\n`,
