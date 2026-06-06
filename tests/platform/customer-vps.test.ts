@@ -981,7 +981,7 @@ describe('platform/customer-vps', () => {
     errorSpy.mockRestore();
   });
 
-  it('sends channel deploy targets to running VPS upgrade endpoints', async () => {
+  it('sends channel deploy targets to the VPS system updater endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
     const { service } = createService();
@@ -996,7 +996,7 @@ describe('platform/customer-vps', () => {
     try {
       await expect(service.deploy({ channel: 'dev' })).resolves.toMatchObject({ triggered: 1, failed: 0 });
       expect(fetchMock).toHaveBeenCalledWith(
-        'https://203.0.113.10:443/api/internal/upgrade',
+        'https://203.0.113.10:443/api/system/update',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ channel: 'dev' }),
@@ -1037,7 +1037,7 @@ describe('platform/customer-vps', () => {
         .resolves.toMatchObject({ triggered: 1, failed: 0 });
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock).toHaveBeenCalledWith(
-        'https://203.0.113.11:443/api/internal/upgrade',
+        'https://203.0.113.11:443/api/system/update',
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({ version: 'v082-onboarding-test' }),
