@@ -104,12 +104,8 @@ private struct WebShellView: NSViewRepresentable {
         coordinator.lastRequestedURL = url
         coordinator.destinationURL = url
         guard let bearerToken, !bearerToken.isEmpty, let request = appSessionExchangeRequest(for: url, token: bearerToken) else {
-<<<<<<< HEAD
             coordinator.exchangeInFlight = false
-            view.load(destinationRequest(for: url, token: bearerToken))
-=======
             view.load(webShellDestinationRequest(for: url, token: bearerToken))
->>>>>>> 81595539 (fix(086): harden native auth routing retries)
             return
         }
         coordinator.exchangeInFlight = true
