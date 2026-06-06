@@ -999,6 +999,13 @@ async function selectProvisionIdentityForClerkUser(
   env: NodeJS.ProcessEnv,
 ): Promise<ProvisionIdentity | null> {
   const existing = await getPlatformUserByClerkId(db, userId);
+  if (existing && await isProvisionHandleAvailableForClerkUser(db, existing.handle, userId)) {
+    return {
+      handle: existing.handle,
+      displayName: existing.displayName,
+      email: existing.email,
+    };
+  }
   const { secretKey, profile } = await fetchClerkProvisionProfile(userId, env);
   const candidates = existing
     ? [existing.handle, ...resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey)]

@@ -20,6 +20,9 @@ a VPS. The app should show billing and machine selection after signup; only the
 browser-triggered `/api/auth/provision-runtime` path creates a VPS after the user
 has chosen a machine and passed billing/entitlement checks.
 
+The Inngest function keeps the existing `provision-matrix-os` ID for queued-run
+continuity. Its current behavior is sync-only despite the legacy ID name.
+
 ## Backfill existing Clerk users
 
 Dry-run first:

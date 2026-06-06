@@ -9,7 +9,7 @@ const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? "";
 const HANDLE_PREFIX = process.env.HANDLE_PREFIX ?? "";
 
 export const provisionUser = inngest.createFunction(
-  { id: "sync-matrix-os-user" },
+  { id: "provision-matrix-os" },
   { event: "clerk/user.created" },
   async ({ event, step }) => {
     const user = event.data;

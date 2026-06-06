@@ -78,7 +78,7 @@ describe("provisionUser", () => {
   it("syncs signup users without provisioning a runtime", () => {
     const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
 
-    expect(source).toContain('id: "sync-matrix-os-user"');
+    expect(source).toContain('id: "provision-matrix-os"');
     expect(source).toContain('`${PLATFORM_API_URL}/users/sync`');
     expect(source).toContain("for (const candidateHandle of handleCandidates)");
     expect(source).toContain("res.status === 409");
