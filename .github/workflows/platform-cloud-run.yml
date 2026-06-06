@@ -191,11 +191,26 @@ jobs:
       - name: Smoke candidate revision
         run: |
           set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq is required to parse host bundle smoke JSON output." >&2
+            exit 1
+          fi
           if [ -z "${CANDIDATE_URL:-}" ]; then
             echo "No tagged candidate Cloud Run URL found; refusing to smoke the live service URL." >&2
             exit 1
           fi
           curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health" >/dev/null
+          manifest="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/system-bundles/channels/dev.json")"
+          bundle_url="$(printf '%s\n' "$manifest" | jq -r '.url // empty')"
+          if [ -z "$bundle_url" ]; then
+            echo "Candidate host bundle channel smoke did not return a signed bundle URL." >&2
+            exit 1
+          fi
+          if printf '%s\n' "$bundle_url" | grep -q 'matrixos-sync'; then
+            echo "Candidate host bundle signer returned the sync bucket; refusing to promote." >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url" >/dev/null
 
       - name: Promote revision
         if: ${{ inputs.promote }}

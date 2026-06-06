@@ -124,6 +124,29 @@ describe('platform host bundle route', () => {
     expect(syncGetPresignedGetUrl).not.toHaveBeenCalled();
   });
 
+  it('does not fall back to sync storage for customer VPS host bundle archives', async () => {
+    await seedRelease();
+    const syncGetPresignedGetUrl = vi.fn().mockResolvedValue('https://sync.example/wrong-bucket');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl: syncGetPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+      env: {
+        CUSTOMER_VPS_ENABLED: 'true',
+      },
+    });
+
+    const res = await app.request('/system-bundles/v2026.05.12-1/matrix-host-bundle.tar.gz');
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({ error: 'Host bundle storage unavailable' });
+    expect(syncGetPresignedGetUrl).not.toHaveBeenCalled();
+  });
+
   it('returns JSON 502 when release metadata cannot mint a signed URL', async () => {
     await seedRelease();
     const getPresignedGetUrl = vi.fn().mockRejectedValue(new Error('r2 unavailable'));

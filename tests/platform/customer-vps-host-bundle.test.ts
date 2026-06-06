@@ -448,4 +448,16 @@ describe('customer VPS host bundle', () => {
     expect(restore).toContain('latest_pointer_key="system/db/latest"');
     expect(restore).toContain('/opt/matrix/bin/matrixctl r2 get "$latest_pointer_key" "$latest_file"');
   });
+
+  it('platform Cloud Run workflow smokes signed host bundle URLs before promotion', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health"');
+    expect(workflow).toContain('$CANDIDATE_URL/system-bundles/channels/dev.json');
+    expect(workflow).toContain("jq -r '.url // empty'");
+    expect(workflow).toContain("grep -q 'matrixos-sync'");
+    expect(workflow).toContain('Candidate host bundle signer returned the sync bucket; refusing to promote.');
+    expect(workflow).toContain('curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url"');
+  });
 });
