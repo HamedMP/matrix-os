@@ -138,7 +138,7 @@
 
 ### Implementation for US3
 
-- [x] T050 [US3] Implement sharing service in `packages/gateway/src/sync/sharing.ts` (createShare: insert into sync_shares + broadcast sync:share-invite WS event, acceptShare: update accepted=true, revokeShare: delete row + broadcast sync:access-revoked, listShares: query owned + received, checkSharePermission: validate grantee has required role for path)
+- [x] T050 [US3] Implement sharing service in `packages/gateway/src/sync/sharing.ts` (createShare: insert into sync_shares + broadcast sync:share-invite WS event, acceptShare: update accepted=true, revokeShare: delete row + broadcast sync:access-revoked, listShares: query owned + received, checkSharePermission: validate grantee has required role for path). Scoped-per-share R2 token generation is deferred to F19 slice 3.
 - [x] T051 [US3] Implement sharing control-plane REST routes in `packages/gateway/src/sync/routes.ts` (add POST /share, DELETE /share, POST /share/accept, GET /shares routes). **Data-plane integration is not done**: `/manifest`, `/presign`, and `/commit` remain caller-namespace only; see F19 in `specs/066-file-sync/follow-ups.md`.
 - [ ] T052 [US3] Implement `matrixos share` command in `packages/sync-client/src/cli/commands/share.ts` (positional path + handle args, --role flag default editor, call POST /api/sync/share) -- **NOT STARTED**: file does not exist
 - [ ] T053 [US3] Implement `matrixos unshare` command in `packages/sync-client/src/cli/commands/share.ts` (positional path + handle args, call DELETE /api/sync/share) -- **NOT STARTED**
@@ -149,6 +149,7 @@
 - [ ] Wire shared manifest and presign GET access through accepted, unexpired shares and filtered owner manifests.
 - [ ] Wire shared PUT/delete commits through `checkSharePermission()`, owner-scoped manifest locks, owner R2 keys, and role-specific write/delete checks.
 - [ ] Broadcast owner shared-prefix changes to authorized grantee peers and stop fanout after revoke.
+- [ ] Parse `sync:share-invite` and `sync:access-revoked` in the daemon, mount accepted shares under `~/matrixos/shared/{owner}/...`, stop syncing on revoke, and keep local copies.
 - [ ] Add an end-to-end shared-folder regression covering owner share, grantee accept, download, edit propagation, and revoke.
 
 **Checkpoint**: Sharing works end-to-end only after T052-T054 and the F19 shared data-plane follow-up slices. Share a folder, colleague syncs it, edits propagate bidirectionally, revocation stops sync. Current status is control-plane only; the shared-folder data plane remains intentionally fail-closed.
