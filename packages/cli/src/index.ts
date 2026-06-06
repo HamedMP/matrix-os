@@ -13,6 +13,8 @@ export const PUBLISHED_CLI_COMMANDS = new Set([
   "whoami",
   "status",
   "run",
+  "port",
+  "forward",
   "doctor",
   "instance",
   "completion",
