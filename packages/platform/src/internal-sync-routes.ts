@@ -171,6 +171,7 @@ function parseMultipartCompleteInput(input: unknown): MultipartCompleteInput | n
     const etag = parseNonEmptyString(partRecord.etag);
     if (
       !etag ||
+      etag.length > 512 ||
       !Number.isInteger(partNumber) ||
       typeof partNumber !== "number" ||
       partNumber <= 0 ||

@@ -189,6 +189,26 @@ describe("platform/internal-sync-routes", () => {
     );
   });
 
+  it("rejects multipart complete requests with oversized ETags", async () => {
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+        parts: [{ partNumber: 1, etag: "x".repeat(513) }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(r2.completeMultipartUpload).not.toHaveBeenCalled();
+  });
+
   it("aborts multipart uploads only for keys in the container user's prefix", async () => {
     r2.abortMultipartUpload.mockResolvedValue(undefined);
     const app = createTestApp();

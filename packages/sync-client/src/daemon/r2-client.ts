@@ -3,6 +3,8 @@ import { createReadStream } from "node:fs";
 import { lstat, readFile, writeFile, mkdir, stat, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
+const MULTIPART_COMPLETE_TIMEOUT_MS = 60_000;
+
 export interface MultipartInfo {
   uploadId: string;
   partUrls: string[];
@@ -82,7 +84,7 @@ export async function completeMultipartUpload(
       authorization: `Bearer ${client.token}`,
     },
     body: JSON.stringify({ path, uploadId, parts }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(MULTIPART_COMPLETE_TIMEOUT_MS),
   });
 
   if (res.status === 401 || res.status === 403) {
