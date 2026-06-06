@@ -43,6 +43,10 @@ public struct GatewayHTTPClient: Sendable {
         try await send(method: "GET", path: path, body: Optional<EmptyBody>.none, timeout: timeout)
     }
 
+    public func getData(_ path: String, timeout: TimeInterval? = nil) async throws -> Data {
+        try await sendRaw(method: "GET", path: path, body: Optional<EmptyBody>.none, timeout: timeout)
+    }
+
     public func post<Body: Encodable, Response: Decodable>(
         _ path: String,
         body: Body,
@@ -59,6 +63,23 @@ public struct GatewayHTTPClient: Sendable {
         timeout: TimeInterval? = nil
     ) async throws -> Response {
         try await send(method: "PATCH", path: path, body: body, timeout: timeout)
+    }
+
+    public func putData(
+        _ path: String,
+        data: Data,
+        contentType: String = "text/plain; charset=utf-8",
+        timeout: TimeInterval? = nil
+    ) async throws {
+        var request = try await makeRequest(
+            method: "PUT",
+            path: path,
+            body: Optional<EmptyBody>.none,
+            timeout: timeout
+        )
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        _ = try await perform(request)
     }
 
     /// DELETE with no decoded response body.
@@ -92,7 +113,10 @@ public struct GatewayHTTPClient: Sendable {
         timeout: TimeInterval?
     ) async throws -> Data {
         let request = try await makeRequest(method: method, path: path, body: body, timeout: timeout)
+        return try await perform(request)
+    }
 
+    private func perform(_ request: URLRequest) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {

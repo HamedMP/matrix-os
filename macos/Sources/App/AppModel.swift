@@ -960,6 +960,7 @@ public final class AppModel: ObservableObject {
                 Task { await self?.loadSessions() }
             }
         }
+        session.start()
         return session
     }
 

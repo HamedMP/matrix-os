@@ -41,8 +41,8 @@ struct CommandPalette: View {
             PaletteAction(id: "go-board", title: "Switch to Board", symbol: "rectangle.split.3x1") {
                 model.section = .board
             },
-            PaletteAction(id: "go-terminals", title: "Switch to Terminals", symbol: "terminal.fill") {
-                model.section = .terminals
+            PaletteAction(id: "go-shell", title: "Switch to Shell", symbol: "terminal.fill") {
+                model.section = .shell
             },
         ] + projectActions
     }

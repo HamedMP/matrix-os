@@ -552,7 +552,7 @@ private struct TerminalsView: View {
         case .terminal:
             terminalSurface
         case .shell:
-            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix OS Shell")
+            workbenchPlaceholder(title: "Matrix OS Shell", icon: "globe", message: "The web shell panel is added in the next stack layer.")
         case .app(let slug):
             switch slug {
             case "editor":
@@ -566,7 +566,7 @@ private struct TerminalsView: View {
             case "processes":
                 ProcessesPanel(model: model)
             case "whiteboard":
-                MatrixWebShellPanel(model: model, url: model.appURL(slug: "whiteboard"), title: "Excalidraw")
+                workbenchPlaceholder(title: "Excalidraw", icon: "scribble.variable", message: "Whiteboard opens once the web shell panel is available.")
             default:
                 let meta = panelMeta(slug)
                 workbenchPlaceholder(title: meta.title, icon: meta.icon, message: meta.message)
