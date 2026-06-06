@@ -1151,6 +1151,60 @@ Add to cron:
 echo "0 3 * * * /root/matrix-os/scripts/backup.sh" | crontab -
 ```
 
+## Migrating Platform Postgres To Managed Postgres
+
+The current Docker platform stack owns the canonical `matrixos_platform` database
+until Cloud Run proves it can see the same users, machines, and host-bundle
+release metadata. Do not promote Cloud Run or stop `distro-platform-1` while the
+candidate `/vps/fleet` is empty or `/system-bundles/releases` has no rows.
+
+Use the guarded manual workflow:
+
+```bash
+gh workflow run "Platform DB Migration" \
+  --repo HamedMP/matrix-os \
+  --ref main \
+  -f environment=staging \
+  -f mode=verify
+```
+
+If the verify run can read the Docker source and the managed target, run the
+restore with the exact confirmation phrase:
+
+```bash
+gh workflow run "Platform DB Migration" \
+  --repo HamedMP/matrix-os \
+  --ref main \
+  -f environment=staging \
+  -f mode=migrate \
+  -f confirmation="MIGRATE PLATFORM DB TO MANAGED POSTGRES"
+```
+
+The workflow keeps a VPS-local custom-format dump under
+`/home/deploy/backups/platform-migration/`, reads the managed target from the
+GCP `platform-database-url` secret, restores with `pg_restore --clean
+--if-exists --single-transaction`, and verifies non-zero `users`,
+`user_machines`, and `host_bundle_releases` counts.
+
+After migration:
+
+```bash
+gh workflow run "Platform Cloud Run" \
+  --repo HamedMP/matrix-os \
+  --ref main \
+  -f environment=staging \
+  -f promote=true
+
+curl -fsS https://api.matrix-os.com/health
+curl -fsS https://api.matrix-os.com/system-bundles/channels/dev.json
+curl -fsS -H "Authorization: Bearer $PLATFORM_SECRET" https://api.matrix-os.com/vps/fleet
+```
+
+Docker platform can be stopped only after Cloud Run is serving 100% traffic and
+the Cloud Run `/vps/fleet` output matches the Docker platform fleet. Customer VPS
+Postgres databases are not part of this migration; they stay owner-local on each
+VPS.
+
 ### Hetzner Snapshots
 
 For full-server backups, use Hetzner server snapshots:
