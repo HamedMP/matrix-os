@@ -86,6 +86,11 @@ const LOCAL_TERMINAL_INPUT_RESET = [
 const MAX_PENDING_ESCAPE_SEQUENCE_CHARS = 128;
 const STALE_MOUSE_FOCUS_GUARD_MS = 5_000;
 const FOCUS_MOUSE_SUPPRESS_MS = 1_000;
+const SAFE_SHELL_SERVER_ERROR_CODES = new Set([
+  "auth_expired",
+  "session_not_found",
+  "zellij_failed",
+]);
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -256,11 +261,20 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       headers["Content-Type"] = "application/json";
     }
 
-    const res = await fetchImpl(`${base}${path}`, {
-      ...init,
-      headers,
-      signal: AbortSignal.timeout(requestTimeoutMs),
-    });
+    let res: Response;
+    try {
+      res = await fetchImpl(`${base}${path}`, {
+        ...init,
+        headers,
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+    } catch (err: unknown) {
+      throw Object.assign(new Error("Request failed"), {
+        code: err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError")
+          ? "request_timeout"
+          : "gateway_unreachable",
+      });
+    }
     let payload: unknown = {};
     try {
       payload = await res.json();
@@ -278,7 +292,11 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         typeof (payload as { error?: { code?: unknown } }).error?.code === "string"
           ? (payload as { error: { code: string } }).error.code
           : undefined;
-      const code = payloadCode ?? (res.status === 401 ? "auth_expired" : "request_failed");
+      const code = payloadCode && SAFE_SHELL_SERVER_ERROR_CODES.has(payloadCode)
+        ? payloadCode
+        : res.status === 401
+          ? "auth_expired"
+          : "request_failed";
       throw Object.assign(new Error("Request failed"), { code });
     }
 
@@ -426,8 +444,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         const queuedFrames: string[] = [];
         let queuedFrameBytes = 0;
         const timeout = setTimeout(() => {
-          ws.close();
           settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
+          ws.close();
         }, timeoutMs);
         timeout.unref?.();
         const cleanup = () => {
@@ -588,13 +606,19 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             inputFilter.noteRemoteOutput();
             output.write(msg.data);
           } else if (msg.type === "error") {
-            const code = typeof msg.code === "string" ? msg.code : "attach_failed";
+            const code = typeof msg.code === "string" && SAFE_SHELL_SERVER_ERROR_CODES.has(msg.code)
+              ? msg.code
+              : "attach_failed";
             settle(() => reject(Object.assign(new Error("Request failed"), { code })));
           } else if (msg.type === "exit") {
             settle(() => resolve({ detached: false }));
           }
         };
         const onClose = () => {
+          if (!remoteAttached) {
+            settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
+            return;
+          }
           settle(() => resolve({ detached: true }));
         };
         const onError = (err: unknown) => {

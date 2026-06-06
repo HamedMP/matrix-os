@@ -51,7 +51,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "node ./scripts/check-publish.mjs"
+    "prepublishOnly": "node ./scripts/check-publish.mjs",
+    "validate:package-runners": "node ./scripts/validate-package-runners.mjs"
   },
   "dependencies": {
     "chokidar": "^4.0.0",

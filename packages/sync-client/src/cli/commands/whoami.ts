@@ -42,7 +42,7 @@ export const whoamiCommand = defineCommand({
       } else if (data.authenticated) {
         console.log(`Authenticated with explicit token (${data.profile}).`);
       } else if ("auth" in data && data.auth === "expired") {
-        console.log(`Login expired (${data.profile}). Run \`matrix login --profile ${data.profile}\` to refresh.`);
+        console.log(`Login expired (${data.profile}). Run \`mos login --profile ${data.profile}\` to refresh.`);
       } else {
         console.log(`Not logged in (${data.profile}).`);
       }

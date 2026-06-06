@@ -344,7 +344,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("matrix shell connect main");
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("mos shell attach main");
   });
 
   it("does not persist the mobile-forced sidebar state into shared terminal layout", async () => {
