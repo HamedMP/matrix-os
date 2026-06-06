@@ -4,8 +4,10 @@ import {
   isNewer,
   normalizeMatrixReleaseTag,
   releaseActionLabel,
+  resolveUpgradeInstallCopy,
   resolveSystemUpdateState,
   severityBadgeStyle,
+  upgradeInstallStatusLine,
 } from "../../shell/src/components/settings/sections/system-update-state.js";
 
 describe("SystemSection version helpers", () => {
@@ -128,5 +130,33 @@ describe("SystemSection version helpers", () => {
     expect(severityBadgeStyle("critical")).toContain("orange");
     expect(severityBadgeStyle("normal")).toContain("blue");
     expect(severityBadgeStyle(undefined)).toContain("blue");
+  });
+
+  it("normalizes rotating upgrade install status lines", () => {
+    expect(upgradeInstallStatusLine(0)).toBe("Reading the Matrix release notes between packets.");
+    expect(upgradeInstallStatusLine(6)).toBe("Reading the Matrix release notes between packets.");
+    expect(upgradeInstallStatusLine(-1)).toBe("Reading the Matrix release notes between packets.");
+  });
+
+  it("builds accessible upgrade install copy", () => {
+    expect(resolveUpgradeInstallCopy({
+      target: "dev",
+      message: null,
+      statusIndex: 1,
+    })).toEqual({
+      title: "Installing dev",
+      detail: "Downloading the host bundle and waiting for the shell to return.",
+      statusLine: "Cloud status: one host bundle, lightly compressed, coming right up.",
+    });
+
+    expect(resolveUpgradeInstallCopy({
+      target: null,
+      message: "Upgrade started. Waiting for services to come back...",
+      statusIndex: 2,
+    })).toEqual({
+      title: "Installing update",
+      detail: "Upgrade started. Waiting for services to come back...",
+      statusLine: "A coding agent is watching the logs and resisting the urge to refactor them.",
+    });
   });
 });

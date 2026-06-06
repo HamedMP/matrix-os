@@ -86,6 +86,32 @@ export function severityBadgeStyle(severity?: string): string {
   }
 }
 
+export const UPGRADE_INSTALL_STATUS_LINES = [
+  "Reading the Matrix release notes between packets.",
+  "Cloud status: one host bundle, lightly compressed, coming right up.",
+  "A coding agent is watching the logs and resisting the urge to refactor them.",
+  "The VPS is swapping in the new shell without touching your home files.",
+  "Cloudflare has the route. The updater has the bundle. Everyone has one job.",
+  "Checking that the new reality answers /health before we reload.",
+] as const;
+
+export function upgradeInstallStatusLine(index: number): string {
+  if (!Number.isInteger(index) || index < 0) return UPGRADE_INSTALL_STATUS_LINES[0];
+  return UPGRADE_INSTALL_STATUS_LINES[index % UPGRADE_INSTALL_STATUS_LINES.length];
+}
+
+export function resolveUpgradeInstallCopy(input: {
+  target?: string | null;
+  message?: string | null;
+  statusIndex: number;
+}) {
+  return {
+    title: `Installing ${input.target ?? "update"}`,
+    detail: input.message ?? "Downloading the host bundle and waiting for the shell to return.",
+    statusLine: upgradeInstallStatusLine(input.statusIndex),
+  };
+}
+
 export function resolveSystemUpdateState(input: {
   installedVersion?: string;
   latestVersion?: string | null;
