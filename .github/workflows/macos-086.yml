@@ -31,12 +31,31 @@ jobs:
 
       - name: Select Xcode
         run: |
-          XCODE_PATH="${XCODE_PATH:-/Applications/Xcode_26.4.app}"
+          if [[ -n "${XCODE_PATH:-}" ]]; then
+            candidates=("$XCODE_PATH")
+          else
+            candidates=(
+              /Applications/Xcode_26.4.app
+              /Applications/Xcode_26.3.app
+              /Applications/Xcode_26.2.app
+              /Applications/Xcode_26.1.app
+              /Applications/Xcode_26.0.app
+              /Applications/Xcode.app
+            )
+          fi
+          XCODE_PATH=""
+          for candidate in "${candidates[@]}"; do
+            if [[ -d "$candidate" ]]; then
+              XCODE_PATH="$candidate"
+              break
+            fi
+          done
           if [[ ! -d "$XCODE_PATH" ]]; then
-            echo "::error::Required Xcode path not found: $XCODE_PATH"
+            echo "::error::No supported Xcode path found"
             ls -1 /Applications | grep -E '^Xcode' || true
             exit 1
           fi
+          echo "Using Xcode at $XCODE_PATH"
           sudo xcode-select -switch "$XCODE_PATH"
 
       - name: Swift version
