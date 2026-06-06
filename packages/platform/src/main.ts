@@ -3462,7 +3462,7 @@ export function createApp(deps: {
   });
 
   app.post('/api/auth/app-session', bodyLimit({ maxSize: 1024 }), async (c) => {
-    if (!platformJwtSecret || !clerkAuth) {
+    if (!platformJwtSecret) {
       applyNoStoreHeaders(c);
       return c.json({ error: 'Session unavailable' }, 503);
     }
@@ -3483,8 +3483,37 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
     const redirectTo = normalizePostAuthRedirectPath(parsed.data.redirectTo);
+    const requestedRuntimeSlot =
+      parsed.data.runtime ?? readRuntimeSlotSelection(new URL(redirectTo, 'https://app.matrix-os.com').toString()).slot;
+    const authHeader = c.req.header('authorization');
 
-    const token = clerkAuth.extractToken(c.req.header('authorization'), c.req.header('cookie'));
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const nativeIdentity = await resolveAppDomainIdentity({
+          authHeader,
+          cookieHeader: undefined,
+          db,
+          platformJwtSecret,
+          runtimeSlot: requestedRuntimeSlot,
+        });
+        if (nativeIdentity) {
+          applyNoStoreHeaders(c);
+          c.header('Set-Cookie', buildAppSessionCookie(authHeader.slice(7)));
+          return c.json({ redirectTo });
+        }
+      } catch (err: unknown) {
+        logPlatformRouteError('/api/auth/app-session native exchange', err);
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Session unavailable' }, 503);
+      }
+    }
+
+    if (!clerkAuth) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Session unavailable' }, 503);
+    }
+
+    const token = clerkAuth.extractToken(authHeader, c.req.header('cookie'));
     if (!token) {
       applyNoStoreHeaders(c);
       return c.json({ error: 'Unauthorized' }, 401);
@@ -3497,8 +3526,6 @@ export function createApp(deps: {
     }
 
     const record = await getContainerByClerkId(db, result.userId);
-    const requestedRuntimeSlot =
-      parsed.data.runtime ?? readRuntimeSlotSelection(new URL(redirectTo, 'https://app.matrix-os.com').toString()).slot;
     const machine = record ? undefined : await getActiveUserMachineByClerkId(db, result.userId, requestedRuntimeSlot);
     const handle = record?.handle ?? machine?.handle;
     if (!handle) {

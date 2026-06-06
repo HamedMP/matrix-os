@@ -78,19 +78,19 @@ public enum SignInState: Equatable, Sendable {
     case failed(String)
 }
 
-/// Top-level workspace sections (left rail). Board = task kanban; Terminals =
-/// the live zellij session list opened in a full/side terminal.
+/// Top-level workspace sections (left rail). Home is the web shell package;
+/// Terminal is the live zellij session list opened in a full terminal surface.
 public enum AppSection: String, CaseIterable, Sendable {
     case home
     case board
-    case shell
+    case terminal
     case browser
 
     public var title: String {
         switch self {
         case .home: return "Home"
         case .board: return "Board"
-        case .shell: return "Shell"
+        case .terminal: return "Terminal"
         case .browser: return "Browser"
         }
     }
@@ -99,7 +99,7 @@ public enum AppSection: String, CaseIterable, Sendable {
         switch self {
         case .home: return "house"
         case .board: return "rectangle.split.3x1"
-        case .shell: return "terminal"
+        case .terminal: return "terminal"
         case .browser: return "globe"
         }
     }
@@ -520,6 +520,13 @@ public final class AppModel: ObservableObject {
             phase = .needsProfile
             return
         }
+        guard await principal.token() != nil else {
+            phase = .needsProfile
+            terminal?.shutdown()
+            terminal = nil
+            openError = nil
+            return
+        }
         ensureHomeTab(select: activeTabID == nil)
         if phase == .ready {
             // Keep showing the board while refreshing; only drop to disconnected on failure.
@@ -681,7 +688,7 @@ public final class AppModel: ObservableObject {
         }
         sessions = loaded
         if !loaded.isEmpty {
-            if section == .shell, terminal == nil, let first = sessions.first(where: \.isActive) ?? sessions.first {
+            if section == .terminal, terminal == nil, let first = sessions.first(where: \.isActive) ?? sessions.first {
                 openSession(named: first.name)
             }
         }
@@ -721,6 +728,11 @@ public final class AppModel: ObservableObject {
         activeTabID = "home"
         section = .home
         activePanel = .shell
+    }
+
+    public func openTerminalSection() {
+        section = .terminal
+        Task { await loadSessions() }
     }
 
     public var activeProjectName: String {
@@ -792,6 +804,7 @@ public final class AppModel: ObservableObject {
 
     /// Opens a raw zellij session (Terminals section) in the side terminal view.
     public func openSession(named name: String) {
+        section = .terminal
         let card = Card(
             id: name, projectSlug: projectSlug, title: name,
             status: .running, priority: .normal, order: 0,

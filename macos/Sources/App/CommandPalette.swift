@@ -40,13 +40,13 @@ struct CommandPalette: View {
                 model.createSession()
             },
             PaletteAction(id: "go-home", title: "Switch to Home", symbol: "house") {
-                model.section = .home
+                model.openHome()
             },
             PaletteAction(id: "go-board", title: "Switch to Board", symbol: "rectangle.split.3x1") {
                 model.section = .board
             },
-            PaletteAction(id: "go-shell", title: "Switch to Shell", symbol: "terminal.fill") {
-                model.section = .shell
+            PaletteAction(id: "go-terminal", title: "Switch to Terminal", symbol: "terminal.fill") {
+                model.openTerminalSection()
             },
             PaletteAction(id: "go-browser", title: "Switch to Browser", symbol: "globe") {
                 model.section = .browser

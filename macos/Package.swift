@@ -106,5 +106,11 @@ let package = Package(
             path: "Tests/BoardTests",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        .testTarget(
+            name: "AppTests",
+            dependencies: ["MatrixOS"],
+            path: "Tests/AppTests",
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
     ]
 )
