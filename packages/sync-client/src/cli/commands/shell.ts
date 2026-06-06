@@ -128,6 +128,15 @@ function attachOptionsFromArgs(args: Record<string, unknown>) {
   return options;
 }
 
+function attachOptionsForOutput(args: Record<string, unknown>, json: boolean) {
+  const options = attachOptionsFromArgs(args);
+  if (json) {
+    options.output = process.stderr;
+    options.errorOutput = process.stderr;
+  }
+  return options;
+}
+
 function sessionCreateInput(args: Record<string, unknown>) {
   return {
     name: String(args.name),
@@ -191,7 +200,7 @@ function attachCommand(name: string, description: string) {
         const client = await clientFromArgs(args);
         let result: { detached: boolean };
         try {
-          result = await client.attachSession(String(args.name), attachOptionsFromArgs(args));
+          result = await client.attachSession(String(args.name), attachOptionsForOutput(args, json));
         } catch (err) {
           const code = err instanceof Error && "code" in err
             ? (err as { code?: unknown }).code
@@ -201,11 +210,12 @@ function attachCommand(name: string, description: string) {
           }
           const data = await client.createSession(sessionCreateInput(args));
           if (json) {
-            console.log(formatCliSuccess({ created: data, attached: false }));
+            result = await client.attachSession(String(args.name), attachOptionsForOutput(args, json));
+            console.log(formatCliSuccess({ created: data, detached: result.detached }));
             return;
           }
           console.log(`Created shell session ${args.name}. Connecting...`);
-          result = await client.attachSession(String(args.name), attachOptionsFromArgs(args));
+          result = await client.attachSession(String(args.name), attachOptionsForOutput(args, json));
         }
         console.log(
           json
@@ -251,13 +261,19 @@ export const shellCommand = defineCommand({
         try {
           const client = await clientFromArgs(args);
           const data = await client.createSession(sessionCreateInput(args));
-          if (json || args.attach !== true) {
+          if (args.attach !== true) {
             console.log(json ? formatCliSuccess(data) : `Created shell session ${args.name}`);
             return;
           }
-          console.log(`Created shell session ${args.name}. Attaching...`);
-          await client.attachSession(String(args.name), attachOptionsFromArgs(args));
-          console.log(`Detached. Reattach: matrix shell connect ${args.name}`);
+          if (!json) {
+            console.log(`Created shell session ${args.name}. Attaching...`);
+          }
+          const result = await client.attachSession(String(args.name), attachOptionsForOutput(args, json));
+          console.log(
+            json
+              ? formatCliSuccess({ created: data, detached: result.detached })
+              : `Detached. Reattach: matrix shell connect ${args.name}`,
+          );
         } catch (err) {
           writeError(err, json);
           process.exitCode = 1;
