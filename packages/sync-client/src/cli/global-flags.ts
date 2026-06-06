@@ -16,7 +16,7 @@ const LEADING_VALUE_GLOBAL_FLAGS = new Set([
 ]);
 
 function splitOption(arg: string): string {
-  return arg.split("=", 1)[0] ?? arg;
+  return arg.split("=", 1)[0]!;
 }
 
 function consumeLeadingGlobalFlag(argv: string[], index: number): string[] | null {
