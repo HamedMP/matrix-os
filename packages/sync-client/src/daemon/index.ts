@@ -930,11 +930,10 @@ async function runWithConcurrency<T>(
     async () => {
       for (;;) {
         const index = nextIndex++;
-        const item = items[index];
-        if (!item) {
+        if (index >= items.length) {
           return;
         }
-        await worker(item);
+        await worker(items[index]!);
       }
     },
   );

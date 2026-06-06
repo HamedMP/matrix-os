@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { lstat, readFile, writeFile, mkdir, stat, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
-import { once } from "node:events";
 
 export interface PresignedUrl {
   path: string;
@@ -158,10 +157,36 @@ async function writeResponseBodyToTempFile(
     flags: "wx",
     mode: 0o600,
   });
-  const writerError = new Promise<never>((_, reject) => {
-    writer.once("error", reject);
+  let writerFailure: unknown;
+  const recordWriterError = (err: unknown): void => {
+    writerFailure = err;
+  };
+  writer.on("error", recordWriterError);
+  const writerClosed = new Promise<void>((resolve) => {
+    writer.once("close", resolve);
   });
-  const writerClosed = once(writer, "close");
+
+  const waitForWriterEvent = (event: "drain" | "finish"): Promise<void> => {
+    if (writerFailure) {
+      return Promise.reject(writerFailure);
+    }
+    return new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        writer.off(event, onEvent);
+        writer.off("error", onError);
+      };
+      const onEvent = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (err: unknown) => {
+        cleanup();
+        reject(err);
+      };
+      writer.once(event, onEvent);
+      writer.once("error", onError);
+    });
+  };
 
   const writeChunk = async (chunk: Uint8Array): Promise<void> => {
     size += chunk.byteLength;
@@ -170,7 +195,7 @@ async function writeResponseBodyToTempFile(
     }
     hash.update(chunk);
     if (!writer.write(chunk)) {
-      await Promise.race([once(writer, "drain"), writerError]);
+      await waitForWriterEvent("drain");
     }
   };
 
@@ -192,14 +217,16 @@ async function writeResponseBodyToTempFile(
         reader.releaseLock();
       }
     }
-    await Promise.race([
-      new Promise<void>((resolve) => writer.end(resolve)),
-      writerError,
-    ]);
+    const finished = waitForWriterEvent("finish");
+    writer.end();
+    await finished;
+    await writerClosed;
   } catch (err: unknown) {
     writer.destroy();
     await writerClosed;
     throw err;
+  } finally {
+    writer.off("error", recordWriterError);
   }
 
   return {
