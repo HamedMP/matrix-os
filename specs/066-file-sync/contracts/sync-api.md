@@ -39,6 +39,8 @@ Fetch the current sync manifest for the authenticated user.
 
 **Response 401**: Invalid or missing JWT.
 
+**Status caveat**: Shared-folder manifest filtering is target behavior tracked by F19 in `../follow-ups.md`. Current `/api/sync/manifest` responses are caller-namespace only.
+
 **Headers**:
 - `ETag`: Current manifest ETag for client caching
 
@@ -96,7 +98,7 @@ const PresignRequestSchema = z.object({
 
 **Security**:
 - Every `path` is validated with `resolveWithinPrefix(userId, path)`
-- For shared folders: checks `sync_shares` table for grantee permissions
+- For shared folders *(target behavior — not yet wired; see F19 status caveat above)*: checks `sync_shares` table for grantee permissions
 - `action: "put"` requires editor or admin role on shared paths
 - `action: "get"` requires viewer or higher role on shared paths
 
