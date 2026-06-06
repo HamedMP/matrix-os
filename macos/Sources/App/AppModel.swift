@@ -1461,19 +1461,25 @@ public final class AppModel: ObservableObject {
             openTabs[index] = tab
         } else {
             openTabs.append(tab)
-            if openTabs.count > 16 {
-                let evictedTabs = Array(openTabs.prefix(openTabs.count - 16))
-                openTabs.removeFirst(evictedTabs.count)
-                for evicted in evictedTabs {
-                    removeCachedTerminalSession(for: evicted.id)
-                    if activeTabID == evicted.id {
-                        terminal = nil
-                    }
-                }
-            }
+            trimOpenTabsToLimit(protecting: tab.id)
         }
         activeTabID = tab.id
         return tab.id
+    }
+
+    private func trimOpenTabsToLimit(protecting protectedID: String) {
+        while openTabs.count > 16 {
+            guard let evictIndex = openTabs.firstIndex(where: { tab in
+                tab.id != "home" && tab.id != protectedID
+            }) else {
+                return
+            }
+            let evicted = openTabs.remove(at: evictIndex)
+            removeCachedTerminalSession(for: evicted.id)
+            if activeTabID == evicted.id {
+                terminal = nil
+            }
+        }
     }
 }
 

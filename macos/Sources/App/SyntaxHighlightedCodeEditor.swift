@@ -108,7 +108,9 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.theme = theme
         context.coordinator.filePath = filePath
-        apply(text: text, to: textView, theme: theme, filePath: filePath)
+        context.coordinator.applyHighlight {
+            apply(text: text, to: textView, theme: theme, filePath: filePath)
+        }
         return scrollView
     }
 
@@ -118,10 +120,13 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
             ruler.theme = theme
             ruler.needsDisplay = true
         }
-        if textView.string != text || context.coordinator.theme != theme || context.coordinator.filePath != filePath {
+        if textView.string != text || context.coordinator.needsHighlight || context.coordinator.theme != theme || context.coordinator.filePath != filePath {
             context.coordinator.theme = theme
             context.coordinator.filePath = filePath
-            apply(text: text, to: textView, theme: theme, filePath: filePath)
+            context.coordinator.needsHighlight = false
+            context.coordinator.applyHighlight {
+                apply(text: text, to: textView, theme: theme, filePath: filePath)
+            }
         }
     }
 
@@ -170,13 +175,23 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         weak var textView: NSTextView?
         var theme: CodeEditorTheme?
         var filePath: String?
+        var needsHighlight = false
+        private var isApplyingHighlight = false
 
         init(text: Binding<String>) {
             _text = text
         }
 
+        func applyHighlight(_ body: () -> Void) {
+            isApplyingHighlight = true
+            defer { isApplyingHighlight = false }
+            body()
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            guard !isApplyingHighlight else { return }
+            needsHighlight = true
             text = textView.string
         }
     }
