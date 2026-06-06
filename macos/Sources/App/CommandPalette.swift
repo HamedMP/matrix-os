@@ -236,7 +236,10 @@ private struct PaletteKeyCatcher: NSViewRepresentable {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self else { return event }
-                guard Self.paletteSearchFieldHasFocus() else { return event }
+                let searchFieldHasFocus = MainActor.assumeIsolated {
+                    Self.paletteSearchFieldHasFocus()
+                }
+                guard searchFieldHasFocus else { return event }
                 switch event.keyCode {
                 case 125:
                     onDown()
@@ -256,6 +259,7 @@ private struct PaletteKeyCatcher: NSViewRepresentable {
             }
         }
 
+        @MainActor
         private static func paletteSearchFieldHasFocus() -> Bool {
             guard let responder = NSApp.keyWindow?.firstResponder else { return false }
             return responder is NSTextView
