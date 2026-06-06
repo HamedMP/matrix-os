@@ -2407,6 +2407,10 @@ function getAuthPage(
             showNoRuntimeState();
             return null;
           }
+          if (res.status === 402) {
+            showBillingRequiredState();
+            return null;
+          }
           showSignedInRecoveryState();
           return null;
         })
@@ -3722,6 +3726,18 @@ export function createApp(deps: {
     if (!handle) {
       applyNoStoreHeaders(c);
       c.header('Set-Cookie', buildClearAppSessionCookie());
+      if (stripeBillingEntitlementsEnabled(appEnv)) {
+        const now = new Date();
+        const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
+        const access = getRuntimeAccessDecision(entitlement, now);
+        if (!access.runtimeProxyAllowed) {
+          return jsonCustomerVpsError(
+            c,
+            new CustomerVpsError(402, 'billing_required', 'Billing upgrade required'),
+            '/api/auth/app-session',
+          );
+        }
+      }
       return c.json({ error: 'Matrix computer unavailable', code: 'no_runtime' }, 404);
     }
 

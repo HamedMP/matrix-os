@@ -110,6 +110,7 @@ describe("platform proxy routing", () => {
     vi.restoreAllMocks();
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
+    delete process.env.MATRIX_BILLING_PROVIDER;
     delete process.env.MATRIX_STRIPE_BILLING_ENABLED;
     delete process.env.STRIPE_SECRET_KEY;
     delete process.env.HETZNER_SERVER_TYPE;
@@ -2205,6 +2206,57 @@ describe("platform proxy routing", () => {
     expect(html).toContain("Loading your Matrix computer");
     expect(html).not.toContain("ask the operator to provision this account");
     expect(html).not.toContain("You are already signed in");
+  });
+
+  it("shows checkout instead of the no-runtime provision CTA when app-session billing is required", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/sign-up", {
+      headers: { host: "app.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("if (res.status === 402) {\n            showBillingRequiredState();");
+  });
+
+  it("returns billing_required for signed-in app-session exchange before a Stripe entitlement exists", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    process.env.MATRIX_BILLING_PROVIDER = "stripe";
+    process.env.STRIPE_SECRET_KEY = "sk_test_matrix";
+    await deleteContainer(db, "alice");
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(exchange.status).toBe(402);
+    await expect(exchange.json()).resolves.toEqual({
+      error: "Billing upgrade required",
+      code: "billing_required",
+    });
+    expect(exchange.headers.get("set-cookie")).toContain("matrix_app_session=;");
+    expect(exchange.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
   it("serves the shell billing gate from auth-shell for signed-in users before a VPS exists", async () => {
