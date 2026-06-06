@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   formatUnsupportedNodeError,
@@ -7,10 +8,13 @@ import {
   nodeMajor,
 } from "../../packages/sync-client/src/lib/node-runtime-guard.mjs";
 
+const testDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(testDir, "../..");
+
 describe("published CLI package runners", () => {
   it("keeps package metadata compatible with npx and pnpm dlx", async () => {
     const packageJson = JSON.parse(
-      await readFile(join(process.cwd(), "packages/sync-client/package.json"), "utf8"),
+      await readFile(resolve(repoRoot, "packages/sync-client/package.json"), "utf8"),
     );
 
     expect(packageJson.name).toBe("@finnaai/matrix");

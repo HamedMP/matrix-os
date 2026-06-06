@@ -75,7 +75,7 @@ try {
     throw new Error(`npm exec did not print ${packInfo.version}: ${npmRun.stdout}`);
   }
 
-  const pnpmRun = await run("pnpm", ["dlx", tarball, "--version"], {
+  const pnpmRun = await run("pnpm", ["dlx", `file:${tarball}`, "--version"], {
     home: join(tempRoot, "pnpm-dlx-home"),
   });
   if (!pnpmRun.stdout.includes(packInfo.version)) {
