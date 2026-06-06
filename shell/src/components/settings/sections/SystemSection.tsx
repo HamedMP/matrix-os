@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { getGatewayUrl } from "@/lib/gateway";
-import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon } from "lucide-react";
+import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon, CloudIcon, Code2Icon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
@@ -90,6 +90,14 @@ import {
 const RELEASE_CHANNELS = ["stable", "canary", "beta", "dev"] as const;
 type ReleaseChannel = typeof RELEASE_CHANNELS[number];
 
+const UPGRADE_WAITING_MESSAGES = [
+  "The Matrix picked a new bundle. It still refuses to say whether there is a spoon.",
+  "Cloud computing update: this cloud is briefly pretending to be a very serious USB stick.",
+  "A coding agent is watching the progress bar and trying not to refactor it.",
+  "The VPS is swapping realities. Please keep all blue pills away from the deploy script.",
+  "Cloudflare is checking the guest list while the host bundle finds its seat.",
+] as const;
+
 function coerceReleaseChannel(value: unknown): ReleaseChannel {
   return RELEASE_CHANNELS.includes(value as ReleaseChannel) ? value as ReleaseChannel : "stable";
 }
@@ -107,6 +115,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const [installingTarget, setInstallingTarget] = useState<string | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
   const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
+  const [upgradeWaitingIndex, setUpgradeWaitingIndex] = useState(0);
   const releaseRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
   const reloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -120,6 +129,14 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!upgrading) return;
+    const jokeTimer = setInterval(() => {
+      setUpgradeWaitingIndex((index) => (index + 1) % UPGRADE_WAITING_MESSAGES.length);
+    }, 8_000);
+    return () => clearInterval(jokeTimer);
+  }, [upgrading]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-bootstrap useEffect dependency array below; removing useCallback would re-run that effect on every render and refetch system info/health in a loop.
   const refreshReleaseData = useCallback(async (channel: ReleaseChannel) => {
@@ -194,6 +211,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const releaseRows = releaseList?.releases ?? [];
   const canInstallSelectedChannel = Boolean(latestVersion && (updateAvailable || selectedChannel !== installedChannel));
   const systemUpdatesLocked = !billingActive;
+  const upgradeWaitingMessage = UPGRADE_WAITING_MESSAGES[upgradeWaitingIndex];
 
   const waitForInstalledUpdate = async (
     target: { channel?: ReleaseChannel; version?: string },
@@ -247,6 +265,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
     const targetKey = target.version ?? target.channel ?? "stable";
     setUpgrading(true);
     setInstallingTarget(targetKey);
+    setUpgradeWaitingIndex(0);
     setUpgradeError(null);
     setUpgradeMessage(`Installing ${targetKey}. This can take a few minutes...`);
 
@@ -433,8 +452,40 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
           {upgradeError && (
             <p className="text-xs text-red-500">{upgradeError}</p>
           )}
-          {upgradeMessage && (
+          {upgradeMessage && !upgrading && (
             <p className="text-xs text-muted-foreground">{upgradeMessage}</p>
+          )}
+          {upgrading && (
+            <output
+              aria-live="polite"
+              className="overflow-hidden rounded-lg border border-blue-500/20 bg-blue-500/10"
+            >
+              <div className="flex gap-3 p-4">
+                <div className="relative flex size-10 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white">
+                  <ArrowUpCircleIcon className="size-5 animate-pulse" />
+                  <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full border border-background bg-background text-blue-600">
+                    <CloudIcon className="size-3" />
+                  </span>
+                </div>
+                <div className="min-w-0 flex-1 space-y-3">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">
+                      Installing {installingTarget ?? "update"}
+                    </p>
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {upgradeMessage ?? "The VPS is downloading and swapping the host bundle. Services may blink while the new shell comes online."}
+                    </p>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-background">
+                    <div className="h-full w-1/2 rounded-full bg-blue-600 animate-pulse" />
+                  </div>
+                  <div className="flex items-start gap-2 rounded-md border border-border/70 bg-background/70 p-2.5">
+                    <Code2Icon className="mt-0.5 size-3.5 shrink-0 text-blue-600" />
+                    <p className="text-xs leading-5 text-muted-foreground">{upgradeWaitingMessage}</p>
+                  </div>
+                </div>
+              </div>
+            </output>
           )}
           {canInstallSelectedChannel && (
             <div className="pt-1">
