@@ -71,6 +71,7 @@ export const provisionUser = inngest.createFunction(
               source: "inngest",
             },
           });
+          await shutdownPostHog();
           throw new Error(`User sync failed: ${res.status} ${body}`);
         }
 
