@@ -181,6 +181,50 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.openTabs.first(where: { $0.id == "task:main:task_login" })?.panel, .terminal)
     }
 
+    func testFocusingTabFallsBackWhenStoredPaneWasDisabledElsewhere() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let firstCard = Card(
+            id: "task_login",
+            projectSlug: "main",
+            title: "Fix login",
+            status: .todo,
+            priority: .normal,
+            order: 1,
+            linkedSessionId: nil,
+            updatedAt: "now"
+        )
+        let secondCard = Card(
+            id: "task_editor",
+            projectSlug: "main",
+            title: "Fix editor",
+            status: .todo,
+            priority: .normal,
+            order: 2,
+            linkedSessionId: nil,
+            updatedAt: "now"
+        )
+        _ = try? await model.openCard(firstCard)
+        model.switchPanel(.app(slug: "git"))
+        _ = try? await model.openCard(secondCard)
+        model.togglePanel(.app(slug: "git"))
+
+        model.focusTab(id: "task:main:task_login")
+
+        XCTAssertFalse(model.enabledPanels.contains(.app(slug: "git")))
+        XCTAssertTrue(model.enabledPanels.contains(model.activePanel))
+        XCTAssertEqual(model.activePanel, .terminal)
+        XCTAssertEqual(model.openTabs.first(where: { $0.id == "task:main:task_login" })?.panel, .terminal)
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()
