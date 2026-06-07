@@ -1,0 +1,76 @@
+name: macOS app (086)
+
+# Native macOS shell build+test. Intentionally separate from the pnpm/turbo
+# pipeline — this target is a Swift package, not part of the TS monorepo build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "macos/**"
+      - ".github/workflows/macos-086.yml"
+  pull_request:
+    paths:
+      - "macos/**"
+      - ".github/workflows/macos-086.yml"
+
+concurrency:
+  group: macos-086-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: swift build + test
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          if [[ -n "${XCODE_PATH:-}" ]]; then
+            candidates=("$XCODE_PATH")
+          else
+            candidates=(
+              /Applications/Xcode_26.4.app
+              /Applications/Xcode_26.3.app
+              /Applications/Xcode_26.2.app
+              /Applications/Xcode_26.1.app
+              /Applications/Xcode_26.0.app
+              /Applications/Xcode.app
+            )
+          fi
+          XCODE_PATH=""
+          for candidate in "${candidates[@]}"; do
+            if [[ -d "$candidate" ]]; then
+              XCODE_PATH="$candidate"
+              break
+            fi
+          done
+          if [[ ! -d "$XCODE_PATH" ]]; then
+            echo "::error::No supported Xcode path found"
+            ls -1 /Applications | grep -E '^Xcode' || true
+            exit 1
+          fi
+          echo "Using Xcode at $XCODE_PATH"
+          sudo xcode-select -switch "$XCODE_PATH"
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: macos/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('macos/Package.swift', 'macos/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Build
+        run: swift build -v
+
+      - name: Test
+        run: swift test -v

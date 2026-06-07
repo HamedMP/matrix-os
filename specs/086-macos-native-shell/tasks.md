@@ -55,7 +55,7 @@ description: "Task list for 086 Matrix OS native macOS app"
 **Goal**: sign in → board of sessions → open card → terminal attaches with scrollback + live I/O.
 **Independent Test**: attach to a real test zellij session, round-trip a command.
 
-- [ ] T030 [P] [US1] Failing integration test: device-auth → resolve VPS → `GET /api/projects/:slug/tasks` renders cards (mock gateway) in `macos/Tests/Integration/BoardLoadTests.swift`.
+- [ ] T030 [P] [US1] Failing integration test: device-auth → resolve VPS (`app.matrix-os.com`, optional `?runtime=<slot>`) → `GET /api/projects/:slug/tasks` renders cards (mock gateway) in `macos/Tests/Integration/BoardLoadTests.swift`. (Phase-0 confirmed: no per-VPS IP addressing; bearer header on all calls.)
 - [ ] T031 [P] [US1] Failing integration test: open card → `ShellWSClient` attaches to `linkedSessionId`, scrollback replays, input echoes (test gateway + zellij) in `macos/Tests/Integration/TerminalAttachTests.swift`.
 - [ ] T032 [US1] Implement read-only `BoardStore` (fetch tasks→cards, map status→columns, order) in `macos/Sources/Board/`.
 - [ ] T033 [US1] Implement `BoardView`/`ColumnView`/`CardView` (LazyVStack recycling, OPERATOR design tokens, status badges, live edge-glow) in `macos/Sources/Board/`.

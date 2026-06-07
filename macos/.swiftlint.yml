@@ -1,0 +1,33 @@
+# SwiftLint config for the Matrix OS macOS app (086).
+# Optional: CI uses `swift-format` (see .swift-format); SwiftLint is for local use if installed.
+
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+
+line_length:
+  warning: 100
+  error: 140
+  ignores_comments: true
+  ignores_urls: true
+
+identifier_name:
+  min_length: 1
+  excluded:
+    - id
+    - x
+    - r
+    - g
+    - b
+    - a
+
+disabled_rules:
+  - todo # TODOs are intentional placeholders for later phases (fonts, SwiftTerm).
+
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - explicit_init
