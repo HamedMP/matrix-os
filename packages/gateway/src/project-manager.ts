@@ -57,6 +57,7 @@ type CommandRunner = (
 
 type Result<T> = { ok: true; status?: number } & T;
 type Failure = { ok: false; status: number; error: WorkspaceError };
+type CreateProjectMode = "scratch" | "github";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
@@ -177,10 +178,47 @@ export function createProjectManager(options: {
 
   return {
     async createProject(input: {
-      url: string;
+      url?: string;
       slug?: string;
+      name?: string;
+      mode?: CreateProjectMode;
       ownerScope?: OwnerScope;
     }): Promise<Result<{ project: ProjectConfig }> | Failure> {
+      const mode = input.mode ?? (input.url ? "github" : "scratch");
+      if (mode === "scratch") {
+        const name = input.name?.trim() || input.slug?.trim() || "";
+        if (!name) {
+          return genericError(400, "invalid_project_name", "Project name is required");
+        }
+        const slug = input.slug ? input.slug.trim() : slugify(name);
+        if (!SlugSchema.safeParse(slug).success) {
+          return genericError(400, "invalid_slug", "Project slug is invalid");
+        }
+        return withProjectLock(slug, async () => {
+          const targetProjectPath = projectPath(homePath, slug);
+          if (await pathExists(targetProjectPath)) {
+            return genericError(409, "slug_conflict", "Project slug already exists");
+          }
+          const repoPath = join(targetProjectPath, "repo");
+          await mkdir(repoPath, { recursive: true });
+          const timestamp = nowIso(options.now);
+          const project: ProjectConfig = {
+            id: `proj_${randomUUID()}`,
+            name,
+            slug,
+            localPath: repoPath,
+            addedAt: timestamp,
+            updatedAt: timestamp,
+            ownerScope: input.ownerScope ?? { type: "user", id: "local" },
+          };
+          await atomicWriteJson(join(targetProjectPath, "config.json"), project);
+          return { ok: true, status: 201, project };
+        });
+      }
+
+      if (!input.url) {
+        return genericError(400, "invalid_repository_url", "Repository URL must point to GitHub");
+      }
       const github = validateGitHubUrl(input.url);
       if (!github.ok) {
         return genericError(400, github.code, github.message);

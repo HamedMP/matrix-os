@@ -1,7 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import http from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { WebSocketServer } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveProfileAuth } from "../../packages/sync-client/src/auth/token-store.js";
 import { shellCommand } from "../../packages/sync-client/src/cli/commands/shell.js";
@@ -14,6 +16,70 @@ async function tempHome() {
   roots.push(root);
   process.env.HOME = root;
   return root;
+}
+
+async function createFakeAttachGateway() {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { code: "not_found" } }));
+  });
+  const wss = new WebSocketServer({ server, path: "/ws/terminal/session" });
+  let wsConnections = 0;
+  wss.on("connection", (ws) => {
+    wsConnections += 1;
+    ws.send(JSON.stringify({ type: "attached" }));
+    setTimeout(() => ws.close(), 10).unref?.();
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fake gateway did not bind a TCP port");
+  }
+
+  return {
+    gatewayUrl: `http://127.0.0.1:${address.port}`,
+    get wsConnections() {
+      return wsConnections;
+    },
+    async close() {
+      wss.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+async function runMatrixCli(args: string[]) {
+  const bin = join(process.cwd(), "packages/sync-client/bin/matrix.mjs");
+  return await new Promise<{
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+  }>((resolve, reject) => {
+    const child = spawn(process.execPath, [bin, ...args], {
+      cwd: process.cwd(),
+      env: { ...process.env, HOME: process.env.HOME ?? "", FORCE_COLOR: "0", NO_COLOR: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.on("error", (err) => {
+      reject(err);
+    });
+    child.on("close", (status, signal) => {
+      resolve({
+        status,
+        signal,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
+  });
 }
 
 beforeEach(async () => {
@@ -63,7 +129,7 @@ describe("shell CLI command", () => {
 
     await shellCommand.run?.({ args: {} } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
   });
 
   it("prints usage for the bare shell command with valued root flags", async () => {
@@ -77,7 +143,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
   });
 
   it("prints usage when a root flag value matches a shell subcommand", async () => {
@@ -91,7 +157,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
   });
 
   it("does not print usage after subcommands run", async () => {
@@ -150,7 +216,7 @@ describe("shell CLI command", () => {
         v: 1,
         error: {
           code: "not_authenticated",
-          message: 'Not logged in for profile "local". Run `matrix login` first.',
+          message: 'Not logged in for profile "local". Run `mos login` first.',
         },
       },
     ]);
@@ -180,7 +246,7 @@ describe("shell CLI command", () => {
       v: 1,
       error: {
         code: "auth_expired",
-        message: 'Auth for profile "local" expired on 2026-05-29T23:24:06.000Z. Run `matrix login --profile local` to refresh.',
+        message: 'Auth for profile "local" expired on 2026-05-29T23:24:06.000Z. Run `mos login --profile local` to refresh.',
       },
     });
   });
@@ -210,7 +276,7 @@ describe("shell CLI command", () => {
       v: 1,
       error: {
         code: "auth_expired",
-        message: "Matrix CLI auth expired. Run `matrix login` to refresh your session.",
+        message: "Matrix CLI auth expired. Run `mos login` to refresh your session.",
       },
     });
   });
@@ -231,7 +297,7 @@ describe("shell CLI command", () => {
         v: 1,
         error: {
           code: "not_authenticated",
-          message: 'Not logged in for profile "local". Run `matrix login` first.',
+          message: 'Not logged in for profile "local". Run `mos login` first.',
         },
       }),
     );
@@ -270,6 +336,35 @@ describe("shell CLI command", () => {
     ]);
   });
 
+  it.each(["connect", "attach"])("keeps stdout JSON-only for shell %s --json", async (verb) => {
+    const gateway = await createFakeAttachGateway();
+    try {
+      const result = await runMatrixCli([
+        "shell",
+        verb,
+        "main",
+        "--gateway",
+        gateway.gatewayUrl,
+        "--token",
+        "tok",
+        "--json",
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.stdout).not.toContain("\u001b[");
+      expect(JSON.parse(result.stdout)).toEqual({
+        v: 1,
+        ok: true,
+        data: { detached: true },
+      });
+      expect(result.stderr).toContain("\u001b[?1000l");
+      expect(gateway.wsConnections).toBe(1);
+    } finally {
+      await gateway.close();
+    }
+  });
+
   it("creates shell sessions without attaching by default", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       if (/\/api\/(?:terminal\/)?sessions$/.test(url) && init?.method === "POST") {
@@ -295,6 +390,230 @@ describe("shell CLI command", () => {
     expect(logs).toEqual(["Created shell session main"]);
   });
 
+  it("attaches new shell sessions when requested", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (/\/api\/(?:terminal\/)?sessions$/.test(url) && init?.method === "POST") {
+        return new Response(JSON.stringify({ name: "main", created: true }), { status: 201 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    class ClosingWebSocket {
+      static instances = 0;
+      constructor(_url: string, _options?: unknown) {
+        ClosingWebSocket.instances += 1;
+      }
+      send() {}
+      close() {}
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        if (event === "open") {
+          queueMicrotask(() => listener());
+        }
+        if (event === "message") {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+          queueMicrotask(() => listener(JSON.stringify({ type: "exit", code: 0 })));
+        }
+        return this;
+      }
+      off() {
+        return this;
+      }
+    }
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await shellCommand.subCommands!.new.run!({
+      args: { name: "main", attach: true, dev: true, token: "tok", WebSocketImpl: ClosingWebSocket },
+    } as never);
+
+    expect(ClosingWebSocket.instances).toBe(1);
+    expect(logs).toEqual([
+      "Created shell session main. Attaching...",
+      "Shell attach ended. Reattach: mos shell attach main",
+    ]);
+  });
+
+  it("honors new --attach --json without writing terminal bytes to stdout", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (/\/api\/(?:terminal\/)?sessions$/.test(url) && init?.method === "POST") {
+        return new Response(JSON.stringify({ name: "main", created: true }), { status: 201 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    class OutputWebSocket {
+      static instances = 0;
+      constructor(_url: string, _options?: unknown) {
+        OutputWebSocket.instances += 1;
+      }
+      send() {}
+      close() {}
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        if (event === "open") {
+          queueMicrotask(() => listener());
+        }
+        if (event === "message") {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+          queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "REMOTE_BYTES" })));
+        }
+        if (event === "close") {
+          queueMicrotask(() => listener());
+        }
+        return this;
+      }
+      off() {
+        return this;
+      }
+    }
+    const logs: string[] = [];
+    const stdoutWrites: string[] = [];
+    const stderrWrites: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+
+    await shellCommand.subCommands!.new.run!({
+      args: { name: "main", attach: true, dev: true, token: "tok", json: true, WebSocketImpl: OutputWebSocket },
+    } as never);
+
+    expect(OutputWebSocket.instances).toBe(1);
+    expect(logs.map((line) => JSON.parse(line))).toEqual([
+      { v: 1, ok: true, data: { created: { name: "main", created: true }, detached: true } },
+    ]);
+    expect(stdoutWrites.join("")).not.toContain("REMOTE_BYTES");
+    expect(stderrWrites.join("")).toContain("REMOTE_BYTES");
+  });
+
+  it("honors connect --json without writing terminal bytes to stdout", async () => {
+    class OutputWebSocket {
+      static instances = 0;
+      constructor(_url: string, _options?: unknown) {
+        OutputWebSocket.instances += 1;
+      }
+      send() {}
+      close() {}
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        if (event === "open") {
+          queueMicrotask(() => listener());
+        }
+        if (event === "message") {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+          queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "CONNECT_BYTES" })));
+        }
+        if (event === "close") {
+          queueMicrotask(() => listener());
+        }
+        return this;
+      }
+      off() {
+        return this;
+      }
+    }
+    const logs: string[] = [];
+    const stdoutWrites: string[] = [];
+    const stderrWrites: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+
+    await shellCommand.subCommands!.connect.run!({
+      args: { name: "main", dev: true, token: "tok", json: true, WebSocketImpl: OutputWebSocket },
+    } as never);
+
+    expect(OutputWebSocket.instances).toBe(1);
+    expect(logs.map((line) => JSON.parse(line))).toEqual([
+      { v: 1, ok: true, data: { detached: true } },
+    ]);
+    expect(stdoutWrites.join("")).not.toContain("CONNECT_BYTES");
+    expect(stderrWrites.join("")).toContain("CONNECT_BYTES");
+  });
+
+  it("honors connect -c --json by creating and attaching", async () => {
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (/\/api\/(?:terminal\/)?sessions$/.test(url) && init?.method === "POST") {
+        return new Response(JSON.stringify({ name: "main", created: true }), { status: 201 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    class CreateThenOutputWebSocket {
+      static instances = 0;
+      private readonly instance: number;
+      constructor(_url: string, _options?: unknown) {
+        CreateThenOutputWebSocket.instances += 1;
+        this.instance = CreateThenOutputWebSocket.instances;
+      }
+      send() {}
+      close() {}
+      on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
+        if (event === "open") {
+          queueMicrotask(() => listener());
+        }
+        if (event === "message" && this.instance === 1) {
+          queueMicrotask(() => listener(JSON.stringify({ type: "error", code: "session_not_found" })));
+        }
+        if (event === "message" && this.instance === 2) {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+          queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "CREATED_CONNECT_BYTES" })));
+        }
+        if (event === "close" && this.instance === 2) {
+          queueMicrotask(() => listener());
+        }
+        return this;
+      }
+      off() {
+        return this;
+      }
+    }
+    const logs: string[] = [];
+    const stdoutWrites: string[] = [];
+    const stderrWrites: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stdoutWrites.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+
+    await shellCommand.subCommands!.connect.run!({
+      args: { name: "main", create: true, dev: true, token: "tok", json: true, WebSocketImpl: CreateThenOutputWebSocket },
+    } as never);
+
+    expect(CreateThenOutputWebSocket.instances).toBe(2);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/terminal\/sessions$/),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(logs.map((line) => JSON.parse(line))).toEqual([
+      { v: 1, ok: true, data: { created: { name: "main", created: true }, detached: true } },
+    ]);
+    expect(stdoutWrites.join("")).not.toContain("CREATED_CONNECT_BYTES");
+    expect(stderrWrites.join("")).toContain("CREATED_CONNECT_BYTES");
+  });
+
   it("creates missing sessions with connect -c", async () => {
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/api/sessions") && init?.method === "POST") {
@@ -316,7 +635,11 @@ describe("shell CLI command", () => {
         if (event === "message" && this.instance === 1) {
           queueMicrotask(() => listener(JSON.stringify({ type: "error", code: "session_not_found" })));
         }
-        if (event === "open" || (event === "close" && this.instance === 2)) {
+        if (event === "message" && this.instance === 2) {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+          queueMicrotask(() => listener(JSON.stringify({ type: "exit", code: 0 })));
+        }
+        if (event === "open") {
           queueMicrotask(() => listener());
         }
         return this;
@@ -339,6 +662,6 @@ describe("shell CLI command", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(logs).toContain("Created shell session 1. Connecting...");
-    expect(logs).toContain("Detached. Reattach: matrix shell connect 1");
+    expect(logs).toContain("Shell attach ended. Reattach: mos shell attach 1");
   });
 });

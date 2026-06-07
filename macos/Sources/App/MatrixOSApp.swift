@@ -12,12 +12,14 @@
 // VPS resolver already exist in MatrixNet and are composed here when a profile
 // is supplied. Set MATRIX_DEV_GATEWAY_HOST + MATRIX_DEV_HANDLE in the environment
 // to auto-select a dev profile for local source dev.
+import AppKit
 import SwiftUI
 import DesignSystem
 import MatrixNet
 
 @main
 struct MatrixOSApp: App {
+    @NSApplicationDelegateAdaptor(MatrixOSAppDelegate.self) private var appDelegate
     @StateObject private var model: AppModel
 
     init() {
@@ -53,6 +55,54 @@ struct MatrixOSApp: App {
     }
 }
 
+private final class MatrixOSAppDelegate: NSObject, NSApplicationDelegate {
+    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { @MainActor in
+            MatrixOSAppDelegate.bringAppForward()
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            MatrixOSAppDelegate.bringAppForward()
+        }
+    }
+
+    nonisolated func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Task { @MainActor in
+            MatrixOSAppDelegate.bringAppForward()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            MatrixOSAppDelegate.bringAppForward()
+        }
+        return true
+    }
+
+    @MainActor
+    private static func bringAppForward() {
+        NSApp.setActivationPolicy(.regular)
+
+        if let window = NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first {
+            recoverIfOffscreen(window)
+            window.makeKeyAndOrderFront(nil)
+        }
+        NSApp.activate()
+    }
+
+    @MainActor
+    private static func recoverIfOffscreen(_ window: NSWindow) {
+        let frame = window.frame
+        let isReachable = NSScreen.screens.contains { screen in
+            screen.visibleFrame.intersects(frame)
+        }
+        guard !isReachable else { return }
+
+        if let screen = NSScreen.main ?? NSScreen.screens.first {
+            let visibleFrame = screen.visibleFrame
+            let origin = NSPoint(
+                x: visibleFrame.midX - frame.width / 2,
+                y: visibleFrame.midY - frame.height / 2
+            )
+            window.setFrameOrigin(origin)
+        }
+    }
+}
+
 /// Root view: binds the OPERATOR look to the window and renders the board.
 private struct RootView: View {
     @ObservedObject var model: AppModel
@@ -64,31 +114,35 @@ private struct RootView: View {
     }
 }
 
-/// Operator-grade keyboard model (design.md §7). US1 wires panel switching and
+/// Matrix keyboard model (design.md §7). US1 wires panel switching and
 /// dismiss; ⌘N is a placeholder until US2 mutations land.
 private struct OperatorCommands: Commands {
     let model: AppModel
 
     var body: some Commands {
-        CommandMenu("Operator") {
+        CommandMenu("Matrix") {
             Button("Command Palette…") { model.showCommandPalette.toggle() }
                 .keyboardShortcut("k", modifiers: .command)
             Divider()
-            Button("New Card") { model.newCardPlaceholder() }
+            Button("New Task") { model.newCardPlaceholder() }
                 .keyboardShortcut("n", modifiers: .command)
             Button("New Session") { model.createSession() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
-            Button("Board") { model.section = .board }
+            Button("Home") { model.openHome() }
                 .keyboardShortcut("1", modifiers: .control)
-            Button("Terminals") { model.section = .terminals }
+            Button("Board") { model.section = .board }
                 .keyboardShortcut("2", modifiers: .control)
+            Button("Terminal") { model.openTerminalSection() }
+                .keyboardShortcut("3", modifiers: .control)
+            Button("Browser") { model.section = .browser }
+                .keyboardShortcut("4", modifiers: .control)
             Divider()
             Button("Terminal Panel") { model.switchPanel(.terminal) }
                 .keyboardShortcut("1", modifiers: .command)
-            Button("Shell Panel") { model.switchPanel(.shell) }
+            Button("Editor Panel") { model.switchPanel(.app(slug: "editor")) }
                 .keyboardShortcut("2", modifiers: .command)
-            Button("App Panel") { model.switchPanel(.app(slug: "")) }
+            Button("Git Panel") { model.switchPanel(.app(slug: "git")) }
                 .keyboardShortcut("3", modifiers: .command)
             Divider()
             Button("Close Card") { model.closeCard() }

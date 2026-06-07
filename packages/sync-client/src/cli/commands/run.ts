@@ -2,10 +2,10 @@ import { defineCommand } from "citty";
 import { randomUUID } from "node:crypto";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
-import { createShellClient, type ShellClient } from "../shell-client.js";
+import { createShellClient, type ShellAttachOptions, type ShellClient } from "../shell-client.js";
 import { requireCliAuthToken } from "../auth-state.js";
 
-const RUN_USAGE = "Usage: matrix run -it [--session <name>] [-C <dir>] -- <command>";
+const RUN_USAGE = "Usage: matrix run [-it] [--session <name>] [-C <dir>] -- <command>";
 const RUN_VALUE_OPTIONS = new Set(["--gateway", "--profile", "--token", "--session", "-C", "--cwd"]);
 
 async function clientFromArgs(args: Record<string, unknown>) {
@@ -66,6 +66,7 @@ export async function createOrAttachRunSession(
     cwd?: string;
     sessionProvided: boolean;
     mouse?: boolean;
+    attachOptions?: ShellAttachOptions;
   },
 ): Promise<{ detached: boolean }> {
   try {
@@ -79,9 +80,11 @@ export async function createOrAttachRunSession(
       throw err;
     }
   }
-  return input.mouse === undefined
-    ? await client.attachSession(input.name)
-    : await client.attachSession(input.name, { mouse: input.mouse });
+  const attachOptions: ShellAttachOptions = { ...input.attachOptions };
+  if (input.mouse !== undefined) {
+    attachOptions.mouse = input.mouse;
+  }
+  return await client.attachSession(input.name, attachOptions);
 }
 
 function isInteractive(args: Record<string, unknown>, rawArgs: string[] | undefined): boolean {
@@ -112,6 +115,16 @@ function writeError(err: unknown, json: boolean): void {
         ? formatCliErrorMessage(code, safeMessage)
         : safeMessage ?? `Error: Request failed (${code})`,
   );
+}
+
+export function exitCodeFromRunResult(result: { exitCode: number | null; timedOut: boolean }): number {
+  if (result.timedOut) {
+    return 124;
+  }
+  if (result.exitCode !== null && Number.isInteger(result.exitCode)) {
+    return Math.min(Math.max(result.exitCode, 0), 255);
+  }
+  return 1;
 }
 
 export const runCommand = defineCommand({
@@ -163,27 +176,43 @@ export const runCommand = defineCommand({
       if (command.length === 0) {
         throw Object.assign(new Error(RUN_USAGE), { code: "invalid_request" });
       }
-      if (!isInteractive(args, rawArgs)) {
-        throw Object.assign(
-          new Error("Non-interactive matrix run will use the same zellij session primitive, but this gateway does not expose remote exit status yet. Use `matrix run -it -- <command>` for now."),
-          { code: "not_implemented" },
-        );
-      }
-
       const sessionProvided = typeof args.session === "string";
       const name = sessionProvided ? args.session as string : createEphemeralSessionName();
       const client = await clientFromArgs(args);
+
+      if (!isInteractive(args, rawArgs)) {
+        if (sessionProvided) {
+          throw Object.assign(new Error("--session is only supported with -it"), { code: "invalid_request" });
+        }
+        const result = await client.runCommand({
+          command,
+          cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+        });
+        if (json) {
+          console.log(formatCliSuccess({ ...result }));
+        } else {
+          process.stdout.write(result.stdout);
+          process.stderr.write(result.stderr);
+          if (result.truncated) {
+            process.stderr.write("matrix: output truncated (limit reached)\n");
+          }
+        }
+        process.exitCode = exitCodeFromRunResult(result);
+        return;
+      }
+
       const result = await createOrAttachRunSession(client, {
         name,
         cwd: typeof args.cwd === "string" ? args.cwd : undefined,
         command,
         sessionProvided,
         mouse: args.noMouse === true ? false : undefined,
+        attachOptions: json ? { output: process.stderr } : undefined,
       });
       console.log(
         json
           ? formatCliSuccess({ detached: result.detached, session: name })
-          : `Detached. Reattach: matrix shell connect ${name}`,
+          : `Detached. Reattach: mos shell attach ${name}`,
       );
     } catch (err) {
       writeError(err, json);

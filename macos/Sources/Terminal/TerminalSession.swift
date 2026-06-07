@@ -57,6 +57,7 @@ public final class TerminalSession: ObservableObject {
     /// Sink for decoded PTY output text. The view installs this to feed SwiftTerm.
     /// Called on the main actor.
     private var outputSink: (@MainActor (String) -> Void)?
+    private var attachHandler: (@MainActor () -> Void)?
     /// Coalesced output waiting to be fed into SwiftTerm. Feeding SwiftTerm once
     /// per websocket frame can fall behind under zellij bursts, causing zellij to
     /// disconnect the client. Drain at UI cadence instead.
@@ -80,9 +81,16 @@ public final class TerminalSession: ObservableObject {
     /// Installs the output sink (the SwiftTerm feed) before/while starting.
     public func setOutputSink(_ sink: @escaping @MainActor (String) -> Void) {
         outputSink = sink
+        flushPendingOutput()
+    }
+
+    /// Runs once when the terminal first reaches an attached/output state.
+    public func onNextAttach(_ handler: @escaping @MainActor () -> Void) {
+        attachHandler = handler
     }
 
     /// Connects the client and begins consuming its event stream. Idempotent.
+    @MainActor
     public func start() {
         guard !started else { return }
         started = true
@@ -161,6 +169,7 @@ public final class TerminalSession: ObservableObject {
         switch event {
         case .attached:
             connectionState = .attached
+            notifyAttached()
             // Re-send the last known size once after attach (protocol requirement).
             if let size = lastSize {
                 let client = self.client
@@ -171,6 +180,7 @@ public final class TerminalSession: ObservableObject {
             // A late output frame while still "connecting" implies we're attached.
             if case .connecting = connectionState { connectionState = .attached }
             if case .reconnecting = connectionState { connectionState = .attached }
+            notifyAttached()
             enqueueOutput(data)
             if !isPinnedToBottom {
                 unseenLines += 1
@@ -191,6 +201,12 @@ public final class TerminalSession: ObservableObject {
         }
     }
 
+    private func notifyAttached() {
+        guard let attachHandler else { return }
+        self.attachHandler = nil
+        attachHandler()
+    }
+
     private func enqueueOutput(_ data: String) {
         pendingOutput += data
         guard outputFlushTask == nil else { return }
@@ -206,9 +222,9 @@ public final class TerminalSession: ObservableObject {
     }
 
     private func flushPendingOutput() {
-        guard !pendingOutput.isEmpty else { return }
+        guard !pendingOutput.isEmpty, let outputSink else { return }
         let chunk = pendingOutput
         pendingOutput.removeAll(keepingCapacity: true)
-        outputSink?(chunk)
+        outputSink(chunk)
     }
 }

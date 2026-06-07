@@ -35,44 +35,43 @@ struct BoardView: View {
         case .needsProfile:
             NoProfileView(
                 onCreate: openCreateFlow,
-                onSignIn: { model.beginSignIn() },
+                onSignIn: { model.beginSignIn(mode: .signIn) },
                 onCancelSignIn: { model.cancelSignIn() },
                 signIn: model.signIn
             )
         case .connecting:
             BoardSkeletonView()
         case .ready, .disconnected:
-            boardWithDetail
+            if model.hasSelectedProject {
+                boardWithDetail
+            } else {
+                ProjectSelectionRequiredView()
+            }
         }
     }
 
     // MARK: - Board + detail split
 
     private var boardWithDetail: some View {
-        // Native draggable divider: drag to choose how wide the board vs the
-        // detail/terminal are. Each side has a min width so neither collapses.
-        HSplitView {
-            VStack(spacing: 0) {
-                if model.phase == .disconnected {
-                    ReconnectingBar(handle: model.profile?.handle ?? "your computer")
-                }
-                if let error = model.openError {
-                    GenericErrorBanner(message: error.message, onRetry: {
-                        Task { await model.refresh() }
-                    })
-                }
+        VStack(spacing: 0) {
+            if model.phase == .disconnected {
+                ReconnectingBar(handle: model.profile?.handle ?? "your computer")
+            }
+            if let error = model.openError {
+                GenericErrorBanner(message: error.message, onRetry: {
+                    Task { await model.refresh() }
+                })
+            }
+            if selectedBoardCard != nil {
+                detailPane
+            } else {
                 columns
                     .opacity(model.phase == .disconnected ? 0.7 : 1)
                     .saturation(model.phase == .disconnected ? 0.6 : 1)
                     .allowsHitTesting(model.phase != .disconnected)
             }
-            .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            if hasTaskDetail {
-                detailPane
-                    .frame(minWidth: 380, idealWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
-            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var hasTaskDetail: Bool {
@@ -88,13 +87,14 @@ struct BoardView: View {
         // board remains usable beside the detail terminal on laptop widths.
         // Pinch / ⌘+/⌘-/⌘0 scale the lanes (Conductor-style zoom).
         let effectiveZoom = clampZoom(zoom * pinch)
-        let laneWidth = max(248, 280 * effectiveZoom)
+        let laneWidth: CGFloat = 280
+        let unscaledWidth = laneWidth * CGFloat(model.board.columns.count)
         return ScrollView(.horizontal, showsIndicators: true) {
             HStack(alignment: .top, spacing: 0) {
                 ForEach(model.board.columns) { column in
                     ColumnView(
                         column: column,
-                        selectedCardID: model.selectedCard?.id,
+                        selectedCardID: selectedBoardCard?.id,
                         onOpenCard: openCard,
                         onAddCard: { model.createTask(status: $0) },
                         onMoveCard: { id, status in
@@ -104,11 +104,11 @@ struct BoardView: View {
                     .frame(width: laneWidth)
                 }
             }
-            .frame(
-                minWidth: laneWidth * CGFloat(model.board.columns.count),
-                maxHeight: .infinity,
-                alignment: .topLeading
-            )
+            .frame(width: unscaledWidth, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
+            .scaleEffect(effectiveZoom, anchor: .topLeading)
+            .frame(width: unscaledWidth * effectiveZoom, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .gesture(
@@ -136,18 +136,21 @@ struct BoardView: View {
 
     // MARK: - Detail pane (workspace tabs + terminal)
 
+    private var selectedBoardCard: Card? {
+        guard let selected = model.selectedCard else { return nil }
+        return model.board.columns
+            .flatMap(\.cards)
+            .first { $0.id == selected.id }
+    }
+
     private var detailPane: some View {
         VStack(spacing: 0) {
             detailHeader
             Divider().overlay(Color.hairlineDark)
             TaskPaneStrip(activePanel: model.activePanel, onSelect: model.switchPanel)
             Divider().overlay(Color.hairlineDark)
-            HSplitView {
-                boardTerminalSurface
-                    .frame(minWidth: 360, idealWidth: 500, maxWidth: .infinity, maxHeight: .infinity)
-                panelBody
-                    .frame(minWidth: 340, idealWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
-            }
+            panelBody
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.surfaceRail)
         .overlay(alignment: .leading) {
@@ -159,7 +162,7 @@ struct BoardView: View {
         VStack(spacing: 0) {
             if model.openTabs.isEmpty {
                 HStack {
-                    Text(model.selectedCard?.title ?? "Task terminal")
+                    Text(selectedBoardCard?.title ?? "Task terminal")
                         .font(.plexSans(13, weight: .semibold))
                         .foregroundStyle(Color.inkPrimary)
                         .lineLimit(1)
@@ -179,7 +182,7 @@ struct BoardView: View {
                 WorkspaceTabStrip(
                     tabs: model.openTabs,
                     activeID: model.activeTabID,
-                    isCreating: model.isCreatingSession,
+                    isCreating: model.isCreatingWorkItem,
                     onSelect: model.focusTab,
                     onClose: model.closeTab,
                     onCreate: { model.createTask(status: .todo) }
@@ -193,7 +196,7 @@ struct BoardView: View {
     private var panelBody: some View {
         switch model.activePanel {
         case .terminal:
-            EditorPanel(model: model)
+            boardTerminalSurface
         case .shell:
             MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix OS Shell")
         case .app(let slug):
@@ -250,11 +253,27 @@ struct BoardView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: Spacing.x2) {
-                Circle().fill(Color.signalLive).frame(width: 7, height: 7)
-                Text("OPERATOR")
-                    .font(.plexMono(11, weight: .semibold))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.inkSecondary)
+                if model.hasSelectedProject {
+                    ProjectAvatarIcon(
+                        name: model.activeProjectName,
+                        slug: model.projectSlug,
+                        isActive: true,
+                        size: 24
+                    )
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(model.activeProjectName)
+                            .font(.plexSans(12, weight: .semibold))
+                            .foregroundStyle(Color.inkPrimary)
+                        Text("Kanban")
+                            .font(.plexSans(10, weight: .medium))
+                            .foregroundStyle(Color.inkTertiary)
+                    }
+                } else {
+                    Circle().fill(Color.signalLive).frame(width: 7, height: 7)
+                    Text("Matrix OS")
+                        .font(.plexSans(12, weight: .semibold))
+                        .foregroundStyle(Color.inkSecondary)
+                }
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
@@ -263,31 +282,33 @@ struct BoardView: View {
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .help("Refresh board")
+            .help(model.hasSelectedProject ? "Refresh board" : "Refresh Matrix")
 
-            Divider()
+            if model.hasSelectedProject {
+                Divider()
 
-            Button {
-                zoom = clampZoom(zoom - 0.1)
-            } label: {
-                Image(systemName: "minus.magnifyingglass")
+                Button {
+                    zoom = clampZoom(zoom - 0.1)
+                } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+                .help("Zoom out (⌘-)")
+
+                Button {
+                    zoom = 1
+                } label: {
+                    Text("\(Int(zoom * 100))%")
+                        .font(.plexMono(11, weight: .medium))
+                }
+                .help("Reset board scale (⌘0)")
+
+                Button {
+                    zoom = clampZoom(zoom + 0.1)
+                } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+                .help("Zoom in (⌘=)")
             }
-            .help("Zoom out (⌘-)")
-
-            Button {
-                zoom = 1
-            } label: {
-                Text("\(Int(zoom * 100))%")
-                    .font(.plexMono(11, weight: .medium))
-            }
-            .help("Reset zoom (⌘0)")
-
-            Button {
-                zoom = clampZoom(zoom + 0.1)
-            } label: {
-                Image(systemName: "plus.magnifyingglass")
-            }
-            .help("Zoom in (⌘=)")
         }
     }
 
@@ -298,10 +319,7 @@ struct BoardView: View {
     }
 
     private func openCreateFlow() {
-        // Hand off to the platform onboarding flow. In US1 this opens the web flow.
-        if let url = URL(string: "https://app.matrix-os.com/runtime") {
-            NSWorkspace.shared.open(url)
-        }
+        model.beginSignIn(mode: .signUp)
     }
 }
 

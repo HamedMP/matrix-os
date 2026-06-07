@@ -208,17 +208,24 @@ describe("SystemSection release refresh", () => {
       await Promise.resolve();
     });
     expect(screen.getByText("Installing... checking status")).toBeTruthy();
+    expect(screen.getByRole("status")).toBeTruthy();
+    expect(screen.getByText("Installing stable")).toBeTruthy();
     expect(screen.getByText("Installing stable. This can take a few minutes...")).toBeTruthy();
+    expect(screen.getByText("Putting the new version in place. Your files stay where they are.")).toBeTruthy();
+    expect(screen.getByText("Download")).toBeTruthy();
+    expect(screen.getByText("Install")).toBeTruthy();
+    expect(screen.getByText("Verify")).toBeTruthy();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(7_000);
     });
 
+    expect(screen.getByText("Almost there. We are making sure everything opens cleanly.")).toBeTruthy();
     expect(screen.getByText("Installing... checking status")).toBeTruthy();
     expect(screen.getByText("Installing stable. This can take a few minutes...")).toBeTruthy();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.advanceTimersByTimeAsync(13_000);
     });
 
     expect(screen.getByText("Installed. Reloading...")).toBeTruthy();
@@ -383,6 +390,7 @@ describe("SystemSection release refresh", () => {
     expect(updateStarted).toBe(true);
     expect(screen.getByText("Upgrade is still running. Check again in a minute.")).toBeTruthy();
     expect(screen.queryByText("Installing... checking status")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByText("Switch to stable")).toBeTruthy();
   });
 

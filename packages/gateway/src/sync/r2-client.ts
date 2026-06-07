@@ -2,6 +2,11 @@ import { buildFileKey, buildManifestKey } from "./r2-keys.js";
 
 type S3ClientType = import("@aws-sdk/client-s3").S3Client;
 
+export interface MultipartUploadedPart {
+  partNumber: number;
+  etag: string;
+}
+
 async function loadS3() {
   const [s3, presigner] = await Promise.all([
     import("@aws-sdk/client-s3"),
@@ -28,6 +33,12 @@ export interface R2Client {
   getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
   createMultipartUpload(key: string): Promise<string>;
   getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn?: number): Promise<string>;
+  completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: MultipartUploadedPart[],
+  ): Promise<{ etag?: string }>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
   getObject(
     key: string,
     options?: { signal?: AbortSignal },
@@ -48,7 +59,17 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     throw new Error("R2 client requires either accountId or endpoint");
   }
 
-  const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, CreateMultipartUploadCommand, UploadPartCommand, getSignedUrl } = await loadS3();
+  const {
+    S3Client,
+    GetObjectCommand,
+    PutObjectCommand,
+    DeleteObjectCommand,
+    CreateMultipartUploadCommand,
+    UploadPartCommand,
+    CompleteMultipartUploadCommand,
+    AbortMultipartUploadCommand,
+    getSignedUrl,
+  } = await loadS3();
   const s3 = new S3Client({
     region: "auto",
     endpoint,
@@ -127,6 +148,40 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
         expiresIn,
         signingDate: new Date(),
       }));
+    },
+
+    async completeMultipartUpload(
+      key: string,
+      uploadId: string,
+      parts: MultipartUploadedPart[],
+    ): Promise<{ etag?: string }> {
+      const orderedParts = [...parts]
+        .sort((left, right) => left.partNumber - right.partNumber)
+        .map((part) => ({
+          PartNumber: part.partNumber,
+          ETag: part.etag,
+        }));
+      const command = new CompleteMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: { Parts: orderedParts },
+      });
+      const response = await s3.send(command, {
+        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
+      });
+      return { etag: response.ETag ?? undefined };
+    },
+
+    async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+      const command = new AbortMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        UploadId: uploadId,
+      });
+      await s3.send(command, {
+        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
+      });
     },
 
     async getObject(

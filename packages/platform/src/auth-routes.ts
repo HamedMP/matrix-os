@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -105,6 +105,28 @@ function readCsrfCookie(cookieHeader: string | undefined): string | null {
   return m ? m[1] : null;
 }
 
+function signNativeRedirectUri(secret: string, userCode: string, redirectUri: string): string {
+  return createHmac('sha256', secret)
+    .update(normalizeUserCode(userCode))
+    .update('\0')
+    .update(redirectUri)
+    .digest('base64url');
+}
+
+function verifiedNativeRedirectUri(
+  secret: string,
+  userCode: string,
+  redirectUriValue: unknown,
+  signatureValue: unknown,
+): string | null {
+  const redirectUri = normalizeNativeRedirectUri(redirectUriValue);
+  if (!redirectUri || typeof signatureValue !== 'string' || signatureValue.length > 128) {
+    return null;
+  }
+  const expected = signNativeRedirectUri(secret, userCode, redirectUri);
+  return timingSafeTokenEquals(expected, signatureValue) ? redirectUri : null;
+}
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -127,6 +149,7 @@ function approvalPage(
   publishableKey: string | null,
   scriptNonce: string,
   nativeRedirectUri: string | null,
+  nativeRedirectSig: string | null,
 ): string {
   // Renders an HTML page that lets a Clerk-authenticated user confirm the
   // device pairing. The Clerk widget is loaded for sign-in if needed; once a
@@ -139,6 +162,13 @@ function approvalPage(
     ? escapeHtmlAttr(publishableKey)
     : null;
   const escapedNativeRedirectUri = nativeRedirectUri ? escapeHtmlAttr(nativeRedirectUri) : '';
+  const escapedNativeRedirectSig = nativeRedirectSig ? escapeHtmlAttr(nativeRedirectSig) : '';
+  const isNativeApp = Boolean(nativeRedirectUri);
+  const productLabel = isNativeApp ? 'Matrix OS app' : 'Matrix CLI';
+  const setupTitle = isNativeApp ? 'Checking Matrix OS' : 'Setting up Matrix CLI';
+  const recoveryDetail = isNativeApp
+    ? 'Matrix could not finish connecting the desktop app. Try again after a moment.'
+    : 'Matrix could not finish connecting this terminal. Try again after a moment.';
   const clerkScript = publishableKey
     ? `
   <script nonce="${scriptNonce}">
@@ -146,6 +176,7 @@ function approvalPage(
     var csrf = "${escapedCsrf}";
     var approvalUrl = window.location.href;
     var authMode = new URL(window.location.href).searchParams.get('mode') === 'sign-in' ? 'sign-in' : 'sign-up';
+    var nativeApp = ${isNativeApp ? 'true' : 'false'};
     var runtimeReady = false;
 
     function deviceReturnPath() {
@@ -236,9 +267,20 @@ function approvalPage(
 
     function showLoadingState(message) {
       setConfirmReady(false);
-      renderActionState('Setting up Matrix CLI', message, 'Working...', function() {});
+      renderActionState('${setupTitle}', message, 'Working...', function() {});
       var button = document.querySelector('#signin-area button');
       if (button) button.disabled = true;
+    }
+
+    function showRuntimeSetupState() {
+      runtimeReady = false;
+      setConfirmReady(false);
+      renderActionState(
+        'Set up your Matrix computer',
+        'Create or activate your Matrix computer first, then return here to approve the desktop app.',
+        'Open setup',
+        redirectToBillingSetup
+      );
     }
 
     function showSignedInRecoveryState() {
@@ -246,7 +288,7 @@ function approvalPage(
       setConfirmReady(false);
       renderActionState(
         'Session needs a refresh',
-        'Matrix could not finish connecting this terminal. Try again after a moment.',
+        '${recoveryDetail}',
         'Try again',
         continueDeviceOnboarding
       );
@@ -334,6 +376,10 @@ function approvalPage(
           return;
         }
         if (res.status === 404) {
+          if (nativeApp) {
+            showRuntimeSetupState();
+            return;
+          }
           redirectToBillingSetup();
           return;
         }
@@ -364,7 +410,9 @@ function approvalPage(
 
         var body = new URLSearchParams({ userCode: userCode, csrf: csrf });
         var nativeRedirectUri = document.getElementById('native-redirect-uri')?.value || '';
+        var nativeRedirectSig = document.getElementById('native-redirect-sig')?.value || '';
         if (nativeRedirectUri) body.set('redirectUri', nativeRedirectUri);
+        if (nativeRedirectSig) body.set('redirectSig', nativeRedirectSig);
         var res = await fetchWithTimeout('/auth/device/approve', {
           method: 'POST',
           headers: {
@@ -536,8 +584,8 @@ function approvalPage(
 </head>
 <body>
   <main>
-    <section class="terminal" aria-label="Matrix CLI login preview">
-      <div class="bar"><span class="dot ok"></span><span class="dot"></span><span class="dot"></span><span>matrix login</span></div>
+    <section class="terminal" aria-label="${productLabel} login preview">
+      <div class="bar"><span class="dot ok"></span><span class="dot"></span><span class="dot"></span><span>${isNativeApp ? 'matrix app sign in' : 'matrix login'}</span></div>
       <div class="screen">
         <div><span class="prompt">matrix</span> login</div>
         <div class="muted">open app.matrix-os.com/auth/device</div>
@@ -547,21 +595,22 @@ function approvalPage(
         <br>
         <div><span class="prompt">matrix</span> whoami</div>
         <div class="muted">@handle on app.matrix-os.com</div>
-        <div><span class="prompt">matrix</span> shell connect -c main</div>
+        <div><span class="prompt">matrix</span> shell attach -c main</div>
         <div><span class="prompt">matrix</span> run -it -- claude</div>
         <div><span class="prompt">matrix</span> doctor</div>
       </div>
     </section>
     <section class="panel">
       <div>
-        <h1>Approve Matrix CLI</h1>
-        <p>Authorize this terminal to connect to your Matrix OS cloud computer.</p>
+        <h1>Approve ${productLabel}</h1>
+        <p>Authorize ${isNativeApp ? 'the desktop app' : 'this terminal'} to connect to your Matrix OS cloud computer.</p>
       </div>
       <div id="signin-area" style="display:none"></div>
       <form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">
         <input type="hidden" name="userCode" value="${escapedCode}">
         <input type="hidden" name="csrf" value="${escapedCsrf}">
         <input id="native-redirect-uri" type="hidden" name="redirectUri" value="${escapedNativeRedirectUri}">
+        <input id="native-redirect-sig" type="hidden" name="redirectSig" value="${escapedNativeRedirectSig}">
         <button id="confirm-button" type="submit" disabled>approve login</button>
       </form>
       <p id="status" class="status" role="status" aria-live="polite">${publishableKey ? '' : 'Sign-in is unavailable. Refresh and try again.'}</p>
@@ -712,6 +761,10 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         const verificationUrl = new URL(issued.verificationUri);
         if (nativeRedirectUri && body.clientId === 'matrix-os-macos') {
           verificationUrl.searchParams.set('redirect_uri', nativeRedirectUri);
+          verificationUrl.searchParams.set(
+            'redirect_sig',
+            signNativeRedirectUri(config.jwtSecret, issued.userCode, nativeRedirectUri),
+          );
         }
         captureAuthEvent("cli_device_code_created", {
           client_id: body.clientId,
@@ -781,7 +834,13 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
   // GET /auth/device?user_code=ABCD-EFGH -- public; renders approval HTML.
   app.get('/auth/device', (c) => {
     const userCodeRaw = c.req.query('user_code') ?? '';
-    const nativeRedirectUri = normalizeNativeRedirectUri(c.req.query('redirect_uri'));
+    const nativeRedirectUri = verifiedNativeRedirectUri(
+      config.jwtSecret,
+      userCodeRaw,
+      c.req.query('redirect_uri'),
+      c.req.query('redirect_sig'),
+    );
+    const nativeRedirectSig = nativeRedirectUri ? c.req.query('redirect_sig') ?? null : null;
     if (!userCodeRaw) {
       return c.text('Missing user_code', 400);
     }
@@ -797,7 +856,14 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       `device_csrf=${csrf}; Path=/auth/device; Max-Age=900; HttpOnly; SameSite=Strict${secure}`,
     );
     applyNoFrameHeaders(c, scriptNonce, { allowClerkCaptcha: true });
-    return c.html(approvalPage(userCodeRaw, csrf, publishableKey, scriptNonce, nativeRedirectUri));
+    return c.html(approvalPage(
+      userCodeRaw,
+      csrf,
+      publishableKey,
+      scriptNonce,
+      nativeRedirectUri,
+      nativeRedirectSig,
+    ));
   });
 
   // POST /auth/device/approve -- requires Clerk session + CSRF cookie/form match.
@@ -829,12 +895,15 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       const cookieCsrf = readCsrfCookie(c.req.header('cookie'));
       let formCsrf: string | undefined;
       let userCode: string | undefined;
+      let formRedirectUri: unknown;
+      let formRedirectSig: unknown;
       let nativeRedirectUri: string | null = null;
       try {
         const form = await c.req.parseBody();
         formCsrf = typeof form.csrf === 'string' ? form.csrf : undefined;
         userCode = typeof form.userCode === 'string' ? form.userCode : undefined;
-        nativeRedirectUri = normalizeNativeRedirectUri(form.redirectUri);
+        formRedirectUri = form.redirectUri;
+        formRedirectSig = form.redirectSig;
       } catch (err: unknown) {
         console.error(
           '[device-flow] Form parse failed:',
@@ -853,6 +922,12 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       if (!userCode || normalizeUserCode(userCode).length !== 8) {
         return c.json({ error: 'invalid_request' }, 400);
       }
+      nativeRedirectUri = verifiedNativeRedirectUri(
+        config.jwtSecret,
+        userCode,
+        formRedirectUri,
+        formRedirectSig,
+      );
 
       try {
         await flow.approveDeviceCode(userCode, verifyResult.userId);

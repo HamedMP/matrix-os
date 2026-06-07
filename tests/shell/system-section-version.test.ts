@@ -4,8 +4,12 @@ import {
   isNewer,
   normalizeMatrixReleaseTag,
   releaseActionLabel,
+  resolveUpgradeInstallCopy,
   resolveSystemUpdateState,
   severityBadgeStyle,
+  formatReleaseBuildId,
+  formatReleaseBuildShortId,
+  upgradeInstallStatusLine,
 } from "../../shell/src/components/settings/sections/system-update-state.js";
 
 describe("SystemSection version helpers", () => {
@@ -128,5 +132,43 @@ describe("SystemSection version helpers", () => {
     expect(severityBadgeStyle("critical")).toContain("orange");
     expect(severityBadgeStyle("normal")).toContain("blue");
     expect(severityBadgeStyle(undefined)).toContain("blue");
+  });
+
+  it("formats release build IDs without exposing full commit hashes by default", () => {
+    expect(formatReleaseBuildId("0f7e2f12554e1941d10c29b2209e0a6c2d7e2438")).toBe("Build ID 0f7e2f12554e");
+    expect(formatReleaseBuildId(undefined)).toBeNull();
+  });
+
+  it("formats short build ID values for labeled fields", () => {
+    expect(formatReleaseBuildShortId("0f7e2f12554e1941d10c29b2209e0a6c2d7e2438")).toBe("0f7e2f12554e");
+    expect(formatReleaseBuildShortId(undefined)).toBeNull();
+  });
+
+  it("normalizes rotating upgrade install status lines", () => {
+    expect(upgradeInstallStatusLine(0)).toBe("Putting the new version in place. Your files stay where they are.");
+    expect(upgradeInstallStatusLine(6)).toBe("Putting the new version in place. Your files stay where they are.");
+    expect(upgradeInstallStatusLine(-1)).toBe("Putting the new version in place. Your files stay where they are.");
+  });
+
+  it("builds accessible upgrade install copy", () => {
+    expect(resolveUpgradeInstallCopy({
+      target: "dev",
+      message: null,
+      statusIndex: 1,
+    })).toEqual({
+      title: "Installing dev",
+      detail: "Downloading the update and waiting for your workspace to return.",
+      statusLine: "Almost there. We are making sure everything opens cleanly.",
+    });
+
+    expect(resolveUpgradeInstallCopy({
+      target: null,
+      message: "Upgrade started. Waiting for services to come back...",
+      statusIndex: 2,
+    })).toEqual({
+      title: "Installing update",
+      detail: "Upgrade started. Waiting for services to come back...",
+      statusLine: "Your workspace is getting the new version ready.",
+    });
   });
 });

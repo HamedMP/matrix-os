@@ -33,6 +33,7 @@ import { listDirectory } from "./files-tree.js";
 import { getMissingFileFallback } from "./file-fallbacks.js";
 import { getMimeType } from "./file-utils.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
+import { createFileBlobRoutes } from "./file-blob-routes.js";
 import { fileSearch } from "./file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
@@ -205,6 +206,7 @@ import {
   ScrollbackStore,
   ShellPreferencesStore,
   createPendingTerminalInputQueue,
+  createShellCommandRunner,
   createShellWsHandler,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
@@ -214,6 +216,7 @@ import {
   ClientErrorReportSchema,
   writeClientErrorReport,
 } from "./client-error-log.js";
+import { createForwardTunnelHub } from "./forward-ws.js";
 
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 
@@ -513,6 +516,7 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     scrollbackStore: shellScrollbackStore,
   });
+  const forwardTunnelHub = createForwardTunnelHub();
   const captureTerminalEvent = (
     event: string,
     properties: Record<string, string | number | boolean | undefined> = {},
@@ -1645,6 +1649,8 @@ export async function createGateway(config: GatewayConfig) {
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
     layouts: shellLayoutStore,
+    shellBackend: zellijAdapter,
+    commandRunner: createShellCommandRunner({ homePath }),
   };
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
   app.route("/api", createShellRoutes(shellRouteDeps));
@@ -2271,6 +2277,11 @@ export async function createGateway(config: GatewayConfig) {
   );
 
   app.get(
+    "/ws/forward",
+    upgradeWebSocket(() => forwardTunnelHub.createHandler()),
+  );
+
+  app.get(
     "/ws/terminal/session",
     upgradeWebSocket((c) => {
       const namedSession = c.req.query("session");
@@ -2816,6 +2827,7 @@ export async function createGateway(config: GatewayConfig) {
     });
     return c.json(result);
   });
+  app.route("/api/files", createFileBlobRoutes({ homePath }));
 
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
@@ -4382,6 +4394,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       await channelManager.stop();
       await processManager.shutdownAll();
+      await forwardTunnelHub.close();
       await sessionRegistry.shutdown();
       await watcher.close();
       await homeMirror?.stop();

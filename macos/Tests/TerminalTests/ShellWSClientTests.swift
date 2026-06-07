@@ -191,6 +191,31 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         await client.shutdown()
     }
 
+    func testInputTypedBeforeAttachFlushesAfterAttach() async throws {
+        let transport = MockShellTransport()
+        let client = makeClient(transport: transport)
+
+        await client.sendInput("echo hello\n")
+        let sentBeforeAttach = await transport.sentTexts
+        XCTAssertTrue(sentBeforeAttach.isEmpty)
+
+        await client.connect()
+        await transport.waitForConnect(count: 1)
+        await transport.emit(#"{"type":"attached","session":"main","state":"running","fromSeq":0}"#)
+        _ = await drain(client, count: 1)
+
+        try await waitUntil(timeout: 3) {
+            await !transport.sentTexts.isEmpty
+        }
+        let sent = await transport.sentTexts
+        XCTAssertEqual(sent.count, 1)
+        let frame = try XCTUnwrap(sent.first)
+        let obj = try JSONSerialization.jsonObject(with: Data(frame.utf8)) as? [String: Any]
+        XCTAssertEqual(obj?["type"] as? String, "input")
+        XCTAssertEqual(obj?["data"] as? String, "echo hello\n")
+        await client.shutdown()
+    }
+
     func testReconnectResumesFromLastSeqPlusOne() async throws {
         let transport = MockShellTransport()
         let clock = MockClock()
@@ -207,6 +232,60 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         let reconnect = await transport.lastConnectRequest
         let query = reconnect?.url?.query ?? ""
         XCTAssertTrue(query.contains("fromSeq=6"), "expected resume fromSeq=6, got \(query)")
+        await client.shutdown()
+    }
+
+    func testReconnectUsesFreshTokenFromProvider() async throws {
+        let transport = MockShellTransport()
+        let clock = MockClock()
+        let tokenSource = SequenceTokenSource(["initial-token", "refreshed-token"])
+        let client = ShellWSClient(
+            url: URL(string: "wss://vps.example/ws/terminal/session")!,
+            tokenProvider: {
+                await tokenSource.next()
+            },
+            session: "main",
+            transport: transport,
+            backoff: .test,
+            clock: clock
+        )
+        await client.connect()
+        await transport.waitForConnect(count: 1)
+        let first = await transport.lastConnectRequest
+        XCTAssertEqual(first?.value(forHTTPHeaderField: "Authorization"), "Bearer initial-token")
+
+        await transport.failCurrent()
+        await clock.waitForSleeper()
+        await clock.advanceAll()
+        await transport.waitForConnect(count: 2)
+
+        let reconnect = await transport.lastConnectRequest
+        XCTAssertEqual(reconnect?.value(forHTTPHeaderField: "Authorization"), "Bearer refreshed-token")
+        await client.shutdown()
+    }
+
+    func testRepeatedReconnectFailuresEmitConnectionErrorOnce() async throws {
+        let transport = MockShellTransport()
+        let clock = MockClock()
+        let client = makeClient(transport: transport, clock: clock)
+        await client.connect()
+
+        for connectionCount in 1...4 {
+            await transport.waitForConnect(count: connectionCount)
+            await transport.failCurrent()
+            await clock.waitForSleeper()
+            if connectionCount < 4 {
+                await clock.advanceAll()
+            }
+        }
+
+        let events = await drain(client, count: 4)
+        XCTAssertEqual(events, [
+            .reconnecting,
+            .error(code: "connection_failed", message: "Terminal connection failed"),
+            .reconnecting,
+            .reconnecting
+        ])
         await client.shutdown()
     }
 
@@ -303,5 +382,33 @@ final class ShellWSClientStateMachineTests: XCTestCase {
             if seen.count == count { break }
         }
         return seen
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval,
+        pollInterval: UInt64 = 10_000_000,
+        condition: () async -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await condition() { return }
+            try await Task.sleep(nanoseconds: pollInterval)
+        }
+        XCTFail("condition was not met within \(timeout)s")
+        throw WaitTimeout()
+    }
+
+    private struct WaitTimeout: Error {}
+}
+
+private actor SequenceTokenSource {
+    private var tokens: [String]
+
+    init(_ tokens: [String]) {
+        self.tokens = tokens
+    }
+
+    func next() -> String {
+        tokens.isEmpty ? "fallback-token" : tokens.removeFirst()
     }
 }

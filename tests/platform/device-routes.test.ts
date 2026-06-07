@@ -66,6 +66,8 @@ describe("device routes", () => {
     await destroyTestPlatformDb(db);
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    delete process.env.PLATFORM_PUBLIC_URL;
+    delete process.env.NEXT_PUBLIC_MATRIX_APP_URL;
   });
 
   describe("POST /api/auth/device/code", () => {
@@ -103,6 +105,39 @@ describe("device routes", () => {
       expect(verificationUri.searchParams.get("redirect_uri")).toBe(
         "matrixos://auth?status=approved",
       );
+      expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
+    });
+
+    it("uses the app shell origin for macOS approval even when platform API origin differs", async () => {
+      process.env.PLATFORM_PUBLIC_URL = "https://api.matrix-os.com";
+      process.env.NEXT_PUBLIC_MATRIX_APP_URL = "https://app.matrix-os.com";
+      const { docker } = createMockDocker();
+      const routedApp = createApp({
+        db,
+        orchestrator: createOrchestrator({ db, docker: docker as any }),
+        clerkAuth: createClerkAuth({
+          verifyToken: async () => ({ sub: "user_alice" }),
+        }),
+      });
+
+      const res = await routedApp.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-macos",
+          redirectUri: "matrixos://auth?status=approved",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const verificationUri = new URL(body.verificationUri);
+      expect(verificationUri.origin).toBe("https://app.matrix-os.com");
+      expect(verificationUri.pathname).toBe("/auth/device");
+      expect(verificationUri.searchParams.get("redirect_uri")).toBe(
+        "matrixos://auth?status=approved",
+      );
+      expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
     });
 
     it("ignores native callbacks for other clients or invalid schemes", async () => {
@@ -424,9 +459,53 @@ describe("device routes", () => {
       const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
         /device_csrf=([^;]+)/,
       )![1];
+      const verificationUri = new URL(code.verificationUri);
+      const redirectSig = verificationUri.searchParams.get("redirect_sig");
       const html = await setCookieRes.text();
       expect(html).toContain('id="native-redirect-uri"');
+      expect(html).toContain('id="native-redirect-sig"');
       expect(html).toContain("matrixos://auth?status=approved");
+      expect(redirectSig).toEqual(expect.any(String));
+
+      const approveRes = await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-alice",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf,
+          redirectUri: "matrixos://auth?status=approved",
+          redirectSig: redirectSig ?? "",
+        }).toString(),
+      });
+
+      expect(approveRes.status).toBe(200);
+      const successHtml = await approveRes.text();
+      expect(successHtml).toContain("Return to Matrix OS");
+      expect(successHtml).toContain("matrixos://auth?status=approved");
+      expect(successHtml).toContain('http-equiv="refresh"');
+    });
+
+    it("ignores manually appended native callbacks without the macOS signature", async () => {
+      const code = await app
+        .request("/api/auth/device/code", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        })
+        .then((r) => r.json());
+
+      const setCookieRes = await app.request(
+        `/auth/device?user_code=${code.userCode}&redirect_uri=${encodeURIComponent("matrixos://auth?status=approved")}`,
+      );
+      const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
+        /device_csrf=([^;]+)/,
+      )![1];
+      const html = await setCookieRes.text();
+      expect(html).not.toContain("matrixos://auth?status=approved");
 
       const approveRes = await app.request("/auth/device/approve", {
         method: "POST",
@@ -444,9 +523,8 @@ describe("device routes", () => {
 
       expect(approveRes.status).toBe(200);
       const successHtml = await approveRes.text();
-      expect(successHtml).toContain("Return to Matrix OS");
-      expect(successHtml).toContain("matrixos://auth?status=approved");
-      expect(successHtml).toContain('http-equiv="refresh"');
+      expect(successHtml).not.toContain("matrixos://auth?status=approved");
+      expect(successHtml).not.toContain('http-equiv="refresh"');
     });
 
     it("leaves the device code pending when approval only carries the CSRF cookie", async () => {
@@ -572,8 +650,11 @@ describe("device routes", () => {
       expect(cookie).toMatch(/device_csrf=[A-Fa-f0-9]+/);
       expect(cookie).toMatch(/HttpOnly/);
       const html = await res.text();
-      expect(html).toContain("shell connect -c main");
+      expect(html).toContain(">matrix login<");
+      expect(html).toContain('<span class="prompt">matrix</span> whoami');
+      expect(html).toContain("shell attach -c main");
       expect(html).toContain("run -it -- claude");
+      expect(html).toContain('<span class="prompt">matrix</span> doctor');
       expect(html).toContain('id="instance-line"');
     });
 
@@ -603,6 +684,33 @@ describe("device routes", () => {
       expect(html).toContain(
         '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">',
       );
+    });
+
+    it("renders native macOS approval copy with a signed app redirect", async () => {
+      const codeRes = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-macos",
+          redirectUri: "matrixos://auth?status=approved",
+        }),
+      });
+      const code = await codeRes.json();
+      const verificationUri = new URL(code.verificationUri);
+      const res = await app.request(`${verificationUri.pathname}${verificationUri.search}`);
+      const html = await res.text();
+
+      expect(html).toContain("Approve Matrix OS app");
+      expect(html).toContain("Authorize the desktop app");
+      expect(html).toContain("var nativeApp = true;");
+      expect(html).toContain("Checking Matrix OS");
+      expect(html).toContain("showRuntimeSetupState()");
+      expect(html).toContain("Create or activate your Matrix computer first");
+      expect(html).toContain('id="native-redirect-uri"');
+      expect(html).toContain('value="matrixos://auth?status=approved"');
+      expect(html).toContain('id="native-redirect-sig"');
+      expect(html).not.toContain("Approve Matrix CLI");
+      expect(html).not.toContain("Setting up Matrix CLI");
     });
 
     it("submits approval with an explicit Clerk bearer token", async () => {

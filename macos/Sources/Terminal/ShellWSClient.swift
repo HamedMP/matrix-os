@@ -13,7 +13,7 @@ import Foundation
 ///   scrollback ring buffer with eviction (R1).
 public actor ShellWSClient {
     private let baseURL: URL
-    private let token: String
+    private let tokenProvider: @Sendable () async -> String
     private let session: String
     private let transport: ShellTransport
     private let backoff: BackoffPolicy
@@ -24,6 +24,8 @@ public actor ShellWSClient {
     private var ring: ScrollbackRing
     private var lastSeqValue: Int = 0
     private var pendingSize: (cols: Int, rows: Int)?
+    private var pendingInputs: [String] = []
+    private var isAttached = false
     private var runLoop: Task<Void, Never>?
     private var stopped = false
 
@@ -39,8 +41,28 @@ public actor ShellWSClient {
         clock: ShellClock = SystemClock(),
         scrollbackCapacity: Int = 5_000
     ) {
+        self.init(
+            url: url,
+            tokenProvider: { token },
+            session: session,
+            transport: transport,
+            backoff: backoff,
+            clock: clock,
+            scrollbackCapacity: scrollbackCapacity
+        )
+    }
+
+    public init(
+        url: URL,
+        tokenProvider: @escaping @Sendable () async -> String,
+        session: String,
+        transport: ShellTransport,
+        backoff: BackoffPolicy = .default,
+        clock: ShellClock = SystemClock(),
+        scrollbackCapacity: Int = 5_000
+    ) {
         self.baseURL = url
-        self.token = token
+        self.tokenProvider = tokenProvider
         self.session = session
         self.transport = transport
         self.backoff = backoff
@@ -67,6 +89,13 @@ public actor ShellWSClient {
 
     /// Sends a keystroke/byte payload to the PTY.
     public func sendInput(_ data: String) async {
+        guard isAttached else {
+            pendingInputs.append(data)
+            if pendingInputs.count > 256 {
+                pendingInputs.removeFirst(pendingInputs.count - 256)
+            }
+            return
+        }
         await sendClient(.input(data: data))
     }
 
@@ -98,12 +127,17 @@ public actor ShellWSClient {
         while !stopped && !Task.isCancelled {
             // Fresh connect → live tail; reconnect → resume at lastSeq + 1.
             let fromSeq = lastSeqValue > 0 ? lastSeqValue + 1 : SHELL_ATTACH_LIVE_TAIL_FROM_SEQ
-            let request = makeRequest(fromSeq: fromSeq)
+            let request = await makeRequest(fromSeq: fromSeq)
             let frames = await transport.open(request)
             let cleanly = await consume(frames)
             if stopped || Task.isCancelled { break }
+            isAttached = false
             attempt = cleanly ? 0 : attempt + 1
-            eventContinuation.yield(.reconnecting)
+            if !cleanly && attempt == 2 {
+                eventContinuation.yield(.error(code: "connection_failed", message: "Terminal connection failed"))
+            } else {
+                eventContinuation.yield(.reconnecting)
+            }
             await clock.sleep(seconds: backoff.delay(forAttempt: attempt))
         }
     }
@@ -128,11 +162,13 @@ public actor ShellWSClient {
         }
         switch message {
         case let .attached(_, state, fromSeq):
+            isAttached = true
             eventContinuation.yield(.attached(state: state, fromSeq: fromSeq))
             // Resize once immediately after attach.
             if let size = pendingSize {
                 await sendClient(.resize(cols: size.cols, rows: size.rows))
             }
+            await flushPendingInputs()
         case let .output(seq, payload):
             lastSeqValue = max(lastSeqValue, seq)
             ring.append(seq: seq, data: payload)
@@ -147,12 +183,22 @@ public actor ShellWSClient {
             // Unrecoverable gap: clear buffer + seq, re-attach at live tail.
             ring.clear()
             lastSeqValue = 0
+            isAttached = false
             eventContinuation.yield(.replayEvicted)
             await transport.close() // drop current connection; run loop re-attaches at live tail
         }
     }
 
     // MARK: - Sending
+
+    private func flushPendingInputs() async {
+        guard !pendingInputs.isEmpty else { return }
+        let inputs = pendingInputs
+        pendingInputs.removeAll(keepingCapacity: true)
+        for input in inputs {
+            await sendClient(.input(data: input))
+        }
+    }
 
     private func sendClient(_ message: ClientMessage) async {
         guard !stopped, let encoded = try? encoder.encode(message),
@@ -162,7 +208,7 @@ public actor ShellWSClient {
 
     // MARK: - Request building
 
-    private func makeRequest(fromSeq: Int) -> URLRequest {
+    private func makeRequest(fromSeq: Int) async -> URLRequest {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         var items = components?.queryItems ?? []
         items.removeAll { $0.name == "session" || $0.name == "fromSeq" || $0.name == "token" }
@@ -176,6 +222,7 @@ public actor ShellWSClient {
         let url = components?.url ?? baseURL
         var request = URLRequest(url: url)
         // FR-015a / S1: principal token in the Authorization header, never the query string.
+        let token = await tokenProvider()
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }

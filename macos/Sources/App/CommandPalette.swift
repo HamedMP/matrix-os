@@ -39,11 +39,17 @@ struct CommandPalette: View {
             PaletteAction(id: "new-session", title: "New session", symbol: "terminal") {
                 model.createSession()
             },
+            PaletteAction(id: "go-home", title: "Switch to Home", symbol: "house") {
+                model.openHome()
+            },
             PaletteAction(id: "go-board", title: "Switch to Board", symbol: "rectangle.split.3x1") {
                 model.section = .board
             },
-            PaletteAction(id: "go-terminals", title: "Switch to Terminals", symbol: "terminal.fill") {
-                model.section = .terminals
+            PaletteAction(id: "go-terminal", title: "Switch to Terminal", symbol: "terminal.fill") {
+                model.openTerminalSection()
+            },
+            PaletteAction(id: "go-browser", title: "Switch to Browser", symbol: "globe") {
+                model.section = .browser
             },
         ] + projectActions
     }
@@ -233,6 +239,10 @@ private struct PaletteKeyCatcher: NSViewRepresentable {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self else { return event }
+                let searchFieldHasFocus = MainActor.assumeIsolated {
+                    Self.paletteSearchFieldHasFocus()
+                }
+                guard searchFieldHasFocus else { return event }
                 switch event.keyCode {
                 case 125:
                     onDown()
@@ -250,6 +260,12 @@ private struct PaletteKeyCatcher: NSViewRepresentable {
                     return event
                 }
             }
+        }
+
+        @MainActor
+        private static func paletteSearchFieldHasFocus() -> Bool {
+            guard let responder = NSApp.keyWindow?.firstResponder else { return false }
+            return responder is NSTextView
         }
 
         func uninstall() {

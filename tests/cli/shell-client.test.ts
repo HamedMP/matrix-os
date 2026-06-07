@@ -117,6 +117,38 @@ describe("shell REST client", () => {
     });
   });
 
+  it("maps gateway fetch failures to gateway_unreachable", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError("connect ECONNREFUSED 127.0.0.1:4000");
+    });
+    const client = createShellClient({
+      gatewayUrl: "http://gateway",
+      token: "tok",
+      fetch: fetchImpl,
+    });
+
+    await expect(client.listSessions()).rejects.toMatchObject({
+      code: "gateway_unreachable",
+      message: "Request failed",
+    });
+  });
+
+  it("maps gateway fetch aborts to request_timeout", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new DOMException("The operation was aborted", "AbortError");
+    });
+    const client = createShellClient({
+      gatewayUrl: "http://gateway",
+      token: "tok",
+      fetch: fetchImpl,
+    });
+
+    await expect(client.listSessions()).rejects.toMatchObject({
+      code: "request_timeout",
+      message: "Request failed",
+    });
+  });
+
   it("keeps gateway forbidden responses generic", async () => {
     const fetchImpl = vi.fn(async () => new Response(
       JSON.stringify({ error: "Forbidden" }),
@@ -208,6 +240,7 @@ describe("shell REST client", () => {
     });
     ControlledWebSocket.last?.emit("open");
     await new Promise((resolve) => setTimeout(resolve, 10));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     ControlledWebSocket.last?.emit("close");
 
     await expect(attached).resolves.toEqual({ detached: true });
@@ -233,10 +266,66 @@ describe("shell REST client", () => {
       fromSeq: 0,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     ControlledWebSocket.last?.emit("close");
 
     await expect(attached).resolves.toEqual({ detached: true });
     expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=0");
+  });
+
+  it("rejects attach when the websocket closes before an attached, error, or exit frame", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("close");
+
+    await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
+  });
+
+  it("allowlists terminal websocket error frame codes", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "error", code: "internal_path_leak" }));
+
+    await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
+  });
+
+  it("distinguishes remote exit from explicit local detach", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+
+    await expect(attached).resolves.toEqual({ detached: false });
   });
 
   it("queues stdin frames until the websocket is open", async () => {
@@ -258,6 +347,7 @@ describe("shell REST client", () => {
     expect(ControlledWebSocket.last?.sent).toEqual([
       JSON.stringify({ type: "input", data: "pwd\r" }),
     ]);
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     ControlledWebSocket.last?.emit("close");
     await expect(attached).resolves.toEqual({ detached: true });
   });
@@ -297,6 +387,7 @@ describe("shell REST client", () => {
     });
 
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     process.emit("SIGWINCH", "SIGWINCH");
     ControlledWebSocket.last?.emit("close");
 
@@ -322,6 +413,7 @@ describe("shell REST client", () => {
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "a");
     input.emit("data", "\u001c");
     input.emit("data", "b");
@@ -372,6 +464,7 @@ describe("shell REST client", () => {
       mouse: false,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "a\u001b[<0;10;20M\u001b[Mabc\u001b[I\u001b[O");
     ControlledWebSocket.last?.emit("close");
 
@@ -395,6 +488,7 @@ describe("shell REST client", () => {
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "\u001b[Ia\u001b[O\u001b[<0;10;20M");
     ControlledWebSocket.last?.emit("close");
 
@@ -419,6 +513,7 @@ describe("shell REST client", () => {
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
     nowSpy.mockReturnValue(6_000);
     input.emit("data", "\u001b[I\u001b[<0;10;20M\u001b[Mabcx");
@@ -447,6 +542,7 @@ describe("shell REST client", () => {
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
     nowSpy.mockReturnValue(6_000);
     input.emit("data", "\u001b[I\u001b[99;5u\u001b[100;5uok");
@@ -474,6 +570,7 @@ describe("shell REST client", () => {
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "\u001b[99;5u");
     ControlledWebSocket.last?.emit("close");
 
@@ -497,6 +594,7 @@ describe("shell REST client", () => {
       errorOutput,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "a\u001b[99");
     input.emit("data", ";5ub");
     ControlledWebSocket.last?.emit("close");
@@ -523,6 +621,7 @@ describe("shell REST client", () => {
       mouse: false,
     });
     ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "a\u001b[<0;10;");
     input.emit("data", "20Mbc");
     ControlledWebSocket.last?.emit("close");

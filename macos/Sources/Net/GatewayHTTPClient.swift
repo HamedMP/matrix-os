@@ -190,13 +190,31 @@ public struct GatewayHTTPClient: Sendable {
             return nil
         }
         let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
-        comps.path = String(parts.first ?? "")
+        let relativePath = String(parts.first ?? "")
+        comps.path = appendPath(base: comps.path, relative: relativePath)
         if parts.count == 2,
            let relative = URLComponents(string: path),
            let queryItems = relative.queryItems,
            !queryItems.isEmpty {
-            comps.queryItems = (comps.queryItems ?? []) + queryItems
+            let overriddenNames = Set(queryItems.map(\.name))
+            let baseItems = (comps.queryItems ?? []).filter { !overriddenNames.contains($0.name) }
+            comps.queryItems = baseItems + queryItems
         }
         return comps.url
+    }
+
+    private func appendPath(base: String, relative: String) -> String {
+        let cleanBase = base.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let cleanRelative = relative.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        switch (cleanBase.isEmpty, cleanRelative.isEmpty) {
+        case (true, true):
+            return ""
+        case (true, false):
+            return "/\(cleanRelative)"
+        case (false, true):
+            return "/\(cleanBase)"
+        case (false, false):
+            return "/\(cleanBase)/\(cleanRelative)"
+        }
     }
 }

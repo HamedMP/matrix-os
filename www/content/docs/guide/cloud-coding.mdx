@@ -16,6 +16,29 @@ matrixos project add github.com/owner/repo
 
 Project import validates repository URLs, stages clones safely, and creates a durable project record before worktrees, sessions, or reviews attach to it.
 
+## Local CLI launch
+
+Run the Matrix CLI from your laptop without a global install:
+
+```bash
+npx --yes @finnaai/matrix login --profile cloud
+npx --yes @finnaai/matrix run -it -- claude
+```
+
+With pnpm:
+
+```bash
+pnpm dlx @finnaai/matrix login --profile cloud
+pnpm dlx @finnaai/matrix run -it -- claude
+```
+
+Both runners use `~/.matrixos/` for profiles and auth, so the login is reused if you later install the CLI permanently. To preview a web app running on your Matrix computer, start the dev server in a Matrix shell and forward it locally:
+
+```bash
+npx --yes @finnaai/matrix forward 5173
+open http://127.0.0.1:5173
+```
+
 ## Installing tools
 
 Your Matrix VPS is your own Linux machine. The `matrix` user has passwordless `sudo`, so you can install operating-system packages directly:

@@ -7,11 +7,27 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 The Matrix OS CLI is a single binary — `matrix` (also installed as `matrixos` and `mos`) — for everything you do against your Matrix OS instance from outside the browser: signing in, syncing files, opening terminal sessions, and (soon) driving the upcoming VSCode extension.
 
-## Install
+## Run Without Installing
 
 <Callout type="info">
-The CLI is published as `@finnaai/matrix` on npm and as a Homebrew formula. It works against the cloud at `app.matrix-os.com` and against a local stack via `--profile local`.
+The CLI is published as `@finnaai/matrix` on npm. `npx` and `pnpm dlx` run the same CLI entrypoint as an installed `matrix` binary, and profile/auth files are stored in `~/.matrixos/` so later installs reuse the same login.
 </Callout>
+
+```bash
+# npm package runner
+npx --yes @finnaai/matrix login --profile cloud
+npx --yes @finnaai/matrix whoami
+
+# pnpm package runner
+pnpm dlx @finnaai/matrix login --profile cloud
+pnpm dlx @finnaai/matrix whoami
+```
+
+If you do not have a Matrix account yet, `login --profile cloud` keeps waiting while the browser walks you through signup, hosted trial checkout, and provisioning your Matrix computer. When setup finishes, approve the CLI in that same browser tab and return to your terminal.
+
+The package runner requires Node.js 24 or newer. If your shell uses an older Node runtime, install Node 24+ first and rerun the same command.
+
+## Install Permanently
 
 ```bash
 # Homebrew (macOS / Linux)
@@ -37,12 +53,11 @@ matrix doctor
 ```bash
 matrix login --profile cloud # opens a browser, completes the hosted device flow
 matrix whoami                # confirms handle, gateway, token expiry
-matrix shell new main        # creates and attaches to your "main" session
+matrix shell new main          # creates your "main" session
+matrix shell new main --attach # creates and attaches in one step
 ```
 
-If you do not have a Matrix account yet, `matrix login --profile cloud` keeps waiting while the browser walks you through signup, hosted trial checkout, and provisioning your Matrix computer. When setup finishes, approve the CLI in that same browser tab and return to your terminal.
-
-`Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `matrix shell connect main`.
+`Ctrl-\ Ctrl-\` detaches from a session without killing it. Reattach any time with `mos shell attach main`.
 
 ## Profiles
 
@@ -75,16 +90,17 @@ Every Matrix OS instance ships with [zellij](https://zellij.dev) pre-installed. 
 
 ```bash
 matrix shell ls                         # list sessions
-matrix shell new code                   # create + attach
-matrix shell new code --layout dev      # use a saved layout
-matrix shell new agent --cmd "claude"   # spawn an inline command in the session
-matrix shell connect code               # reattach to an existing session
-matrix shell connect -c review          # create if missing, then connect
+matrix shell new code                   # create a session
+matrix shell new code --attach          # create + attach
+matrix shell new code --layout dev      # create with a saved layout
+matrix shell new agent --cmd "claude"   # create with an inline command
+mos shell attach code                   # reattach to an existing session
+mos shell attach -c review              # create if missing, then attach
 matrix shell rm code --force            # destroy a session
 ```
 
 <Callout type="info">
-**Detaching.** Press `Ctrl-\` twice in quick succession to leave the session running and return to your shell — the same combo whether you're in `attach` or just created a session with `new`. To kill it instead, exit the shell normally inside the session or run `matrix shell rm <name>`.
+**Detaching.** Press `Ctrl-\` twice in quick succession to leave the session running and return to your shell — the same combo whether you're in `attach`, `connect`, or just created a session with `new --attach`. To kill it instead, exit the shell normally inside the session or run `matrix shell rm <name>`.
 </Callout>
 
 ### Tabs
@@ -120,6 +136,37 @@ matrix shell layout show --name dev        # print the KDL
 matrix shell layout rm --name dev
 ```
 
+## Port forwarding
+
+Forwarding opens a listener on your local machine and connects it to a service listening on your Matrix computer. V1 supports local-to-Matrix-computer forwarding only. Reverse tunnels and public/shareable HTTPS URLs are not part of this command yet.
+
+```bash
+# Local 127.0.0.1:3000 -> Matrix computer 127.0.0.1:3000
+matrix port forward 3000
+
+# Local 127.0.0.1:8080 -> Matrix computer 127.0.0.1:3000
+matrix port forward 8080:127.0.0.1:3000
+
+# Top-level alias
+matrix forward 3000
+matrix forward 8080:127.0.0.1:3000
+```
+
+The local listener always binds to `127.0.0.1`. The remote target must be loopback on the Matrix computer: `127.0.0.1:<port>`, `localhost:<port>`, or `[::1]:<port>`. To forward a dev server, start that server on the Matrix computer first, then run the CLI command from your local terminal.
+
+```bash
+matrix port forward 5173
+open http://127.0.0.1:5173
+```
+
+With `--json`, port forwarding emits NDJSON. The first event is `ready`, then connection lifecycle events follow until the command exits.
+
+```bash
+matrix port forward 3000 --json
+{"v":1,"type":"ready","data":{"localHost":"127.0.0.1","localPort":3000,"remoteHost":"127.0.0.1","remotePort":3000,"profile":"cloud","gatewayUrl":"https://app.matrix-os.com"}}
+{"v":1,"type":"connection_open","data":{"localHost":"127.0.0.1","localPort":3000,"remoteHost":"127.0.0.1","remotePort":3000,"connectionId":1}}
+```
+
 ## File sync
 
 The sync daemon mirrors a local folder against your instance's home directory. It runs as a background service installed by `matrix sync start`.
@@ -136,6 +183,38 @@ Scope sync to a subtree of your instance with `--folder`:
 ```bash
 matrix sync ~/work-projects --folder projects
 ```
+
+## Single-file transfer
+
+Use `matrix upload` and `matrix download` for one-off files that should not start the sync daemon or touch R2 sync state.
+
+```bash
+matrix upload ./README.md projects/demo/README.md
+matrix upload --force ./config.json system/config.json
+matrix download projects/demo/README.md ./README.remote.md
+matrix download --force projects/demo/README.md ./README.remote.md
+matrix download --secret .codex/auth.json ~/.codex/auth.json
+```
+
+For credential files, add `--secret` so transferred files are written owner-only.
+Regular downloads are written with standard user-readable file permissions.
+
+```bash
+matrix upload --secret ~/.codex/auth.json .codex/auth.json
+```
+
+Agents should run the Matrix CLI command and must not print credential file contents.
+
+## Agent auth scan
+
+`matrix agent auth scan` checks for local AI-agent credential files without reading or printing tokens.
+
+```bash
+matrix agent auth scan
+matrix agent auth scan --json
+```
+
+The scan can detect transfer-ready files for Codex, Claude Code file credentials, OpenCode, and Pi. macOS Keychain-only Claude Code credentials are reported as manual because they cannot be moved through generic file upload.
 
 ## Instance ops
 
@@ -158,6 +237,7 @@ Every command supports `--json` for scripting and integration with the upcoming 
 ```bash
 matrix shell ls --json
 matrix sync status --json
+matrix port forward 3000 --json
 matrix shell tab ls main --json | jq '.[] | .name'
 ```
 
@@ -211,13 +291,21 @@ The sync daemon is installed but not running. Start it with `matrix sync start`.
 
 Your token expired. Run `matrix login` again. Tokens are valid for the duration set by the platform (typically a few hours).
 
-**`matrix shell connect` shows a blank screen**
+**`mos shell attach` shows a blank screen**
 
 Usually means the zellij session exited on your instance. Check `matrix shell ls` — if the session is in the `exited` state, recreate it with `matrix shell new <name>`.
 
 **`session "foo" not found` when connecting**
 
-The session does not exist on your instance. `matrix shell connect` is intentionally strict unless you pass `-c`. Use `matrix shell new foo` or `matrix shell connect -c foo` to create it.
+The session does not exist on your instance. `mos shell attach` is intentionally strict unless you pass `-c`. Use `mos shell new foo` or `mos shell attach -c foo` to create it.
+
+**`matrix port forward` returns `invalid_forward_spec`**
+
+Check the spec shape and port ranges. Valid examples are `3000`, `8080:127.0.0.1:3000`, `8080:localhost:3000`, and `8080:[::1]:3000`. Ports must be integers from 1 through 65535.
+
+**`matrix port forward` connects but the browser shows connection refused**
+
+The target service must be running on the Matrix computer loopback interface, not on your laptop. Attach with `mos shell attach <session>` and verify the service is listening on `127.0.0.1:<port>` inside the Matrix computer.
 
 **Local stack returns connection refused**
 

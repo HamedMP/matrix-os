@@ -148,7 +148,7 @@ No constitution violations to justify.
 
 1. **Gateway auth**: Existing `authMiddleware` validates Bearer JWT on all `/api/sync/*` routes
 2. **Path validation**: `resolveWithinPrefix(userId, path)` on every file path in presign/commit requests — prevents path traversal
-3. **Scoped R2 tokens**: Per-user R2 API tokens scoped to `matrixos-sync/{userId}/*`. Share tokens scoped to shared prefix only.
+3. **Scoped R2 tokens**: Per-user R2 API tokens scoped to `matrixos-sync/{userId}/*`. Per-share scoped R2 tokens and shared-prefix data-plane access are deferred to F19 follow-up slices.
 4. **Body limits**: `bodyLimit({ maxSize: 65536 })` on all mutating sync endpoints (metadata only, no file content)
 5. **Timeouts**: `AbortSignal.timeout(10_000)` on all R2 API calls, `AbortSignal.timeout(30_000)` on presigned URL generation for large batches
 6. **Rate limiting**: Per-user rate limits on presign requests (100 req/min) to prevent URL farming
@@ -160,7 +160,7 @@ No constitution violations to justify.
 |-------|---------|-------|--------|------------|
 | **1** | `packages/gateway` | Sync engine core: R2 presigned URL generation, manifest management (Postgres-backed versioning), sync routes (`/api/sync/*`), WebSocket events (`sync:*`), conflict detection | DONE | — |
 | **2** | `packages/sync-client` | CLI + daemon: `matrixos` CLI (citty), background daemon (chokidar + WS client + R2 presigned upload/download), launchd/systemd service management, Unix socket IPC | DONE (login broken pending Phase 6) | Phase 1 |
-| **3** | `packages/gateway` + `packages/sync-client` | Sharing: Postgres permissions table, scoped R2 tokens, invite notifications | GATEWAY DONE; CLI commands + daemon event handling pending (T052-T054) | Phase 1, 2 |
+| **3** | `packages/gateway` + `packages/sync-client` | Sharing: Postgres permissions table, scoped R2 tokens, invite notifications | GATEWAY DONE for control-plane; per-share scoped tokens and shared-prefix data-plane access deferred to F19; CLI commands + daemon event handling pending (T052-T054) | Phase 1, 2 |
 | **4** | `packages/gateway` + `packages/sync-client` | Shell access: zellij-backed `matrixos shell` over the gateway terminal WebSocket | DONE | Phase 2 (auth) |
 | **5** | `packages/sync-client/macos` | Mac menu bar app: Swift/SwiftUI, daemon communication via Unix socket | DONE (notifications pending T063) | Phase 2 |
 | **6 (NEW)** | `packages/platform` + gateway + sync-client | OAuth 2.0 Device Flow on platform service: device code endpoints, JWT issuance, gateway JWT validation, replace stub auth with real Clerk-backed login | NOT STARTED -- see Phase 9 in tasks.md (T071-T092) | Phase 2 |

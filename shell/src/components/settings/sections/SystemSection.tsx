@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { getGatewayUrl } from "@/lib/gateway";
-import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon } from "lucide-react";
+import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon, CloudIcon, Code2Icon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
@@ -82,7 +82,10 @@ interface SystemReleaseList {
 }
 
 import {
+  formatReleaseBuildId,
+  formatReleaseBuildShortId,
   releaseActionLabel,
+  resolveUpgradeInstallCopy,
   severityBadgeStyle,
   resolveSystemUpdateState,
 } from "./system-update-state";
@@ -107,6 +110,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const [installingTarget, setInstallingTarget] = useState<string | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
   const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
+  const [upgradeWaitingIndex, setUpgradeWaitingIndex] = useState(0);
   const releaseRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
   const reloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -120,6 +124,14 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!upgrading) return;
+    const progressMessageTimer = setInterval(() => {
+      setUpgradeWaitingIndex((index) => index + 1);
+    }, 7_000);
+    return () => clearInterval(progressMessageTimer);
+  }, [upgrading]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-bootstrap useEffect dependency array below; removing useCallback would re-run that effect on every render and refetch system info/health in a loop.
   const refreshReleaseData = useCallback(async (channel: ReleaseChannel) => {
@@ -194,6 +206,11 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const releaseRows = releaseList?.releases ?? [];
   const canInstallSelectedChannel = Boolean(latestVersion && (updateAvailable || selectedChannel !== installedChannel));
   const systemUpdatesLocked = !billingActive;
+  const upgradeInstallCopy = resolveUpgradeInstallCopy({
+    target: installingTarget,
+    message: upgradeMessage,
+    statusIndex: upgradeWaitingIndex,
+  });
 
   const waitForInstalledUpdate = async (
     target: { channel?: ReleaseChannel; version?: string },
@@ -247,6 +264,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
     const targetKey = target.version ?? target.channel ?? "stable";
     setUpgrading(true);
     setInstallingTarget(targetKey);
+    setUpgradeWaitingIndex(0);
     setUpgradeError(null);
     setUpgradeMessage(`Installing ${targetKey}. This can take a few minutes...`);
 
@@ -433,8 +451,48 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
           {upgradeError && (
             <p className="text-xs text-red-500">{upgradeError}</p>
           )}
-          {upgradeMessage && (
+          {upgradeMessage && !upgrading && (
             <p className="text-xs text-muted-foreground">{upgradeMessage}</p>
+          )}
+          {upgrading && (
+            <output
+              aria-live="polite"
+              aria-label={`${upgradeInstallCopy.title}. ${upgradeInstallCopy.detail}`}
+              className="overflow-hidden rounded-lg border border-blue-500/20 bg-blue-500/10 shadow-sm"
+            >
+              <div className="flex gap-3 p-4">
+                <div className="relative flex size-11 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white">
+                  <ArrowUpCircleIcon className="size-5 animate-pulse" aria-hidden="true" />
+                  <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full border border-background bg-background text-blue-600">
+                    <CloudIcon className="size-3" aria-hidden="true" />
+                  </span>
+                </div>
+                <div className="min-w-0 flex-1 space-y-3.5">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">
+                      {upgradeInstallCopy.title}
+                    </p>
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {upgradeInstallCopy.detail}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-background">
+                      <div className="h-full w-1/2 rounded-full bg-blue-600 animate-pulse" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 text-[11px] leading-4 text-muted-foreground">
+                      <span className="truncate">Download</span>
+                      <span className="truncate text-center">Install</span>
+                      <span className="truncate text-right">Verify</span>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-md border border-border/70 bg-background/70 p-2.5">
+                    <Code2Icon className="mt-0.5 size-3.5 shrink-0 text-blue-600" aria-hidden="true" />
+                    <p className="text-xs leading-5 text-muted-foreground">{upgradeInstallCopy.statusLine}</p>
+                  </div>
+                </div>
+              </div>
+            </output>
           )}
           {canInstallSelectedChannel && (
             <div className="pt-1">
@@ -495,8 +553,13 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
                         )}
                       </div>
                       <p className="truncate text-xs text-muted-foreground">
-                        {[release.gitCommit?.slice(0, 12), release.buildTime].filter(Boolean).join(" · ")}
+                        {[formatReleaseBuildId(release.gitCommit), release.buildTime].filter(Boolean).join(" · ")}
                       </p>
+                      {selectedChannel === "stable" && release.changelog && (
+                        <p className="whitespace-pre-line text-xs leading-5 text-muted-foreground">
+                          {release.changelog}
+                        </p>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -526,7 +589,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             ["Version", info.version ?? "0.1.0"],
             ["Host Bundle", info.release?.version],
             ["Channel", info.release?.channel],
-            ["Git Commit", info.release?.gitCommit],
+            ["Build ID", formatReleaseBuildShortId(info.release?.gitCommit)],
             ["Git Ref", info.release?.gitRef],
             ["Bundle Build Time", info.release?.buildTime],
             ["Installed At", info.release?.installedAt],

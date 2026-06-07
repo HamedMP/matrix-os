@@ -108,7 +108,9 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.theme = theme
         context.coordinator.filePath = filePath
-        apply(text: text, to: textView, theme: theme, filePath: filePath)
+        context.coordinator.applyHighlight {
+            apply(text: text, to: textView, theme: theme, filePath: filePath)
+        }
         return scrollView
     }
 
@@ -118,10 +120,13 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
             ruler.theme = theme
             ruler.needsDisplay = true
         }
-        if textView.string != text || context.coordinator.theme != theme || context.coordinator.filePath != filePath {
+        if textView.string != text || context.coordinator.needsHighlight || context.coordinator.theme != theme || context.coordinator.filePath != filePath {
             context.coordinator.theme = theme
             context.coordinator.filePath = filePath
-            apply(text: text, to: textView, theme: theme, filePath: filePath)
+            context.coordinator.needsHighlight = false
+            context.coordinator.applyHighlight {
+                apply(text: text, to: textView, theme: theme, filePath: filePath)
+            }
         }
     }
 
@@ -147,14 +152,55 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
     private static func highlighted(_ text: String, filePath: String?, theme: CodeEditorTheme) -> NSAttributedString {
         let nsText = text as NSString
         let fullRange = NSRange(location: 0, length: nsText.length)
+        let language = syntaxLanguage(for: filePath)
         let output = NSMutableAttributedString(
             string: text,
             attributes: [.font: editorFont(size: 13), .foregroundColor: theme.foreground]
         )
         apply(pattern: #""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`"#, color: theme.string, to: output, range: fullRange)
-        apply(pattern: #"(?m)(//.*$|#.*$)"#, color: theme.comment, to: output, range: fullRange)
-        apply(pattern: #"\b(import|export|from|func|function|let|const|var|struct|class|enum|protocol|extension|public|private|return|if|else|switch|case|for|while|guard|try|await|async|throws|type|interface|extends|implements|new|in|of)\b"#, color: theme.keyword, to: output, range: fullRange)
+        if language.supportsLineComments {
+            apply(pattern: language.commentPattern, color: theme.comment, to: output, range: fullRange)
+        }
+        if language.supportsKeywords {
+            apply(pattern: language.keywordPattern, color: theme.keyword, to: output, range: fullRange)
+        }
         return output
+    }
+
+    private struct SyntaxLanguage {
+        var supportsLineComments: Bool
+        var supportsKeywords: Bool
+        var commentPattern: String
+        var keywordPattern: String
+    }
+
+    private static func syntaxLanguage(for filePath: String?) -> SyntaxLanguage {
+        let fallback = SyntaxLanguage(
+            supportsLineComments: true,
+            supportsKeywords: true,
+            commentPattern: #"(?m)(//.*$|#.*$)"#,
+            keywordPattern: #"\b(import|export|from|func|function|let|const|var|struct|class|enum|protocol|extension|public|private|return|if|else|switch|case|for|while|guard|try|await|async|throws|type|interface|extends|implements|new|in|of)\b"#
+        )
+        guard let filePath, !filePath.isEmpty else { return fallback }
+        let ext = URL(fileURLWithPath: filePath).pathExtension.lowercased()
+        switch ext {
+        case "json", "jsonc", "yaml", "yml", "toml", "xml", "html", "htm", "md", "markdown", "txt", "log", "csv":
+            return SyntaxLanguage(
+                supportsLineComments: false,
+                supportsKeywords: false,
+                commentPattern: fallback.commentPattern,
+                keywordPattern: fallback.keywordPattern
+            )
+        case "py", "rb", "sh", "bash", "zsh":
+            return SyntaxLanguage(
+                supportsLineComments: true,
+                supportsKeywords: true,
+                commentPattern: #"(?m)#.*$"#,
+                keywordPattern: fallback.keywordPattern
+            )
+        default:
+            return fallback
+        }
     }
 
     private static func apply(pattern: String, color: NSColor, to output: NSMutableAttributedString, range: NSRange) {
@@ -170,13 +216,23 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         weak var textView: NSTextView?
         var theme: CodeEditorTheme?
         var filePath: String?
+        var needsHighlight = false
+        private var isApplyingHighlight = false
 
         init(text: Binding<String>) {
             _text = text
         }
 
+        func applyHighlight(_ body: () -> Void) {
+            isApplyingHighlight = true
+            defer { isApplyingHighlight = false }
+            body()
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            guard !isApplyingHighlight else { return }
+            needsHighlight = true
             text = textView.string
         }
     }
@@ -205,17 +261,15 @@ private final class LineNumberRulerView: NSRulerView {
         let visible = textView.visibleRect
         let glyphRange = layoutManager.glyphRange(forBoundingRect: visible, in: textContainer)
         let text = textView.string as NSString
-        var line = 1
-        var index = 0
-        while index < glyphRange.location, index < text.length {
-            if text.character(at: index) == 10 { line += 1 }
-            index += 1
-        }
         var glyphIndex = glyphRange.location
+        var scanIndex = 0
+        var line = 1
         while glyphIndex < NSMaxRange(glyphRange) {
             var effective = NSRange()
             let rect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &effective)
             let y = rect.minY + textView.textContainerOrigin.y - visible.minY + 1
+            let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            advanceLineNumber(upTo: characterIndex, in: text, scanIndex: &scanIndex, line: &line)
             let label = "\(line)" as NSString
             label.draw(
                 at: NSPoint(x: 8, y: y),
@@ -225,7 +279,13 @@ private final class LineNumberRulerView: NSRulerView {
                 ]
             )
             glyphIndex = NSMaxRange(effective)
-            line += 1
+        }
+    }
+
+    private func advanceLineNumber(upTo characterIndex: Int, in text: NSString, scanIndex: inout Int, line: inout Int) {
+        while scanIndex < characterIndex, scanIndex < text.length {
+            if text.character(at: scanIndex) == 10 { line += 1 }
+            scanIndex += 1
         }
     }
 }

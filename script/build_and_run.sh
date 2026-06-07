@@ -3,8 +3,15 @@ set -euo pipefail
 
 MODE="${1:-run}"
 APP_NAME="MatrixOS"
+APP_DISPLAY_NAME="Matrix OS"
 BUNDLE_ID="com.matrixos.native-shell"
 MIN_SYSTEM_VERSION="14.0"
+BUILD_CONFIGURATION="${MATRIX_BUILD_CONFIGURATION:-release}"
+if [[ "$MODE" == "--debug" || "$MODE" == "debug" ]]; then
+  BUILD_CONFIGURATION="debug"
+fi
+APP_SHORT_VERSION="0.1.0"
+APP_VERSION="1"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_DIR="$ROOT_DIR/macos"
@@ -19,8 +26,8 @@ APP_ICON="$PACKAGE_DIR/Resources/AppIcon.icns"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
-swift build --package-path "$PACKAGE_DIR" --product "$APP_NAME"
-BUILD_BINARY="$(swift build --package-path "$PACKAGE_DIR" --show-bin-path)/$APP_NAME"
+swift build --package-path "$PACKAGE_DIR" --product "$APP_NAME" --configuration "$BUILD_CONFIGURATION"
+BUILD_BINARY="$(swift build --package-path "$PACKAGE_DIR" --configuration "$BUILD_CONFIGURATION" --show-bin-path)/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
@@ -40,13 +47,25 @@ cat >"$INFO_PLIST" <<PLIST
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
-  <string>$APP_NAME</string>
+  <string>$APP_DISPLAY_NAME</string>
+  <key>CFBundleDisplayName</key>
+  <string>$APP_DISPLAY_NAME</string>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$APP_SHORT_VERSION</string>
+  <key>CFBundleVersion</key>
+  <string>$APP_VERSION</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
   <key>CFBundleURLTypes</key>
@@ -63,6 +82,13 @@ cat >"$INFO_PLIST" <<PLIST
 </dict>
 </plist>
 PLIST
+
+codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null
+
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [[ -x "$LSREGISTER" ]]; then
+  "$LSREGISTER" -f "$APP_BUNDLE" >/dev/null 2>&1 || true
+fi
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"

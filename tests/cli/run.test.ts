@@ -1,11 +1,120 @@
+import { spawn } from "node:child_process";
+import http from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { WebSocketServer } from "ws";
 import {
   createOrAttachRunSession,
+  exitCodeFromRunResult,
   parseRunCommand,
   quoteCommandArg,
   runCommand,
 } from "../../packages/sync-client/src/cli/commands/run.js";
 import { PUBLISHED_CLI_COMMANDS, resolvePublishedCliRedirect } from "../../packages/cli/src/index.js";
+
+async function createFakeRunGateway(runResult: Record<string, unknown> = {
+  stdout: "file.txt\n",
+  stderr: "warn\n",
+  exitCode: 7,
+  signal: null,
+  timedOut: false,
+  truncated: false,
+  durationMs: 8,
+}) {
+  let createRequests = 0;
+  let runRequests: unknown[] = [];
+  let wsConnections = 0;
+  const server = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === "/api/terminal/sessions") {
+      createRequests += 1;
+      req.resume();
+      res.writeHead(201, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ name: "run-session", created: true }));
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/terminal/run") {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        runRequests.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(runResult));
+      });
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: { code: "not_found" } }));
+  });
+  const wss = new WebSocketServer({ server, path: "/ws/terminal/session" });
+  wss.on("connection", (ws) => {
+    wsConnections += 1;
+    ws.send(JSON.stringify({ type: "attached" }));
+    setTimeout(() => ws.close(), 10).unref?.();
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fake gateway did not bind a TCP port");
+  }
+
+  return {
+    gatewayUrl: `http://127.0.0.1:${address.port}`,
+    get createRequests() {
+      return createRequests;
+    },
+    get runRequests() {
+      return runRequests;
+    },
+    get wsConnections() {
+      return wsConnections;
+    },
+    async close() {
+      wss.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+async function runMatrixCli(args: string[]) {
+  const home = await mkdtemp(join(tmpdir(), "matrix-run-cli-"));
+  const bin = join(process.cwd(), "packages/sync-client/bin/matrix.mjs");
+  try {
+    return await new Promise<{
+      status: number | null;
+      signal: NodeJS.Signals | null;
+      stdout: string;
+      stderr: string;
+    }>((resolve, reject) => {
+      const child = spawn(process.execPath, [bin, ...args], {
+        cwd: process.cwd(),
+        env: { ...process.env, HOME: home, FORCE_COLOR: "0", NO_COLOR: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      child.on("error", (err) => {
+        reject(err);
+      });
+      child.on("close", (status, signal) => {
+        resolve({
+          status,
+          signal,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+    });
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+}
 
 describe("run CLI command", () => {
   it("exports the developer run command", () => {
@@ -45,7 +154,13 @@ describe("run CLI command", () => {
         sessionProvided: true,
       }),
     ).resolves.toEqual({ detached: true });
-    expect(client.attachSession).toHaveBeenCalledWith("setup");
+    expect(client.attachSession).toHaveBeenCalledWith("setup", {});
+  });
+
+  it("maps timed-out runs to 124 even when the remote process reports an exit code", () => {
+    expect(exitCodeFromRunResult({ exitCode: 0, timedOut: true })).toBe(124);
+    expect(exitCodeFromRunResult({ exitCode: 7, timedOut: false })).toBe(7);
+    expect(exitCodeFromRunResult({ exitCode: null, timedOut: false })).toBe(1);
   });
 
   it("passes no-mouse mode through interactive run attach", async () => {
@@ -63,6 +178,123 @@ describe("run CLI command", () => {
       }),
     ).resolves.toEqual({ detached: true });
     expect(client.attachSession).toHaveBeenCalledWith("setup", { mouse: false });
+  });
+
+  it("keeps stdout JSON-only for run -it --json", async () => {
+    const gateway = await createFakeRunGateway();
+    try {
+      const result = await runMatrixCli([
+        "run",
+        "-it",
+        "--session",
+        "run-session",
+        "--gateway",
+        gateway.gatewayUrl,
+        "--token",
+        "tok",
+        "--json",
+        "--",
+        "echo",
+        "ok",
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.stdout).not.toContain("\u001b[");
+      expect(JSON.parse(result.stdout)).toEqual({
+        v: 1,
+        ok: true,
+        data: { detached: true, session: "run-session" },
+      });
+      expect(result.stderr).toContain("\u001b[?1000l");
+      expect(gateway.createRequests).toBe(1);
+      expect(gateway.wsConnections).toBe(1);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("runs non-interactive commands and exits with the remote status", async () => {
+    const gateway = await createFakeRunGateway();
+    try {
+      const result = await runMatrixCli([
+        "run",
+        "--gateway",
+        gateway.gatewayUrl,
+        "--token",
+        "tok",
+        "-C",
+        "projects/app",
+        "--",
+        "ls",
+      ]);
+
+      expect(result.status).toBe(7);
+      expect(result.signal).toBeNull();
+      expect(result.stdout).toBe("file.txt\n");
+      expect(result.stderr).toBe("warn\n");
+      expect(gateway.runRequests).toEqual([{ command: ["ls"], cwd: "projects/app" }]);
+      expect(gateway.createRequests).toBe(0);
+      expect(gateway.wsConnections).toBe(0);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("warns when non-interactive text output is truncated", async () => {
+    const gateway = await createFakeRunGateway({
+      stdout: "partial\n",
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      truncated: true,
+      durationMs: 8,
+    });
+    try {
+      const result = await runMatrixCli([
+        "run",
+        "--gateway",
+        gateway.gatewayUrl,
+        "--token",
+        "tok",
+        "--",
+        "cat",
+        "large.log",
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("partial\n");
+      expect(result.stderr).toBe("matrix: output truncated (limit reached)\n");
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("rejects --session without interactive mode", async () => {
+    const gateway = await createFakeRunGateway();
+    try {
+      const result = await runMatrixCli([
+        "run",
+        "--session",
+        "setup",
+        "--gateway",
+        gateway.gatewayUrl,
+        "--token",
+        "tok",
+        "--",
+        "ls",
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("--session is only supported with -it");
+      expect(gateway.runRequests).toEqual([]);
+      expect(gateway.createRequests).toBe(0);
+      expect(gateway.wsConnections).toBe(0);
+    } finally {
+      await gateway.close();
+    }
   });
 
   it("does not reuse an accidental ephemeral session collision", async () => {

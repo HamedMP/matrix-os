@@ -1,7 +1,6 @@
 ## Swift / SwiftPM
 .build/
 .swiftpm/
-Package.resolved
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
 xcuserdata/

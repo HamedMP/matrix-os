@@ -25,7 +25,7 @@ export async function resolveCliProfile(
     flags.dev === true ? "local" : typeof flags.profile === "string" ? flags.profile : profiles.active;
   const profile = profiles.profiles[explicitProfile];
   if (!profile) {
-    throw new Error("profile_not_found");
+    throw Object.assign(new Error("profile_not_found"), { code: "profile_not_found" });
   }
 
   return {

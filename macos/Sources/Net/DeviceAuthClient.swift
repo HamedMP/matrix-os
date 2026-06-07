@@ -72,8 +72,8 @@ public struct DeviceAuthClient: DeviceAuthorizing {
             path: "/api/auth/device/code",
             body: CodeBody(clientId: clientId, redirectUri: "matrixos://auth?status=approved")
         )
-        guard GatewayError.from(statusCode: http.statusCode) == nil else {
-            throw GatewayError.from(statusCode: http.statusCode) ?? .server
+        if let mapped = GatewayError.from(statusCode: http.statusCode) {
+            throw mapped
         }
         do {
             return try decoder.decode(DeviceAuthStart.self, from: data)

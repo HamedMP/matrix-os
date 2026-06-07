@@ -77,6 +77,21 @@ final class TerminalSessionTests: XCTestCase {
         XCTAssertEqual(session.connectionState, .attached)
     }
 
+    func testOutputBeforeSinkIsFlushedWhenSinkIsInstalled() async {
+        let (session, source) = makeSession()
+        var fed: [String] = []
+        session.start()
+
+        await source.emit(.output(seq: 1, data: "boot "))
+        await source.emit(.output(seq: 2, data: "ready"))
+        await eventually({ session.lastSeq == 2 })
+        try? await Task.sleep(nanoseconds: 30_000_000)
+
+        session.setOutputSink { fed.append($0) }
+
+        await eventually({ fed == ["boot ready"] })
+    }
+
     func testBurstOutputIsCoalescedBeforeFeedingSink() async {
         let (session, source) = makeSession()
         var fed: [String] = []

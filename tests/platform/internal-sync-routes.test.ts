@@ -21,6 +21,8 @@ describe("platform/internal-sync-routes", () => {
     getObject: vi.fn(),
     putObject: vi.fn(),
     deleteObject: vi.fn(),
+    completeMultipartUpload: vi.fn(),
+    abortMultipartUpload: vi.fn(),
     destroy: vi.fn(),
   };
 
@@ -38,6 +40,7 @@ describe("platform/internal-sync-routes", () => {
 
   afterEach(async () => {
     await destroyTestPlatformDb(db);
+    vi.restoreAllMocks();
   });
 
   function stubOrchestrator(): Orchestrator {
@@ -153,6 +156,190 @@ describe("platform/internal-sync-routes", () => {
 
     expect(res.status).toBe(403);
     expect(r2.getPresignedGetUrl).not.toHaveBeenCalled();
+  });
+
+  it("completes multipart uploads only for keys in the container user's prefix", async () => {
+    r2.completeMultipartUpload.mockResolvedValue({ etag: '"complete-etag"' });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+        parts: [
+          { partNumber: 1, etag: '"etag-1"' },
+          { partNumber: 2, etag: '"etag-2"' },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ etag: '"complete-etag"' });
+    expect(r2.completeMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/files/videos/large.mov",
+      "upload-123",
+      [
+        { partNumber: 1, etag: '"etag-1"' },
+        { partNumber: 2, etag: '"etag-2"' },
+      ],
+    );
+  });
+
+  it("rejects multipart complete requests with oversized ETags", async () => {
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+        parts: [{ partNumber: 1, etag: "x".repeat(513) }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(r2.completeMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it("rejects multipart complete requests with duplicate part numbers", async () => {
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+        parts: [
+          { partNumber: 1, etag: '"etag-1a"' },
+          { partNumber: 1, etag: '"etag-1b"' },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(r2.completeMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it("accepts multipart complete bodies over 64KB within the internal complete cap", async () => {
+    r2.completeMultipartUpload.mockResolvedValue({ etag: '"complete-etag"' });
+    const app = createTestApp();
+    const parts = Array.from({ length: 140 }, (_, index) => ({
+      partNumber: index + 1,
+      etag: `"${String(index + 1).padStart(5, "0")}-${"e".repeat(490)}"`,
+    }));
+    const body = JSON.stringify({
+      key: "matrixos-sync/user_alice/files/videos/large.mov",
+      uploadId: "upload-123",
+      parts,
+    });
+
+    expect(Buffer.byteLength(body)).toBeGreaterThan(64 * 1024);
+    expect(Buffer.byteLength(body)).toBeLessThan(1024 * 1024);
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ etag: '"complete-etag"' });
+    expect(r2.completeMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/files/videos/large.mov",
+      "upload-123",
+      parts,
+    );
+  });
+
+  it("returns a generic JSON 500 when multipart completion fails in storage", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    r2.completeMultipartUpload.mockRejectedValue(new Error("r2 complete exploded"));
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/complete", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+        parts: [{ partNumber: 1, etag: '"etag-1"' }],
+      }),
+    });
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Multipart completion failed" });
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[internal-sync] Multipart completion failed:",
+      expect.any(String),
+    );
+  });
+
+  it("aborts multipart uploads only for keys in the container user's prefix", async () => {
+    r2.abortMultipartUpload.mockResolvedValue(undefined);
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/abort", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(r2.abortMultipartUpload).toHaveBeenCalledWith(
+      "matrixos-sync/user_alice/files/videos/large.mov",
+      "upload-123",
+    );
+  });
+
+  it("returns a generic JSON 500 when multipart abort fails in storage", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    r2.abortMultipartUpload.mockRejectedValue(new Error("r2 abort exploded"));
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/sync/multipart/abort", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        key: "matrixos-sync/user_alice/files/videos/large.mov",
+        uploadId: "upload-123",
+      }),
+    });
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "Multipart abort failed" });
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[internal-sync] Multipart abort failed:",
+      expect.any(String),
+    );
   });
 
   it("maps NoSuchKey from storage reads to a 404", async () => {

@@ -12,6 +12,11 @@ import { whoamiCommand } from "./commands/whoami.js";
 import { statusCommand } from "./commands/status.js";
 import { completionCommand } from "./commands/completion.js";
 import { runCommand } from "./commands/run.js";
+import { uploadCommand } from "./commands/upload.js";
+import { downloadCommand } from "./commands/download.js";
+import { agentCommand } from "./commands/agent.js";
+import { forwardAliasCommand, portCommand } from "./commands/port.js";
+import { normalizeLeadingGlobalFlags } from "./global-flags.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../../package.json") as { version: string };
@@ -33,10 +38,15 @@ const main = defineCommand({
     whoami: whoamiCommand,
     status: statusCommand,
     run: runCommand,
+    upload: uploadCommand,
+    download: downloadCommand,
+    agent: agentCommand,
+    port: portCommand,
+    forward: forwardAliasCommand,
     doctor: doctorCommand,
     instance: instanceCommand,
     completion: completionCommand,
   },
 });
 
-runMain(main);
+await runMain(main, { rawArgs: normalizeLeadingGlobalFlags(process.argv.slice(2)) });

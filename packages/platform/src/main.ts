@@ -1,4 +1,9 @@
 import { createHmac, randomBytes } from 'node:crypto';
+import {
+  getClerkDisplayName,
+  getPrimaryClerkEmail,
+  normalizeMatrixOsHandleCandidate,
+} from '@matrix-os/clerk-sync';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
@@ -25,6 +30,9 @@ import {
   updateLastActive,
   updateContainerStatus,
   listContainers,
+  ensurePlatformUser,
+  getPlatformUserByClerkId,
+  isPlatformHandleAvailableForClerkUser,
   getHostBundleRelease,
   getHostBundleReleaseByChannel,
   HostBundleReleaseConflictError,
@@ -44,6 +52,7 @@ import { createAuthRoutes } from './auth-routes.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
 import {
   getSessionRoutedWebSocketHost,
+  getWebSocketUpgradeHost,
   getWebSocketUpgradeToken,
   isAppDomainHost,
   isCodeDomainHost,
@@ -98,11 +107,13 @@ const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 const PLATFORM_JWT_SECRET = process.env.PLATFORM_JWT_SECRET ?? '';
 const DEV_PLATFORM_SECRET = 'dev-secret';
 const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
+const DEFAULT_SYNC_BUCKET = 'matrixos-sync';
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
+const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const CLERK_USER_LOOKUP_TIMEOUT_MS = 10_000;
 const RUNTIME_PICKER_PROBE_TIMEOUT_MS = 2_500;
@@ -130,6 +141,7 @@ const HOST_BUNDLE_FILES = new Set([
 ]);
 const HOST_BUNDLE_CHANNEL_PATTERN = /^(stable|canary|dev|beta)$/;
 const HOST_BUNDLE_CHANNEL_FILE_PATTERN = /^(stable|canary|dev|beta)\.json$/;
+type HeaderValue = string | string[] | undefined;
 const TENANT_PUBLIC_TELEMETRY_ENV_KEYS = [
   'POSTHOG_TOKEN',
   'POSTHOG_PROJECT_TOKEN',
@@ -159,7 +171,12 @@ const customerVpsProxyDispatcher = new Agent({
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
-const SENSITIVE_PROXY_HEADERS = new Set(['authorization', 'cookie']);
+const SENSITIVE_PROXY_HEADERS = new Set([
+  'authorization',
+  'cookie',
+  EDGE_SECRET_HEADER,
+  'x-matrix-code-proxy-token',
+]);
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -206,6 +223,8 @@ const AppSessionProvisionBodySchema = z.object({
 
 const ClerkUserProfileSchema = z.object({
   username: z.string().nullable().optional(),
+  first_name: z.string().nullable().optional(),
+  last_name: z.string().nullable().optional(),
   primary_email_address_id: z.string().nullable().optional(),
   email_addresses: z.array(z.object({
     id: z.string().optional(),
@@ -243,8 +262,16 @@ const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
+  email: z.string().email().max(320).optional(),
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   serverType: HetznerServerTypeSchema.optional(),
+});
+
+const ClerkUserSyncBodySchema = z.object({
+  handle: z.string().regex(HANDLE_PATTERN),
+  clerkUserId: z.string().min(1).max(256),
+  displayName: z.string().min(1).max(100).optional(),
+  email: z.string().email().max(320).optional(),
 });
 
 const SocialSendBodySchema = z.object({
@@ -308,6 +335,12 @@ interface GatewayR2Client {
     partNumber: number,
     expiresIn?: number,
   ): Promise<string>;
+  completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: Array<{ partNumber: number; etag: string }>,
+  ): Promise<{ etag?: string }>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
   getObject(
     key: string,
     options?: { signal?: AbortSignal },
@@ -330,7 +363,7 @@ interface GatewayR2ClientModule {
     endpoint?: string;
     publicEndpoint?: string;
     forcePathStyle?: boolean;
-  }): GatewayR2Client;
+  }): Promise<GatewayR2Client>;
 }
 
 async function importRuntimeModule<T>(specifier: string): Promise<T> {
@@ -661,7 +694,11 @@ function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): En
 }
 
 function stripeBillingEntitlementsEnabled(env: NodeJS.ProcessEnv): boolean {
-  return env.MATRIX_STRIPE_BILLING_ENABLED === 'true' || env.MATRIX_BILLING_PROVIDER === 'stripe';
+  return (
+    env.MATRIX_STRIPE_BILLING_ENABLED === 'true' ||
+    env.MATRIX_BILLING_PROVIDER === 'stripe' ||
+    Boolean(env.STRIPE_SECRET_KEY?.trim())
+  );
 }
 
 async function resolveEffectiveBillingEntitlement(
@@ -853,18 +890,6 @@ function jsonCustomerVpsError(c: import('hono').Context, err: unknown, context: 
   return c.json({ error: 'Provisioning failed', code: 'provisioning_failed' }, 503);
 }
 
-function normalizeProvisionHandleCandidate(value: string | undefined | null): string | null {
-  if (!value) return null;
-  const candidate = value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 31)
-    .replace(/-+$/g, '');
-  return HANDLE_PATTERN.test(candidate) ? candidate : null;
-}
-
 function fallbackProvisionHandleForClerkUser(userId: string, secretKey: string): string {
   const suffix = createHmac('sha256', secretKey)
     .update(userId)
@@ -873,10 +898,39 @@ function fallbackProvisionHandleForClerkUser(userId: string, secretKey: string):
   return `u${suffix}`;
 }
 
-async function resolveProvisionHandleCandidatesFromClerkProfile(
+async function ensureProvisionedPlatformUser(
+  db: PlatformDB,
+  input: {
+    clerkUserId: string;
+    handle: string;
+    displayName?: string;
+    email?: string;
+    runtimeId: string;
+  },
+): Promise<void> {
+  await ensurePlatformUser(db, {
+    clerkId: input.clerkUserId,
+    handle: input.handle,
+    displayName: input.displayName ?? input.handle,
+    email: input.email ?? `${input.handle}@matrix-os.local`,
+    containerId: input.runtimeId,
+    plan: 'free',
+    status: 'active',
+  });
+}
+
+type ClerkProvisionProfile = z.infer<typeof ClerkUserProfileSchema>;
+
+interface ProvisionIdentity {
+  handle: string;
+  displayName: string;
+  email?: string;
+}
+
+async function fetchClerkProvisionProfile(
   userId: string,
   env: NodeJS.ProcessEnv,
-): Promise<string[]> {
+): Promise<{ secretKey: string; profile: ClerkProvisionProfile }> {
   const secretKey = env.CLERK_SECRET_KEY;
   if (!secretKey) {
     throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
@@ -908,21 +962,27 @@ async function resolveProvisionHandleCandidatesFromClerkProfile(
   if (!profile.success) {
     throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
   }
+  return { secretKey, profile: profile.data };
+}
+
+function resolveProvisionHandleCandidatesFromClerkProfile(
+  userId: string,
+  profile: ClerkProvisionProfile,
+  secretKey: string,
+): string[] {
   const candidates: string[] = [];
   const addCandidate = (candidate: string | null) => {
     if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
   };
-  const usernameHandle = normalizeProvisionHandleCandidate(profile.data.username);
+  const usernameHandle = normalizeMatrixOsHandleCandidate(profile.username);
   addCandidate(usernameHandle);
 
-  const primaryEmail = profile.data.email_addresses?.find(
-    (email) => email.id && email.id === profile.data.primary_email_address_id,
-  )?.email_address;
-  const primaryEmailHandle = normalizeProvisionHandleCandidate(primaryEmail?.split('@')[0]);
+  const primaryEmail = getPrimaryClerkEmail(profile);
+  const primaryEmailHandle = normalizeMatrixOsHandleCandidate(primaryEmail?.split('@')[0]);
   addCandidate(primaryEmailHandle);
 
-  const firstEmailHandle = normalizeProvisionHandleCandidate(
-    profile.data.email_addresses?.[0]?.email_address?.split('@')[0],
+  const firstEmailHandle = normalizeMatrixOsHandleCandidate(
+    profile.email_addresses?.[0]?.email_address?.split('@')[0],
   );
   addCandidate(firstEmailHandle);
   addCandidate(fallbackProvisionHandleForClerkUser(userId, secretKey));
@@ -934,40 +994,33 @@ async function isProvisionHandleAvailableForClerkUser(
   handle: string,
   clerkUserId: string,
 ): Promise<boolean> {
-  const conflictingActiveHandleMachine = await db.executor
-    .selectFrom('user_machines')
-    .select('clerk_user_id')
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .where('clerk_user_id', '!=', clerkUserId)
-    .executeTakeFirst();
-  if (conflictingActiveHandleMachine) {
-    return false;
-  }
-  // Same-user VPS machines supersede stale docker-era container rows for the same handle.
-  const ownedActiveHandleMachine = await db.executor
-    .selectFrom('user_machines')
-    .select('machine_id')
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .where('clerk_user_id', '=', clerkUserId)
-    .executeTakeFirst();
-  if (ownedActiveHandleMachine) {
-    return true;
-  }
-  const legacyHandleContainer = await getContainer(db, handle);
-  return !legacyHandleContainer || legacyHandleContainer.clerkUserId === clerkUserId;
+  return isPlatformHandleAvailableForClerkUser(db, handle, clerkUserId);
 }
 
-async function selectProvisionHandleForClerkUser(
+async function selectProvisionIdentityForClerkUser(
   db: PlatformDB,
   userId: string,
   env: NodeJS.ProcessEnv,
-): Promise<string | null> {
-  const candidates = await resolveProvisionHandleCandidatesFromClerkProfile(userId, env);
+): Promise<ProvisionIdentity | null> {
+  const existing = await getPlatformUserByClerkId(db, userId);
+  if (existing && await isProvisionHandleAvailableForClerkUser(db, existing.handle, userId)) {
+    return {
+      handle: existing.handle,
+      displayName: existing.displayName,
+      email: existing.email,
+    };
+  }
+  const { secretKey, profile } = await fetchClerkProvisionProfile(userId, env);
+  const candidates = existing
+    ? [existing.handle, ...resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey)]
+    : resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey);
   for (const handle of candidates) {
     if (await isProvisionHandleAvailableForClerkUser(db, handle, userId)) {
-      return handle;
+      return {
+        handle,
+        displayName: getClerkDisplayName(profile, handle),
+        email: getPrimaryClerkEmail(profile),
+      };
     }
   }
   return null;
@@ -1227,7 +1280,7 @@ function buildCodeDomainProxyHeaders(
 ): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(requestHeaders)) {
-    if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && key !== 'x-matrix-code-proxy-token' && value) {
+    if (shouldForwardProxyHeader(key, value)) {
       headers.set(key, value);
     }
   }
@@ -1239,6 +1292,46 @@ function buildCodeDomainProxyHeaders(
   headers.set('x-forwarded-proto', 'https');
   headers.set('connection', 'close');
   return headers;
+}
+
+function shouldForwardProxyHeader(key: string, value: string | undefined): value is string {
+  const lowerKey = key.toLowerCase();
+  return lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && Boolean(value);
+}
+
+function firstHeaderValue(value: HeaderValue): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
+export function getTrustedSessionRouteHost(
+  host: HeaderValue,
+  forwardedHost: HeaderValue,
+  edgeSecretHeader: HeaderValue,
+  edgeRouterSecret: string | undefined,
+): string {
+  const rawHost = getWebSocketUpgradeHost(host, undefined);
+  const normalizedForwardedHost = getWebSocketUpgradeHost(undefined, forwardedHost);
+  if (!normalizedForwardedHost) return rawHost;
+
+  const normalizedSecret = edgeRouterSecret?.trim();
+  if (!normalizedSecret) return rawHost;
+  if (!timingSafeTokenEquals(firstHeaderValue(edgeSecretHeader), normalizedSecret)) return rawHost;
+
+  return normalizedForwardedHost;
+}
+
+export function getTrustedSessionRoutedWebSocketHost(
+  host: HeaderValue,
+  forwardedHost: HeaderValue,
+  edgeSecretHeader: HeaderValue,
+  edgeRouterSecret: string | undefined,
+  path: string,
+): string {
+  const trustedHost = getTrustedSessionRouteHost(host, forwardedHost, edgeSecretHeader, edgeRouterSecret);
+  return getSessionRoutedWebSocketHost(trustedHost, undefined, path);
 }
 
 function buildPlatformUserProof(handle: string, userId: string, platformSecret: string): string {
@@ -1363,6 +1456,38 @@ export function checkUnsafeDefaultSecrets(
     );
   }
 
+  return problems;
+}
+
+export function checkHostBundleStorageEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  log: (msg: string) => void = console.warn,
+): string[] {
+  if (env.CUSTOMER_VPS_ENABLED !== 'true') return [];
+  const problems: string[] = [];
+  if (!(env.S3_BUNDLES_ENDPOINT || env.R2_BUNDLES_ENDPOINT || env.S3_BUNDLES_ACCOUNT_ID || env.R2_BUNDLES_ACCOUNT_ID)) {
+    problems.push('S3_BUNDLES_ENDPOINT/R2_BUNDLES_ENDPOINT or S3_BUNDLES_ACCOUNT_ID/R2_BUNDLES_ACCOUNT_ID');
+  }
+  if (!(env.S3_BUNDLES_ACCESS_KEY_ID || env.R2_BUNDLES_ACCESS_KEY_ID)) {
+    problems.push('S3_BUNDLES_ACCESS_KEY_ID/R2_BUNDLES_ACCESS_KEY_ID');
+  }
+  if (!(env.S3_BUNDLES_SECRET_ACCESS_KEY || env.R2_BUNDLES_SECRET_ACCESS_KEY)) {
+    problems.push('S3_BUNDLES_SECRET_ACCESS_KEY/R2_BUNDLES_SECRET_ACCESS_KEY');
+  }
+  const bundleBucket = env.S3_BUNDLES_BUCKET ?? env.R2_BUNDLES_BUCKET;
+  if (!bundleBucket) {
+    problems.push('S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET');
+  } else {
+    const syncBucket = env.S3_BUCKET ?? env.R2_BUCKET ?? DEFAULT_SYNC_BUCKET;
+    if (bundleBucket === syncBucket) {
+      problems.push('S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET must not equal S3_BUCKET/R2_BUCKET');
+    }
+  }
+  if (problems.length > 0) {
+    log(
+      `[platform] CUSTOMER_VPS_ENABLED=true but dedicated host bundle storage is incomplete; refusing to fall back to the sync bucket for signed host bundle URLs. Problems: ${problems.join(', ')}.`,
+    );
+  }
   return problems;
 }
 
@@ -2316,6 +2441,10 @@ function getAuthPage(
             showNoRuntimeState();
             return null;
           }
+          if (res.status === 402) {
+            showBillingRequiredState();
+            return null;
+          }
           showSignedInRecoveryState();
           return null;
         })
@@ -2892,6 +3021,7 @@ export function createApp(deps: {
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !deps.customerVpsService;
   const platformSecret = deps.platformSecret ?? appEnv.PLATFORM_SECRET ?? '';
+  const allowHostBundleSyncStoreFallback = appEnv.CUSTOMER_VPS_ENABLED !== 'true';
   type CachedVpsRuntimeMetrics = {
     machineKey: string;
     expiresAt: number;
@@ -3137,8 +3267,12 @@ export function createApp(deps: {
     });
   });
 
+  function getHostBundleObjectStore(): CustomerVpsObjectStore | undefined {
+    return deps.hostBundleObjectStore ?? (allowHostBundleSyncStoreFallback ? deps.customerVpsObjectStore : undefined);
+  }
+
   async function getSignedBundleUrl(release: HostBundleReleaseRecord): Promise<string> {
-    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    const hostBundleObjectStore = getHostBundleObjectStore();
     if (!hostBundleObjectStore) {
       throw new Error('Host bundle storage unavailable');
     }
@@ -3277,7 +3411,7 @@ export function createApp(deps: {
   // Public, immutable host-service bundles used by customer VPS cloud-init.
   // Metadata comes from Postgres; R2 only stores the bytes.
   app.get('/system-bundles/:imageVersion/:file', async (c) => {
-    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    const hostBundleObjectStore = getHostBundleObjectStore();
     if (!hostBundleObjectStore) {
       return c.json({ error: 'Host bundle storage unavailable' }, 503);
     }
@@ -3398,7 +3532,7 @@ export function createApp(deps: {
   });
 
   app.get('/system-bundles/channels/:channel', async (c) => {
-    const hostBundleObjectStore = deps.hostBundleObjectStore ?? deps.customerVpsObjectStore;
+    const hostBundleObjectStore = getHostBundleObjectStore();
     if (!hostBundleObjectStore) {
       return c.json({ error: 'Host bundle storage unavailable' }, 503);
     }
@@ -3428,15 +3562,17 @@ export function createApp(deps: {
   // the platform. Public endpoints; admin Bearer middleware below skips them.
   const platformJwtSecret = process.env.PLATFORM_JWT_SECRET ?? '';
   if (platformJwtSecret) {
-    const platformPublicUrl =
-      process.env.PLATFORM_PUBLIC_URL ?? `http://localhost:${process.env.PLATFORM_PORT ?? 9000}`;
+    const deviceAuthPublicUrl =
+      appEnv.NEXT_PUBLIC_MATRIX_APP_URL ??
+      appEnv.PLATFORM_PUBLIC_URL ??
+      `http://localhost:${appEnv.PLATFORM_PORT ?? 9000}`;
     app.route(
       '/',
       createAuthRoutes({
         db,
         clerkAuth,
         jwtSecret: platformJwtSecret,
-        platformUrl: platformPublicUrl,
+        platformUrl: deviceAuthPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
         captureEvent: (event, properties) => {
           capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN, {
@@ -3508,22 +3644,43 @@ export function createApp(deps: {
     }
 
     try {
-      const handle = await selectProvisionHandleForClerkUser(db, result.userId, appEnv);
-      if (!handle) {
+      if (stripeBillingEntitlementsEnabled(appEnv)) {
+        const now = new Date();
+        const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
+        const access = getRuntimeAccessDecision(entitlement, now);
+        if (!access.runtimeProxyAllowed) {
+          applyNoStoreHeaders(c);
+          return jsonCustomerVpsError(
+            c,
+            new CustomerVpsError(402, 'billing_required', 'Billing upgrade required'),
+            '/api/auth/provision-runtime',
+          );
+        }
+      }
+
+      const identity = await selectProvisionIdentityForClerkUser(db, result.userId, appEnv);
+      if (!identity) {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
       }
       const provisioned = await deps.customerVpsService.provision({
-        handle,
+        handle: identity.handle,
         clerkUserId: result.userId,
         runtimeSlot: parsed.data.runtime,
       });
+      await ensureProvisionedPlatformUser(db, {
+        clerkUserId: result.userId,
+        handle: identity.handle,
+        displayName: identity.displayName,
+        email: identity.email,
+        runtimeId: `vps:${provisioned.machineId}`,
+      });
       if (matrixProvisioner) {
         try {
-          await matrixProvisioner.provisionUser(handle);
+          await matrixProvisioner.provisionUser(identity.handle);
         } catch (matrixErr: unknown) {
           console.error(
-            `[matrix] Failed to provision Matrix accounts for ${handle}:`,
+            `[matrix] Failed to provision Matrix accounts for ${identity.handle}:`,
             matrixErr instanceof Error ? matrixErr.message : String(matrixErr),
           );
         }
@@ -3531,7 +3688,7 @@ export function createApp(deps: {
       applyNoStoreHeaders(c);
       return c.json({
         runtime: 'customer_vps',
-        handle,
+        handle: identity.handle,
         clerkUserId: result.userId,
         ...provisioned,
         runtimeSlot: parsed.data.runtime,
@@ -3543,7 +3700,7 @@ export function createApp(deps: {
   });
 
   app.post('/api/auth/app-session', bodyLimit({ maxSize: 1024 }), async (c) => {
-    if (!platformJwtSecret || !clerkAuth) {
+    if (!platformJwtSecret) {
       applyNoStoreHeaders(c);
       return c.json({ error: 'Session unavailable' }, 503);
     }
@@ -3564,8 +3721,37 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
     const redirectTo = normalizePostAuthRedirectPath(parsed.data.redirectTo);
+    const requestedRuntimeSlot =
+      parsed.data.runtime ?? readRuntimeSlotSelection(new URL(redirectTo, 'https://app.matrix-os.com').toString()).slot;
+    const authHeader = c.req.header('authorization');
 
-    const token = clerkAuth.extractToken(c.req.header('authorization'), c.req.header('cookie'));
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const nativeIdentity = await resolveAppDomainIdentity({
+          authHeader,
+          cookieHeader: undefined,
+          db,
+          platformJwtSecret,
+          runtimeSlot: requestedRuntimeSlot,
+        });
+        if (nativeIdentity) {
+          applyNoStoreHeaders(c);
+          c.header('Set-Cookie', buildAppSessionCookie(authHeader.slice(7)));
+          return c.json({ redirectTo });
+        }
+      } catch (err: unknown) {
+        logPlatformRouteError('/api/auth/app-session native exchange', err);
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Session unavailable' }, 503);
+      }
+    }
+
+    if (!clerkAuth) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Session unavailable' }, 503);
+    }
+
+    const token = clerkAuth.extractToken(authHeader, c.req.header('cookie'));
     if (!token) {
       applyNoStoreHeaders(c);
       return c.json({ error: 'Unauthorized' }, 401);
@@ -3578,13 +3764,23 @@ export function createApp(deps: {
     }
 
     const record = await getContainerByClerkId(db, result.userId);
-    const requestedRuntimeSlot =
-      parsed.data.runtime ?? readRuntimeSlotSelection(new URL(redirectTo, 'https://app.matrix-os.com').toString()).slot;
     const machine = record ? undefined : await getActiveUserMachineByClerkId(db, result.userId, requestedRuntimeSlot);
     const handle = record?.handle ?? machine?.handle;
     if (!handle) {
       applyNoStoreHeaders(c);
       c.header('Set-Cookie', buildClearAppSessionCookie());
+      if (stripeBillingEntitlementsEnabled(appEnv)) {
+        const now = new Date();
+        const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
+        const access = getRuntimeAccessDecision(entitlement, now);
+        if (!access.runtimeProxyAllowed) {
+          return jsonCustomerVpsError(
+            c,
+            new CustomerVpsError(402, 'billing_required', 'Billing upgrade required'),
+            '/api/auth/app-session',
+          );
+        }
+      }
       return c.json({ error: 'Matrix computer unavailable', code: 'no_runtime' }, 404);
     }
 
@@ -3614,7 +3810,12 @@ export function createApp(deps: {
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
   app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), async (c, next) => {
-    const host = c.req.header('host') ?? '';
+    const host = getTrustedSessionRouteHost(
+      c.req.header('host'),
+      c.req.header('x-forwarded-host'),
+      c.req.header(EDGE_SECRET_HEADER),
+      appEnv.EDGE_ROUTER_SECRET,
+    );
     const isAppDomain = isAppDomainHost(host);
     const isCodeDomain = isCodeDomainHost(host);
     if (!isAppDomain && !isCodeDomain) return next();
@@ -3670,8 +3871,7 @@ export function createApp(deps: {
 
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
-        const lowerKey = key.toLowerCase();
-        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -3861,7 +4061,7 @@ export function createApp(deps: {
       }
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -4010,7 +4210,7 @@ export function createApp(deps: {
         : new Headers();
       if (!isCodeDomain) {
         for (const [key, value] of Object.entries(c.req.header())) {
-          if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+          if (shouldForwardProxyHeader(key, value)) {
             headers.set(key, value);
           }
         }
@@ -4170,7 +4370,7 @@ export function createApp(deps: {
       : new Headers();
     if (!isCodeDomain) {
       for (const [key, value] of Object.entries(c.req.header())) {
-        if (key !== 'host' && key !== 'cookie' && key !== 'authorization' && value) {
+        if (shouldForwardProxyHeader(key, value)) {
           headers.set(key, value);
         }
       }
@@ -4421,13 +4621,20 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
 
-    const { handle, clerkUserId, displayName, runtimeSlot, serverType } = parsed.data;
+    const { handle, clerkUserId, displayName, email, runtimeSlot, serverType } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
       if (deps.customerVpsService) {
         const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot, serverType });
+        await ensureProvisionedPlatformUser(db, {
+          clerkUserId,
+          handle,
+          displayName,
+          email,
+          runtimeId: `vps:${machine.machineId}`,
+        });
 
         // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
         if (matrixProvisioner) {
@@ -4448,6 +4655,13 @@ export function createApp(deps: {
       }
 
       const record = await orchestrator.provision(handle, clerkUserId, displayName);
+      await ensureProvisionedPlatformUser(db, {
+        clerkUserId,
+        handle,
+        displayName,
+        email,
+        runtimeId: `legacy:${handle}`,
+      });
 
       // Provision Matrix accounts (non-blocking: log error but don't fail container provision)
       if (matrixProvisioner) {
@@ -4471,6 +4685,45 @@ export function createApp(deps: {
       }
       logPlatformRouteError('/containers/provision', e);
       return c.json({ error: 'Provision failed' }, 500);
+    }
+  });
+
+  app.post('/users/sync', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (e: unknown) {
+      logPlatformRouteError('/users/sync parse', e);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = ClerkUserSyncBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'Validation error' }, 400);
+    }
+
+    const { handle, clerkUserId, displayName, email } = parsed.data;
+    try {
+      const user = await ensurePlatformUser(db, {
+        clerkId: clerkUserId,
+        handle,
+        displayName: displayName ?? handle,
+        email: email ?? `${handle}@matrix-os.local`,
+        containerId: `clerk:${clerkUserId}`,
+        plan: 'free',
+        status: 'active',
+      });
+      return c.json({
+        id: user.id,
+        clerkUserId: user.clerkId,
+        handle: user.handle,
+        status: user.status,
+      });
+    } catch (e: unknown) {
+      if (isPostgresUniqueViolation(e)) {
+        return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
+      }
+      logPlatformRouteError('/users/sync', e);
+      return c.json({ error: 'User sync failed' }, 500);
     }
   });
 
@@ -4766,8 +5019,7 @@ export function createApp(deps: {
         const headers = new Headers();
         const originalHost = c.req.header('host') ?? `${handle}.matrix-os.com`;
         for (const [key, value] of Object.entries(c.req.header())) {
-          const lowerKey = key.toLowerCase();
-          if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
+          if (shouldForwardProxyHeader(key, value)) headers.set(key, value);
         }
         headers.set('host', `${handle}.matrix-os.com`);
         headers.set('x-forwarded-host', originalHost);
@@ -4817,8 +5069,7 @@ export function createApp(deps: {
       const headers = new Headers();
       const originalHost = c.req.header('host') ?? '';
       for (const [key, value] of Object.entries(c.req.header())) {
-        const lowerKey = key.toLowerCase();
-        if (lowerKey !== 'host' && !SENSITIVE_PROXY_HEADERS.has(lowerKey) && value) headers.set(key, value);
+        if (shouldForwardProxyHeader(key, value)) headers.set(key, value);
       }
       headers.set('x-forwarded-host', originalHost);
       headers.set('x-forwarded-proto', 'https');
@@ -4864,10 +5115,14 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     }
     throw err;
   }
+  checkHomeMirrorS3Env();
+  const hostBundleStorageProblems = checkHostBundleStorageEnv();
+  if (hostBundleStorageProblems.length > 0) {
+    process.exit(1);
+  }
+
   const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
   await db.ready;
-
-  checkHomeMirrorS3Env();
 
   let docker: Dockerode | undefined;
   let orchestrator: Orchestrator;
@@ -5030,7 +5285,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
   if (s3AccessKey && s3SecretKey && PLATFORM_SECRET) {
     const [r2ClientModule, { createInternalSyncRoutes }] = await Promise.all([
-      importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js'),
+      importRuntimeModule<GatewayR2ClientModule>('./r2-client.js'),
       import('./internal-sync-routes.js'),
     ]);
     createR2Client = r2ClientModule.createR2Client;
@@ -5057,7 +5312,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   const bundleS3SecretKey = process.env.S3_BUNDLES_SECRET_ACCESS_KEY ?? process.env.R2_BUNDLES_SECRET_ACCESS_KEY;
   if (bundleS3Bucket && bundleS3AccessKey && bundleS3SecretKey) {
     createR2Client ??= (
-      await importRuntimeModule<GatewayR2ClientModule>('../../gateway/src/sync/r2-client.js')
+      await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')
     ).createR2Client;
     hostBundleObjectStore = await createR2Client({
       accessKeyId: bundleS3AccessKey,
@@ -5230,7 +5485,13 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
     const path = req.url ?? '/';
     const pathClass = classifyWebSocketPath(path);
-    const host = getSessionRoutedWebSocketHost(req.headers.host, req.headers['x-forwarded-host'], path);
+    const host = getTrustedSessionRoutedWebSocketHost(
+      req.headers.host,
+      req.headers['x-forwarded-host'],
+      req.headers[EDGE_SECRET_HEADER],
+      appEnv.EDGE_ROUTER_SECRET,
+      path,
+    );
     if (!isSessionRoutedHost(host)) {
       socket.destroy();
       return;

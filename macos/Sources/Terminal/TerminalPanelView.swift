@@ -145,20 +145,36 @@ private struct AnimatedEllipsis: View {
             .font(.plexMono(10, weight: .medium))
             .foregroundStyle(color)
             .onAppear {
-                guard !reduceMotion else { return }
-                ticker = Task { @MainActor in
-                    // Calm ellipsis: never a harsh blink. Stops when the view goes away.
-                    while !Task.isCancelled {
-                        try? await Task.sleep(nanoseconds: 450_000_000)
-                        phase = (phase + 1) % 4
-                    }
-                }
+                syncTickerForMotionPreference()
             }
-            .onDisappear { ticker?.cancel() }
+            .onChange(of: reduceMotion) { _, _ in syncTickerForMotionPreference() }
+            .onDisappear {
+                stopTicker()
+            }
     }
 
     private var dots: String {
         String(repeating: ".", count: phase)
+    }
+
+    private func syncTickerForMotionPreference() {
+        stopTicker()
+        guard !reduceMotion else {
+            phase = 0
+            return
+        }
+        ticker = Task { @MainActor in
+            // Calm ellipsis: never a harsh blink. Stops when the view goes away.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                phase = (phase + 1) % 4
+            }
+        }
+    }
+
+    private func stopTicker() {
+        ticker?.cancel()
+        ticker = nil
     }
 }
 
@@ -179,6 +195,9 @@ private struct SwiftTermView: NSViewRepresentable {
         let view = TerminalView(frame: .zero)
         view.terminalDelegate = context.coordinator
         context.coordinator.terminalView = view
+        let clickRecognizer = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.focusTerminal(_:)))
+        clickRecognizer.numberOfClicksRequired = 1
+        view.addGestureRecognizer(clickRecognizer)
 
         // OPERATOR look: deep terminal surface + phosphor ink, Plex Mono 12.5.
         view.nativeBackgroundColor = NSColor(Color.surfaceTerminal)
@@ -194,6 +213,10 @@ private struct SwiftTermView: NSViewRepresentable {
         let dims = view.getTerminal().getDims()
         session.resize(cols: dims.cols, rows: dims.rows)
         session.start()
+        DispatchQueue.main.async { [weak view] in
+            guard let view else { return }
+            view.window?.makeFirstResponder(view)
+        }
         return view
     }
 
@@ -236,6 +259,11 @@ private struct SwiftTermView: NSViewRepresentable {
 
         init(session: TerminalSession) {
             self.session = session
+        }
+
+        @MainActor @objc func focusTerminal(_ recognizer: NSClickGestureRecognizer) {
+            guard let source = recognizer.view as? TerminalView else { return }
+            source.window?.makeFirstResponder(source)
         }
 
         // User keystrokes → PTY.

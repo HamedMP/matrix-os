@@ -1,8 +1,7 @@
-// Matrix OS — workspace shell: left rail (Board / Terminals) + section content.
+// Matrix OS — workspace shell: left rail (Home / Board / Terminal / Browser) + section content.
 //
-// Board = task kanban (cards open a zellij session). Terminals = the live zellij
-// session list, opened in a side terminal (full terminal experience). This keeps
-// raw sessions OUT of the kanban (per product direction) while still one click away.
+// Board = task kanban (cards open a zellij session). Terminal = the live zellij
+// session list. Home is the hosted Matrix shell UI from the shell package.
 #if os(macOS)
 import SwiftUI
 import AppKit
@@ -39,10 +38,14 @@ struct RootShellView: View {
     @ViewBuilder
     private var sectionContent: some View {
         switch model.section {
+        case .home:
+            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix Home")
         case .board:
             BoardView(model: model)
-        case .terminals:
+        case .terminal:
             TerminalsView(model: model)
+        case .browser:
+            BrowserPageView()
         }
     }
 }
@@ -65,7 +68,7 @@ private struct Sidebar: View {
                 expandedSidebar
             }
         }
-        .frame(width: collapsed ? 88 : 320)
+        .frame(width: collapsed ? 76 : 320)
         .frame(maxHeight: .infinity)
         .background(Color.canvasVoid)
         .overlay(alignment: .trailing) {
@@ -75,61 +78,76 @@ private struct Sidebar: View {
     }
 
     private var sidebarHeader: some View {
-        HStack(spacing: Spacing.x3) {
-            AppMark(collapsed: collapsed)
-            if !collapsed {
-                VStack(alignment: .leading, spacing: 1) {
-                    Menu {
-                        ForEach(AppSection.allCases, id: \.self) { section in
-                            Button { model.section = section } label: {
-                                Label(section.title, systemImage: section.symbol)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: Spacing.x1) {
-                            Text("Matrix")
-                                .font(.plexSans(17, weight: .semibold))
-                                .foregroundStyle(Color.inkPrimary)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(Color.inkTertiary)
-                        }
+        Group {
+            if collapsed {
+                VStack(spacing: Spacing.x2) {
+                    AppMark(collapsed: true)
+                    Button { collapsed.toggle() } label: {
+                        Image(systemName: "sidebar.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                            .frame(width: 40, height: 32)
+                            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                                    .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
+                            )
                     }
                     .buttonStyle(.plain)
-                    Text(model.section.title)
+                    .help("Expand sidebar")
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: Spacing.x3) {
+                    AppMark(collapsed: false)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Matrix")
+                        .font(.plexSans(17, weight: .semibold))
+                        .foregroundStyle(Color.inkPrimary)
+                    Text(model.hasSelectedProject ? model.activeProjectName : "Home")
                         .font(.plexMono(10, weight: .medium))
                         .foregroundStyle(Color.inkTertiary)
                 }
                 Spacer()
+                    Button { collapsed.toggle() } label: {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                            .iconHitTarget(32)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Collapse sidebar")
+                }
             }
-            Button { collapsed.toggle() } label: {
-                Image(systemName: collapsed ? "sidebar.right" : "sidebar.left")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.inkTertiary)
-                    .iconHitTarget(32)
-            }
-            .buttonStyle(.plain)
-            .help(collapsed ? "Expand sidebar" : "Collapse sidebar")
         }
     }
 
     private var collapsedRail: some View {
-        VStack(spacing: Spacing.x2) {
-            ForEach(AppSection.allCases, id: \.self) { section in
-                railButton(section)
+        VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: Spacing.x2) {
+                    ForEach(AppSection.allCases, id: \.self) { section in
+                        railButton(section)
+                    }
+                    railDivider
+                    ProjectPickerRail(model: model, collapsed: true)
+                    railDivider
+                    addButton(compact: true)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, Spacing.x1)
             }
-            Divider().overlay(Color.hairlineDark).padding(.vertical, Spacing.x1)
-            addButton(compact: true)
-            Spacer()
             handleBadge
+                .padding(.top, Spacing.x3)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, Spacing.x2)
+        .padding(.horizontal, Spacing.x1)
         .padding(.bottom, Spacing.x3)
     }
 
     private var expandedSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
+            navigationBlock
             projectsBlock
             sessionsBlock
             Spacer(minLength: Spacing.x4)
@@ -143,15 +161,57 @@ private struct Sidebar: View {
         }
     }
 
+    private var navigationBlock: some View {
+        VStack(alignment: .leading, spacing: Spacing.x1) {
+            sectionLabel("Navigate") {
+                EmptyView()
+            }
+            ForEach(AppSection.allCases, id: \.self) { section in
+                sectionRow(section)
+            }
+        }
+        .padding(.horizontal, Spacing.x4)
+        .padding(.bottom, Spacing.x4)
+    }
+
+    private func sectionRow(_ section: AppSection) -> some View {
+        let active = model.section == section
+        return Button { selectSection(section) } label: {
+            HStack(spacing: Spacing.x2) {
+                Image(systemName: section.symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(active ? Color.signalLive : Color.inkTertiary)
+                    .frame(width: 20)
+                Text(section.title)
+                    .font(.plexSans(13, weight: active ? .semibold : .medium))
+                    .foregroundStyle(active ? Color.inkPrimary : Color.inkSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, Spacing.x3)
+            .frame(height: 34)
+            .background(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .fill(active ? Color.surfaceCardRaised : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .strokeBorder(active ? Color.hairlineDark.opacity(0.75) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(section.title)
+        .accessibilityLabel(section.title)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
     private func railButton(_ section: AppSection) -> some View {
         let active = model.section == section
-        return Button { model.section = section } label: {
-            VStack(spacing: 3) {
-                Image(systemName: section.symbol)
-                    .font(.system(size: 16, weight: .medium))
-            }
+        return Button { selectSection(section) } label: {
+            Image(systemName: section.symbol)
+                .font(.system(size: 16, weight: active ? .semibold : .medium))
             .foregroundStyle(active ? Color.signalLive : Color.inkTertiary)
-            .frame(width: 52, height: 48)
+            .frame(width: 46, height: 44)
             .background(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                     .fill(active ? Color.surfaceCardRaised : Color.clear)
@@ -168,9 +228,26 @@ private struct Sidebar: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
+    private var railDivider: some View {
+        Rectangle()
+            .fill(Color.hairlineDark.opacity(0.7))
+            .frame(width: 46, height: 1)
+            .padding(.vertical, Spacing.x1)
+    }
+
+    private func selectSection(_ section: AppSection) {
+        if section == .home {
+            model.openHome()
+        } else if section == .terminal {
+            model.openTerminalSection()
+        } else {
+            model.section = section
+        }
+    }
+
     private func addButton(compact: Bool) -> some View {
         Button {
-            if model.section == .terminals { model.createSession() } else { model.createTask(status: .todo) }
+            performPrimaryAction()
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 16, weight: .bold))
@@ -179,9 +256,31 @@ private struct Sidebar: View {
                 .background(Circle().fill(Color.signalLive))
         }
         .buttonStyle(.plain)
-        .disabled(model.isCreatingSession)
-        .help(model.section == .terminals ? "New session" : "New task (⌘N)")
-        .accessibilityLabel(model.section == .terminals ? "New session" : "New task")
+        .disabled(model.isCreatingWorkItem)
+        .help(primaryActionTitle)
+        .accessibilityLabel(primaryActionTitle)
+    }
+
+    private func performPrimaryAction() {
+        if model.section == .terminal {
+            model.createSession()
+        } else if model.section == .board {
+            model.createTask(status: .todo)
+        } else {
+            model.showCommandPalette = true
+        }
+    }
+
+    private var primaryActionTitle: String {
+        if model.section == .terminal { return "New session" }
+        if model.section == .board { return "New task" }
+        return "Command palette"
+    }
+
+    private var primaryActionShortcut: String {
+        if model.section == .terminal { return "⌘T" }
+        if model.section == .board { return "⌘N" }
+        return "⌘K"
     }
 
     private var projectsBlock: some View {
@@ -206,7 +305,7 @@ private struct Sidebar: View {
                         .iconHitTarget(28)
                 }
                 .buttonStyle(.plain)
-                .disabled(model.isCreatingSession)
+                .disabled(model.isCreatingWorkItem)
                 .help("New terminal tab")
             }
 
@@ -323,15 +422,15 @@ private struct Sidebar: View {
 
     private var newTaskButton: some View {
         Button {
-            if model.section == .terminals { model.createSession() } else { model.createTask(status: .todo) }
+            performPrimaryAction()
         } label: {
             HStack(spacing: Spacing.x3) {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .semibold))
-                Text(model.section == .terminals ? "New session" : "New task / New agent")
+                Text(primaryActionTitle)
                     .font(.plexSans(14, weight: .semibold))
                 Spacer()
-                Text(model.section == .terminals ? "⌘T" : "⌘N")
+                Text(primaryActionShortcut)
                     .font(.plexMono(11, weight: .semibold))
                     .padding(.horizontal, Spacing.x2)
                     .padding(.vertical, 5)
@@ -353,7 +452,9 @@ private struct Sidebar: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, Spacing.x4)
-        .disabled(model.isCreatingSession)
+        .disabled(model.isCreatingWorkItem)
+        .help(primaryActionTitle)
+        .accessibilityLabel(primaryActionTitle)
     }
 
     private var handleBadge: some View {
@@ -370,7 +471,7 @@ private struct Sidebar: View {
                         .font(.plexSans(12, weight: .semibold))
                         .foregroundStyle(Color.inkPrimary)
                         .lineLimit(1)
-                    Text("Clerk user")
+                    Text("Matrix account")
                         .font(.plexMono(9, weight: .medium))
                         .foregroundStyle(Color.inkTertiary)
                         .lineLimit(1)
@@ -414,28 +515,23 @@ private struct TerminalsView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        HSplitView {
-            workbench
-                .frame(minWidth: 620, maxWidth: .infinity, maxHeight: .infinity)
-            inspector
-                .frame(minWidth: 260, idealWidth: 300, maxWidth: 360, maxHeight: .infinity)
-        }
+        workbench
         .background(Color.canvasVoid)
     }
 
     private var workbench: some View {
         VStack(spacing: Spacing.x3) {
             workbenchHeader
-            WorkspaceTabStrip(
-                tabs: model.openTabs,
-                activeID: model.activeTabID,
-                isCreating: model.isCreatingSession,
-                onSelect: model.focusTab,
-                onClose: model.closeTab,
+            TerminalSessionTabStrip(
+                sessions: model.sessions,
+                activeName: model.activeTerminalSessionName,
+                isCreating: model.isCreatingWorkItem,
+                onSelect: model.openSession,
+                onClose: model.closeSession,
                 onCreate: model.createSession
             )
-            TaskPaneStrip(activePanel: model.activePanel, onSelect: model.switchPanel)
-            taskWorkspaceSplit
+            terminalSurface
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, Spacing.x5)
         .padding(.vertical, Spacing.x4)
@@ -445,28 +541,9 @@ private struct TerminalsView: View {
     private var workbenchHeader: some View {
         VStack(spacing: Spacing.x3) {
             HStack(spacing: Spacing.x2) {
-                Text(model.projectSlug)
-                    .font(.plexSans(12, weight: .medium))
-                    .foregroundStyle(Color.inkTertiary)
-                    .lineLimit(1)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Color.inkDisabled)
-                Image(systemName: model.selectedCard == nil ? "house" : "square.and.pencil")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.inkTertiary)
-                Text(model.activeTabTitle)
-                    .font(.plexSans(12, weight: .semibold))
+                Label("Terminal", systemImage: "terminal")
+                    .font(.plexSans(13, weight: .semibold))
                     .foregroundStyle(Color.inkPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Button { model.loadSelectedTabPanel() } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.inkTertiary)
-                        .iconHitTarget(24)
-                }
-                .buttonStyle(.plain)
                 Spacer()
                 searchButton
                 Spacer()
@@ -481,24 +558,23 @@ private struct TerminalsView: View {
 
             HStack(alignment: .top, spacing: Spacing.x3) {
                 VStack(alignment: .leading, spacing: Spacing.x3) {
-                    Text(model.activeTabTitle)
+                    Text(model.terminal?.displayName ?? "Terminal")
                         .font(.plexSans(22, weight: .semibold))
                         .foregroundStyle(Color.inkPrimary)
                         .lineLimit(2)
                     HStack(spacing: Spacing.x2) {
-                        statusChip("Running", icon: "circle.fill", tint: .signalDone)
+                        statusChip(model.sessions.isEmpty ? "No sessions" : "\(model.sessions.count) sessions", icon: "terminal", tint: .signalDone)
                         statusChip(model.terminal == nil ? "Detached" : "Attached", icon: "tray.and.arrow.up", tint: .inkSecondary)
-                        statusChip("gpt-5.5", icon: "gearshape", tint: .inkSecondary)
                     }
                 }
                 Spacer()
-                Button { model.closeCard() } label: {
-                    Label("Close tab", systemImage: "xmark.circle")
+                Button { model.createSession() } label: {
+                    Label("New terminal", systemImage: "plus")
                         .font(.plexSans(12, weight: .medium))
-                        .foregroundStyle(Color.inkTertiary)
+                        .foregroundStyle(Color.inkPrimary)
                 }
                 .buttonStyle(.plain)
-                .disabled(model.activeTabID == "home")
+                .disabled(model.isCreatingWorkItem)
             }
         }
     }
@@ -564,12 +640,8 @@ private struct TerminalsView: View {
 
     @ViewBuilder
     private var taskWorkspaceSplit: some View {
-        HSplitView {
-            terminalSurface
-                .frame(minWidth: 420, idealWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
-            selectedPane
-                .frame(minWidth: 360, idealWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
-        }
+        selectedPane
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -577,9 +649,9 @@ private struct TerminalsView: View {
     private var selectedPane: some View {
         switch model.activePanel {
         case .terminal:
-            EditorPanel(model: model)
+            terminalSurface
         case .shell:
-            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix OS Shell")
+            workbenchPlaceholder(title: "Matrix OS Shell", icon: "globe", message: "The web shell panel is added in the next stack layer.")
         case .app(let slug):
             switch slug {
             case "editor":
@@ -593,7 +665,7 @@ private struct TerminalsView: View {
             case "processes":
                 ProcessesPanel(model: model)
             case "whiteboard":
-                MatrixWebShellPanel(model: model, url: model.appURL(slug: "whiteboard"), title: "Excalidraw")
+                workbenchPlaceholder(title: "Excalidraw", icon: "scribble.variable", message: "Whiteboard opens once the web shell panel is available.")
             default:
                 let meta = panelMeta(slug)
                 workbenchPlaceholder(title: meta.title, icon: meta.icon, message: meta.message)
@@ -839,7 +911,7 @@ struct EditorPanel: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
-                    if fileKind == .markdown {
+                    if fileKind == .markdown || fileKind == .code {
                         Picker("View", selection: $viewMode) {
                             Text("Preview").tag(EditorViewMode.preview)
                             Text("Edit").tag(EditorViewMode.code)
@@ -847,7 +919,8 @@ struct EditorPanel: View {
                         .labelsHidden()
                         .pickerStyle(.segmented)
                         .frame(width: 150)
-                    } else if fileKind == .code {
+                    }
+                    if fileKind == .code {
                         Picker("Theme", selection: $theme) {
                             ForEach(CodeEditorTheme.allCases) { theme in
                                 Text(theme.rawValue).tag(theme)
@@ -882,6 +955,8 @@ struct EditorPanel: View {
                     ImageFilePreview(data: model.selectedFileData, path: model.selectedFilePath)
                 } else if fileKind == .markdown && viewMode == .preview {
                     MarkdownRenderedPreview(markdown: model.selectedFileContent)
+                } else if fileKind == .code && viewMode == .preview {
+                    CodeReadOnlyPreview(text: model.selectedFileContent, filePath: model.selectedFilePath, theme: theme)
                 } else {
                     SyntaxHighlightedCodeEditor(
                         text: $model.selectedFileContent,
@@ -893,6 +968,39 @@ struct EditorPanel: View {
             .frame(minWidth: 360, maxWidth: .infinity)
         }
         .background(Color.surfaceCard)
+    }
+}
+
+private struct CodeReadOnlyPreview: View {
+    let text: String
+    let filePath: String?
+    let theme: CodeEditorTheme
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                    HStack(alignment: .top, spacing: Spacing.x3) {
+                        Text("\(index + 1)")
+                            .font(.plexMono(12))
+                            .foregroundStyle(Color.inkTertiary)
+                            .frame(width: 42, alignment: .trailing)
+                        Text(line.isEmpty ? " " : line)
+                            .font(.plexMono(13))
+                            .foregroundStyle(theme == .terminalDark ? Color.terminalInk : Color.inkPrimary)
+                            .textSelection(.enabled)
+                    }
+                    .padding(.vertical, 1)
+                }
+            }
+            .padding(Spacing.x4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(theme == .terminalDark ? Color.surfaceTerminal : Color.surfaceCard)
+    }
+
+    private var lines: [String] {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }
 }
 

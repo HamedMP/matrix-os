@@ -17,9 +17,12 @@ import MatrixBoard
 import MatrixModel
 import MatrixNet
 import MatrixTerminal
+import OSLog
 #if canImport(AppKit)
 import AppKit
 #endif
+
+private let appModelLogger = Logger(subsystem: "com.matrixos.native-shell", category: "AppModel")
 
 /// Within the App module, `ConnectionProfile` means the MatrixNet one (carries
 /// gateway/WS URL resolution). MatrixModel also defines a Keychain-ref profile;
@@ -78,23 +81,35 @@ public enum SignInState: Equatable, Sendable {
     case failed(String)
 }
 
-/// Top-level workspace sections (left rail). Board = task kanban; Terminals =
-/// the live zellij session list opened in a full/side terminal.
+/// Which Clerk screen the device approval page should mount first.
+public enum SignInMode: String, Sendable {
+    case signIn = "sign-in"
+    case signUp = "sign-up"
+}
+
+/// Top-level workspace sections (left rail). Home is the web shell package;
+/// Terminal is the live zellij session list opened in a full terminal surface.
 public enum AppSection: String, CaseIterable, Sendable {
+    case home
     case board
-    case terminals
+    case terminal
+    case browser
 
     public var title: String {
         switch self {
+        case .home: return "Home"
         case .board: return "Board"
-        case .terminals: return "Terminals"
+        case .terminal: return "Terminal"
+        case .browser: return "Browser"
         }
     }
 
     public var symbol: String {
         switch self {
+        case .home: return "house"
         case .board: return "rectangle.split.3x1"
-        case .terminals: return "terminal"
+        case .terminal: return "terminal"
+        case .browser: return "globe"
         }
     }
 }
@@ -162,6 +177,12 @@ public struct ProjectSummary: Identifiable, Equatable, Sendable {
     public init(slug: String, name: String, remote: String? = nil) {
         self.slug = slug; self.name = name; self.remote = remote
     }
+}
+
+public enum ProjectStartMode: String, CaseIterable, Sendable {
+    case scratch
+    case github
+    case linear
 }
 
 public struct WorkspaceFileEntry: Identifiable, Equatable, Sendable {
@@ -261,6 +282,10 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var profile: ConnectionProfile?
     /// Top-level phase driving the root view.
     @Published public private(set) var phase: AppPhase = .needsProfile
+    /// Whether the user has explicitly opened a project in this session. Until
+    /// then the ready state shows the Matrix home/onboarding surface instead of
+    /// auto-opening a kanban board.
+    @Published public private(set) var hasSelectedProject: Bool
     /// The board the operator is working in (read-only in US1).
     @Published public private(set) var board: BoardStore
     /// The currently selected/open card (detail pane + terminal).
@@ -284,6 +309,8 @@ public final class AppModel: ObservableObject {
     private let openExternalURL: @Sendable (URL) -> Void
     /// Gateway host for the profile created after a successful sign-in.
     private let signInGatewayHost: String
+    /// Monotonic token used to ignore stale `openCard` calls that resume after a newer tap.
+    private var openCardGeneration = 0
     /// In-flight sign-in task, so a re-tap cancels the previous attempt.
     private var signInTask: Task<Void, Never>?
     /// The project whose tasks the board renders.
@@ -291,6 +318,8 @@ public final class AppModel: ObservableObject {
     /// Maps workspace session ids / terminal ids to the zellij shell session name
     /// required by `/ws/terminal/session`.
     private var sessionAttachNames: [String: String] = [:]
+    private let maxCachedTerminalSessions = 8
+    private var terminalSessionAccessOrder: [String] = []
 
     /// Factory for the gateway client given a resolved base URL + token provider.
     /// Injected so tests can stub it without real networking.
@@ -299,9 +328,10 @@ public final class AppModel: ObservableObject {
     /// Factory for a board loader given a gateway client. Injected for tests.
     private let makeLoader: @Sendable (GatewayHTTPClient) -> any BoardLoading
 
-    /// Factory for a terminal session given a resolved WS URL, token, and session id.
+    /// Factory for a terminal session given a resolved WS URL, principal provider, and session id.
     /// Injected so tests can supply a mock event source instead of a real socket.
-    private let makeTerminal: @MainActor (URL, String, String, String) -> TerminalSession
+    private let makeTerminal: @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession
+    private var signInMode: SignInMode = .signUp
 
     // MARK: - Init
 
@@ -315,14 +345,15 @@ public final class AppModel: ObservableObject {
             GatewayHTTPClient(baseURL: url, tokenProvider: provider)
         },
         makeLoader: @escaping @Sendable (GatewayHTTPClient) -> any BoardLoading = { client in
-            // The board is project/task-first, but unlinked live zellij sessions are
-            // also surfaced so a fresh VPS never opens to an empty board.
-            CompositeBoardLoader(client: client)
+            // Project boards are task-first. Generic shells live in the Terminal
+            // section, not inside project kanban.
+            GatewayBoardLoader(client: client)
         },
-        makeTerminal: @escaping @MainActor (URL, String, String, String) -> TerminalSession = { url, token, session, name in
+        makeTerminal: @escaping @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession = { url, provider, session, name in
+            let tokenProvider = provider as any TokenProviding
             let client = ShellWSClient(
                 url: url,
-                token: token,
+                tokenProvider: { await tokenProvider.token() ?? "" },
                 session: session,
                 transport: URLSessionShellTransport()
             )
@@ -343,6 +374,7 @@ public final class AppModel: ObservableObject {
         self.deviceAuth = deviceAuth
         self.signInGatewayHost = signInGatewayHost
         self.openExternalURL = openExternalURL
+        self.hasSelectedProject = false
         // If a profile is already known (persisted sign-in), wire the real board
         // loader immediately so the first `refresh()` fetches. Otherwise a
         // placeholder keeps `board` non-nil until `selectProfile`.
@@ -402,8 +434,9 @@ public final class AppModel: ObservableObject {
     /// Starts the device-authorization sign-in: requests a device code, opens the
     /// verification page in the browser, and polls until approved. On success it
     /// stores the principal token, builds a profile, and loads the board.
-    public func beginSignIn() {
+    public func beginSignIn(mode: SignInMode = .signIn) {
         signInTask?.cancel()
+        signInMode = mode
         signIn = .starting
         signInTask = Task { [weak self] in await self?.runSignIn() }
     }
@@ -439,8 +472,9 @@ public final class AppModel: ObservableObject {
         do {
             let start = try await deviceAuth.startDeviceAuth()
             if Task.isCancelled { return }
-            signIn = .awaitingApproval(userCode: start.userCode, verificationUri: start.verificationUri)
-            if let url = URL(string: start.verificationUri) {
+            let verificationUri = verificationURI(start.verificationUri, mode: signInMode)
+            signIn = .awaitingApproval(userCode: start.userCode, verificationUri: verificationUri)
+            if let url = URL(string: verificationUri) {
                 openExternalURL(url)
             }
 
@@ -478,6 +512,15 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    private func verificationURI(_ rawValue: String, mode: SignInMode) -> String {
+        guard var components = URLComponents(string: rawValue) else { return rawValue }
+        var items = components.queryItems ?? []
+        items.removeAll { $0.name == "mode" }
+        items.append(URLQueryItem(name: "mode", value: mode.rawValue))
+        components.queryItems = items
+        return components.url?.absoluteString ?? rawValue
+    }
+
     // MARK: - Profile selection
 
     /// Selects a connection profile, rebuilds the gateway client + board store,
@@ -495,7 +538,6 @@ public final class AppModel: ObservableObject {
             self.board = BoardStore(loader: UnconfiguredBoardLoader())
             self.phase = .needsProfile
         }
-        ensureHomeTab(select: activeTabID == nil)
     }
 
     // MARK: - Board lifecycle
@@ -509,14 +551,24 @@ public final class AppModel: ObservableObject {
             phase = .needsProfile
             return
         }
-        ensureHomeTab(select: activeTabID == nil)
+        guard await principal.token() != nil else {
+            phase = .needsProfile
+            terminal?.shutdown()
+            terminal = nil
+            openError = nil
+            return
+        }
         if phase == .ready {
             // Keep showing the board while refreshing; only drop to disconnected on failure.
         } else {
             phase = .connecting
         }
-        await resolveProjectIfNeeded()
         await loadProjects()
+        guard hasSelectedProject else {
+            phase = .ready
+            return
+        }
+        guard await resolveProjectIfNeeded() else { return }
         await loadSessions()
         await board.load(projectSlug: projectSlug)
         switch board.state {
@@ -557,13 +609,14 @@ public final class AppModel: ObservableObject {
 
     public func ensureHomeTab(select: Bool = false) {
         guard profile != nil else { return }
+        let existingPanel = openTabs.first(where: { $0.id == "home" })?.panel
         let home = WorkspaceTab(
             id: "home",
             title: homeTitle(),
             projectSlug: projectSlug,
             projectName: activeProjectName,
             kind: .home,
-            panel: .shell
+            panel: existingPanel ?? .shell
         )
         if let index = openTabs.firstIndex(where: { $0.id == home.id }) {
             openTabs[index] = home
@@ -581,14 +634,28 @@ public final class AppModel: ObservableObject {
 
     /// Resolves the active project slug from the user's projects when unset, so the
     /// board targets a real project instead of a hardcoded "default" (which 404s).
-    private func resolveProjectIfNeeded() async {
-        guard projectSlug == "default" || projectSlug.isEmpty, let client = gatewayClient() else { return }
+    private func resolveProjectIfNeeded() async -> Bool {
+        guard projectSlug == "default" || projectSlug.isEmpty else { return true }
+        guard let client = gatewayClient() else {
+            phase = .needsProfile
+            return false
+        }
         struct ProjectsResponse: Decodable { struct Project: Decodable { let slug: String }; let projects: [Project] }
-        if let response: ProjectsResponse = try? await client.get("/api/workspace/projects"),
-           let first = response.projects.first {
+        if let first = projects.first {
+            projectSlug = first.slug
+            self.board = BoardStore(loader: makeLoader(client))
+            return true
+        }
+        do {
+            let response: ProjectsResponse = try await client.get("/api/workspace/projects")
+            guard let first = response.projects.first else { return true }
             projectSlug = first.slug
             // Rebuild the board store against the resolved project.
             self.board = BoardStore(loader: makeLoader(client))
+            return true
+        } catch {
+            phase = .disconnected
+            return false
         }
     }
 
@@ -642,16 +709,16 @@ public final class AppModel: ObservableObject {
             let sessions: [SessionDTO]
         }
         var byName: [String: WorkspaceSession] = [:]
+        var nextAttachNames: [String: String] = [:]
         func merge(_ dtos: [SessionDTO]) {
             for dto in dtos where !dto.name.isEmpty {
                 byName[dto.name] = WorkspaceSession(name: dto.name, attachName: dto.attachName, status: dto.status)
                 for alias in dto.aliases {
-                    sessionAttachNames[alias] = dto.attachName
+                    nextAttachNames[alias] = dto.attachName
                 }
-                sessionAttachNames[dto.name] = dto.attachName
+                nextAttachNames[dto.name] = dto.attachName
             }
         }
-        sessionAttachNames.removeAll(keepingCapacity: true)
         if let response: SessionsResponse = try? await client.get("/api/terminal/sessions") {
             merge(response.sessions)
         }
@@ -665,9 +732,10 @@ public final class AppModel: ObservableObject {
             if lhs.isActive != rhs.isActive { return lhs.isActive && !rhs.isActive }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
+        sessionAttachNames = nextAttachNames
         sessions = loaded
         if !loaded.isEmpty {
-            if section == .terminals, terminal == nil, let first = sessions.first(where: \.isActive) ?? sessions.first {
+            if section == .terminal, terminal == nil, let first = sessions.first(where: \.isActive) ?? sessions.first {
                 openSession(named: first.name)
             }
         }
@@ -687,9 +755,10 @@ public final class AppModel: ObservableObject {
 
     /// Switches the active project and reloads its board.
     public func openProject(slug: String) {
-        guard slug != projectSlug, let client = gatewayClient() else { return }
+        guard slug != projectSlug || !hasSelectedProject, let client = gatewayClient() else { return }
         openError = nil
         projectSlug = slug
+        hasSelectedProject = true
         filePanelPath = "projects/\(slug)"
         selectedFilePath = nil
         selectedFileData = nil
@@ -697,6 +766,20 @@ public final class AppModel: ObservableObject {
         board = BoardStore(loader: makeLoader(client))
         section = .board
         Task { await refresh() }
+    }
+
+    public func openHome() {
+        hasSelectedProject = false
+        selectedCard = nil
+        terminal = nil
+        activeTabID = nil
+        section = .home
+        activePanel = .shell
+    }
+
+    public func openTerminalSection() {
+        section = .terminal
+        Task { await loadSessions() }
     }
 
     public var activeProjectName: String {
@@ -714,14 +797,17 @@ public final class AppModel: ObservableObject {
     }
 
     /// Creates a project (optionally from a git remote) and opens it.
-    public func createProject(name: String, remote: String?) {
+    public func createProject(name: String, remote: String?, startMode: ProjectStartMode = .scratch) {
         guard let client = gatewayClient() else { return }
         openError = nil
         Task { [weak self] in
-            let source = (remote?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                ? remote?.trimmingCharacters(in: .whitespacesAndNewlines)
-                : name.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-            guard !source.isEmpty else {
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedRemote = remote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard startMode != .linear, !trimmedName.isEmpty else {
+                await MainActor.run { self?.openError = .createProjectFailed }
+                return
+            }
+            guard startMode != .github || !trimmedRemote.isEmpty else {
                 await MainActor.run { self?.openError = .createProjectFailed }
                 return
             }
@@ -730,22 +816,42 @@ public final class AppModel: ObservableObject {
                 .components(separatedBy: CharacterSet.alphanumerics.inverted)
                 .filter { !$0.isEmpty }
                 .joined(separator: "-")
-            struct CreateProjectRequest: Encodable { let url: String; let slug: String? }
+            struct CreateProjectRequest: Encodable {
+                let url: String?
+                let slug: String?
+                let name: String?
+                let mode: String
+            }
             struct CreateProjectResponse: Decodable { let project: Project?; struct Project: Decodable { let slug: String } }
             do {
                 let response: CreateProjectResponse = try await client.post(
-                    "/api/projects", body: CreateProjectRequest(url: source, slug: slug.isEmpty ? nil : slug)
+                    "/api/projects",
+                    body: CreateProjectRequest(
+                        url: trimmedRemote.isEmpty ? nil : trimmedRemote,
+                        slug: slug.isEmpty ? nil : slug,
+                        name: trimmedName,
+                        mode: startMode.rawValue
+                    )
                 )
                 await self?.loadProjects()
-                if let slug = response.project?.slug { self?.openProject(slug: slug) }
+                if let slug = response.project?.slug {
+                    self?.ensureProjectIsListed(ProjectSummary(slug: slug, name: trimmedName, remote: trimmedRemote.isEmpty ? nil : trimmedRemote))
+                    self?.openProject(slug: slug)
+                }
             } catch {
+                appModelLogger.error("Create project request failed: \(String(describing: error), privacy: .private)")
                 await MainActor.run { self?.openError = .createProjectFailed }
             }
         }
     }
 
-    /// Moves a card to a new column/order (drag-to-move). Optimistic + persisted
-    /// via PATCH; refreshes on completion to reconcile.
+    private func ensureProjectIsListed(_ project: ProjectSummary) {
+        guard !projects.contains(where: { $0.slug == project.slug }) else { return }
+        projects.insert(project, at: 0)
+    }
+
+    /// Moves a card to a new column/order (drag-to-move). Persists via PATCH and
+    /// refreshes on completion to reconcile.
     public func updateTaskStatus(cardId: String, to status: TaskStatus, order: Double?) {
         guard let client = gatewayClient() else { return }
         openError = nil
@@ -760,6 +866,7 @@ public final class AppModel: ObservableObject {
                 )
                 await self?.refresh()
             } catch {
+                appModelLogger.error("Task status update failed: \(String(describing: error), privacy: .private)")
                 await MainActor.run { self?.openError = .taskMutationFailed }
                 await self?.refresh() // reconcile on failure too
             }
@@ -768,23 +875,32 @@ public final class AppModel: ObservableObject {
 
     /// Opens a raw zellij session (Terminals section) in the side terminal view.
     public func openSession(named name: String) {
+        section = .terminal
         let card = Card(
             id: name, projectSlug: projectSlug, title: name,
             status: .running, priority: .normal, order: 0,
             linkedSessionId: name, updatedAt: ""
         )
-        Task { try? await openCard(card) }
+        Task {
+            do {
+                try await openCard(card)
+            } catch let error as OperatorError {
+                await MainActor.run { self.openError = error }
+            } catch {
+                await MainActor.run { self.openError = .misconfigured }
+            }
+        }
     }
 
     /// Creates a new task in the given column and refreshes the board (TE01/US7).
     public func createTask(status: TaskStatus = .todo) {
-        guard !isCreatingSession else { return }
+        guard !isCreatingWorkItem else { return }
         openError = nil
-        isCreatingSession = true
+        isCreatingWorkItem = true
         Task { [weak self] in
-            defer { Task { @MainActor in self?.isCreatingSession = false } }
+            defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
             guard let self, let client = self.gatewayClient() else { return }
-            await self.resolveProjectIfNeeded()
+            guard await self.resolveProjectIfNeeded() else { return }
             let slug = self.projectSlug
             struct CreateTaskRequest: Encodable { let title: String; let status: String }
             struct CreateTaskResponse: Decodable {
@@ -799,7 +915,7 @@ public final class AppModel: ObservableObject {
                     let card = task.toCard()
                     await MainActor.run {
                         self.selectedCard = card
-                        self.activePanel = .app(slug: "editor")
+                        self.activePanel = .terminal
                         _ = self.upsertTab(for: card)
                     }
                     Task { try? await self.openCard(card) }
@@ -842,12 +958,13 @@ public final class AppModel: ObservableObject {
     public func openCard(_ card: Card) async throws -> TerminalSession {
         openError = nil
         selectedCard = card
-        if activePanel == .terminal {
-            activePanel = .app(slug: "editor")
-        }
         let tabID = upsertTab(for: card)
+        activePanel = .terminal
+        openCardGeneration += 1
+        let generation = openCardGeneration
 
         if let existing = terminalSessions[tabID] {
+            markTerminalSessionUsed(tabID)
             terminal = existing
             return existing
         }
@@ -857,10 +974,13 @@ public final class AppModel: ObservableObject {
             openError = err
             throw err
         }
-        guard let token = await principal.token() else {
+        guard await principal.token() != nil else {
             let err = OperatorError.unauthorized
             openError = err
             throw err
+        }
+        guard generation == openCardGeneration, selectedCard?.id == card.id else {
+            throw OperatorError.noSession
         }
 
         // Existing session → attach by name. No session yet → connect to
@@ -886,17 +1006,15 @@ public final class AppModel: ObservableObject {
         }
 
         let label = hasSession ? attachSession : card.title
-        let session = makeTerminal(wsURL, token, attachSession, label)
-        terminalSessions[tabID] = session
+        let session = makeTerminal(wsURL, principal, attachSession, label)
+        cacheTerminalSession(session, for: tabID)
         terminal = session
-        session.start()
-        // After it opens, refresh the session list so the new session is tracked.
         if !hasSession {
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
-                await self?.loadSessions()
+            session.onNextAttach { [weak self] in
+                Task { await self?.loadSessions() }
             }
         }
+        session.start()
         return session
     }
 
@@ -907,11 +1025,20 @@ public final class AppModel: ObservableObject {
         activePanel = tab.panel
         selectedCard = tab.card
         if let cachedTerminal = terminalSessions[id] {
+            markTerminalSessionUsed(id)
             terminal = cachedTerminal
             return
         }
         if let card = tab.card {
-            Task { try? await openCard(card) }
+            Task {
+                do {
+                    try await openCard(card)
+                } catch let error as OperatorError {
+                    await MainActor.run { self.openError = error }
+                } catch {
+                    await MainActor.run { self.openError = .misconfigured }
+                }
+            }
         } else {
             terminal = nil
         }
@@ -927,10 +1054,8 @@ public final class AppModel: ObservableObject {
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
         let wasActive = activeTabID == id
         openTabs.remove(at: index)
+        removeCachedTerminalSession(for: id)
         if !wasActive { return }
-        if let session = terminalSessions.removeValue(forKey: id) {
-            session.shutdown()
-        }
         terminal = nil
         selectedCard = nil
         openError = nil
@@ -1265,52 +1390,40 @@ public final class AppModel: ObservableObject {
             }
             return
         }
-        activePanel = .terminal
         terminal?.send(trimmed + "\n")
     }
 
     /// ⌘N / column "+": create a new task card on the board.
     public func newCardPlaceholder() { createTask(status: .todo) }
 
-    /// Whether a create (task or session) is in flight.
-    @Published public private(set) var isCreatingSession = false
+    /// Whether a task or terminal-session create request is in flight.
+    @Published public private(set) var isCreatingWorkItem = false
 
     /// Creates a new zellij session (Terminals section "+") and reloads the list.
     public func createSession() {
-        guard !isCreatingSession, let client = gatewayClient() else { return }
+        guard !isCreatingWorkItem, let client = gatewayClient() else { return }
         openError = nil
-        isCreatingSession = true
+        isCreatingWorkItem = true
         let existingSessionNames = Set(sessions.map(\.name))
+        let name = generatedShellSessionName()
         Task { [weak self] in
-            defer { Task { @MainActor in self?.isCreatingSession = false } }
+            defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
             struct CreateSessionRequest: Encodable {
-                let kind = "shell"
-                let runtimePreference = "zellij"
-                let projectSlug: String
+                let name: String
+                let cwd: String?
             }
             struct CreateSessionResponse: Decodable {
-                struct Session: Decodable {
-                    let name: String
-
-                    private enum CodingKeys: String, CodingKey { case name, id, sessionId }
-
-                    init(from decoder: Decoder) throws {
-                        let container = try decoder.container(keyedBy: CodingKeys.self)
-                        name = try container.decodeIfPresent(String.self, forKey: .name)
-                            ?? container.decodeIfPresent(String.self, forKey: .id)
-                            ?? container.decode(String.self, forKey: .sessionId)
-                    }
-                }
-                let session: Session?
+                let name: String?
             }
             do {
                 let response: CreateSessionResponse = try await client.post(
-                    "/api/sessions",
-                    body: CreateSessionRequest(projectSlug: self?.projectSlug ?? "default")
+                    "/api/terminal/sessions",
+                    body: CreateSessionRequest(name: name, cwd: nil)
                 )
                 await self?.loadSessions()
-                if let name = response.session?.name {
-                    await MainActor.run { self?.openSession(named: name) }
+                let requestedName = response.name ?? name
+                if self?.sessions.contains(where: { $0.name == requestedName }) == true {
+                    await MainActor.run { self?.openSession(named: requestedName) }
                 } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {
                     await MainActor.run { self?.openSession(named: created.name) }
                 }
@@ -1318,6 +1431,11 @@ public final class AppModel: ObservableObject {
                 await MainActor.run { self?.openError = .createSessionFailed }
             }
         }
+    }
+
+    private func generatedShellSessionName() -> String {
+        let suffix = UUID().uuidString.prefix(8).lowercased()
+        return "shell-\(suffix)"
     }
 
     private func displayName(for card: Card) -> String {
@@ -1329,6 +1447,32 @@ public final class AppModel: ObservableObject {
 
     private func sessionAttachName(for session: String) -> String {
         sessionAttachNames[session] ?? session
+    }
+
+    private func cacheTerminalSession(_ session: TerminalSession, for tabID: String) {
+        terminalSessions[tabID] = session
+        markTerminalSessionUsed(tabID)
+        evictCachedTerminalSessionsIfNeeded()
+    }
+
+    private func markTerminalSessionUsed(_ tabID: String) {
+        terminalSessionAccessOrder.removeAll { $0 == tabID }
+        terminalSessionAccessOrder.append(tabID)
+    }
+
+    private func evictCachedTerminalSessionsIfNeeded() {
+        while terminalSessions.count > maxCachedTerminalSessions {
+            guard let evictID = terminalSessionAccessOrder.first(where: { $0 != activeTabID })
+                ?? terminalSessions.keys.first(where: { $0 != activeTabID }) else {
+                return
+            }
+            removeCachedTerminalSession(for: evictID)
+        }
+    }
+
+    private func removeCachedTerminalSession(for tabID: String) {
+        terminalSessionAccessOrder.removeAll { $0 == tabID }
+        terminalSessions.removeValue(forKey: tabID)?.shutdown()
     }
 
     private func queryValue(_ value: String) -> String {
@@ -1353,24 +1497,40 @@ public final class AppModel: ObservableObject {
     private func upsertTab(for card: Card) -> String {
         let kind: WorkspaceTab.Kind = card.id.hasPrefix("task_") ? .task : .session
         let title = displayName(for: card)
+        let tabID = "\(kind.rawValue):\(projectSlug):\(card.id)"
+        let existingPanel = openTabs.first(where: { $0.id == tabID })?.panel
         let tab = WorkspaceTab(
+            id: tabID,
             title: title,
             projectSlug: projectSlug,
             projectName: activeProjectName,
             kind: kind,
             card: card,
-            panel: .app(slug: "editor")
+            panel: existingPanel ?? .terminal
         )
         if let index = openTabs.firstIndex(where: { $0.id == tab.id }) {
             openTabs[index] = tab
         } else {
             openTabs.append(tab)
-            if openTabs.count > 16 {
-                openTabs.removeFirst(openTabs.count - 16)
-            }
+            trimOpenTabsToLimit(protecting: tab.id)
         }
         activeTabID = tab.id
         return tab.id
+    }
+
+    private func trimOpenTabsToLimit(protecting protectedID: String) {
+        while openTabs.count > 16 {
+            guard let evictIndex = openTabs.firstIndex(where: { tab in
+                tab.id != "home" && tab.id != protectedID
+            }) else {
+                return
+            }
+            let evicted = openTabs.remove(at: evictIndex)
+            removeCachedTerminalSession(for: evicted.id)
+            if activeTabID == evicted.id {
+                terminal = nil
+            }
+        }
     }
 }
 

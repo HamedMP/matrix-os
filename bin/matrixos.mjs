@@ -13,6 +13,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { findTsxLoader } from '../packages/sync-client/src/lib/find-tsx-loader.mjs';
+import { assertSupportedNodeRuntime } from '../packages/sync-client/src/lib/node-runtime-guard.mjs';
+
+assertSupportedNodeRuntime(process.argv.slice(2), process.version);
 
 const here = dirname(fileURLToPath(import.meta.url));
 
