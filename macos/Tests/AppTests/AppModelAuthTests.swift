@@ -7,6 +7,28 @@ import MatrixNet
 
 @MainActor
 final class AppModelAuthTests: XCTestCase {
+    func testWebShellAuthStateKeepsPromptWhenHostedShellRequiresAuth() {
+        var state = WebShellAuthState()
+
+        state.resolveToken("native-token")
+        state.markHostedAuthRequired()
+        state.resolveToken("native-token")
+
+        XCTAssertTrue(state.shouldShowSignInPrompt)
+        XCTAssertEqual(state.token, "native-token")
+    }
+
+    func testWebShellAuthStateClearsPromptAfterExplicitSignInReload() {
+        var state = WebShellAuthState()
+
+        state.resolveToken("old-token")
+        state.markHostedAuthRequired()
+        state.resolveToken("new-token", source: .explicitSignIn)
+
+        XCTAssertFalse(state.shouldShowSignInPrompt)
+        XCTAssertEqual(state.token, "new-token")
+    }
+
     func testRefreshRequiresTokenEvenWhenProfileIsPersisted() async {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let profile = ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com")

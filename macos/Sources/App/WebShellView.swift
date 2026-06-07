@@ -9,9 +9,7 @@ struct MatrixWebShellPanel: View {
     let url: URL?
     let title: String
 
-    @State private var token: String?
-    @State private var didResolveToken = false
-    @State private var authRequired = false
+    @State private var authState = WebShellAuthState()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,25 +52,24 @@ struct MatrixWebShellPanel: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.surfaceCard)
-            } else if !didResolveToken {
+            } else if !authState.didResolveToken {
                 ProgressView()
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.canvasVoid)
-            } else if authRequired || token == nil {
+            } else if authState.shouldShowSignInPrompt {
                 NoProfileView(
                     onCreate: { model.beginSignIn(mode: .signUp) },
                     onSignIn: { model.beginSignIn(mode: .signIn) },
                     onCancelSignIn: { model.cancelSignIn() },
                     signIn: model.signIn
                 )
-            } else if let url {
+            } else if let url, let token = authState.token {
                 WebShellView(
                     url: url,
                     bearerToken: token,
                     onAuthRequired: {
-                        authRequired = true
-                        Task { await reloadBearerToken() }
+                        authState.markHostedAuthRequired()
                     }
                 )
             } else {
@@ -88,28 +85,57 @@ struct MatrixWebShellPanel: View {
         .task(id: url) {
             await reloadBearerToken()
         }
-        .onChange(of: model.signIn) { _, _ in
-            Task { await reloadBearerToken() }
+        .onChange(of: model.signIn) { oldValue, newValue in
+            Task {
+                let source: WebShellAuthState.TokenResolutionSource = oldValue != .idle && newValue == .idle
+                    ? .explicitSignIn
+                    : .automatic
+                await reloadBearerToken(source: source)
+            }
         }
     }
 
     @MainActor
-    private func reloadBearerToken() async {
+    private func reloadBearerToken(source: WebShellAuthState.TokenResolutionSource = .automatic) async {
         guard url != nil else {
-            token = nil
-            didResolveToken = true
-            authRequired = false
+            authState.resolveToken(nil, source: source)
             return
         }
-        didResolveToken = false
+        authState.markResolving()
         let current = await model.currentBearerToken()
-        token = current
+        authState.resolveToken(current, source: source)
+    }
+}
+
+struct WebShellAuthState: Equatable, Sendable {
+    enum TokenResolutionSource: Sendable {
+        case automatic
+        case explicitSignIn
+    }
+
+    private(set) var token: String?
+    private(set) var didResolveToken = false
+    private(set) var hostedAuthRequired = false
+
+    var shouldShowSignInPrompt: Bool {
+        didResolveToken && (token == nil || hostedAuthRequired)
+    }
+
+    mutating func markResolving() {
+        didResolveToken = false
+    }
+
+    mutating func resolveToken(_ nextToken: String?, source: TokenResolutionSource = .automatic) {
+        token = nextToken
         didResolveToken = true
-        if current != nil {
-            authRequired = false
-        } else {
-            authRequired = true
+        if nextToken == nil || source == .explicitSignIn {
+            hostedAuthRequired = false
         }
+    }
+
+    mutating func markHostedAuthRequired() {
+        hostedAuthRequired = true
+        didResolveToken = true
     }
 }
 
