@@ -577,13 +577,14 @@ public final class AppModel: ObservableObject {
 
     public func ensureHomeTab(select: Bool = false) {
         guard profile != nil else { return }
+        let existingPanel = openTabs.first(where: { $0.id == "home" })?.panel
         let home = WorkspaceTab(
             id: "home",
             title: homeTitle(),
             projectSlug: projectSlug,
             projectName: activeProjectName,
             kind: .home,
-            panel: .shell
+            panel: existingPanel ?? .shell
         )
         if let index = openTabs.firstIndex(where: { $0.id == home.id }) {
             openTabs[index] = home
@@ -676,16 +677,16 @@ public final class AppModel: ObservableObject {
             let sessions: [SessionDTO]
         }
         var byName: [String: WorkspaceSession] = [:]
+        var nextAttachNames: [String: String] = [:]
         func merge(_ dtos: [SessionDTO]) {
             for dto in dtos where !dto.name.isEmpty {
                 byName[dto.name] = WorkspaceSession(name: dto.name, attachName: dto.attachName, status: dto.status)
                 for alias in dto.aliases {
-                    sessionAttachNames[alias] = dto.attachName
+                    nextAttachNames[alias] = dto.attachName
                 }
-                sessionAttachNames[dto.name] = dto.attachName
+                nextAttachNames[dto.name] = dto.attachName
             }
         }
-        sessionAttachNames.removeAll(keepingCapacity: true)
         if let response: SessionsResponse = try? await client.get("/api/terminal/sessions") {
             merge(response.sessions)
         }
@@ -699,6 +700,7 @@ public final class AppModel: ObservableObject {
             if lhs.isActive != rhs.isActive { return lhs.isActive && !rhs.isActive }
             return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
+        sessionAttachNames = nextAttachNames
         sessions = loaded
         if !loaded.isEmpty {
             if section == .shell, terminal == nil, let first = sessions.first(where: \.isActive) ?? sessions.first {
@@ -1449,16 +1451,10 @@ public final class AppModel: ObservableObject {
     private func upsertTab(for card: Card) -> String {
         let kind: WorkspaceTab.Kind = card.id.hasPrefix("task_") ? .task : .session
         let title = displayName(for: card)
-        let candidate = WorkspaceTab(
-            title: title,
-            projectSlug: projectSlug,
-            projectName: activeProjectName,
-            kind: kind,
-            card: card,
-            panel: .terminal
-        )
-        let existingPanel = openTabs.first(where: { $0.id == candidate.id })?.panel
+        let tabID = "\(kind.rawValue):\(projectSlug):\(card.id)"
+        let existingPanel = openTabs.first(where: { $0.id == tabID })?.panel
         let tab = WorkspaceTab(
+            id: tabID,
             title: title,
             projectSlug: projectSlug,
             projectName: activeProjectName,

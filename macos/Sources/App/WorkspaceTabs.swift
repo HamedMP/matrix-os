@@ -63,7 +63,7 @@ let taskPaneSpecs: [TaskPaneSpec] = [
     TaskPaneSpec(id: "artifacts", title: "Artifacts", icon: "paperclip", shortcut: "⌘⇧A", panel: .app(slug: "artifacts")),
     TaskPaneSpec(id: "git", title: "Git", icon: "arrow.triangle.branch", shortcut: "⌘G", panel: .app(slug: "git")),
     TaskPaneSpec(id: "settings", title: "Settings", icon: "slider.horizontal.3", shortcut: "⌘J", panel: .app(slug: "settings")),
-    TaskPaneSpec(id: "processes", title: "Processes", icon: "cpu", shortcut: "⌘P", panel: .app(slug: "processes")),
+    TaskPaneSpec(id: "processes", title: "Processes", icon: "cpu", shortcut: "⌘⇧P", panel: .app(slug: "processes")),
     TaskPaneSpec(id: "whiteboard", title: "Excalidraw", icon: "scribble.variable", shortcut: "⌘X", panel: .app(slug: "whiteboard")),
 ]
 
@@ -105,7 +105,7 @@ struct TaskPaneStrip: View {
     }
 
     private func shortcutModifiers(for id: String) -> EventModifiers {
-        id == "artifacts" ? [.command, .shift] : [.command]
+        ["artifacts", "processes"].contains(id) ? [.command, .shift] : [.command]
     }
 }
 

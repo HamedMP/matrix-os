@@ -261,17 +261,15 @@ private final class LineNumberRulerView: NSRulerView {
         let visible = textView.visibleRect
         let glyphRange = layoutManager.glyphRange(forBoundingRect: visible, in: textContainer)
         let text = textView.string as NSString
-        var line = 1
-        var index = 0
-        while index < glyphRange.location, index < text.length {
-            if text.character(at: index) == 10 { line += 1 }
-            index += 1
-        }
         var glyphIndex = glyphRange.location
+        var scanIndex = 0
+        var line = 1
         while glyphIndex < NSMaxRange(glyphRange) {
             var effective = NSRange()
             let rect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &effective)
             let y = rect.minY + textView.textContainerOrigin.y - visible.minY + 1
+            let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            advanceLineNumber(upTo: characterIndex, in: text, scanIndex: &scanIndex, line: &line)
             let label = "\(line)" as NSString
             label.draw(
                 at: NSPoint(x: 8, y: y),
@@ -281,7 +279,13 @@ private final class LineNumberRulerView: NSRulerView {
                 ]
             )
             glyphIndex = NSMaxRange(effective)
-            line += 1
+        }
+    }
+
+    private func advanceLineNumber(upTo characterIndex: Int, in text: NSString, scanIndex: inout Int, line: inout Int) {
+        while scanIndex < characterIndex, scanIndex < text.length {
+            if text.character(at: scanIndex) == 10 { line += 1 }
+            scanIndex += 1
         }
     }
 }
