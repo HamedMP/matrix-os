@@ -23,4 +23,15 @@ final class TerminalRendererTests: XCTestCase {
     func testTerminalPanelReportsSwiftTermRendererMetadata() {
         XCTAssertEqual(TerminalPanelView.rendererConfiguration.kind, .swiftTerm)
     }
+
+    func testExperimentalRenderersAreHiddenUnlessExplicitlyAllowed() {
+        XCTAssertEqual(
+            TerminalRendererConfiguration.available().map(\.kind),
+            [.swiftTerm]
+        )
+        XCTAssertEqual(
+            TerminalRendererConfiguration.available(includeExperimental: true).map(\.kind),
+            [.swiftTerm, .ghostty, .xtermWebView]
+        )
+    }
 }

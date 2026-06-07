@@ -20,6 +20,12 @@ public struct TerminalRendererConfiguration: Equatable, Sendable {
 
     public static let `default` = TerminalRendererConfiguration(kind: .swiftTerm)
 
+    public static func available(includeExperimental: Bool = false) -> [TerminalRendererConfiguration] {
+        TerminalRendererKind.allCases
+            .map(TerminalRendererConfiguration.init(kind:))
+            .filter { includeExperimental || !$0.isExperimental }
+    }
+
     public var displayName: String {
         switch kind {
         case .swiftTerm:

@@ -49,14 +49,14 @@
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Add terminal renderer identity assertions in `macos/Tests/TerminalTests/TerminalRendererTests.swift`
+- [x] T011 [P] [US1] Add terminal renderer identity assertions in `macos/Tests/TerminalTests/TerminalRendererTests.swift`
 - [ ] T012 [P] [US1] Add terminal detach-vs-shutdown lifecycle assertions in `macos/Tests/TerminalTests/TerminalSessionTests.swift`
 - [ ] T013 [P] [US1] Add reconnect/replay renderer-safe assertions in `macos/Tests/TerminalTests/ShellWSClientTests.swift`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Expose SwiftTerm renderer kind from `macos/Sources/Terminal/TerminalPanelView.swift`
-- [ ] T015 [US1] Add terminal renderer settings hooks for future Ghostty selection in `macos/Sources/Terminal/TerminalRenderer.swift`
+- [x] T014 [US1] Expose SwiftTerm renderer kind from `macos/Sources/Terminal/TerminalPanelView.swift`
+- [x] T015 [US1] Add terminal renderer settings hooks for future Ghostty selection in `macos/Sources/Terminal/TerminalRenderer.swift`
 - [ ] T016 [US1] Keep user-facing terminal errors generic while recording renderer kind in diagnostics in `macos/Sources/Terminal/TerminalSession.swift`
 - [ ] T017 [US1] Document Ghostty/libghostty spike gates in `specs/088-macos-dev-experience/quickstart.md`
 - [ ] T018 [US1] Run `swift test --package-path macos --filter TerminalTests`
