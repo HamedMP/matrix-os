@@ -257,6 +257,28 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertTrue(model.openTabs.contains(where: { $0.id == "board:main" && $0.kind == .board }))
     }
 
+    func testStaleBoardTabsCanEvictSoTabLimitStillHolds() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        for index in 0..<20 {
+            model.openProject(slug: "project-\(index)")
+        }
+
+        XCTAssertLessThanOrEqual(model.openTabs.count, 16)
+        XCTAssertTrue(model.openTabs.contains(where: { $0.id == "board:project-19" && $0.kind == .board }))
+        XCTAssertLessThan(model.openTabs.filter { $0.kind == .board }.count, 20)
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()

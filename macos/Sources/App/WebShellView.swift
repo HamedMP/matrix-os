@@ -347,17 +347,19 @@ struct NativeAppSessionExchange {
             completion()
             return
         }
-        var remaining = cookies.count
-        for cookie in cookies {
+        func installCookie(at index: Int) {
+            guard cookies.indices.contains(index) else {
+                completion()
+                return
+            }
+            let cookie = cookies[index]
             store.setCookie(cookie) {
                 Task { @MainActor in
-                    remaining -= 1
-                    if remaining == 0 {
-                        completion()
-                    }
+                    installCookie(at: index + 1)
                 }
             }
         }
+        installCookie(at: 0)
     }
 }
 

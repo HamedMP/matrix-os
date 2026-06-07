@@ -1592,9 +1592,10 @@ public final class AppModel: ObservableObject {
     }
 
     private func trimOpenTabsToLimit(protecting protectedID: String) {
+        let currentBoardID = "board:\(projectSlug)"
         while openTabs.count > 16 {
             guard let evictIndex = openTabs.firstIndex(where: { tab in
-                tab.kind != .home && tab.kind != .board && tab.id != protectedID
+                tab.kind != .home && tab.id != currentBoardID && tab.id != protectedID
             }) else {
                 return
             }
