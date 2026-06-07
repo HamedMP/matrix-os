@@ -143,43 +143,20 @@ private struct WebShellView: NSViewRepresentable {
         coordinator.lastBearerToken = bearerToken
         coordinator.lastRequestedURL = url
         coordinator.destinationURL = url
-        guard let bearerToken, !bearerToken.isEmpty, let request = appSessionExchangeRequest(for: url, token: bearerToken) else {
-            coordinator.exchangeInFlight = false
-            coordinator.exchangeNavigation = nil
+        guard let bearerToken, !bearerToken.isEmpty else {
+            coordinator.cancelExchange()
             view.load(webShellDestinationRequest(for: url, token: bearerToken))
             return
         }
-        coordinator.exchangeInFlight = true
-        coordinator.exchangeNavigation = view.load(request)
-    }
-
-    private func appSessionExchangeRequest(for destination: URL, token: String) -> URLRequest? {
-        guard var comps = URLComponents(url: destination, resolvingAgainstBaseURL: false) else { return nil }
-        let redirectTo = destination.path.isEmpty
-            ? "/"
-            : destination.path + (destination.query.map { "?\($0)" } ?? "")
-        comps.path = "/api/auth/app-session"
-        comps.query = nil
-        guard let exchangeURL = comps.url else { return nil }
-        var request = URLRequest(url: exchangeURL)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 20
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONEncoder().encode(AppSessionExchangeBody(redirectTo: redirectTo))
-        return request
-    }
-
-    private struct AppSessionExchangeBody: Encodable {
-        let redirectTo: String
+        coordinator.exchangeAppSession(for: url, token: bearerToken, in: view)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastBearerToken: String?
         var lastRequestedURL: URL?
         var destinationURL: URL?
-        var exchangeInFlight = false
-        var exchangeNavigation: WKNavigation?
+        private var exchangeTask: Task<Void, Never>?
+        private var exchangeGeneration = 0
 
         @MainActor
         func webView(
@@ -197,74 +174,54 @@ private struct WebShellView: NSViewRepresentable {
                 return
             }
             if Self.shouldOpenExternally(url) {
-                if exchangeInFlight {
-                    exchangeInFlight = false
-                    exchangeNavigation = nil
-                }
+                cancelExchange()
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
                 return
-            }
-            if exchangeInFlight, !Self.isAppSessionExchangeURL(url) {
-                exchangeInFlight = false
-                exchangeNavigation = nil
             }
             decisionHandler(.allow)
         }
 
         @MainActor
-        func webView(
-            _ webView: WKWebView,
-            decidePolicyFor navigationResponse: WKNavigationResponse,
-            decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
-        ) {
-            guard exchangeInFlight,
-                  let responseURL = navigationResponse.response.url,
-                  Self.isAppSessionExchangeURL(responseURL),
-                  let httpResponse = navigationResponse.response as? HTTPURLResponse,
-                  !(200..<300).contains(httpResponse.statusCode) else {
-                decisionHandler(.allow)
+        func exchangeAppSession(for destination: URL, token: String, in webView: WKWebView) {
+            cancelExchange()
+            guard let request = NativeAppSessionExchange.request(for: destination, token: token) else {
+                onAuthRequired()
                 return
             }
-            loadDestinationAfterExchangeFailure(in: webView)
-            decisionHandler(.cancel)
-        }
-
-        @MainActor
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            guard exchangeInFlight,
-                  navigation === exchangeNavigation,
-                  webView.url.map(Self.isAppSessionExchangeURL) == true,
-                  let destinationURL else { return }
-            exchangeInFlight = false
-            exchangeNavigation = nil
-            webView.load(webShellDestinationRequest(for: destinationURL, token: lastBearerToken))
-        }
-
-        @MainActor
-        func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
-            if exchangeInFlight {
-                exchangeInFlight = false
-                exchangeNavigation = nil
+            exchangeGeneration += 1
+            let generation = exchangeGeneration
+            exchangeTask = Task { [weak self, weak webView] in
+                do {
+                    let response = try await NativeAppSessionExchange.perform(request: request)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        guard let self, let webView, self.exchangeGeneration == generation else { return }
+                        self.exchangeTask = nil
+                        NativeAppSessionExchange.installCookies(response.cookies, in: webView.configuration.websiteDataStore.httpCookieStore) {
+                            guard self.exchangeGeneration == generation else { return }
+                            webView.load(webShellDestinationRequest(for: destination, token: token))
+                        }
+                    }
+                } catch is CancellationError {
+                    // A newer navigation superseded this exchange.
+                } catch let error as URLError where error.code == .cancelled {
+                    // URLSession reports task cancellation as URLError.cancelled.
+                } catch {
+                    await MainActor.run {
+                        guard let self, self.exchangeGeneration == generation else { return }
+                        self.exchangeTask = nil
+                        self.onAuthRequired()
+                    }
+                }
             }
         }
 
         @MainActor
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            loadDestinationAfterExchangeFailure(in: webView)
-        }
-
-        @MainActor
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            loadDestinationAfterExchangeFailure(in: webView)
-        }
-
-        @MainActor
-        private func loadDestinationAfterExchangeFailure(in webView: WKWebView) {
-            guard exchangeInFlight, let destinationURL else { return }
-            exchangeInFlight = false
-            exchangeNavigation = nil
-            webView.load(webShellDestinationRequest(for: destinationURL, token: lastBearerToken))
+        func cancelExchange() {
+            exchangeGeneration += 1
+            exchangeTask?.cancel()
+            exchangeTask = nil
         }
 
         private let onAuthRequired: @MainActor () -> Void
@@ -278,22 +235,16 @@ private struct WebShellView: NSViewRepresentable {
                   let host = url.host()?.lowercased(),
                   host == destinationHost else { return false }
             let path = url.path.lowercased()
-            guard !Self.isAppSessionExchangeURL(url) else { return false }
             return Self.isAuthPath(path)
         }
 
         private static func shouldOpenExternally(_ url: URL) -> Bool {
             guard let host = url.host()?.lowercased() else { return false }
             let path = url.path.lowercased()
-            if path == "/api/auth/app-session" { return false }
             if host.contains("clerk") || host.contains("accounts.") {
                 return true
             }
             return isAuthPath(path)
-        }
-
-        private static func isAppSessionExchangeURL(_ url: URL) -> Bool {
-            url.path == "/api/auth/app-session"
         }
 
         private static func isAuthPath(_ path: String) -> Bool {
@@ -313,6 +264,76 @@ private struct WebShellView: NSViewRepresentable {
                 || path.hasPrefix("/auth/callback/")
         }
     }
+}
+
+struct NativeAppSessionExchange {
+    private struct Body: Encodable {
+        let redirectTo: String
+    }
+
+    struct Response: Sendable {
+        let cookies: [HTTPCookie]
+    }
+
+    static func request(for destination: URL, token: String) -> URLRequest? {
+        guard var comps = URLComponents(url: destination, resolvingAgainstBaseURL: false) else { return nil }
+        let redirectTo = destination.path.isEmpty
+            ? "/"
+            : destination.path + (destination.query.map { "?\($0)" } ?? "")
+        comps.path = "/api/auth/app-session"
+        comps.query = nil
+        guard let exchangeURL = comps.url else { return nil }
+        var request = URLRequest(url: exchangeURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONEncoder().encode(Body(redirectTo: redirectTo))
+        return request
+    }
+
+    static func perform(request: URLRequest) async throws -> Response {
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw NativeAppSessionExchangeError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw NativeAppSessionExchangeError.unauthorized }
+        guard let url = request.url else { throw NativeAppSessionExchangeError.invalidResponse }
+        return try Response(cookies: appSessionCookies(from: http, for: url))
+    }
+
+    static func appSessionCookies(from response: HTTPURLResponse, for url: URL) throws -> [HTTPCookie] {
+        let fields = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
+            if let key = entry.key as? String, let value = entry.value as? String {
+                result[key] = value
+            }
+        }
+        let cookies = HTTPCookie.cookies(withResponseHeaderFields: fields, for: url)
+        guard cookies.contains(where: { $0.name == "matrix_app_session" || $0.name.hasPrefix("matrix_app_session__") }) else {
+            throw NativeAppSessionExchangeError.invalidResponse
+        }
+        return cookies
+    }
+
+    @MainActor
+    static func installCookies(_ cookies: [HTTPCookie], in store: WKHTTPCookieStore, completion: @escaping @MainActor () -> Void) {
+        guard !cookies.isEmpty else {
+            completion()
+            return
+        }
+        var remaining = cookies.count
+        for cookie in cookies {
+            store.setCookie(cookie) {
+                remaining -= 1
+                if remaining == 0 {
+                    completion()
+                }
+            }
+        }
+    }
+}
+
+enum NativeAppSessionExchangeError: Error, Equatable {
+    case invalidResponse
+    case unauthorized
 }
 
 private func webShellDestinationRequest(for url: URL, token: String?) -> URLRequest {
