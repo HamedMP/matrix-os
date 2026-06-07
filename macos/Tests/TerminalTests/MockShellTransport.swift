@@ -8,6 +8,7 @@ import Foundation
 actor MockShellTransport: ShellTransport {
     private(set) var connectCount = 0
     private(set) var lastConnectRequest: URLRequest?
+    private(set) var sentTexts: [String] = []
     private var continuation: AsyncThrowingStream<String, Error>.Continuation?
     private var connectWaiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
@@ -21,7 +22,7 @@ actor MockShellTransport: ShellTransport {
     }
 
     func send(_ text: String) async throws {
-        // No-op for state-machine tests; client→server payloads are asserted via codec tests.
+        sentTexts.append(text)
     }
 
     func close() {

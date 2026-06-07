@@ -10,12 +10,17 @@ import MatrixModel
 import MatrixNet
 
 public struct CompositeBoardLoader: BoardLoading {
-    private let tasks: GatewayBoardLoader
-    private let sessions: SessionsBoardLoader
+    private let tasks: any BoardLoading
+    private let sessions: any BoardLoading
 
     public init(client: GatewayHTTPClient) {
         self.tasks = GatewayBoardLoader(client: client)
         self.sessions = SessionsBoardLoader(client: client)
+    }
+
+    init(tasks: any BoardLoading, sessions: any BoardLoading) {
+        self.tasks = tasks
+        self.sessions = sessions
     }
 
     public func fetchTasks(projectSlug: String) async throws -> [Card] {

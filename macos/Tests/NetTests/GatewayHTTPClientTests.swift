@@ -132,6 +132,27 @@ final class GatewayHTTPClientTests: XCTestCase {
         XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "PATCH")
     }
 
+    func testRawGetReturnsData() async throws {
+        MockURLProtocol.setHandler { req in
+            (httpResponse(req.url!, 200), Data("hello".utf8))
+        }
+        let client = makeClient()
+        let data = try await client.getData("/files/projects/demo/README.md")
+        XCTAssertEqual(String(data: data, encoding: .utf8), "hello")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "GET")
+    }
+
+    func testPutDataUsesPutAndContentType() async throws {
+        MockURLProtocol.setHandler { req in
+            (httpResponse(req.url!, 200), Data("{}".utf8))
+        }
+        let client = makeClient()
+        try await client.putData("/files/projects/demo/README.md", data: Data("saved".utf8))
+        let req = try XCTUnwrap(MockURLProtocol.lastRequest)
+        XCTAssertEqual(req.httpMethod, "PUT")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "Content-Type"), "text/plain; charset=utf-8")
+    }
+
     func testDeleteUsesDeleteMethod() async throws {
         MockURLProtocol.setHandler { req in
             (httpResponse(req.url!, 200), Data("{}".utf8))

@@ -66,6 +66,8 @@ struct ColumnView: View {
         } isTargeted: { targeted in
             withAnimation(reduceMotion ? nil : Motion.columnReflow) { isTargeted = targeted }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(title) column, \(column.cards.count) cards")
     }
 
     /// Rail brightens ~4% while a card hovers over the lane (§6.1).
@@ -162,6 +164,7 @@ private struct AddCardButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
+        .accessibilityLabel("Add task")
     }
 }
 

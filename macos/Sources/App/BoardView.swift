@@ -42,7 +42,11 @@ struct BoardView: View {
         case .connecting:
             BoardSkeletonView()
         case .ready, .disconnected:
-            boardWithDetail
+            if model.hasSelectedProject {
+                boardWithDetail
+            } else {
+                ProjectSelectionRequiredView()
+            }
         }
     }
 
@@ -54,7 +58,9 @@ struct BoardView: View {
                 ReconnectingBar(handle: model.profile?.handle ?? "your computer")
             }
             if let error = model.openError {
-                GenericErrorBanner(message: error.message, onRetry: nil)
+                GenericErrorBanner(message: error.message, onRetry: {
+                    Task { await model.refresh() }
+                })
             }
             if selectedBoardCard != nil {
                 detailPane
@@ -68,25 +74,42 @@ struct BoardView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private var hasTaskDetail: Bool {
+        guard let activeID = model.activeTabID,
+              let tab = model.openTabs.first(where: { $0.id == activeID }) else {
+            return model.selectedCard != nil
+        }
+        return tab.kind == .task || tab.kind == .session || model.selectedCard != nil
+    }
+
     private var columns: some View {
-        // Five lifecycle lanes fill the available width evenly (no dead space).
+        // Five lifecycle lanes live in a real horizontal scroll surface so the
+        // board remains usable beside the detail terminal on laptop widths.
         // Pinch / ⌘+/⌘-/⌘0 scale the lanes (Conductor-style zoom).
         let effectiveZoom = clampZoom(zoom * pinch)
-        return HStack(alignment: .top, spacing: 0) {
-            ForEach(model.board.columns) { column in
-                ColumnView(
-                    column: column,
-                    selectedCardID: selectedBoardCard?.id,
-                    onOpenCard: openCard,
-                    onAddCard: { model.createTask(status: $0) },
-                    onMoveCard: { id, status in
-                        model.updateTaskStatus(cardId: id, to: status, order: nil)
-                    }
-                )
+        let laneWidth: CGFloat = 280
+        let unscaledWidth = laneWidth * CGFloat(model.board.columns.count)
+        return ScrollView(.horizontal, showsIndicators: true) {
+            HStack(alignment: .top, spacing: 0) {
+                ForEach(model.board.columns) { column in
+                    ColumnView(
+                        column: column,
+                        selectedCardID: selectedBoardCard?.id,
+                        onOpenCard: openCard,
+                        onAddCard: { model.createTask(status: $0) },
+                        onMoveCard: { id, status in
+                            model.updateTaskStatus(cardId: id, to: status, order: nil)
+                        }
+                    )
+                    .frame(width: laneWidth)
+                }
             }
+            .frame(width: unscaledWidth, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
+            .scaleEffect(effectiveZoom, anchor: .topLeading)
+            .frame(width: unscaledWidth * effectiveZoom, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .scaleEffect(effectiveZoom, anchor: .topLeading)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .gesture(
             MagnificationGesture()
@@ -94,6 +117,7 @@ struct BoardView: View {
                 .onEnded { value in zoom = clampZoom(zoom * value) }
         )
         .background(zoomShortcuts)
+        .animation(Motion.columnReflow, value: effectiveZoom)
     }
 
     /// Hidden buttons providing ⌘+/⌘-/⌘0 zoom shortcuts.
@@ -110,7 +134,7 @@ struct BoardView: View {
         .allowsHitTesting(false)
     }
 
-    // MARK: - Detail pane (panel switcher + terminal)
+    // MARK: - Detail pane (workspace tabs + terminal)
 
     private var selectedBoardCard: Card? {
         guard let selected = model.selectedCard else { return nil }
@@ -123,7 +147,10 @@ struct BoardView: View {
         VStack(spacing: 0) {
             detailHeader
             Divider().overlay(Color.hairlineDark)
+            TaskPaneStrip(activePanel: model.activePanel, onSelect: model.switchPanel)
+            Divider().overlay(Color.hairlineDark)
             panelBody
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.surfaceRail)
         .overlay(alignment: .leading) {
@@ -132,48 +159,88 @@ struct BoardView: View {
     }
 
     private var detailHeader: some View {
-        HStack(spacing: Spacing.x3) {
-            Text(selectedBoardCard?.title ?? "")
-                .font(.plexSans(14, weight: .medium))
-                .foregroundStyle(Color.inkPrimary)
-                .lineLimit(1)
-            Spacer()
-            PanelSwitcher(active: model.activePanel) { model.switchPanel($0) }
-            Button(action: model.closeCard) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.inkTertiary)
+        VStack(spacing: 0) {
+            if model.openTabs.isEmpty {
+                HStack {
+                    Text(selectedBoardCard?.title ?? "Task terminal")
+                        .font(.plexSans(13, weight: .semibold))
+                        .foregroundStyle(Color.inkPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    Button(action: model.closeCard) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                            .iconHitTarget(30)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.cancelAction)
+                }
+                .padding(.horizontal, Spacing.x4)
+                .padding(.vertical, Spacing.x2)
+            } else {
+                WorkspaceTabStrip(
+                    tabs: model.openTabs,
+                    activeID: model.activeTabID,
+                    isCreating: model.isCreatingWorkItem,
+                    onSelect: model.focusTab,
+                    onClose: model.closeTab,
+                    onCreate: { model.createTask(status: .todo) }
+                )
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, Spacing.x4)
-        .padding(.vertical, Spacing.x3)
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
     private var panelBody: some View {
         switch model.activePanel {
         case .terminal:
-            if let terminal = model.terminal {
-                TerminalPanelView(session: terminal)
-                    .padding(Spacing.x3)
-            } else {
-                placeholderPane("No live session for this card.")
-            }
+            boardTerminalSurface
         case .shell:
-            placeholderPane("Shell view — coming soon.")
-        case .app:
-            placeholderPane("App view — coming soon.")
+            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix OS Shell")
+        case .app(let slug):
+            switch slug {
+            case "editor":
+                EditorPanel(model: model)
+            case "artifacts":
+                ArtifactsPanel(model: model)
+            case "git":
+                GitPanel(model: model)
+            case "settings":
+                SettingsPanel(model: model)
+            case "processes":
+                ProcessesPanel(model: model)
+            case "whiteboard":
+                MatrixWebShellPanel(model: model, url: model.appURL(slug: "whiteboard"), title: "Excalidraw")
+            default:
+                placeholderPane("This task pane is not available yet.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var boardTerminalSurface: some View {
+        if let terminal = model.terminal {
+            TerminalPanelView(session: terminal)
+                .id(terminal.id)
+                .background(Color.surfaceTerminal)
+        } else {
+            placeholderPane("Open a task to attach its agent terminal.")
         }
     }
 
     private func placeholderPane(_ text: String) -> some View {
         VStack {
             Spacer()
-            Text(text)
-                .font(.plexSans(13))
-                .foregroundStyle(Color.inkTertiary)
+            VStack(spacing: Spacing.x2) {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 26, weight: .light))
+                    .foregroundStyle(Color.terminalMutedInk)
+                Text(text)
+                    .font(.plexSans(13))
+                    .foregroundStyle(Color.terminalMutedInk)
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -187,10 +254,43 @@ struct BoardView: View {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: Spacing.x2) {
                 Circle().fill(Color.signalLive).frame(width: 7, height: 7)
-                Text("OPERATOR")
-                    .font(.plexMono(11, weight: .semibold))
-                    .tracking(1.2)
+                Text(model.hasSelectedProject ? "\(model.activeProjectName) Board" : "Matrix")
+                    .font(.plexSans(12, weight: .semibold))
                     .foregroundStyle(Color.inkSecondary)
+            }
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button {
+                Task { await model.refresh() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .help(model.hasSelectedProject ? "Refresh board" : "Refresh Matrix")
+
+            if model.hasSelectedProject {
+                Divider()
+
+                Button {
+                    zoom = clampZoom(zoom - 0.1)
+                } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+                .help("Zoom out (⌘-)")
+
+                Button {
+                    zoom = 1
+                } label: {
+                    Text("\(Int(zoom * 100))%")
+                        .font(.plexMono(11, weight: .medium))
+                }
+                .help("Reset board scale (⌘0)")
+
+                Button {
+                    zoom = clampZoom(zoom + 0.1)
+                } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+                .help("Zoom in (⌘=)")
             }
         }
     }
@@ -209,47 +309,4 @@ struct BoardView: View {
     }
 }
 
-/// Segmented Terminal · Shell · App switcher (design.md §6.5). Active segment
-/// carries a thin signal underline + ink.primary; inactive is ink.tertiary.
-struct PanelSwitcher: View {
-    let active: Panel
-    let onSelect: (Panel) -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            segment("Terminal", panel: .terminal, isActive: active == .terminal)
-            segment("Shell", panel: .shell, isActive: active == .shell)
-            segment("App", panel: .app(slug: ""), isActive: isApp)
-        }
-        .padding(2)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                .strokeBorder(Color.hairlineHighlight, lineWidth: 1)
-        )
-    }
-
-    private var isApp: Bool {
-        if case .app = active { return true }
-        return false
-    }
-
-    private func segment(_ label: String, panel: Panel, isActive: Bool) -> some View {
-        Button {
-            onSelect(panel)
-        } label: {
-            VStack(spacing: 2) {
-                Text(label)
-                    .font(.plexMono(10, weight: isActive ? .semibold : .regular))
-                    .foregroundStyle(isActive ? Color.inkPrimary : Color.inkTertiary)
-                Rectangle()
-                    .fill(isActive ? Color.signalLive : Color.clear)
-                    .frame(height: 1.5)
-            }
-            .padding(.horizontal, Spacing.x2)
-            .padding(.vertical, 3)
-        }
-        .buttonStyle(.plain)
-    }
-}
 #endif

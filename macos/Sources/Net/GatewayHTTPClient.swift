@@ -71,14 +71,13 @@ public struct GatewayHTTPClient: Sendable {
         contentType: String = "text/plain; charset=utf-8",
         timeout: TimeInterval? = nil
     ) async throws {
-        var request = try await makeRequest(
+        let request = try await makeRawRequest(
             method: "PUT",
             path: path,
-            body: Optional<EmptyBody>.none,
+            data: data,
+            contentType: contentType,
             timeout: timeout
         )
-        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        request.httpBody = data
         _ = try await perform(request)
     }
 
@@ -161,6 +160,27 @@ public struct GatewayHTTPClient: Sendable {
                 throw GatewayError.decoding
             }
         }
+        return request
+    }
+
+    private func makeRawRequest(
+        method: String,
+        path: String,
+        data: Data,
+        contentType: String,
+        timeout: TimeInterval?
+    ) async throws -> URLRequest {
+        guard let url = resolve(path: path) else {
+            throw GatewayError.misconfigured
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = timeout ?? defaultTimeout
+        if let token = await tokenProvider.token() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
         return request
     }
 

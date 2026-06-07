@@ -18,35 +18,77 @@ struct NoProfileView: View {
     var signIn: SignInState = .idle
 
     var body: some View {
-        ZStack {
-            Color.canvasVoid.ignoresSafeArea()
-            VStack(spacing: Spacing.x4) {
+        HStack(spacing: 0) {
+            onboardingBrandPanel
+                .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: Spacing.x5) {
+                Spacer()
+                authCard
+                Spacer()
+            }
+            .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.canvasVoid)
+        }
+        .background(Color.canvasVoid.ignoresSafeArea())
+    }
+
+    private var onboardingBrandPanel: some View {
+        ZStack(alignment: .leading) {
+            Color.signalLive
+            VStack(alignment: .leading, spacing: Spacing.x5) {
                 glyph
-                Text("No Matrix computer yet")
-                    .font(.plexSans(20, weight: .semibold))
-                    .tracking(-0.4)
-                    .foregroundStyle(Color.inkPrimary)
-                Text("Sign in to see your sessions as a live board and work in a\nterminal — or create your Matrix OS if you don't have one.")
-                    .font(.plexSans(13))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(Color.inkSecondary)
-
-                switch signIn {
-                case .awaitingApproval(let code, let uri):
-                    approvalCard(code: code, uri: uri)
-                default:
-                    actions
+                VStack(alignment: .leading, spacing: Spacing.x2) {
+                    Text("Matrix")
+                        .font(.plexSans(38, weight: .semibold))
+                        .foregroundStyle(Color.canvasVoid)
+                    Text("Run cloud agents.\nShip reliable software.")
+                        .font(.plexSans(30, weight: .semibold))
+                        .foregroundStyle(Color.canvasVoid)
+                        .lineSpacing(2)
                 }
-
-                if case .failed(let message) = signIn {
-                    Text(message)
-                        .font(.plexMono(11))
-                        .foregroundStyle(Color.signalWaiting)
-                        .padding(.top, Spacing.x1)
+                Text("Matrix gives you a private cloud computer with terminal, files, projects, agents, and review tools in one native app.")
+                    .font(.plexSans(15))
+                    .foregroundStyle(Color.canvasVoid.opacity(0.82))
+                    .lineSpacing(3)
+                    .frame(maxWidth: 360, alignment: .leading)
+                VStack(alignment: .leading, spacing: Spacing.x3) {
+                    brandBullet("cloud", "Powerful cloud runtimes")
+                    brandBullet("terminal", "Agent-native development")
+                    brandBullet("checkmark.shield", "End-to-end visibility")
                 }
+                Spacer()
             }
             .padding(Spacing.x7)
         }
+    }
+
+    private var authCard: some View {
+        VStack(spacing: Spacing.x4) {
+            VStack(spacing: Spacing.x1) {
+                Text("Welcome to Matrix")
+                    .font(.plexSans(24, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                Text("Sign in or create your Matrix computer.")
+                    .font(.plexSans(13))
+                    .foregroundStyle(Color.inkTertiary)
+            }
+            switch signIn {
+            case .awaitingApproval(let code, let uri):
+                approvalCard(code: code, uri: uri)
+            default:
+                actions
+            }
+            if case .failed(let message) = signIn {
+                Text(message)
+                    .font(.plexMono(11))
+                    .foregroundStyle(Color.signalWaiting)
+            }
+        }
+        .padding(Spacing.x6)
+        .frame(width: 390)
+        .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous).strokeBorder(Color.hairlineDark, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.12), radius: 28, y: 16)
     }
 
     private var actions: some View {
@@ -69,9 +111,9 @@ struct NoProfileView: View {
             .disabled(isStarting)
 
             Button(action: onCreate) {
-                Text("Create your Matrix OS")
+                Text("Create account")
                     .font(.plexSans(12, weight: .medium))
-                    .foregroundStyle(Color.inkSecondary)
+                    .foregroundStyle(Color.signalLive)
             }
             .buttonStyle(.plain)
         }
@@ -121,17 +163,178 @@ struct NoProfileView: View {
     private var glyph: some View {
         ZStack {
             RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
-                .fill(Color.surfaceCard)
+                .fill(Color.canvasVoid.opacity(0.16))
                 .frame(width: 72, height: 72)
                 .overlay(
                     RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
-                        .strokeBorder(Color.hairlineHighlight, lineWidth: 1)
+                        .strokeBorder(Color.canvasVoid.opacity(0.35), lineWidth: 1)
                 )
-            Circle()
-                .fill(Color.signalLive)
-                .frame(width: 12, height: 12)
-                .shadow(color: Color.signalGlowLive, radius: 8)
+            VStack(spacing: 4) {
+                ForEach(0..<6, id: \.self) { row in
+                    HStack(spacing: 5) {
+                        ForEach(0..<(row + 1), id: \.self) { _ in
+                            Circle().fill(Color.canvasVoid).frame(width: 5, height: 5)
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    private func brandBullet(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: Spacing.x2) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 20)
+            Text(text)
+                .font(.plexSans(13, weight: .medium))
+        }
+        .foregroundStyle(Color.canvasVoid.opacity(0.92))
+    }
+}
+
+struct MatrixComputerHomeView: View {
+    @ObservedObject var model: AppModel
+    let onOpenShell: () -> Void
+    @State private var projectSheet: ProjectSheetMode?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: Spacing.x6) {
+                VStack(spacing: Spacing.x2) {
+                    Text("Start coding on your Matrix computer")
+                        .font(.plexSans(34, weight: .semibold))
+                        .foregroundStyle(Color.inkPrimary)
+                    Text("This is your private cloud computer, ready for engineering work.\nBuild, test, and ship securely from one native workspace.")
+                        .font(.plexSans(16))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(Color.inkTertiary)
+                        .lineSpacing(3)
+                }
+                HStack(spacing: Spacing.x4) {
+                    homeAction("folder.badge.plus", "Create project", "Start from scratch or use a template.", action: { projectSheet = .create })
+                    homeAction("folder", "Open folder on Matrix", "Open an existing repository or folder from your computer.", action: { projectSheet = .clone })
+                    homeAction("terminal", "Open shell", "Launch a web shell and start working in your Matrix computer.", action: onOpenShell)
+                }
+                shellPreview
+            }
+            .padding(Spacing.x7)
+            .frame(maxWidth: 1180)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color.canvasVoid)
+        .sheet(item: $projectSheet) { mode in
+            ProjectCreateSheet(mode: mode) { name, remote, startMode in
+                model.createProject(name: name, remote: remote, startMode: startMode)
+            }
+        }
+    }
+
+    private func homeAction(_ icon: String, _ title: String, _ subtitle: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: Spacing.x3) {
+                Image(systemName: icon)
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(Color.signalLive)
+                Text(title)
+                    .font(.plexSans(18, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                Text(subtitle)
+                    .font(.plexSans(14))
+                    .foregroundStyle(Color.inkTertiary)
+                    .lineLimit(2)
+                Spacer()
+                HStack {
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.inkPrimary)
+                        .frame(width: 38, height: 34)
+                        .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                }
+            }
+            .padding(Spacing.x5)
+            .frame(maxWidth: .infinity, minHeight: 190, alignment: .leading)
+            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous).strokeBorder(Color.hairlineDark, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var shellPreview: some View {
+        VStack(alignment: .leading, spacing: Spacing.x2) {
+            HStack {
+                Text("Matrix shell preview")
+                    .font(.plexSans(13, weight: .medium))
+                    .foregroundStyle(Color.inkTertiary)
+                Spacer()
+                Button("Open full shell", action: onOpenShell)
+                    .font(.plexSans(12, weight: .semibold))
+            }
+            HStack(spacing: 0) {
+                shellPreviewSidebar
+                shellPreviewTerminal
+            }
+            .frame(height: 260)
+            .background(Color.surfaceTerminal, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous).strokeBorder(Color.black.opacity(0.35), lineWidth: 1))
+        }
+        .padding(Spacing.x3)
+        .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous).strokeBorder(Color.hairlineDark, lineWidth: 1))
+    }
+
+    private var shellPreviewSidebar: some View {
+        VStack(alignment: .leading, spacing: Spacing.x3) {
+            Text("Matrix")
+                .font(.plexSans(18, weight: .semibold))
+                .foregroundStyle(Color.canvasVoid)
+            Label("Terminal", systemImage: "terminal")
+            Label("Files", systemImage: "folder")
+            Label("Processes", systemImage: "cpu")
+            Label("Secrets", systemImage: "ellipsis.message")
+            Spacer()
+        }
+        .font(.plexSans(13, weight: .medium))
+        .foregroundStyle(Color.canvasVoid.opacity(0.82))
+        .padding(Spacing.x4)
+        .frame(width: 180, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06))
+    }
+
+    private var shellPreviewTerminal: some View {
+        VStack(alignment: .leading, spacing: Spacing.x2) {
+            Text("matrix ~ $ uname -a")
+            Text("Linux matrix-builder 6.6.15-arch1-1")
+            Text("matrix ~ $ git status")
+            Text("On branch main\nnothing to commit, working tree clean")
+            Text("matrix ~ $")
+        }
+        .font(.plexMono(14))
+        .foregroundStyle(Color.terminalInk)
+        .padding(Spacing.x5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+struct ProjectSelectionRequiredView: View {
+    var body: some View {
+        VStack(spacing: Spacing.x4) {
+            Image(systemName: "rectangle.split.3x1")
+                .font(.system(size: 42, weight: .light))
+                .foregroundStyle(Color.signalLive)
+            Text("Choose a project")
+                .font(.plexSans(28, weight: .semibold))
+                .foregroundStyle(Color.inkPrimary)
+            Text("Kanban boards are project-specific. Select a project square in the sidebar or create a new project to open its tasks.")
+                .font(.plexSans(15))
+                .foregroundStyle(Color.inkTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 460)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.canvasVoid)
     }
 }
 
@@ -260,82 +463,4 @@ struct GenericErrorBanner: View {
     }
 }
 
-struct MatrixComputerHomeView: View {
-    @ObservedObject var model: AppModel
-    let onOpenShell: () -> Void
-
-    var body: some View {
-        VStack(spacing: Spacing.x6) {
-            Spacer(minLength: 0)
-            VStack(spacing: Spacing.x2) {
-                Image(systemName: "server.rack")
-                    .font(.system(size: 44, weight: .light))
-                    .foregroundStyle(Color.signalLive)
-                Text("Start coding on your Matrix computer")
-                    .font(.plexSans(24, weight: .semibold))
-                    .foregroundStyle(Color.inkPrimary)
-                Text("Open a project board or start a shell session on your private runtime.")
-                    .font(.plexSans(14))
-                    .foregroundStyle(Color.inkSecondary)
-                    .multilineTextAlignment(.center)
-            }
-
-            HStack(spacing: Spacing.x3) {
-                homeAction("Create project", icon: "folder.badge.plus") {
-                    model.createProject(name: "New project", remote: nil)
-                }
-                homeAction("Open shell", icon: "terminal") {
-                    onOpenShell()
-                }
-                homeAction("New task", icon: "plus.rectangle") {
-                    model.createTask(status: .todo)
-                }
-            }
-            .frame(maxWidth: 760)
-            Spacer(minLength: 0)
-        }
-        .padding(Spacing.x6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.canvasVoid)
-    }
-
-    private func homeAction(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: Spacing.x3) {
-                Image(systemName: icon)
-                    .font(.system(size: 24, weight: .light))
-                    .foregroundStyle(Color.signalLive)
-                Text(title)
-                    .font(.plexSans(14, weight: .semibold))
-                    .foregroundStyle(Color.inkPrimary)
-            }
-            .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
-            .padding(Spacing.x4)
-            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                    .strokeBorder(Color.hairlineDark, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct ProjectSelectionRequiredView: View {
-    var body: some View {
-        VStack(spacing: Spacing.x3) {
-            Image(systemName: "rectangle.split.3x1")
-                .font(.system(size: 38, weight: .light))
-                .foregroundStyle(Color.signalLive)
-            Text("Select a project")
-                .font(.plexSans(20, weight: .semibold))
-                .foregroundStyle(Color.inkPrimary)
-            Text("Choose a project in the sidebar to open its kanban board.")
-                .font(.plexSans(13))
-                .foregroundStyle(Color.inkSecondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.canvasVoid)
-    }
-}
 #endif
