@@ -18,8 +18,8 @@ final class DeviceAuthClientTests: XCTestCase {
             XCTAssertEqual(req.url?.path, "/api/auth/device/code")
             XCTAssertEqual(req.httpMethod, "POST")
             let body = requestJSONBody(req)
-            XCTAssertEqual(body?["clientId"], "matrix-os-macos")
-            XCTAssertNil(body?["redirectUri"])
+            XCTAssertEqual(body?["clientId"] as? String, "matrix-os-macos")
+            XCTAssertFalse(body?.keys.contains("redirectUri") ?? true)
             let json = """
             {"deviceCode":"DC","userCode":"ABCD-EFGH","verificationUri":"https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH","expiresIn":900,"interval":5}
             """
@@ -93,7 +93,7 @@ final class DeviceAuthClientTests: XCTestCase {
     }
 }
 
-private func requestJSONBody(_ request: URLRequest) -> [String: String]? {
+private func requestJSONBody(_ request: URLRequest) -> [String: Any]? {
     var data = request.httpBody ?? Data()
     if data.isEmpty, let stream = request.httpBodyStream {
         var streamData = Data()
@@ -111,5 +111,5 @@ private func requestJSONBody(_ request: URLRequest) -> [String: String]? {
         data = streamData
     }
     guard !data.isEmpty else { return nil }
-    return (try? JSONSerialization.jsonObject(with: data)) as? [String: String]
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
 }

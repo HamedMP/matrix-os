@@ -63,7 +63,6 @@ public struct DeviceAuthClient: DeviceAuthorizing {
 
     private struct CodeBody: Encodable {
         let clientId: String
-        let redirectUri: String?
     }
 
     public func startDeviceAuth() async throws -> DeviceAuthStart {
@@ -71,7 +70,7 @@ public struct DeviceAuthClient: DeviceAuthorizing {
         // ask the browser to deep-link back and accidentally open another app.
         let (data, http) = try await post(
             path: "/api/auth/device/code",
-            body: CodeBody(clientId: clientId, redirectUri: nil)
+            body: CodeBody(clientId: clientId)
         )
         if let mapped = GatewayError.from(statusCode: http.statusCode) {
             throw mapped
