@@ -1934,8 +1934,12 @@ defmodule SymphonyElixir.StatusDashboard do
   defp alternate_key(key) when is_atom(key), do: Atom.to_string(key)
   defp alternate_key(key), do: key
 
-  defp truncate(value, max) when String.length(value) > max do
-    value |> String.slice(0, max) |> Kernel.<>("...")
+  defp truncate(value, max) when is_binary(value) and is_integer(max) do
+    if String.length(value) > max do
+      value |> String.slice(0, max) |> Kernel.<>("...")
+    else
+      value
+    end
   end
 
   defp truncate(value, _max), do: value

@@ -159,7 +159,8 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(statusDashboard).toContain("defp tps_graph(samples, now_ms, _current_tokens)");
     expect(statusDashboard).toMatch(/samples\s*\|>\s*prune_graph_samples\(now_ms\)/);
     expect(statusDashboard).toContain("String.length(value) <= width");
-    expect(statusDashboard).toContain("when String.length(value) > max");
+    expect(statusDashboard).toContain("if String.length(value) > max do");
+    expect(statusDashboard).not.toContain("when String.length(value) > max");
     expect(statusDashboard).not.toContain('Enum.map_join(", ", &format_retry_summary/1)');
     expect(statusDashboard).not.toContain("when byte_size(value) > max");
     expect(statusDashboard).toContain("String.trim_trailing");
