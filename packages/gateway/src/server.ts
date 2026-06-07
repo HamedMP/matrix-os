@@ -106,6 +106,10 @@ import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveBundledSystemIconPath, resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
+import { collectSystemActivity } from "./system-activity/collector.js";
+import { CleanupCandidateRegistry, executeCleanupAction } from "./system-activity/cleanup.js";
+import { ActivityHistoryStore, AutoCleanupPolicyStore } from "./system-activity/history.js";
+import { createSystemActivityRoutes } from "./system-activity/routes.js";
 import {
   checkForSystemUpdate,
   listSystemReleases,
@@ -1652,6 +1656,28 @@ export async function createGateway(config: GatewayConfig) {
     shellBackend: zellijAdapter,
     commandRunner: createShellCommandRunner({ homePath }),
   };
+  const systemActivityCandidates = new CleanupCandidateRegistry();
+  const systemActivityHistory = new ActivityHistoryStore({ homePath });
+  const systemActivityPolicy = new AutoCleanupPolicyStore({ homePath });
+  app.route("/api/system", createSystemActivityRoutes({
+    collect: async (collectOptions) => {
+      const policy = await systemActivityPolicy.read();
+      return collectSystemActivity({
+        homePath,
+        collectOptions,
+        candidates: systemActivityCandidates,
+        cleanupGracePeriodSeconds: policy.gracePeriodSeconds,
+      });
+    },
+    executeAction: (action) => executeCleanupAction({
+      action,
+      registry: systemActivityCandidates,
+      history: systemActivityHistory,
+    }),
+    readPolicy: () => systemActivityPolicy.read(),
+    savePolicy: (policy) => systemActivityPolicy.save(policy),
+    readHistory: (query) => systemActivityHistory.list(query),
+  }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
   app.route("/api", createShellRoutes(shellRouteDeps));
 
@@ -4392,6 +4418,7 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();
+      systemActivityCandidates.clear();
       await channelManager.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();
