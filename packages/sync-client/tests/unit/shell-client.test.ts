@@ -121,11 +121,11 @@ describe("createShellClient attachSession", () => {
       WebSocketImpl: FakeWebSocket as never,
     });
 
+    expect(FakeWebSocket.last?.url).toContain(`fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`);
+
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     FakeWebSocket.last?.emit("close");
     await attach;
-
-    expect(FakeWebSocket.last?.url).toContain(`fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`);
   });
 
   it("forwards SIGINT after attach so terminals that still emit signals can interrupt remote programs", async () => {

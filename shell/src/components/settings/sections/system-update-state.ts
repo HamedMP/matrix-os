@@ -86,13 +86,24 @@ export function severityBadgeStyle(severity?: string): string {
   }
 }
 
+export function formatReleaseBuildId(gitCommit?: string): string | null {
+  const shortId = formatReleaseBuildShortId(gitCommit);
+  if (!shortId) return null;
+  return `Build ID ${shortId}`;
+}
+
+export function formatReleaseBuildShortId(gitCommit?: string): string | null {
+  if (!gitCommit) return null;
+  return gitCommit.slice(0, 12);
+}
+
 export const UPGRADE_INSTALL_STATUS_LINES = [
-  "Reading the Matrix release notes between packets.",
-  "Cloud status: one host bundle, lightly compressed, coming right up.",
-  "A coding agent is watching the logs and resisting the urge to refactor them.",
-  "The VPS is swapping in the new shell without touching your home files.",
-  "Cloudflare has the route. The updater has the bundle. Everyone has one job.",
-  "Checking that the new reality answers /health before we reload.",
+  "Putting the new version in place. Your files stay where they are.",
+  "Almost there. We are making sure everything opens cleanly.",
+  "Your workspace is getting the new version ready.",
+  "Finishing the install and checking everything responds.",
+  "Your workspace is staying put while the update lands.",
+  "One last check before the screen refreshes.",
 ] as const;
 
 export function upgradeInstallStatusLine(index: number): string {
@@ -107,7 +118,7 @@ export function resolveUpgradeInstallCopy(input: {
 }) {
   return {
     title: `Installing ${input.target ?? "update"}`,
-    detail: input.message ?? "Downloading the host bundle and waiting for the shell to return.",
+    detail: input.message ?? "Downloading the update and waiting for your workspace to return.",
     statusLine: upgradeInstallStatusLine(input.statusIndex),
   };
 }

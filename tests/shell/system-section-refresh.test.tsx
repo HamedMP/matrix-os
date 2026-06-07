@@ -211,7 +211,7 @@ describe("SystemSection release refresh", () => {
     expect(screen.getByRole("status")).toBeTruthy();
     expect(screen.getByText("Installing stable")).toBeTruthy();
     expect(screen.getByText("Installing stable. This can take a few minutes...")).toBeTruthy();
-    expect(screen.getByText("Reading the Matrix release notes between packets.")).toBeTruthy();
+    expect(screen.getByText("Putting the new version in place. Your files stay where they are.")).toBeTruthy();
     expect(screen.getByText("Download")).toBeTruthy();
     expect(screen.getByText("Install")).toBeTruthy();
     expect(screen.getByText("Verify")).toBeTruthy();
@@ -220,7 +220,7 @@ describe("SystemSection release refresh", () => {
       await vi.advanceTimersByTimeAsync(7_000);
     });
 
-    expect(screen.getByText("Cloud status: one host bundle, lightly compressed, coming right up.")).toBeTruthy();
+    expect(screen.getByText("Almost there. We are making sure everything opens cleanly.")).toBeTruthy();
     expect(screen.getByText("Installing... checking status")).toBeTruthy();
     expect(screen.getByText("Installing stable. This can take a few minutes...")).toBeTruthy();
 

@@ -282,6 +282,17 @@ describe('customer VPS host bundle', () => {
     expect(workflow).not.toContain('cancel-in-progress: false');
   });
 
+  it('host bundle release workflow generates friendly stable changelogs from commit subjects', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('fetch-depth: 0');
+    expect(workflow).toContain('node scripts/release-changelog.mjs --base "$BASE_SHA" --head "$GITHUB_SHA"');
+    expect(workflow).toContain('DELIMITER="CHANGELOG_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}_${GITHUB_SHA}"');
+    expect(workflow).toContain('changelog<<$DELIMITER');
+    expect(workflow).not.toContain('changelog<<EOF');
+  });
+
   it('dev bundle gate builds branch pushes even when commit messages request a skip', () => {
     const result = runDevBundleGate({
       GITHUB_EVENT_NAME: 'push',
