@@ -185,9 +185,13 @@ public actor ShellWSClient {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         var items = components?.queryItems ?? []
         items.removeAll { $0.name == "session" || $0.name == "fromSeq" || $0.name == "token" }
-        items.append(URLQueryItem(name: "session", value: session))
-        items.append(URLQueryItem(name: "fromSeq", value: String(fromSeq)))
-        components?.queryItems = items
+        // Empty session = auto-create path (/ws/terminal?cwd=...): do not add a
+        // blank session param. Named attach keeps session + fromSeq.
+        if !session.isEmpty {
+            items.append(URLQueryItem(name: "session", value: session))
+            items.append(URLQueryItem(name: "fromSeq", value: String(fromSeq)))
+        }
+        components?.queryItems = items.isEmpty ? nil : items
         let url = components?.url ?? baseURL
         var request = URLRequest(url: url)
         // FR-015a / S1: principal token in the Authorization header, never the query string.

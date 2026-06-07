@@ -68,8 +68,18 @@ private struct OperatorCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Operator") {
+            Button("Command Palette…") { model.showCommandPalette.toggle() }
+                .keyboardShortcut("k", modifiers: .command)
+            Divider()
             Button("New Card") { model.newCardPlaceholder() }
                 .keyboardShortcut("n", modifiers: .command)
+            Button("New Session") { model.createSession() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+            Divider()
+            Button("Board") { model.section = .board }
+                .keyboardShortcut("1", modifiers: .control)
+            Button("Terminals") { model.section = .terminals }
+                .keyboardShortcut("2", modifiers: .control)
             Divider()
             Button("Terminal Panel") { model.switchPanel(.terminal) }
                 .keyboardShortcut("1", modifiers: .command)

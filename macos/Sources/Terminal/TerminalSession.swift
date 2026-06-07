@@ -52,6 +52,7 @@ public final class TerminalSession: ObservableObject {
     /// Sink for decoded PTY output text. The view installs this to feed SwiftTerm.
     /// Called on the main actor.
     private var outputSink: (@MainActor (String) -> Void)?
+    private var attachHandler: (@MainActor () -> Void)?
     private var consumeTask: Task<Void, Never>?
     private var started = false
     /// Latest requested terminal size, re-sent once after each successful attach.
@@ -71,7 +72,13 @@ public final class TerminalSession: ObservableObject {
         outputSink = sink
     }
 
+    /// Runs once when the terminal first reaches an attached/output state.
+    public func onNextAttach(_ handler: @escaping @MainActor () -> Void) {
+        attachHandler = handler
+    }
+
     /// Connects the client and begins consuming its event stream. Idempotent.
+    @MainActor
     public func start() {
         guard !started else { return }
         started = true
@@ -147,6 +154,7 @@ public final class TerminalSession: ObservableObject {
         switch event {
         case .attached:
             connectionState = .attached
+            notifyAttached()
             // Re-send the last known size once after attach (protocol requirement).
             if let size = lastSize {
                 let client = self.client
@@ -157,6 +165,7 @@ public final class TerminalSession: ObservableObject {
             // A late output frame while still "connecting" implies we're attached.
             if case .connecting = connectionState { connectionState = .attached }
             if case .reconnecting = connectionState { connectionState = .attached }
+            notifyAttached()
             outputSink?(data)
             if !isPinnedToBottom {
                 unseenLines += 1
@@ -173,5 +182,11 @@ public final class TerminalSession: ObservableObject {
             unseenLines = 0
             connectionState = .connecting
         }
+    }
+
+    private func notifyAttached() {
+        guard let attachHandler else { return }
+        self.attachHandler = nil
+        attachHandler()
     }
 }
