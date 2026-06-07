@@ -32,6 +32,11 @@ public enum TerminalConnectionState: Equatable, Sendable {
 /// - Track scroll-pin ("● LIVE" vs "↓ N new") so the view can render the affordance.
 @MainActor
 public final class TerminalSession: ObservableObject {
+    /// Stable identity used by SwiftUI/AppKit bridges. Terminal tabs must be keyed
+    /// by the session object, otherwise AppKit may reuse a `TerminalView` whose
+    /// delegate still points at a previous zellij session.
+    public let id = UUID()
+
     /// Human-readable session label shown in the top strip.
     public let displayName: String
 
@@ -52,6 +57,7 @@ public final class TerminalSession: ObservableObject {
     /// Sink for decoded PTY output text. The view installs this to feed SwiftTerm.
     /// Called on the main actor.
     private var outputSink: (@MainActor (String) -> Void)?
+    private var pendingOutput = ""
     private var attachHandler: (@MainActor () -> Void)?
     private var consumeTask: Task<Void, Never>?
     private var started = false
@@ -70,6 +76,7 @@ public final class TerminalSession: ObservableObject {
     /// Installs the output sink (the SwiftTerm feed) before/while starting.
     public func setOutputSink(_ sink: @escaping @MainActor (String) -> Void) {
         outputSink = sink
+        flushPendingOutput()
     }
 
     /// Runs once when the terminal first reaches an attached/output state.
@@ -166,7 +173,11 @@ public final class TerminalSession: ObservableObject {
             if case .connecting = connectionState { connectionState = .attached }
             if case .reconnecting = connectionState { connectionState = .attached }
             notifyAttached()
-            outputSink?(data)
+            if outputSink == nil {
+                pendingOutput += data
+            } else {
+                outputSink?(data)
+            }
             if !isPinnedToBottom {
                 unseenLines += 1
             }
@@ -188,5 +199,12 @@ public final class TerminalSession: ObservableObject {
         guard let attachHandler else { return }
         self.attachHandler = nil
         attachHandler()
+    }
+
+    private func flushPendingOutput() {
+        guard !pendingOutput.isEmpty, let outputSink else { return }
+        let chunk = pendingOutput
+        pendingOutput.removeAll(keepingCapacity: true)
+        outputSink(chunk)
     }
 }

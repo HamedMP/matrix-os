@@ -259,4 +259,83 @@ struct GenericErrorBanner: View {
         }
     }
 }
+
+struct MatrixComputerHomeView: View {
+    @ObservedObject var model: AppModel
+    let onOpenShell: () -> Void
+
+    var body: some View {
+        VStack(spacing: Spacing.x6) {
+            Spacer(minLength: 0)
+            VStack(spacing: Spacing.x2) {
+                Image(systemName: "server.rack")
+                    .font(.system(size: 44, weight: .light))
+                    .foregroundStyle(Color.signalLive)
+                Text("Start coding on your Matrix computer")
+                    .font(.plexSans(24, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                Text("Open a project board or start a shell session on your private runtime.")
+                    .font(.plexSans(14))
+                    .foregroundStyle(Color.inkSecondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: Spacing.x3) {
+                homeAction("Create project", icon: "folder.badge.plus") {
+                    model.createProject(name: "New project", remote: nil)
+                }
+                homeAction("Open shell", icon: "terminal") {
+                    onOpenShell()
+                }
+                homeAction("New task", icon: "plus.rectangle") {
+                    model.createTask(status: .todo)
+                }
+            }
+            .frame(maxWidth: 760)
+            Spacer(minLength: 0)
+        }
+        .padding(Spacing.x6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.canvasVoid)
+    }
+
+    private func homeAction(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: Spacing.x3) {
+                Image(systemName: icon)
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundStyle(Color.signalLive)
+                Text(title)
+                    .font(.plexSans(14, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+            .padding(Spacing.x4)
+            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                    .strokeBorder(Color.hairlineDark, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct ProjectSelectionRequiredView: View {
+    var body: some View {
+        VStack(spacing: Spacing.x3) {
+            Image(systemName: "rectangle.split.3x1")
+                .font(.system(size: 38, weight: .light))
+                .foregroundStyle(Color.signalLive)
+            Text("Select a project")
+                .font(.plexSans(20, weight: .semibold))
+                .foregroundStyle(Color.inkPrimary)
+            Text("Choose a project in the sidebar to open its kanban board.")
+                .font(.plexSans(13))
+                .foregroundStyle(Color.inkSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.canvasVoid)
+    }
+}
 #endif

@@ -27,6 +27,7 @@ enum ProjectSheetMode: Identifiable {
 /// native and keyboard-reachable; the trigger shows the active project initial.
 struct ProjectPickerRail: View {
     @ObservedObject var model: AppModel
+    var collapsed = false
     @State private var sheet: ProjectSheetMode?
 
     private var activeName: String {
@@ -70,6 +71,27 @@ struct ProjectPickerRail: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Project: \(activeName)")
+        .sheet(item: $sheet) { mode in
+            ProjectCreateSheet(mode: mode) { name, remote in
+                model.createProject(name: name, remote: remote)
+            }
+        }
+    }
+}
+
+struct NewProjectButton: View {
+    @ObservedObject var model: AppModel
+    @State private var sheet: ProjectSheetMode?
+
+    var body: some View {
+        Button { sheet = .create } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.inkSecondary)
+                .iconHitTarget(28)
+        }
+        .buttonStyle(.plain)
+        .help("New project")
         .sheet(item: $sheet) { mode in
             ProjectCreateSheet(mode: mode) { name, remote in
                 model.createProject(name: name, remote: remote)
