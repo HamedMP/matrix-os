@@ -81,6 +81,12 @@ public enum SignInState: Equatable, Sendable {
     case failed(String)
 }
 
+/// Which Clerk screen the device approval page should mount first.
+public enum SignInMode: String, Sendable {
+    case signIn = "sign-in"
+    case signUp = "sign-up"
+}
+
 /// Top-level workspace sections (left rail). Home is the web shell package;
 /// Terminal is the live zellij session list opened in a full terminal surface.
 public enum AppSection: String, CaseIterable, Sendable {
@@ -235,7 +241,7 @@ public final class AppModel: ObservableObject {
     // MARK: - Published state (SwiftUI binds to these)
 
     /// The active top-level section (left rail selection).
-    @Published public var section: AppSection = .home
+    @Published public var section: AppSection = .board
     /// Live zellij sessions for the Terminals section.
     @Published public private(set) var sessions: [WorkspaceSession] = []
     /// Open task/session tabs in the workspace. Tabs are project-marked so work
@@ -325,6 +331,7 @@ public final class AppModel: ObservableObject {
     /// Factory for a terminal session given a resolved WS URL, principal provider, and session id.
     /// Injected so tests can supply a mock event source instead of a real socket.
     private let makeTerminal: @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession
+    private var signInMode: SignInMode = .signUp
 
     // MARK: - Init
 
@@ -338,9 +345,9 @@ public final class AppModel: ObservableObject {
             GatewayHTTPClient(baseURL: url, tokenProvider: provider)
         },
         makeLoader: @escaping @Sendable (GatewayHTTPClient) -> any BoardLoading = { client in
-            // The board is project/task-first, but unlinked live zellij sessions are
-            // also surfaced so a fresh VPS never opens to an empty board.
-            CompositeBoardLoader(client: client)
+            // Project boards are task-first. Generic shells live in the Terminal
+            // section, not inside project kanban.
+            GatewayBoardLoader(client: client)
         },
         makeTerminal: @escaping @MainActor (URL, PrincipalProvider, String, String) -> TerminalSession = { url, provider, session, name in
             let tokenProvider = provider as any TokenProviding
@@ -427,8 +434,9 @@ public final class AppModel: ObservableObject {
     /// Starts the device-authorization sign-in: requests a device code, opens the
     /// verification page in the browser, and polls until approved. On success it
     /// stores the principal token, builds a profile, and loads the board.
-    public func beginSignIn() {
+    public func beginSignIn(mode: SignInMode = .signIn) {
         signInTask?.cancel()
+        signInMode = mode
         signIn = .starting
         signInTask = Task { [weak self] in await self?.runSignIn() }
     }
@@ -464,8 +472,9 @@ public final class AppModel: ObservableObject {
         do {
             let start = try await deviceAuth.startDeviceAuth()
             if Task.isCancelled { return }
-            signIn = .awaitingApproval(userCode: start.userCode, verificationUri: start.verificationUri)
-            if let url = URL(string: start.verificationUri) {
+            let verificationUri = verificationURI(start.verificationUri, mode: signInMode)
+            signIn = .awaitingApproval(userCode: start.userCode, verificationUri: verificationUri)
+            if let url = URL(string: verificationUri) {
                 openExternalURL(url)
             }
 
@@ -503,6 +512,15 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    private func verificationURI(_ rawValue: String, mode: SignInMode) -> String {
+        guard var components = URLComponents(string: rawValue) else { return rawValue }
+        var items = components.queryItems ?? []
+        items.removeAll { $0.name == "mode" }
+        items.append(URLQueryItem(name: "mode", value: mode.rawValue))
+        components.queryItems = items
+        return components.url?.absoluteString ?? rawValue
+    }
+
     // MARK: - Profile selection
 
     /// Selects a connection profile, rebuilds the gateway client + board store,
@@ -520,7 +538,6 @@ public final class AppModel: ObservableObject {
             self.board = BoardStore(loader: UnconfiguredBoardLoader())
             self.phase = .needsProfile
         }
-        ensureHomeTab(select: activeTabID == nil)
     }
 
     // MARK: - Board lifecycle
@@ -541,7 +558,6 @@ public final class AppModel: ObservableObject {
             openError = nil
             return
         }
-        ensureHomeTab(select: activeTabID == nil)
         if phase == .ready {
             // Keep showing the board while refreshing; only drop to disconnected on failure.
         } else {
@@ -739,7 +755,7 @@ public final class AppModel: ObservableObject {
 
     /// Switches the active project and reloads its board.
     public func openProject(slug: String) {
-        guard slug != projectSlug, let client = gatewayClient() else { return }
+        guard slug != projectSlug || !hasSelectedProject, let client = gatewayClient() else { return }
         openError = nil
         projectSlug = slug
         hasSelectedProject = true
@@ -756,7 +772,7 @@ public final class AppModel: ObservableObject {
         hasSelectedProject = false
         selectedCard = nil
         terminal = nil
-        activeTabID = "home"
+        activeTabID = nil
         section = .home
         activePanel = .shell
     }
@@ -1405,8 +1421,9 @@ public final class AppModel: ObservableObject {
                     body: CreateSessionRequest(name: name, cwd: nil)
                 )
                 await self?.loadSessions()
-                if let createdName = response.name {
-                    await MainActor.run { self?.openSession(named: createdName) }
+                let requestedName = response.name ?? name
+                if self?.sessions.contains(where: { $0.name == requestedName }) == true {
+                    await MainActor.run { self?.openSession(named: requestedName) }
                 } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {
                     await MainActor.run { self?.openSession(named: created.name) }
                 }

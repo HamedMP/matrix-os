@@ -38,23 +38,23 @@ struct NoProfileView: View {
             VStack(alignment: .leading, spacing: Spacing.x5) {
                 glyph
                 VStack(alignment: .leading, spacing: Spacing.x2) {
-                    Text("Matrix")
+                    Text("Matrix OS")
                         .font(.plexSans(38, weight: .semibold))
                         .foregroundStyle(Color.canvasVoid)
-                    Text("Run cloud agents.\nShip reliable software.")
+                    Text("Code on your\ncloud computer.")
                         .font(.plexSans(30, weight: .semibold))
                         .foregroundStyle(Color.canvasVoid)
                         .lineSpacing(2)
                 }
-                Text("Matrix gives you a private cloud computer with terminal, files, projects, agents, and review tools in one native app.")
+                Text("Every user gets a private VPS with shell, files, projects, agents, and review tools in one native app.")
                     .font(.plexSans(15))
                     .foregroundStyle(Color.canvasVoid.opacity(0.82))
                     .lineSpacing(3)
                     .frame(maxWidth: 360, alignment: .leading)
                 VStack(alignment: .leading, spacing: Spacing.x3) {
-                    brandBullet("cloud", "Powerful cloud runtimes")
-                    brandBullet("terminal", "Agent-native development")
-                    brandBullet("checkmark.shield", "End-to-end visibility")
+                    brandBullet("checkmark.circle", "No local setup required")
+                    brandBullet("chevron.left.forwardslash.chevron.right", "Works with GitHub")
+                    brandBullet("sparkles", "Claude / Codex / OpenCode ready")
                 }
                 Spacer()
             }
@@ -65,10 +65,10 @@ struct NoProfileView: View {
     private var authCard: some View {
         VStack(spacing: Spacing.x4) {
             VStack(spacing: Spacing.x1) {
-                Text("Welcome to Matrix")
+                Text("Welcome to Matrix OS")
                     .font(.plexSans(24, weight: .semibold))
                     .foregroundStyle(Color.inkPrimary)
-                Text("Sign in or create your Matrix computer.")
+                Text("Sign in to your account or create a new one to get started.")
                     .font(.plexSans(13))
                     .foregroundStyle(Color.inkTertiary)
             }
@@ -327,7 +327,7 @@ struct ProjectSelectionRequiredView: View {
             Text("Choose a project")
                 .font(.plexSans(28, weight: .semibold))
                 .foregroundStyle(Color.inkPrimary)
-            Text("Kanban boards are project-specific. Select a project square in the sidebar or create a new project to open its tasks.")
+            Text("Kanban boards are project-specific. Select a project in the sidebar or create a new project to open its tasks.")
                 .font(.plexSans(15))
                 .foregroundStyle(Color.inkTertiary)
                 .multilineTextAlignment(.center)

@@ -35,7 +35,7 @@ struct BoardView: View {
         case .needsProfile:
             NoProfileView(
                 onCreate: openCreateFlow,
-                onSignIn: { model.beginSignIn() },
+                onSignIn: { model.beginSignIn(mode: .signIn) },
                 onCancelSignIn: { model.cancelSignIn() },
                 signIn: model.signIn
             )
@@ -253,10 +253,27 @@ struct BoardView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             HStack(spacing: Spacing.x2) {
-                Circle().fill(Color.signalLive).frame(width: 7, height: 7)
-                Text(model.hasSelectedProject ? "\(model.activeProjectName) Board" : "Matrix")
-                    .font(.plexSans(12, weight: .semibold))
-                    .foregroundStyle(Color.inkSecondary)
+                if model.hasSelectedProject {
+                    ProjectAvatarIcon(
+                        name: model.activeProjectName,
+                        slug: model.projectSlug,
+                        isActive: true,
+                        size: 24
+                    )
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(model.activeProjectName)
+                            .font(.plexSans(12, weight: .semibold))
+                            .foregroundStyle(Color.inkPrimary)
+                        Text("Kanban")
+                            .font(.plexSans(10, weight: .medium))
+                            .foregroundStyle(Color.inkTertiary)
+                    }
+                } else {
+                    Circle().fill(Color.signalLive).frame(width: 7, height: 7)
+                    Text("Matrix OS")
+                        .font(.plexSans(12, weight: .semibold))
+                        .foregroundStyle(Color.inkSecondary)
+                }
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
@@ -302,10 +319,7 @@ struct BoardView: View {
     }
 
     private func openCreateFlow() {
-        // Hand off to the platform onboarding flow. In US1 this opens the web flow.
-        if let url = URL(string: "https://app.matrix-os.com/runtime") {
-            NSWorkspace.shared.open(url)
-        }
+        model.beginSignIn(mode: .signUp)
     }
 }
 
