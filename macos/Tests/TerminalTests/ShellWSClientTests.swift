@@ -264,6 +264,31 @@ final class ShellWSClientStateMachineTests: XCTestCase {
         await client.shutdown()
     }
 
+    func testRepeatedReconnectFailuresEmitConnectionErrorOnce() async throws {
+        let transport = MockShellTransport()
+        let clock = MockClock()
+        let client = makeClient(transport: transport, clock: clock)
+        await client.connect()
+
+        for connectionCount in 1...4 {
+            await transport.waitForConnect(count: connectionCount)
+            await transport.failCurrent()
+            await clock.waitForSleeper()
+            if connectionCount < 4 {
+                await clock.advanceAll()
+            }
+        }
+
+        let events = await drain(client, count: 4)
+        XCTAssertEqual(events, [
+            .reconnecting,
+            .error(code: "connection_failed", message: "Terminal connection failed"),
+            .reconnecting,
+            .reconnecting
+        ])
+        await client.shutdown()
+    }
+
     func testReplayEvictedResetsToLiveTail() async throws {
         let transport = MockShellTransport()
         let clock = MockClock()

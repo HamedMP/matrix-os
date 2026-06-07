@@ -100,19 +100,44 @@ private struct WebShellView: NSViewRepresentable {
     }
 
     private func load(_ url: URL, in view: WKWebView, coordinator: Coordinator) {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        if let bearerToken, !bearerToken.isEmpty {
-            request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
-        }
         coordinator.lastBearerToken = bearerToken
         coordinator.lastRequestedURL = url
+        coordinator.destinationURL = url
+        guard let bearerToken, !bearerToken.isEmpty, let request = appSessionExchangeRequest(for: url, token: bearerToken) else {
+            coordinator.exchangeInFlight = false
+            view.load(webShellDestinationRequest(for: url, token: bearerToken))
+            return
+        }
+        coordinator.exchangeInFlight = true
         view.load(request)
+    }
+
+    private func appSessionExchangeRequest(for destination: URL, token: String) -> URLRequest? {
+        guard var comps = URLComponents(url: destination, resolvingAgainstBaseURL: false) else { return nil }
+        let redirectTo = destination.path.isEmpty
+            ? "/"
+            : destination.path + (destination.query.map { "?\($0)" } ?? "")
+        comps.path = "/api/auth/app-session"
+        comps.query = nil
+        guard let exchangeURL = comps.url else { return nil }
+        var request = URLRequest(url: exchangeURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONEncoder().encode(AppSessionExchangeBody(redirectTo: redirectTo))
+        return request
+    }
+
+    private struct AppSessionExchangeBody: Encodable {
+        let redirectTo: String
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastBearerToken: String?
         var lastRequestedURL: URL?
+        var destinationURL: URL?
+        var exchangeInFlight = false
 
         @MainActor
         func webView(
@@ -125,28 +150,109 @@ private struct WebShellView: NSViewRepresentable {
                 return
             }
             if Self.shouldOpenExternally(url) {
+                if exchangeInFlight {
+                    exchangeInFlight = false
+                }
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
                 return
             }
+            if exchangeInFlight, !Self.isAppSessionExchangeURL(url) {
+                exchangeInFlight = false
+            }
             decisionHandler(.allow)
+        }
+
+        @MainActor
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationResponse: WKNavigationResponse,
+            decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
+        ) {
+            guard exchangeInFlight,
+                  let responseURL = navigationResponse.response.url,
+                  Self.isAppSessionExchangeURL(responseURL),
+                  let httpResponse = navigationResponse.response as? HTTPURLResponse,
+                  !(200..<300).contains(httpResponse.statusCode) else {
+                decisionHandler(.allow)
+                return
+            }
+            loadDestinationAfterExchangeFailure(in: webView)
+            decisionHandler(.cancel)
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard exchangeInFlight,
+                  webView.url.map(Self.isAppSessionExchangeURL) == true,
+                  let destinationURL else { return }
+            exchangeInFlight = false
+            webView.load(webShellDestinationRequest(for: destinationURL, token: lastBearerToken))
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+            if exchangeInFlight {
+                exchangeInFlight = false
+            }
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            loadDestinationAfterExchangeFailure(in: webView)
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            loadDestinationAfterExchangeFailure(in: webView)
+        }
+
+        @MainActor
+        private func loadDestinationAfterExchangeFailure(in webView: WKWebView) {
+            guard exchangeInFlight, let destinationURL else { return }
+            exchangeInFlight = false
+            webView.load(webShellDestinationRequest(for: destinationURL, token: lastBearerToken))
         }
 
         private static func shouldOpenExternally(_ url: URL) -> Bool {
             guard let host = url.host()?.lowercased() else { return false }
             let path = url.path.lowercased()
-            let firstSegment = url.pathComponents.dropFirst().first?.lowercased()
+            if path == "/api/auth/app-session" { return false }
             if host.contains("clerk") || host.contains("accounts.") {
                 return true
             }
-            return firstSegment == "sign-in"
-                || firstSegment == "sign-up"
-                || firstSegment == "login"
-                || firstSegment == "oauth"
-                || firstSegment == "sso"
-                || firstSegment == "auth"
+            return isAuthPath(path)
+        }
+
+        private static func isAppSessionExchangeURL(_ url: URL) -> Bool {
+            url.path == "/api/auth/app-session"
+        }
+
+        private static func isAuthPath(_ path: String) -> Bool {
+            path == "/sign-in"
+                || path.hasPrefix("/sign-in/")
+                || path == "/sign-up"
+                || path.hasPrefix("/sign-up/")
                 || path == "/login"
+                || path.hasPrefix("/login/")
+                || path == "/oauth"
+                || path.hasPrefix("/oauth/")
+                || path == "/sso"
+                || path.hasPrefix("/sso/")
+                || path == "/auth/device"
+                || path.hasPrefix("/auth/device/")
+                || path == "/auth/callback"
+                || path.hasPrefix("/auth/callback/")
         }
     }
+}
+
+private func webShellDestinationRequest(for url: URL, token: String?) -> URLRequest {
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 20
+    if let token, !token.isEmpty {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
+    return request
 }
 #endif
