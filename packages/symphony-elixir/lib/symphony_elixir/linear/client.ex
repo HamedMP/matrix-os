@@ -387,11 +387,13 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   defp graphql_headers do
+    bridge_credential = Bridge.credential()
+
     case Config.settings!().tracker.api_key do
       nil ->
         {:error, :missing_linear_api_token}
 
-      token when token == Bridge.credential() ->
+      ^bridge_credential ->
         {:ok,
          [
            {"Content-Type", "application/json"}
@@ -407,8 +409,10 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   defp graphql_request_fun do
+    bridge_credential = Bridge.credential()
+
     case Config.settings!().tracker.api_key do
-      token when token == Bridge.credential() -> &post_matrix_linear_bridge_request/2
+      ^bridge_credential -> &post_matrix_linear_bridge_request/2
       _ -> &post_graphql_request/2
     end
   end

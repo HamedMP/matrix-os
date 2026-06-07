@@ -258,6 +258,8 @@ describe("customer VPS Symphony systemd unit", () => {
     const presenter = await readFile("packages/symphony-elixir/lib/symphony_elixir_web/presenter.ex", "utf8");
 
     expect(linearClient).toContain("Bridge.credential()");
+    expect(linearClient).toContain("bridge_credential = Bridge.credential()");
+    expect(linearClient).not.toMatch(/when\s+\w+\s*==\s*Bridge\.credential\(\)/);
     expect(presenter).toContain("is_binary(settings.tracker.api_key) and settings.tracker.api_key == Bridge.credential()");
     expect(linearClient).toContain("PLATFORM_INTERNAL_URL");
     expect(linearClient).toContain("UPGRADE_TOKEN");
