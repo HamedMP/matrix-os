@@ -879,7 +879,7 @@ private struct CodeReadOnlyPreview: View {
 
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
-            VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                     HStack(alignment: .top, spacing: Spacing.x3) {
                         Text("\(index + 1)")

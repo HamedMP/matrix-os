@@ -1449,13 +1449,22 @@ public final class AppModel: ObservableObject {
     private func upsertTab(for card: Card) -> String {
         let kind: WorkspaceTab.Kind = card.id.hasPrefix("task_") ? .task : .session
         let title = displayName(for: card)
-        let tab = WorkspaceTab(
+        let candidate = WorkspaceTab(
             title: title,
             projectSlug: projectSlug,
             projectName: activeProjectName,
             kind: kind,
             card: card,
             panel: .terminal
+        )
+        let existingPanel = openTabs.first(where: { $0.id == candidate.id })?.panel
+        let tab = WorkspaceTab(
+            title: title,
+            projectSlug: projectSlug,
+            projectName: activeProjectName,
+            kind: kind,
+            card: card,
+            panel: existingPanel ?? .terminal
         )
         if let index = openTabs.firstIndex(where: { $0.id == tab.id }) {
             openTabs[index] = tab

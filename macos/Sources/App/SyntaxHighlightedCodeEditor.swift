@@ -152,14 +152,55 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
     private static func highlighted(_ text: String, filePath: String?, theme: CodeEditorTheme) -> NSAttributedString {
         let nsText = text as NSString
         let fullRange = NSRange(location: 0, length: nsText.length)
+        let language = syntaxLanguage(for: filePath)
         let output = NSMutableAttributedString(
             string: text,
             attributes: [.font: editorFont(size: 13), .foregroundColor: theme.foreground]
         )
         apply(pattern: #""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`"#, color: theme.string, to: output, range: fullRange)
-        apply(pattern: #"(?m)(//.*$|#.*$)"#, color: theme.comment, to: output, range: fullRange)
-        apply(pattern: #"\b(import|export|from|func|function|let|const|var|struct|class|enum|protocol|extension|public|private|return|if|else|switch|case|for|while|guard|try|await|async|throws|type|interface|extends|implements|new|in|of)\b"#, color: theme.keyword, to: output, range: fullRange)
+        if language.supportsLineComments {
+            apply(pattern: language.commentPattern, color: theme.comment, to: output, range: fullRange)
+        }
+        if language.supportsKeywords {
+            apply(pattern: language.keywordPattern, color: theme.keyword, to: output, range: fullRange)
+        }
         return output
+    }
+
+    private struct SyntaxLanguage {
+        var supportsLineComments: Bool
+        var supportsKeywords: Bool
+        var commentPattern: String
+        var keywordPattern: String
+    }
+
+    private static func syntaxLanguage(for filePath: String?) -> SyntaxLanguage {
+        let fallback = SyntaxLanguage(
+            supportsLineComments: true,
+            supportsKeywords: true,
+            commentPattern: #"(?m)(//.*$|#.*$)"#,
+            keywordPattern: #"\b(import|export|from|func|function|let|const|var|struct|class|enum|protocol|extension|public|private|return|if|else|switch|case|for|while|guard|try|await|async|throws|type|interface|extends|implements|new|in|of)\b"#
+        )
+        guard let filePath, !filePath.isEmpty else { return fallback }
+        let ext = URL(fileURLWithPath: filePath).pathExtension.lowercased()
+        switch ext {
+        case "json", "jsonc", "yaml", "yml", "toml", "xml", "html", "htm", "md", "markdown", "txt", "log", "csv":
+            return SyntaxLanguage(
+                supportsLineComments: false,
+                supportsKeywords: false,
+                commentPattern: fallback.commentPattern,
+                keywordPattern: fallback.keywordPattern
+            )
+        case "py", "rb", "sh", "bash", "zsh":
+            return SyntaxLanguage(
+                supportsLineComments: true,
+                supportsKeywords: true,
+                commentPattern: #"(?m)#.*$"#,
+                keywordPattern: fallback.keywordPattern
+            )
+        default:
+            return fallback
+        }
     }
 
     private static func apply(pattern: String, color: NSColor, to output: NSMutableAttributedString, range: NSRange) {
