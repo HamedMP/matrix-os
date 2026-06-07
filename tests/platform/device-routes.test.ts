@@ -66,6 +66,8 @@ describe("device routes", () => {
     await destroyTestPlatformDb(db);
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    delete process.env.PLATFORM_PUBLIC_URL;
+    delete process.env.NEXT_PUBLIC_MATRIX_APP_URL;
   });
 
   describe("POST /api/auth/device/code", () => {
@@ -104,6 +106,37 @@ describe("device routes", () => {
         "matrixos://auth?status=approved",
       );
       expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
+    });
+
+    it("uses the app shell origin for macOS approval even when platform API origin differs", async () => {
+      process.env.PLATFORM_PUBLIC_URL = "https://api.matrix-os.com";
+      process.env.NEXT_PUBLIC_MATRIX_APP_URL = "https://app.matrix-os.com";
+      const { docker } = createMockDocker();
+      const routedApp = createApp({
+        db,
+        orchestrator: createOrchestrator({ db, docker: docker as any }),
+        clerkAuth: createClerkAuth({
+          verifyToken: async () => ({ sub: "user_alice" }),
+        }),
+      });
+
+      const res = await routedApp.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-macos",
+          redirectUri: "matrixos://auth?status=approved",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const verificationUri = new URL(body.verificationUri);
+      expect(verificationUri.origin).toBe("https://app.matrix-os.com");
+      expect(verificationUri.pathname).toBe("/auth/device");
+      expect(verificationUri.searchParams.get("redirect_uri")).toBe(
+        "matrixos://auth?status=approved",
+      );
     });
 
     it("ignores native callbacks for other clients or invalid schemes", async () => {

@@ -3562,15 +3562,17 @@ export function createApp(deps: {
   // the platform. Public endpoints; admin Bearer middleware below skips them.
   const platformJwtSecret = process.env.PLATFORM_JWT_SECRET ?? '';
   if (platformJwtSecret) {
-    const platformPublicUrl =
-      process.env.PLATFORM_PUBLIC_URL ?? `http://localhost:${process.env.PLATFORM_PORT ?? 9000}`;
+    const deviceAuthPublicUrl =
+      appEnv.NEXT_PUBLIC_MATRIX_APP_URL ??
+      appEnv.PLATFORM_PUBLIC_URL ??
+      `http://localhost:${appEnv.PLATFORM_PORT ?? 9000}`;
     app.route(
       '/',
       createAuthRoutes({
         db,
         clerkAuth,
         jwtSecret: platformJwtSecret,
-        platformUrl: platformPublicUrl,
+        platformUrl: deviceAuthPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
         captureEvent: (event, properties) => {
           capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN, {
