@@ -4,9 +4,32 @@ import XCTest
 import MatrixBoard
 import MatrixModel
 import MatrixNet
+import MatrixTerminal
 
 @MainActor
 final class AppModelAuthTests: XCTestCase {
+    func testWebShellAuthStateKeepsPromptWhenHostedShellRequiresAuth() {
+        var state = WebShellAuthState()
+
+        state.resolveToken("native-token")
+        state.markHostedAuthRequired()
+        state.resolveToken("native-token")
+
+        XCTAssertTrue(state.shouldShowSignInPrompt)
+        XCTAssertEqual(state.token, "native-token")
+    }
+
+    func testWebShellAuthStateClearsPromptAfterExplicitSignInReload() {
+        var state = WebShellAuthState()
+
+        state.resolveToken("old-token")
+        state.markHostedAuthRequired()
+        state.resolveToken("new-token", source: .explicitSignIn)
+
+        XCTAssertFalse(state.shouldShowSignInPrompt)
+        XCTAssertEqual(state.token, "new-token")
+    }
+
     func testRefreshRequiresTokenEvenWhenProfileIsPersisted() async {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let profile = ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com")
@@ -67,6 +90,105 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertNil(model.activeTabID)
         XCTAssertTrue(model.openTabs.isEmpty)
     }
+
+    func testOpeningProjectCreatesBoardTabAndSelectingTaskKeepsBoardTab() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            makeTerminal: { _, _, _, name in TerminalSession(displayName: name, client: IdleShellEventSource()) },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "main")
+
+        XCTAssertEqual(model.openTabs.map(\.kind), [.board])
+        XCTAssertEqual(model.activeTabID, "board:main")
+
+        let card = Card(
+            id: "task_1",
+            projectSlug: "main",
+            title: "Fix login",
+            status: .todo,
+            priority: .normal,
+            order: 1,
+            linkedSessionId: nil,
+            updatedAt: "now"
+        )
+        _ = try? await model.openCard(card)
+
+        XCTAssertTrue(model.openTabs.contains(where: { $0.id == "board:main" && $0.kind == .board }))
+        XCTAssertTrue(model.openTabs.contains(where: { $0.kind == .task && $0.title == "Fix login" }))
+    }
+
+    func testTaskPaneTogglesKeepAtLeastOnePaneAndEnableMultiple() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: nil,
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.togglePanel(.app(slug: "git"))
+        XCTAssertTrue(model.enabledPanels.contains(.terminal))
+        XCTAssertTrue(model.enabledPanels.contains(.app(slug: "editor")))
+        XCTAssertTrue(model.enabledPanels.contains(.app(slug: "git")))
+
+        model.togglePanel(.terminal)
+        model.togglePanel(.app(slug: "editor"))
+        model.togglePanel(.app(slug: "git"))
+
+        XCTAssertEqual(model.enabledPanels, [.app(slug: "git")])
+    }
+
+    func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        let openedURL = OpenedURLRecorder()
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: nil,
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(
+                start: try makeDeviceAuthStart(
+                    deviceCode: "DC",
+                    userCode: "ABCD-EFGH",
+                    verificationUri: "https://app.matrix-os.com/auth/device?user_code=ABD-EFGH",
+                    expiresIn: 20,
+                    interval: 1
+                ),
+                polls: [
+                    .approved(try makeDeviceAuthToken(
+                        accessToken: "native-token",
+                        expiresAt: nil,
+                        userId: "user_1",
+                        handle: "hamed"
+                    )),
+                ]
+            ),
+            openExternalURL: { openedURL.open($0) }
+        )
+
+        model.beginSignIn(mode: SignInMode.signIn)
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+
+        let token = await principal.token()
+        XCTAssertEqual(token, "native-token")
+        XCTAssertEqual(model.profile?.handle, "hamed")
+        XCTAssertEqual(model.section, AppSection.home)
+        XCTAssertFalse(model.hasSelectedProject)
+        XCTAssertEqual(openedURL.urls.first?.absoluteString, "https://app.matrix-os.com/auth/device?user_code=ABD-EFGH&mode=sign-in")
+    }
 }
 
 private final class MemoryTokenStore: TokenStoring, @unchecked Sendable {
@@ -91,13 +213,68 @@ private struct EmptyBoardLoader: BoardLoading {
     }
 }
 
-private struct MockDeviceAuthorizer: DeviceAuthorizing {
+private func makeDeviceAuthStart(
+    deviceCode: String,
+    userCode: String,
+    verificationUri: String,
+    expiresIn: Int,
+    interval: Int
+) throws -> DeviceAuthStart {
+    let json = """
+    {"deviceCode":"\(deviceCode)","userCode":"\(userCode)","verificationUri":"\(verificationUri)","expiresIn":\(expiresIn),"interval":\(interval)}
+    """
+    return try JSONDecoder().decode(DeviceAuthStart.self, from: Data(json.utf8))
+}
+
+private func makeDeviceAuthToken(
+    accessToken: String,
+    expiresAt: Double?,
+    userId: String,
+    handle: String
+) throws -> DeviceAuthToken {
+    let expires = expiresAt.map { String($0) } ?? "null"
+    let json = """
+    {"accessToken":"\(accessToken)","expiresAt":\(expires),"userId":"\(userId)","handle":"\(handle)"}
+    """
+    return try JSONDecoder().decode(DeviceAuthToken.self, from: Data(json.utf8))
+}
+
+private final class OpenedURLRecorder: @unchecked Sendable {
+    private(set) var urls: [URL] = []
+
+    func open(_ url: URL) {
+        urls.append(url)
+    }
+}
+
+private struct IdleShellEventSource: ShellEventSource {
+    var events: AsyncStream<ServerEvent> {
+        get async { AsyncStream { _ in } }
+    }
+
+    func connect() async {}
+    func sendInput(_ data: String) async {}
+    func resize(cols: Int, rows: Int) async {}
+    func detach() async {}
+    func shutdown() async {}
+}
+
+private final class MockDeviceAuthorizer: DeviceAuthorizing, @unchecked Sendable {
+    var start: DeviceAuthStart?
+    var polls: [DevicePollResult]
+
+    init(start: DeviceAuthStart? = nil, polls: [DevicePollResult] = [.pending]) {
+        self.start = start
+        self.polls = polls
+    }
+
     func startDeviceAuth() async throws -> DeviceAuthStart {
+        if let start { return start }
         throw GatewayError.server
     }
 
     func pollForToken(deviceCode: String) async throws -> DevicePollResult {
-        .pending
+        polls.isEmpty ? .pending : polls.removeFirst()
     }
 }
 #endif

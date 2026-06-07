@@ -69,7 +69,9 @@ let taskPaneSpecs: [TaskPaneSpec] = [
 
 struct TaskPaneStrip: View {
     let activePanel: Panel
-    let onSelect: (Panel) -> Void
+    let enabledPanels: [Panel]
+    let onToggle: (Panel) -> Void
+    let onFocus: (Panel) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -77,10 +79,14 @@ struct TaskPaneStrip: View {
                 ForEach(taskPaneSpecs) { pane in
                     TaskPaneButton(
                         pane: pane,
-                        isActive: pane.panel == activePanel,
-                        action: { onSelect(pane.panel) }
+                        isActive: enabledPanels.contains(pane.panel),
+                        isFocused: pane.panel == activePanel,
+                        action: { onToggle(pane.panel) }
                     )
                     .keyboardShortcut(shortcutKey(for: pane.id), modifiers: shortcutModifiers(for: pane.id))
+                    .contextMenu {
+                        Button("Focus \(pane.title)") { onFocus(pane.panel) }
+                    }
                 }
             }
             .fixedSize(horizontal: true, vertical: false)
@@ -112,21 +118,25 @@ struct TaskPaneStrip: View {
 private struct TaskPaneButton: View {
     let pane: TaskPaneSpec
     let isActive: Bool
+    let isFocused: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: Spacing.x1) {
+                Image(systemName: isActive ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isActive ? Color.signalLive : Color.inkTertiary)
                 Image(systemName: pane.icon)
                     .font(.system(size: 12, weight: .semibold))
                 Text(pane.title)
-                    .font(.plexSans(12, weight: isActive ? .semibold : .medium))
+                    .font(.plexSans(12, weight: isFocused ? .semibold : .medium))
                     .lineLimit(1)
                 Text(pane.shortcut)
                     .font(.plexMono(9, weight: .semibold))
-                    .foregroundStyle(isActive ? Color.inkSecondary : Color.inkTertiary)
+                    .foregroundStyle(isFocused ? Color.inkSecondary : Color.inkTertiary)
             }
-            .foregroundStyle(isActive ? Color.inkPrimary : Color.inkSecondary)
+            .foregroundStyle(isFocused ? Color.inkPrimary : Color.inkSecondary)
             .padding(.horizontal, Spacing.x2)
             .frame(height: 30)
             .background(
@@ -135,7 +145,7 @@ private struct TaskPaneButton: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .strokeBorder(isActive ? Color.hairlineDark : Color.clear, lineWidth: 1)
+                    .strokeBorder(isFocused ? Color.signalLive.opacity(0.7) : (isActive ? Color.hairlineDark : Color.clear), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
@@ -261,7 +271,7 @@ private struct WorkspaceTabPill: View {
             }
             .buttonStyle(.plain)
 
-            if tab.kind != .home {
+            if tab.kind != .home && tab.kind != .board {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))
@@ -298,6 +308,8 @@ private struct WorkspaceTabPill: View {
         switch tab.kind {
         case .home:
             return "house"
+        case .board:
+            return "rectangle.split.3x1"
         case .task:
             return "checklist"
         case .session:
