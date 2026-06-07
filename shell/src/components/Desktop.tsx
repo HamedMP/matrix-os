@@ -16,6 +16,7 @@ import { TerminalApp } from "./terminal/TerminalApp";
 import { WorkspaceApp } from "./workspace/WorkspaceApp";
 import { FileBrowser } from "./file-browser/FileBrowser";
 import { PreviewWindow } from "./preview-window/PreviewWindow";
+import { ActivityMonitorApp } from "./system-activity/ActivityMonitorApp";
 import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
@@ -992,6 +993,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       addApp("Workspace", "__workspace__", "workspace");
       addApp("Files", "__file-browser__", "files");
       addApp("Hermes", "__chat__", "chat");
+      addApp("Activity Monitor", "__activity-monitor__", "chart");
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
@@ -1294,6 +1296,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         group: "Actions",
         keywords: ["files", "finder", "browse", "explorer"],
         execute: () => openWindow("Files", "__file-browser__"),
+      },
+      {
+        id: "action:open-activity-monitor",
+        label: "Open Activity Monitor",
+        group: "Actions",
+        keywords: ["activity", "monitor", "cpu", "memory", "disk", "processes"],
+        execute: () => openWindow("Activity Monitor", "__activity-monitor__"),
       },
       {
         id: "action:toggle-vocal",
@@ -2048,6 +2057,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                         />
                       )}
                     </div>
+                  ) : win.path === "__activity-monitor__" ? (
+                    <ActivityMonitorApp />
                   ) : (
                     <AppViewer path={win.path} onOpenApp={openWindow} />
                   )}

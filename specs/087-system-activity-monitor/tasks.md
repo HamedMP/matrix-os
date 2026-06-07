@@ -19,10 +19,10 @@
 
 - [X] T001 Create `packages/gateway/src/system-activity/types.ts` with ActivitySnapshot, MachineIdentity, ResourceSummary, ServiceStatus, ProcessSummary, CleanupCandidate, CleanupAction, CleanupHistoryEntry, and AutoCleanupPolicy DTO types.
 - [X] T002 Create `packages/gateway/src/system-activity/routes.ts` with placeholder Hono route factory and dependency interface wired for tests but not registered.
-- [ ] T003 [P] Create `shell/src/stores/systemActivityStore.ts` with serializable initial state, refresh status, cleanup status, and error fields.
-- [ ] T004 [P] Create `shell/src/components/system-activity/ActivityMonitorApp.tsx` as a minimal built-in app shell with loading and unavailable states.
-- [ ] T005 Add the System Activity Monitor built-in app manifest/icon wiring in the existing shell built-in app registry files discovered during implementation.
-- [ ] T006 Update `www/content/docs/guide/system-activity-monitor.mdx` with user-facing monitor and cleanup safety overview.
+- [X] T003 [P] Create `shell/src/stores/systemActivityStore.ts` with serializable initial state, refresh status, cleanup status, and error fields.
+- [X] T004 [P] Create `shell/src/components/system-activity/ActivityMonitorApp.tsx` as a minimal built-in app shell with loading and unavailable states.
+- [X] T005 Add the System Activity Monitor built-in app manifest/icon wiring in the existing shell built-in app registry files discovered during implementation.
+- [X] T006 Update `www/content/docs/guide/system-activity-monitor.mdx` with user-facing monitor and cleanup safety overview.
 
 ---
 
@@ -55,8 +55,8 @@
 
 ### Tests for User Story 1
 
-- [ ] T017 [P] [US1] Add failing shell store tests for refresh lifecycle, safe error strings, section-level unavailable states, and stable serializable state in `tests/shell/system-activity-app.test.tsx`.
-- [ ] T018 [P] [US1] Add failing component tests for MachineSummary, ResourceMeters, ProcessTable, service health rendering, refresh button behavior, and no layout overlap in `tests/shell/system-activity-app.test.tsx`.
+- [X] T017 [P] [US1] Add failing shell store tests for refresh lifecycle, safe error strings, section-level unavailable states, and stable serializable state in `tests/shell/system-activity-app.test.tsx`.
+- [X] T018 [P] [US1] Add failing component tests for MachineSummary, ResourceMeters, ProcessTable, service health rendering, refresh button behavior, and no layout overlap in `tests/shell/system-activity-app.test.tsx`.
 
 ### Implementation for User Story 1
 
@@ -64,9 +64,9 @@
 - [ ] T020 [P] [US1] Implement `MachineSummary.tsx` in `shell/src/components/system-activity/MachineSummary.tsx`.
 - [ ] T021 [P] [US1] Implement `ResourceMeters.tsx` in `shell/src/components/system-activity/ResourceMeters.tsx`.
 - [ ] T022 [P] [US1] Implement `ProcessTable.tsx` in `shell/src/components/system-activity/ProcessTable.tsx`.
-- [ ] T023 [US1] Implement dashboard refresh, polling, abort handling, and safe client error capping in `shell/src/stores/systemActivityStore.ts`.
-- [ ] T024 [US1] Wire `ActivityMonitorApp.tsx` into Canvas and Desktop built-in app handling in `shell/src/components/canvas/CanvasWindow.tsx` and `shell/src/components/Desktop.tsx`.
-- [ ] T025 [US1] Add responsive Canvas-first layout polish and loading/empty states in `shell/src/components/system-activity/ActivityMonitorApp.tsx`.
+- [X] T023 [US1] Implement dashboard refresh, polling, abort handling, and safe client error capping in `shell/src/stores/systemActivityStore.ts`.
+- [X] T024 [US1] Wire `ActivityMonitorApp.tsx` into Canvas and Desktop built-in app handling in `shell/src/components/canvas/CanvasWindow.tsx` and `shell/src/components/Desktop.tsx`.
+- [X] T025 [US1] Add responsive Canvas-first layout polish and loading/empty states in `shell/src/components/system-activity/ActivityMonitorApp.tsx`.
 
 **Checkpoint**: User Story 1 is fully functional as a read-only MVP.
 
@@ -81,14 +81,14 @@
 ### Tests for User Story 2
 
 - [ ] T026 [P] [US2] Add failing classifier fixture tests for orphaned app servers with deleted executables, high-port listeners, no active connections, active zellij sessions, idle code-server, old bundles, and cache scopes in `tests/gateway/system-activity-cleanup.test.ts`.
-- [ ] T027 [P] [US2] Add failing UI tests for cleanup suggestion cards, confidence/risk labels, estimated reclaim, confirmation affordance, and manual-review-only state in `tests/shell/system-activity-app.test.tsx`.
+- [X] T027 [P] [US2] Add failing UI tests for cleanup suggestion cards, confidence/risk labels, estimated reclaim, confirmation affordance, and manual-review-only state in `tests/shell/system-activity-app.test.tsx`.
 
 ### Implementation for User Story 2
 
 - [ ] T028 [US2] Implement stale app server, zellij, code-server, cache, and old-bundle cleanup classifiers in `packages/gateway/src/system-activity/cleanup.ts`.
 - [ ] T029 [US2] Include cleanup suggestions in `GET /api/system/activity` only when requested and only after candidate cache registration in `packages/gateway/src/system-activity/routes.ts`.
-- [ ] T030 [P] [US2] Implement `CleanupSuggestions.tsx` with risk, confidence, target, reason, and estimated reclaim display in `shell/src/components/system-activity/CleanupSuggestions.tsx`.
-- [ ] T031 [US2] Add suggestion rendering and disabled/manual-review states to `ActivityMonitorApp.tsx`.
+- [X] T030 [P] [US2] Implement `CleanupSuggestions.tsx` with risk, confidence, target, reason, and estimated reclaim display in `shell/src/components/system-activity/CleanupSuggestions.tsx`.
+- [X] T031 [US2] Add suggestion rendering and disabled/manual-review states to `ActivityMonitorApp.tsx`.
 
 **Checkpoint**: Users can inspect safe cleanup opportunities without mutating the runtime.
 
@@ -104,14 +104,14 @@
 
 - [ ] T032 [P] [US3] Add failing action execution tests for stale app server stop, stale terminal session close, idle code-server restart, cache cleanup, old bundle pruning, already-clean targets, candidate mismatch, and generic errors in `tests/gateway/system-activity-cleanup.test.ts`.
 - [ ] T033 [P] [US3] Add failing route tests for action schema validation, candidate expiry, confirmation mismatch, body limit, owner auth, history write, and refresh recommendation in `tests/gateway/system-activity-routes.test.ts`.
-- [ ] T034 [P] [US3] Add failing UI tests for confirmation flow, pending state, result state, safe error display, and post-action refresh in `tests/shell/system-activity-app.test.tsx`.
+- [X] T034 [P] [US3] Add failing UI tests for confirmation flow, pending state, result state, safe error display, and post-action refresh in `tests/shell/system-activity-app.test.tsx`.
 
 ### Implementation for User Story 3
 
 - [ ] T035 [US3] Implement typed cleanup executors with idempotent already-clean handling in `packages/gateway/src/system-activity/cleanup.ts`.
 - [ ] T036 [US3] Implement `POST /api/system/activity/actions` with candidate revalidation, confirmation checks, history writes, and generic errors in `packages/gateway/src/system-activity/routes.ts`.
 - [ ] T037 [US3] Implement cleanup history query endpoint in `packages/gateway/src/system-activity/routes.ts`.
-- [ ] T038 [US3] Implement confirmation and action submission flow in `CleanupSuggestions.tsx` and `systemActivityStore.ts`.
+- [X] T038 [US3] Implement confirmation and action submission flow in `CleanupSuggestions.tsx` and `systemActivityStore.ts`.
 - [ ] T039 [US3] Add cleanup history summary UI in `ActivityMonitorApp.tsx`.
 
 **Checkpoint**: Manual cleanup is safe, typed, audited, and visible.
