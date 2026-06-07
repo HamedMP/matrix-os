@@ -67,7 +67,7 @@ From any card the user can switch the panel from Terminal to **Matrix Shell**, e
 
 ---
 
-### User Story 4 - Run a Matrix App inside a card (Priority: P3)
+### User Story 4 - Run a Matrix App inside a card (Priority: P4)
 
 The user pins a specific Matrix App (e.g. a kanban app, a notes app, a game) as a card's panel. The app runs through the MatrixOS app bridge with the same data access it has in the web shell (owner Postgres, KV, allowlisted external fetch).
 
@@ -83,7 +83,7 @@ The user pins a specific Matrix App (e.g. a kanban app, a notes app, a game) as 
 
 ---
 
-### User Story 5 - See and steer Symphony runs from the board (Priority: P4)
+### User Story 5 - See and steer Symphony runs from the board (Priority: P5)
 
 When the user runs the Symphony orchestrator on the VPS, related cards show run status and agent activity, and the user can start/observe an orchestrated run from the board.
 
@@ -99,7 +99,7 @@ When the user runs the Symphony orchestrator on the VPS, related cards show run 
 
 ---
 
-### User Story 6 - Control the board from any terminal (CLI/MCP) (Priority: P4)
+### User Story 6 - Control the board from any terminal (CLI/MCP) (Priority: P6)
 
 A Matrix-targeted CLI command set and MCP server let agents and power users read board context and create/update/move cards from inside any terminal session — the native analogue of SlayZone's `slay`.
 

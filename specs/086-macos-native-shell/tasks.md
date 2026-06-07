@@ -92,21 +92,21 @@ description: "Task list for 086 Matrix OS native macOS app"
 
 ---
 
-## Phase 6: User Story 4 — Matrix App panel (P3)
+## Phase 6: User Story 4 — Matrix App panel (P4)
 
 - [ ] T060 [P] [US4] Failing test: App panel loads via shell-origin `AppViewer` URL (server-side bridge serves it); un-bridged fetch blocked; no native bridge re-impl.
 - [ ] T061 [US4] `AppPanel` (`WKWebView` to shell-origin AppViewer for selected app slug; app picker; suspend/release on switch) in `macos/Sources/Panels/`.
 
 ---
 
-## Phase 7: User Story 5 — Symphony on the board (P4)
+## Phase 7: User Story 5 — Symphony on the board (P5)
 
 - [ ] T070 [P] [US5] Failing test: Symphony run read-model surfaces on related cards; start/observe via `symphony/proxy.ts`.
 - [ ] T071 [US5] `SymphonyClient` + card run-status/agent-activity overlays + start/observe controls in `macos/Sources/Symphony/`.
 
 ---
 
-## Phase 8: User Story 6 — CLI/MCP board control (P4)
+## Phase 8: User Story 6 — CLI/MCP board control (P6)
 
 - [ ] T080 [P] [US6] Failing tests for `matrix board` commands (list/create/move/update) against gateway under principal, in `tests/` (existing convention).
 - [ ] T081 [US6] Implement `matrix board` command group (extend existing CLI) + MCP server exposing board read/write tools under the same principal; live-propagation to the app.
