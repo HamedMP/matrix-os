@@ -59,7 +59,7 @@ Native app authenticates to the **platform** (device-authorization flow, same as
 | Platform device auth / VPS resolution | HTTPS | Device-authorization → JWT | user account |
 | `GET/POST/PATCH/DELETE /api/projects[...]/tasks` | HTTPS | `requireRequestPrincipal` (Authorization header) | `ownerScopeFromPrincipal` |
 | `/api/sessions*` | HTTPS | `requireRequestPrincipal` | owner scope |
-| Shell terminal WS (`createShellWsHandler` route) | WSS upgrade | **Authorization header / WS subprotocol** (S1 — NOT query token) → `requireRequestPrincipal(c)` (same pattern as canvas WS) | owner scope, session-name validated |
+| Shell terminal WS (`createShellWsHandler` route) | WSS upgrade | Global `authMiddleware` accepts `Authorization: Bearer` (native) or allowlisted query token (browser fallback); handlers do not call `requireRequestPrincipal(c)` | single-VPS owner scope via platform routing; session-name validated |
 | Board-update subscription WS | WSS upgrade | Authorization header → principal | owner scope; bounded subscriber registry, TTL eviction, per-send isolation, dead-sender eviction |
 | Symphony proxy routes | HTTPS/WSS | `requireRequestPrincipal` | owner scope |
 | CLI/MCP board ops | HTTPS | same principal token (Keychain/CLI creds) | owner scope |
