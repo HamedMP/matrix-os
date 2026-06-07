@@ -69,6 +69,8 @@ private extension NSColor {
 }
 
 struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
+    nonisolated static let engineConfiguration = EditorEngineConfiguration(kind: .textKitNative)
+
     @Binding var text: String
     let filePath: String?
     let theme: CodeEditorTheme

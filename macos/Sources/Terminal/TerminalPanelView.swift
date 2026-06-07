@@ -15,6 +15,8 @@ private typealias Color = SwiftUI.Color
 /// - Top strip: session name + status badge + "● LIVE" / "↓ N new" affordance.
 /// - Calm inline states: `reconnecting…` (amber), `session exited` (grey) — never raw errors.
 public struct TerminalPanelView: View {
+    public nonisolated static let rendererConfiguration = TerminalRendererConfiguration(kind: .swiftTerm)
+
     @ObservedObject private var session: TerminalSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
