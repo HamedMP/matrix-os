@@ -92,7 +92,7 @@ defmodule SymphonyElixir.MixProject do
       app: nil,
       main_module: SymphonyElixir.CLI,
       name: "symphony",
-      path: "bin/symphony"
+      path: System.get_env("SYMPHONY_ESCRIPT_PATH") || "bin/symphony"
     ]
   end
 end

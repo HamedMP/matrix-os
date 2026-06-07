@@ -181,6 +181,11 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: 28
+          elixir-version: 1.19
+
       - name: Validate public build environment
         env:
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}

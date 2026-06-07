@@ -172,6 +172,93 @@ describe("Elixir Symphony proxy routes", () => {
     expect(JSON.stringify(await res.json())).not.toContain("ECONNREFUSED");
   });
 
+  it("reports host-managed Symphony service status without contacting Elixir", async () => {
+    const fetchImpl = vi.fn();
+    const serviceControl = vi.fn(async () => ({
+      available: true,
+      running: false,
+      status: "stopped" as const,
+      canStart: true,
+      canStop: false,
+      credentialConfigured: true,
+      managedBy: "systemd",
+    }));
+    const app = createElixirSymphonyProxyRoutes({
+      fetchImpl,
+      serviceControl,
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    });
+
+    const res = await app.request("/service");
+
+    expect(res.status).toBe(200);
+    expect(serviceControl).toHaveBeenCalledWith("status");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await res.json()).toEqual({
+      service: {
+        available: true,
+        running: false,
+        status: "stopped",
+        canStart: true,
+        canStop: false,
+        credentialConfigured: true,
+        managedBy: "systemd",
+      },
+    });
+  });
+
+  it("starts and stops the host-managed Symphony service with body limits", async () => {
+    const serviceControl = vi.fn(async (action: "status" | "start" | "stop") => ({
+      available: true,
+      running: action !== "stop",
+      status: action === "stop" ? "stopped" as const : "running" as const,
+      canStart: action === "stop",
+      canStop: action !== "stop",
+      credentialConfigured: true,
+      managedBy: "systemd",
+    }));
+    const app = createElixirSymphonyProxyRoutes({
+      serviceControl,
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    });
+
+    const start = await app.request("/service/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const stop = await app.request("/service/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    expect(start.status).toBe(200);
+    expect(stop.status).toBe(200);
+    expect(serviceControl).toHaveBeenNthCalledWith(1, "start");
+    expect(serviceControl).toHaveBeenNthCalledWith(2, "stop");
+    expect(await start.json()).toMatchObject({ service: { running: true, status: "running" } });
+    expect(await stop.json()).toMatchObject({ service: { running: false, status: "stopped" } });
+  });
+
+  it("maps host service control failures to generic unavailable errors", async () => {
+    const app = createElixirSymphonyProxyRoutes({
+      serviceControl: async () => {
+        throw new Error("systemctl failed with secret output");
+      },
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    });
+
+    const res = await app.request("/service/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: { code: "service_unavailable", message: "Symphony service control is unavailable" } });
+  });
+
   it("validates issue identifiers before proxying detail requests", async () => {
     const fetchImpl = vi.fn();
     const app = createElixirSymphonyProxyRoutes({
