@@ -46,6 +46,7 @@ defmodule SymphonyElixir.MixProject do
       dialyzer: [
         plt_add_apps: [:mix]
       ],
+      releases: releases(),
       escript: escript(),
       aliases: aliases(),
       deps: deps()
@@ -92,7 +93,17 @@ defmodule SymphonyElixir.MixProject do
       app: nil,
       main_module: SymphonyElixir.CLI,
       name: "symphony",
-      path: "bin/symphony"
+      path: System.get_env("SYMPHONY_ESCRIPT_PATH") || "bin/symphony"
+    ]
+  end
+
+  defp releases do
+    [
+      symphony: [
+        include_erts: true,
+        include_executables_for: [:unix],
+        applications: [symphony_elixir: :permanent]
+      ]
     ]
   end
 end

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createElixirSymphonyProxyRoutes } from "../../packages/gateway/src/symphony/proxy.js";
+import { createElixirSymphonyProxyRoutes, createHostSymphonyServiceControl } from "../../packages/gateway/src/symphony/proxy.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -170,6 +171,120 @@ describe("Elixir Symphony proxy routes", () => {
 
     expect(res.status).toBe(503);
     expect(JSON.stringify(await res.json())).not.toContain("ECONNREFUSED");
+  });
+
+  it("reports host-managed Symphony service status without contacting Elixir", async () => {
+    const fetchImpl = vi.fn();
+    const serviceControl = vi.fn(async () => ({
+      available: true,
+      running: false,
+      status: "stopped" as const,
+      canStart: true,
+      canStop: false,
+      credentialConfigured: true,
+      managedBy: "systemd",
+    }));
+    const app = createElixirSymphonyProxyRoutes({
+      fetchImpl,
+      serviceControl,
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    });
+
+    const res = await app.request("/service");
+
+    expect(res.status).toBe(200);
+    expect(serviceControl).toHaveBeenCalledWith("status");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await res.json()).toEqual({
+      service: {
+        available: true,
+        running: false,
+        status: "stopped",
+        canStart: true,
+        canStop: false,
+        credentialConfigured: true,
+        managedBy: "systemd",
+      },
+    });
+  });
+
+  it("starts and stops the host-managed Symphony service with body limits", async () => {
+    const serviceControl = vi.fn(async (action: "status" | "start" | "stop") => ({
+      available: true,
+      running: action !== "stop",
+      status: action === "stop" ? "stopped" as const : "running" as const,
+      canStart: action === "stop",
+      canStop: action !== "stop",
+      credentialConfigured: true,
+      managedBy: "systemd",
+    }));
+    const app = createElixirSymphonyProxyRoutes({
+      serviceControl,
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    });
+
+    const start = await app.request("/service/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const stop = await app.request("/service/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    expect(start.status).toBe(200);
+    expect(stop.status).toBe(200);
+    expect(serviceControl).toHaveBeenNthCalledWith(1, "start");
+    expect(serviceControl).toHaveBeenNthCalledWith(2, "stop");
+    expect(await start.json()).toMatchObject({ service: { running: true, status: "running" } });
+    expect(await stop.json()).toMatchObject({ service: { running: false, status: "stopped" } });
+  });
+
+  it("maps host service control failures to generic unavailable errors", async () => {
+    const app = createElixirSymphonyProxyRoutes({
+      serviceControl: async () => {
+        throw new Error("systemctl failed with secret output");
+      },
+      getPrincipal: () => ({ userId: "user_123", source: "dev-default" }),
+    });
+
+    const res = await app.request("/service/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: { code: "service_unavailable", message: "Symphony service control is unavailable" } });
+  });
+
+  it("preserves host service JSON stdout when start exits nonzero", async () => {
+    const dir = await mkdtemp(`${tmpdir()}/matrix-symphony-control-`);
+    const script = resolve(dir, "matrix-symphony-control");
+    await writeFile(script, [
+      "#!/usr/bin/env sh",
+      "printf '%s\\n' '{\"available\":false,\"running\":false,\"status\":\"unavailable\",\"canStart\":false,\"canStop\":false,\"credentialConfigured\":false,\"managedBy\":\"systemd\"}'",
+      "exit 1",
+      "",
+    ].join("\n"));
+    await chmod(script, 0o755);
+    try {
+      const control = createHostSymphonyServiceControl(script);
+
+      await expect(control("start")).resolves.toEqual({
+        available: false,
+        running: false,
+        status: "unavailable",
+        canStart: false,
+        canStop: false,
+        credentialConfigured: false,
+        managedBy: "systemd",
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("validates issue identifiers before proxying detail requests", async () => {

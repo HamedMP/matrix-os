@@ -21,6 +21,7 @@ defmodule SymphonyElixir.Application do
 
   @impl true
   def start(_type, _args) do
+    configure_from_env()
     :ok = SymphonyElixir.LogFile.configure()
 
     children = [
@@ -43,5 +44,34 @@ defmodule SymphonyElixir.Application do
   def stop(_state) do
     SymphonyElixir.StatusDashboard.render_offline_status()
     :ok
+  end
+
+  defp configure_from_env do
+    case System.get_env("SYMPHONY_WORKFLOW_FILE") do
+      path when is_binary(path) and path != "" ->
+        SymphonyElixir.Workflow.set_workflow_file_path(Path.expand(path))
+
+      _ ->
+        :ok
+    end
+
+    case System.get_env("SYMPHONY_LOGS_ROOT") do
+      path when is_binary(path) and path != "" ->
+        Application.put_env(:symphony_elixir, :log_file, SymphonyElixir.LogFile.default_log_file(Path.expand(path)))
+
+      _ ->
+        :ok
+    end
+
+    case System.get_env("SYMPHONY_PORT") do
+      port when is_binary(port) ->
+        case Integer.parse(port) do
+          {value, ""} when value >= 0 -> Application.put_env(:symphony_elixir, :server_port_override, value)
+          _ -> :ok
+        end
+
+      _ ->
+        :ok
+    end
   end
 end

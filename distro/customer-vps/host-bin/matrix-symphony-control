@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: matrix-symphony-control [status|start|stop]" >&2
+}
+
+ACTION="${1:-status}"
+case "$ACTION" in
+  status|start|stop) ;;
+  *) usage; exit 64 ;;
+esac
+
+UNIT="matrix-symphony.service"
+MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
+if [ -f /opt/matrix/env/host.env ]; then
+  # shellcheck disable=SC1091
+  source /opt/matrix/env/host.env
+fi
+if [ -r /opt/matrix/bin/matrix-owner-env ]; then
+  # shellcheck disable=SC1091
+  source /opt/matrix/bin/matrix-owner-env
+  if declare -F matrix_export_owner_env >/dev/null 2>&1; then
+    matrix_export_owner_env
+  fi
+fi
+MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
+
+SUDO=()
+if [ "$(id -u)" -ne 0 ]; then
+  SUDO=(sudo)
+fi
+
+unit_available() {
+  systemctl cat "$UNIT" >/dev/null 2>&1
+}
+
+credential_configured() {
+  local credential_dir="$MATRIX_HOME/system/symphony/credentials"
+  [ -d "$credential_dir" ] || return 1
+  find "$credential_dir" -maxdepth 1 -type f -name '*.linear' -size +0c -print -quit | grep -q .
+}
+
+print_status() {
+  local available=false running=false status=unavailable can_start=false can_stop=false credential=false
+  if unit_available; then
+    local active_state
+    available=true
+    active_state="$(systemctl is-active "$UNIT" 2>/dev/null || true)"
+    case "$active_state" in
+      active)
+        running=true
+        status=running
+        can_stop=true
+        ;;
+      activating|reloading)
+        status=starting
+        can_stop=true
+        ;;
+      deactivating)
+        status=stopping
+        can_stop=true
+        ;;
+      *)
+        status=stopped
+        can_start=true
+        ;;
+    esac
+  fi
+  if credential_configured; then
+    credential=true
+  fi
+  printf '{"available":%s,"running":%s,"status":"%s","canStart":%s,"canStop":%s,"credentialConfigured":%s,"managedBy":"systemd"}\n' \
+    "$available" "$running" "$status" "$can_start" "$can_stop" "$credential"
+}
+
+if [ "$ACTION" = "status" ]; then
+  print_status
+  exit 0
+fi
+
+if ! unit_available; then
+  print_status
+  exit 1
+fi
+
+case "$ACTION" in
+  start)
+    "${SUDO[@]}" systemctl enable "$UNIT" >/dev/null
+    "${SUDO[@]}" systemctl start --no-block "$UNIT"
+    ;;
+  stop)
+    "${SUDO[@]}" systemctl stop --no-block "$UNIT"
+    ;;
+esac
+
+print_status
