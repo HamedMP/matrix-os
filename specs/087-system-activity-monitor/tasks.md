@@ -17,8 +17,8 @@
 
 **Purpose**: Establish shared types, module boundaries, and built-in app entry points.
 
-- [ ] T001 Create `packages/gateway/src/system-activity/types.ts` with ActivitySnapshot, MachineIdentity, ResourceSummary, ServiceStatus, ProcessSummary, CleanupCandidate, CleanupAction, CleanupHistoryEntry, and AutoCleanupPolicy DTO types.
-- [ ] T002 Create `packages/gateway/src/system-activity/routes.ts` with placeholder Hono route factory and dependency interface wired for tests but not registered.
+- [X] T001 Create `packages/gateway/src/system-activity/types.ts` with ActivitySnapshot, MachineIdentity, ResourceSummary, ServiceStatus, ProcessSummary, CleanupCandidate, CleanupAction, CleanupHistoryEntry, and AutoCleanupPolicy DTO types.
+- [X] T002 Create `packages/gateway/src/system-activity/routes.ts` with placeholder Hono route factory and dependency interface wired for tests but not registered.
 - [ ] T003 [P] Create `shell/src/stores/systemActivityStore.ts` with serializable initial state, refresh status, cleanup status, and error fields.
 - [ ] T004 [P] Create `shell/src/components/system-activity/ActivityMonitorApp.tsx` as a minimal built-in app shell with loading and unavailable states.
 - [ ] T005 Add the System Activity Monitor built-in app manifest/icon wiring in the existing shell built-in app registry files discovered during implementation.
@@ -32,16 +32,16 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T007 [P] Add failing contract tests for `GET /api/system/activity`, `POST /api/system/activity/actions`, policy routes, history route, auth failures, generic errors, and body limits in `tests/gateway/system-activity-routes.test.ts`.
+- [X] T007 [P] Add failing contract tests for `GET /api/system/activity`, `POST /api/system/activity/actions`, policy routes, history route, auth failures, generic errors, and body limits in `tests/gateway/system-activity-routes.test.ts`.
 - [ ] T008 [P] Add failing collector tests for CPU, memory, cgroup memory decomposition, disk, pressure, service accounting, process limits, subprocess timeouts, and sanitized warnings in `tests/gateway/system-activity-collector.test.ts`.
-- [ ] T009 [P] Add failing cleanup classifier tests for stale app servers, active app servers, zellij sessions, code-server, cache scopes, protected paths, candidate TTL, and bounded candidate cache in `tests/gateway/system-activity-cleanup.test.ts`.
-- [ ] T010 [P] Add failing history/policy tests for owner-file atomic writes, bounded retention, malformed file handling, and safe generic errors in `tests/gateway/system-activity-history.test.ts`.
-- [ ] T011 Implement host metric collectors with bounded readers and subprocess timeouts in `packages/gateway/src/system-activity/collector.ts`.
-- [ ] T012 Implement service and process snapshot collection with allowlisted service ids, capped process rows, sanitized display names, and no raw command stderr in `packages/gateway/src/system-activity/collector.ts`.
-- [ ] T013 Implement cleanup candidate cache with TTL, max size, opaque candidate ids, and shutdown drain in `packages/gateway/src/system-activity/cleanup.ts`.
+- [X] T009 [P] Add failing cleanup classifier tests for stale app servers, active app servers, zellij sessions, code-server, cache scopes, protected paths, candidate TTL, and bounded candidate cache in `tests/gateway/system-activity-cleanup.test.ts`.
+- [X] T010 [P] Add failing history/policy tests for owner-file atomic writes, bounded retention, malformed file handling, and safe generic errors in `tests/gateway/system-activity-history.test.ts`.
+- [X] T011 Implement host metric collectors with bounded readers and subprocess timeouts in `packages/gateway/src/system-activity/collector.ts`.
+- [X] T012 Implement service and process snapshot collection with allowlisted service ids, capped process rows, sanitized display names, and no raw command stderr in `packages/gateway/src/system-activity/collector.ts`.
+- [X] T013 Implement cleanup candidate cache with TTL, max size, opaque candidate ids, and shutdown drain in `packages/gateway/src/system-activity/cleanup.ts`.
 - [ ] T014 Implement protected path helpers and cleanup policy/history owner-file persistence with atomic writes and symlink-safe cleanup in `packages/gateway/src/system-activity/history.ts`.
-- [ ] T015 Implement Zod route schemas, `bodyLimit` on mutating endpoints, owner auth dependency checks, and generic error mapper in `packages/gateway/src/system-activity/routes.ts`.
-- [ ] T016 Register system activity routes at gateway startup with dependency resolution at registration time in `packages/gateway/src/server.ts`.
+- [X] T015 Implement Zod route schemas, `bodyLimit` on mutating endpoints, owner auth dependency checks, and generic error mapper in `packages/gateway/src/system-activity/routes.ts`.
+- [X] T016 Register system activity routes at gateway startup with dependency resolution at registration time in `packages/gateway/src/server.ts`.
 
 **Checkpoint**: Foundation ready - all user story slices can build on trusted collection, validation, and persistence.
 
