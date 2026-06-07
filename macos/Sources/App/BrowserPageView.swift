@@ -196,6 +196,7 @@ private struct BrowserWebView: NSViewRepresentable {
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
         view.underPageBackgroundColor = .clear
+        context.coordinator.observeURLChanges(in: view)
         load(url, in: view, coordinator: context.coordinator)
         return view
     }
@@ -214,6 +215,7 @@ private struct BrowserWebView: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastURL: URL?
+        private var urlObservation: NSKeyValueObservation?
 
         private let onURLChange: @MainActor (URL) -> Void
 
@@ -222,11 +224,31 @@ private struct BrowserWebView: NSViewRepresentable {
             super.init()
         }
 
+        func observeURLChanges(in webView: WKWebView) {
+            urlObservation?.invalidate()
+            urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, change in
+                guard let self, let url = change.newValue.flatMap({ $0 }) else { return }
+                Task { @MainActor in
+                    self.syncURL(url)
+                }
+            }
+        }
+
         @MainActor
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            guard let url = webView.url, lastURL != url else { return }
+            guard let url = webView.url else { return }
+            syncURL(url)
+        }
+
+        @MainActor
+        private func syncURL(_ url: URL) {
+            guard lastURL != url else { return }
             lastURL = url
             onURLChange(url)
+        }
+
+        deinit {
+            urlObservation?.invalidate()
         }
     }
 }
