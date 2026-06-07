@@ -1132,6 +1132,10 @@ public final class AppModel: ObservableObject {
             enabledPanels.removeAll { $0 == panel }
             if activePanel == panel {
                 activePanel = enabledPanels.first ?? .terminal
+                if let activeTabID,
+                   let index = openTabs.firstIndex(where: { $0.id == activeTabID }) {
+                    openTabs[index].panel = activePanel
+                }
             }
             return
         }

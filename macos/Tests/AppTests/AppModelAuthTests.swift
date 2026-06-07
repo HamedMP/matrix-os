@@ -150,6 +150,37 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.enabledPanels, [.app(slug: "git")])
     }
 
+    func testRemovingFocusedPanePersistsFallbackPanelOnActiveTab() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let card = Card(
+            id: "task_login",
+            projectSlug: "main",
+            title: "Fix login",
+            status: .todo,
+            priority: .normal,
+            order: 1,
+            linkedSessionId: nil,
+            updatedAt: "now"
+        )
+        _ = try? await model.openCard(card)
+
+        model.switchPanel(.app(slug: "git"))
+        model.togglePanel(.app(slug: "git"))
+
+        XCTAssertFalse(model.enabledPanels.contains(.app(slug: "git")))
+        XCTAssertEqual(model.activePanel, .terminal)
+        XCTAssertEqual(model.openTabs.first(where: { $0.id == "task:main:task_login" })?.panel, .terminal)
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()
