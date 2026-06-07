@@ -1031,14 +1031,6 @@ public final class AppModel: ObservableObject {
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
         var tab = openTabs[index]
         activeTabID = id
-        if enabledPanels.contains(tab.panel) {
-            activePanel = tab.panel
-        } else {
-            activePanel = enabledPanels.first ?? .terminal
-            tab.panel = activePanel
-            openTabs[index] = tab
-        }
-        selectedCard = tab.card
         if tab.kind == .board {
             section = .board
             terminal = nil
@@ -1051,6 +1043,14 @@ public final class AppModel: ObservableObject {
             selectedCard = nil
             return
         }
+        if enabledPanels.contains(tab.panel) {
+            activePanel = tab.panel
+        } else {
+            activePanel = enabledPanels.first ?? .terminal
+            tab.panel = activePanel
+            openTabs[index] = tab
+        }
+        selectedCard = tab.card
         if let cachedTerminal = terminalSessions[id] {
             markTerminalSessionUsed(id)
             terminal = cachedTerminal

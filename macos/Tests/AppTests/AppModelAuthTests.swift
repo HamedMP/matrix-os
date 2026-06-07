@@ -279,6 +279,28 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertLessThan(model.openTabs.filter { $0.kind == .board }.count, 20)
     }
 
+    func testFocusingBoardAndHomeTabsKeepsCanonicalPanel() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        model.openHome()
+        model.openProject(slug: "main")
+
+        model.focusTab(id: "home")
+        model.focusTab(id: "board:main")
+
+        XCTAssertEqual(model.openTabs.first(where: { $0.id == "home" })?.panel, .shell)
+        XCTAssertEqual(model.openTabs.first(where: { $0.id == "board:main" })?.panel, .app(slug: "board"))
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()
