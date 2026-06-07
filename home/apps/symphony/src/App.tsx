@@ -33,7 +33,7 @@ interface SymphonyState {
 interface SymphonyServiceControl {
   available: boolean;
   running: boolean;
-  status: "running" | "starting" | "stopped" | "unavailable";
+  status: "running" | "starting" | "stopping" | "stopped" | "unavailable";
   canStart: boolean;
   canStop: boolean;
   credentialConfigured?: boolean;

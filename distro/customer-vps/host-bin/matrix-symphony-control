@@ -57,6 +57,10 @@ print_status() {
         status=starting
         can_stop=true
         ;;
+      deactivating)
+        status=stopping
+        can_stop=true
+        ;;
       *)
         status=stopped
         can_start=true
@@ -86,7 +90,7 @@ case "$ACTION" in
     "${SUDO[@]}" systemctl start --no-block "$UNIT"
     ;;
   stop)
-    "${SUDO[@]}" systemctl stop "$UNIT"
+    "${SUDO[@]}" systemctl stop --no-block "$UNIT"
     ;;
 esac
 

@@ -26,7 +26,7 @@ const SymphonyServiceActionSchema = z.enum(["status", "start", "stop"]);
 const HostSymphonyServiceStatusSchema = z.object({
   available: z.boolean(),
   running: z.boolean(),
-  status: z.enum(["running", "starting", "stopped", "unavailable"]).optional(),
+  status: z.enum(["running", "starting", "stopping", "stopped", "unavailable"]).optional(),
   canStart: z.boolean(),
   canStop: z.boolean(),
   credentialConfigured: z.boolean().optional(),
@@ -35,7 +35,7 @@ const HostSymphonyServiceStatusSchema = z.object({
 
 export type SymphonyServiceAction = z.infer<typeof SymphonyServiceActionSchema>;
 export type SymphonyServiceStatus = z.infer<typeof HostSymphonyServiceStatusSchema> & {
-  status: "running" | "starting" | "stopped" | "unavailable";
+  status: "running" | "starting" | "stopping" | "stopped" | "unavailable";
 };
 export type SymphonyServiceControl = (action: SymphonyServiceAction) => Promise<SymphonyServiceStatus>;
 
