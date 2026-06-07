@@ -26,7 +26,7 @@ const SymphonyServiceActionSchema = z.enum(["status", "start", "stop"]);
 const HostSymphonyServiceStatusSchema = z.object({
   available: z.boolean(),
   running: z.boolean(),
-  status: z.enum(["running", "stopped", "unavailable"]).optional(),
+  status: z.enum(["running", "starting", "stopped", "unavailable"]).optional(),
   canStart: z.boolean(),
   canStop: z.boolean(),
   credentialConfigured: z.boolean().optional(),
@@ -35,7 +35,7 @@ const HostSymphonyServiceStatusSchema = z.object({
 
 export type SymphonyServiceAction = z.infer<typeof SymphonyServiceActionSchema>;
 export type SymphonyServiceStatus = z.infer<typeof HostSymphonyServiceStatusSchema> & {
-  status: "running" | "stopped" | "unavailable";
+  status: "running" | "starting" | "stopped" | "unavailable";
 };
 export type SymphonyServiceControl = (action: SymphonyServiceAction) => Promise<SymphonyServiceStatus>;
 
@@ -138,7 +138,7 @@ function normalizeServiceStatus(body: unknown): SymphonyServiceStatus {
   };
 }
 
-function createHostSymphonyServiceControl(controlPath = process.env.SYMPHONY_SERVICE_CONTROL_PATH ?? DEFAULT_SERVICE_CONTROL_PATH): SymphonyServiceControl {
+export function createHostSymphonyServiceControl(controlPath = process.env.SYMPHONY_SERVICE_CONTROL_PATH ?? DEFAULT_SERVICE_CONTROL_PATH): SymphonyServiceControl {
   return async (action) => {
     const parsedAction = SymphonyServiceActionSchema.parse(action);
     const output = await new Promise<string>((resolve, reject) => {
@@ -147,12 +147,22 @@ function createHostSymphonyServiceControl(controlPath = process.env.SYMPHONY_SER
         maxBuffer: 8 * 1024,
       }, (err, stdout) => {
         if (err) {
-          reject(err);
+          reject(Object.assign(err, { stdout }));
           return;
         }
         resolve(stdout);
       });
     }).catch((err: unknown) => {
+      const stdout = typeof err === "object" && err !== null && "stdout" in err && typeof err.stdout === "string"
+        ? err.stdout
+        : "";
+      if (stdout.trim().length > 0) {
+        try {
+          return JSON.stringify(normalizeServiceStatus(JSON.parse(stdout) as unknown));
+        } catch (parseErr: unknown) {
+          console.warn("[symphony] Host service control failure stdout was invalid JSON:", parseErr instanceof Error ? parseErr.message : String(parseErr));
+        }
+      }
       if (parsedAction === "status") {
         console.warn("[symphony] Host service status failed:", err instanceof Error ? err.message : String(err));
         return null;

@@ -95,7 +95,7 @@ describe("customer VPS Symphony systemd unit", () => {
 
     expect(control).toContain("Usage: matrix-symphony-control [status|start|stop]");
     expect(control).toContain("matrix-symphony.service");
-    expect(control).toContain("systemctl start \"$UNIT\"");
+    expect(control).toContain("systemctl start --no-block \"$UNIT\"");
     expect(control).toContain("systemctl stop \"$UNIT\"");
     expect(control).toContain("\"credentialConfigured\"");
     expect(control).not.toContain("journalctl");
