@@ -319,7 +319,9 @@ struct NativeAppSessionExchange {
     }
 
     static func perform(request: URLRequest) async throws -> Response {
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw NativeAppSessionExchangeError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw NativeAppSessionExchangeError.unauthorized }
         guard let url = request.url else { throw NativeAppSessionExchangeError.invalidResponse }
@@ -348,9 +350,11 @@ struct NativeAppSessionExchange {
         var remaining = cookies.count
         for cookie in cookies {
             store.setCookie(cookie) {
-                remaining -= 1
-                if remaining == 0 {
-                    completion()
+                Task { @MainActor in
+                    remaining -= 1
+                    if remaining == 0 {
+                        completion()
+                    }
                 }
             }
         }

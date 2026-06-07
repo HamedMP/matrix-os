@@ -225,6 +225,38 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.openTabs.first(where: { $0.id == "task:main:task_login" })?.panel, .terminal)
     }
 
+    func testBoardTabIsProtectedWhenTaskTabsExceedLimit() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        model.openProject(slug: "main")
+
+        for index in 0..<20 {
+            let card = Card(
+                id: "task_\(index)",
+                projectSlug: "main",
+                title: "Task \(index)",
+                status: .todo,
+                priority: .normal,
+                order: Double(index),
+                linkedSessionId: nil,
+                updatedAt: "now"
+            )
+            _ = try? await model.openCard(card)
+        }
+
+        XCTAssertLessThanOrEqual(model.openTabs.count, 16)
+        XCTAssertTrue(model.openTabs.contains(where: { $0.id == "board:main" && $0.kind == .board }))
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()

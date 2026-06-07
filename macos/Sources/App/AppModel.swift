@@ -460,9 +460,9 @@ public final class AppModel: ObservableObject {
             .value
         switch status {
         case "approved":
-            if case let .awaitingApproval(code, uri) = signIn {
-                signIn = .awaitingApproval(userCode: code, verificationUri: uri)
-            }
+            // Approval is now owned by the polling loop. Keep this legacy deep
+            // link as a no-op so older browser callbacks do not regress state.
+            break
         case "expired":
             signIn = .failed("Sign-in expired. Try again.")
         case "error":
@@ -1594,7 +1594,7 @@ public final class AppModel: ObservableObject {
     private func trimOpenTabsToLimit(protecting protectedID: String) {
         while openTabs.count > 16 {
             guard let evictIndex = openTabs.firstIndex(where: { tab in
-                tab.kind != .home && tab.id != protectedID
+                tab.kind != .home && tab.kind != .board && tab.id != protectedID
             }) else {
                 return
             }
