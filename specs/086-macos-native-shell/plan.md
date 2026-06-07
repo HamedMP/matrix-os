@@ -98,6 +98,8 @@ specs/086-macos-native-shell/
 ├── research.md        # gateway-reuse findings, SwiftTerm/WS decisions
 ├── data-model.md      # task/session/panel view models + tags delta
 ├── design.md          # frontend-design output: macOS UI system
+├── checklists/
+│   └── requirements.md # spec quality checklist
 └── tasks.md           # /speckit.tasks output
 ```
 

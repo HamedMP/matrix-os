@@ -2,9 +2,9 @@
 
 **Feature**: [086-macos-native-shell](./spec.md)
 
-## Headline finding: the backend already exists
+## Headline finding: the backend is mostly reusable
 
-A grep-level audit of `packages/gateway/src` shows the "card ⇄ session ⇄ task" model is already implemented. The macOS app is a **native client over existing routes**, not a new backend.
+A grep-level audit of `packages/gateway/src` shows the "card ⇄ session ⇄ task" model is already implemented. The macOS app is a **native client over existing routes** with a thin gateway delta for board-event push and optional task metadata.
 
 ### Evidence
 
@@ -40,7 +40,7 @@ These are confirmations, not unknowns that block design; each maps to a Phase-0 
 
 ## Phase 0 confirmation results (T001-T004)
 
-Verified against `packages/gateway/src` and `packages/platform/src` at branch `086-macos-native-shell`. All four confirmations resolved; **no gateway delta is required** (no failing tests added).
+Verified against `packages/gateway/src` and `packages/platform/src` at branch `086-macos-native-shell`. All four confirmations resolved; most surfaces already exist, and the remaining gateway delta is the board-events subscription described in C2.
 
 ### C1 / S1 — Shell-WS route + Authorization-header auth ✅ CONFIRMED (header auth already accepted)
 
