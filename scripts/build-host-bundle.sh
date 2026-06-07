@@ -48,8 +48,8 @@ fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
 (cd "$ROOT_DIR/packages/symphony-elixir" && \
-  SYMPHONY_ESCRIPT_PATH="$DIST_DIR/symphony" MIX_DEPS_PATH="$DIST_DIR/symphony-deps" MIX_BUILD_PATH="$DIST_DIR/symphony-build" MIX_ENV=prod mix deps.get --only prod && \
-  SYMPHONY_ESCRIPT_PATH="$DIST_DIR/symphony" MIX_DEPS_PATH="$DIST_DIR/symphony-deps" MIX_BUILD_PATH="$DIST_DIR/symphony-build" MIX_ENV=prod mix escript.build)
+  MIX_DEPS_PATH="$DIST_DIR/symphony-deps" MIX_BUILD_PATH="$DIST_DIR/symphony-build" MIX_ENV=prod mix deps.get --only prod && \
+  MIX_DEPS_PATH="$DIST_DIR/symphony-deps" MIX_BUILD_PATH="$DIST_DIR/symphony-build" MIX_ENV=prod mix release symphony --path "$DIST_DIR/symphony-release" --overwrite)
 
 curl --fail --location --max-time 120 "$NODE_URL" -o "$DIST_DIR/$NODE_ARCHIVE"
 curl --fail --location --max-time 30 "$NODE_BASE_URL/SHASUMS256.txt" -o "$DIST_DIR/SHASUMS256.txt"
@@ -81,7 +81,8 @@ chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$S
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
-install -m 0755 "$DIST_DIR/symphony" "$STAGE_DIR/app/packages/symphony-elixir/bin/symphony"
+mkdir -p "$STAGE_DIR/app/packages/symphony-elixir/release"
+cp -a "$DIST_DIR/symphony-release/." "$STAGE_DIR/app/packages/symphony-elixir/release/"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"

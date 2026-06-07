@@ -59,20 +59,6 @@ fetch_manifest() {
   printf '%s' "$manifest"
 }
 
-ensure_symphony_runtime() {
-  if command -v elixir >/dev/null 2>&1 && command -v escript >/dev/null 2>&1; then
-    return 0
-  fi
-  if ! command -v apt-get >/dev/null 2>&1; then
-    log "WARN: apt-get missing; cannot provision Symphony runtime"
-    return 1
-  fi
-  log "Installing Symphony Erlang/Elixir runtime"
-  sudo apt-get update
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools
-}
-
 prepare_triggered_update() {
   local url="" target=""
   if [ -f "$UPDATE_VERSION_FILE" ]; then
@@ -228,13 +214,9 @@ apply_update() {
     sudo systemctl daemon-reload
     log "Installed systemd units"
     if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
-      if ensure_symphony_runtime; then
-        sudo systemctl enable matrix-symphony.service
-        sudo systemctl start --no-block matrix-symphony.service || true
-        log "Symphony service enabled"
-      else
-        log "WARN: Symphony runtime unavailable; unit installed but not started"
-      fi
+      sudo systemctl enable matrix-symphony.service
+      sudo systemctl start --no-block matrix-symphony.service || true
+      log "Symphony service enabled"
     fi
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service

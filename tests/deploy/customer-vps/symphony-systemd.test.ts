@@ -19,17 +19,17 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(unit).toContain("KillMode=mixed");
     expect(unit).toContain("KillSignal=SIGTERM");
     expect(unit).toContain("TimeoutStopSec=30");
-    expect(unit).toContain("ConditionPathExists=/opt/matrix/app/packages/symphony-elixir/bin/symphony");
+    expect(unit).toContain("ConditionPathExists=/opt/matrix/app/packages/symphony-elixir/release/bin/symphony");
 
     expect(wrapper).toContain("source /opt/matrix/env/host.env");
     expect(wrapper).toContain("export MATRIX_HOME=\"${MATRIX_HOME:-/home/matrix/home}\"");
     expect(wrapper).toContain("export SYMPHONY_HOST=\"${SYMPHONY_HOST:-127.0.0.1}\"");
     expect(wrapper).toContain("export SYMPHONY_PORT=\"${SYMPHONY_PORT:-4766}\"");
     expect(wrapper).toContain("export SYMPHONY_WORKSPACE_ROOT=\"${SYMPHONY_WORKSPACE_ROOT:-$MATRIX_HOME/projects/matrix-os/symphony-workspaces}\"");
-    expect(wrapper).toContain("--i-understand-that-this-will-be-running-without-the-usual-guardrails");
-    expect(wrapper).toContain("--logs-root \"$MATRIX_HOME/system/symphony/logs\"");
-    expect(wrapper).toContain("--port \"$SYMPHONY_PORT\"");
-    expect(wrapper).toContain("\"$WORKFLOW_FILE\"");
+    expect(wrapper).toContain("SYMPHONY_BIN=\"${SYMPHONY_BIN:-$APP_DIR/packages/symphony-elixir/release/bin/symphony}\"");
+    expect(wrapper).toContain("export SYMPHONY_LOGS_ROOT=\"$MATRIX_HOME/system/symphony/logs\"");
+    expect(wrapper).toContain("export SYMPHONY_WORKFLOW_FILE=\"$WORKFLOW_FILE\"");
+    expect(wrapper).toContain("exec \"$SYMPHONY_BIN\" start");
 
     expect(buildScript).toContain("\"$STAGE_DIR/bin/matrix-symphony\"");
     expect(buildScript).toContain("\"$STAGE_DIR/bin/matrix-symphony-control\"");
@@ -74,16 +74,20 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(buildScript).toContain("cp -a \"$ROOT_DIR/packages\" \"$STAGE_DIR/app/packages\"");
   });
 
-  it("builds a runtime Symphony executable before packaging customer host bundles", async () => {
+  it("builds a bundled-ERTS Symphony release before packaging customer host bundles", async () => {
     const mix = await readFile("packages/symphony-elixir/mix.exs", "utf8");
+    const application = await readFile("packages/symphony-elixir/lib/symphony_elixir.ex", "utf8");
     const buildScript = await readFile("scripts/build-host-bundle.sh", "utf8");
     const workflow = await readFile(".github/workflows/host-bundle-release.yml", "utf8");
 
-    expect(mix).toContain('System.get_env("SYMPHONY_ESCRIPT_PATH")');
-    expect(buildScript).toContain("SYMPHONY_ESCRIPT_PATH=\"$DIST_DIR/symphony\"");
+    expect(mix).toContain("releases: releases()");
+    expect(mix).toContain("include_erts: true");
+    expect(application).toContain('System.get_env("SYMPHONY_WORKFLOW_FILE")');
+    expect(application).toContain('System.get_env("SYMPHONY_LOGS_ROOT")');
+    expect(application).toContain('System.get_env("SYMPHONY_PORT")');
     expect(buildScript).toContain("MIX_ENV=prod mix deps.get --only prod");
-    expect(buildScript).toContain("MIX_ENV=prod mix escript.build");
-    expect(buildScript).toContain("install -m 0755 \"$DIST_DIR/symphony\" \"$STAGE_DIR/app/packages/symphony-elixir/bin/symphony\"");
+    expect(buildScript).toContain("MIX_ENV=prod mix release symphony --path \"$DIST_DIR/symphony-release\" --overwrite");
+    expect(buildScript).toContain("cp -a \"$DIST_DIR/symphony-release/.\" \"$STAGE_DIR/app/packages/symphony-elixir/release/\"");
     expect(buildScript).not.toContain("exec mix run --no-halt");
     expect(workflow).toContain("erlef/setup-beam");
     expect(workflow).toContain("elixir-version: 1.19");
@@ -109,7 +113,8 @@ describe("customer VPS Symphony systemd unit", () => {
   it("enables and starts bundled Symphony units during existing VPS updates", async () => {
     const syncAgent = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
 
-    expect(syncAgent).toContain("ensure_symphony_runtime");
+    expect(syncAgent).not.toContain("ensure_symphony_runtime");
+    expect(syncAgent).not.toContain("apt-get install -y");
     expect(syncAgent).toContain("sudo systemctl enable matrix-symphony.service");
     expect(syncAgent).toContain("sudo systemctl start --no-block matrix-symphony.service");
     expect(syncAgent).toContain("sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true");
