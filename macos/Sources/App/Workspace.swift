@@ -249,13 +249,7 @@ private struct Sidebar: View {
 
     private func addButton(compact: Bool) -> some View {
         Button {
-            if model.section == .shell {
-                model.createSession()
-            } else if model.section == .board {
-                model.createTask(status: .todo)
-            } else {
-                model.showCommandPalette = true
-            }
+            performPrimaryAction()
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 16, weight: .bold))
@@ -269,10 +263,26 @@ private struct Sidebar: View {
         .accessibilityLabel(primaryActionTitle)
     }
 
+    private func performPrimaryAction() {
+        if model.section == .shell {
+            model.createSession()
+        } else if model.section == .board {
+            model.createTask(status: .todo)
+        } else {
+            model.showCommandPalette = true
+        }
+    }
+
     private var primaryActionTitle: String {
         if model.section == .shell { return "New session" }
         if model.section == .board { return "New task" }
         return "Command palette"
+    }
+
+    private var primaryActionShortcut: String {
+        if model.section == .shell { return "⌘T" }
+        if model.section == .board { return "⌘N" }
+        return "⌘K"
     }
 
     private var projectsBlock: some View {
@@ -414,15 +424,15 @@ private struct Sidebar: View {
 
     private var newTaskButton: some View {
         Button {
-            if model.section == .shell { model.createSession() } else { model.createTask(status: .todo) }
+            performPrimaryAction()
         } label: {
             HStack(spacing: Spacing.x3) {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .semibold))
-                Text(model.section == .shell ? "New session" : "New task / New agent")
+                Text(primaryActionTitle)
                     .font(.plexSans(14, weight: .semibold))
                 Spacer()
-                Text(model.section == .shell ? "⌘T" : "⌘N")
+                Text(primaryActionShortcut)
                     .font(.plexMono(11, weight: .semibold))
                     .padding(.horizontal, Spacing.x2)
                     .padding(.vertical, 5)
@@ -445,6 +455,8 @@ private struct Sidebar: View {
         .buttonStyle(.plain)
         .padding(.horizontal, Spacing.x4)
         .disabled(model.isCreatingWorkItem)
+        .help(primaryActionTitle)
+        .accessibilityLabel(primaryActionTitle)
     }
 
     private var handleBadge: some View {
