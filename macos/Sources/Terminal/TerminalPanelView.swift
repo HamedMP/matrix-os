@@ -219,12 +219,20 @@ private struct SwiftTermView: NSViewRepresentable {
             guard let view else { return }
             view.window?.makeFirstResponder(view)
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak view] in
+            guard let view else { return }
+            view.window?.makeFirstResponder(view)
+        }
         return view
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
         // Keep the coordinator's reference fresh; sizing is reported via the delegate.
         context.coordinator.terminalView = nsView
+        DispatchQueue.main.async { [weak nsView] in
+            guard let nsView, nsView.window?.firstResponder !== nsView else { return }
+            nsView.window?.makeFirstResponder(nsView)
+        }
     }
 
     private static func terminalFont(size: CGFloat) -> NSFont {
