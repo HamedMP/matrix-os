@@ -48,6 +48,8 @@ struct RootShellView: View {
             BoardView(model: model)
         case .shell:
             TerminalsView(model: model)
+        case .browser:
+            BrowserPageView()
         }
     }
 }
@@ -70,7 +72,7 @@ private struct Sidebar: View {
                 expandedSidebar
             }
         }
-        .frame(width: collapsed ? 88 : 320)
+        .frame(width: collapsed ? 76 : 320)
         .frame(maxHeight: .infinity)
         .background(Color.canvasVoid)
         .overlay(alignment: .trailing) {
@@ -80,9 +82,28 @@ private struct Sidebar: View {
     }
 
     private var sidebarHeader: some View {
-        HStack(spacing: Spacing.x3) {
-            AppMark(collapsed: collapsed)
-            if !collapsed {
+        Group {
+            if collapsed {
+                VStack(spacing: Spacing.x2) {
+                    AppMark(collapsed: true)
+                    Button { collapsed.toggle() } label: {
+                        Image(systemName: "sidebar.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                            .frame(width: 40, height: 32)
+                            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                                    .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Expand sidebar")
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: Spacing.x3) {
+                    AppMark(collapsed: false)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Matrix")
                         .font(.plexSans(17, weight: .semibold))
@@ -92,46 +113,45 @@ private struct Sidebar: View {
                         .foregroundStyle(Color.inkTertiary)
                 }
                 Spacer()
+                    Button { collapsed.toggle() } label: {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                            .iconHitTarget(32)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Collapse sidebar")
+                }
             }
-            Button { collapsed.toggle() } label: {
-                Image(systemName: collapsed ? "sidebar.right" : "sidebar.left")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.inkTertiary)
-                    .iconHitTarget(32)
-            }
-            .buttonStyle(.plain)
-            .help(collapsed ? "Expand sidebar" : "Collapse sidebar")
         }
     }
 
     private var collapsedRail: some View {
-        VStack(spacing: Spacing.x2) {
-            Button { model.openHome() } label: {
-                Image(systemName: "house")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(model.hasSelectedProject ? Color.inkTertiary : Color.signalLive)
-                    .iconHitTarget(44)
+        VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: Spacing.x2) {
+                    ForEach(AppSection.allCases, id: \.self) { section in
+                        railButton(section)
+                    }
+                    railDivider
+                    ProjectPickerRail(model: model, collapsed: true)
+                    railDivider
+                    addButton(compact: true)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, Spacing.x1)
             }
-            .buttonStyle(.plain)
-            .help("Matrix Home")
-            Divider().overlay(Color.hairlineDark).padding(.vertical, Spacing.x1)
-            ProjectPickerRail(model: model, collapsed: true)
-            Divider().overlay(Color.hairlineDark).padding(.vertical, Spacing.x1)
-            ForEach(AppSection.allCases.filter { $0 != .home }, id: \.self) { section in
-                railButton(section)
-            }
-            Divider().overlay(Color.hairlineDark).padding(.vertical, Spacing.x1)
-            addButton(compact: true)
-            Spacer()
             handleBadge
+                .padding(.top, Spacing.x3)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, Spacing.x2)
+        .padding(.horizontal, Spacing.x1)
         .padding(.bottom, Spacing.x3)
     }
 
     private var expandedSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
+            navigationBlock
             projectsBlock
             sessionsBlock
             Spacer(minLength: Spacing.x4)
@@ -145,15 +165,57 @@ private struct Sidebar: View {
         }
     }
 
+    private var navigationBlock: some View {
+        VStack(alignment: .leading, spacing: Spacing.x1) {
+            sectionLabel("Navigate") {
+                EmptyView()
+            }
+            ForEach(AppSection.allCases, id: \.self) { section in
+                sectionRow(section)
+            }
+        }
+        .padding(.horizontal, Spacing.x4)
+        .padding(.bottom, Spacing.x4)
+    }
+
+    private func sectionRow(_ section: AppSection) -> some View {
+        let active = model.section == section
+        return Button { selectSection(section) } label: {
+            HStack(spacing: Spacing.x2) {
+                Image(systemName: section.symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(active ? Color.signalLive : Color.inkTertiary)
+                    .frame(width: 20)
+                Text(section.title)
+                    .font(.plexSans(13, weight: active ? .semibold : .medium))
+                    .foregroundStyle(active ? Color.inkPrimary : Color.inkSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, Spacing.x3)
+            .frame(height: 34)
+            .background(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .fill(active ? Color.surfaceCardRaised : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .strokeBorder(active ? Color.hairlineDark.opacity(0.75) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(section.title)
+        .accessibilityLabel(section.title)
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+
     private func railButton(_ section: AppSection) -> some View {
         let active = model.section == section
-        return Button { model.section = section } label: {
-            VStack(spacing: 3) {
-                Image(systemName: section.symbol)
-                    .font(.system(size: 16, weight: .medium))
-            }
+        return Button { selectSection(section) } label: {
+            Image(systemName: section.symbol)
+                .font(.system(size: 16, weight: active ? .semibold : .medium))
             .foregroundStyle(active ? Color.signalLive : Color.inkTertiary)
-            .frame(width: 52, height: 48)
+            .frame(width: 46, height: 44)
             .background(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                     .fill(active ? Color.surfaceCardRaised : Color.clear)
@@ -170,9 +232,24 @@ private struct Sidebar: View {
         .accessibilityAddTraits(active ? [.isSelected] : [])
     }
 
+    private var railDivider: some View {
+        Rectangle()
+            .fill(Color.hairlineDark.opacity(0.7))
+            .frame(width: 46, height: 1)
+            .padding(.vertical, Spacing.x1)
+    }
+
+    private func selectSection(_ section: AppSection) {
+        if section == .home {
+            model.openHome()
+        } else {
+            model.section = section
+        }
+    }
+
     private func addButton(compact: Bool) -> some View {
         Button {
-            if model.section == .shell { model.createSession() } else { model.createTask(status: .todo) }
+            performPrimaryAction()
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 16, weight: .bold))
@@ -182,8 +259,30 @@ private struct Sidebar: View {
         }
         .buttonStyle(.plain)
         .disabled(model.isCreatingWorkItem)
-        .help(model.section == .shell ? "New session" : "New task (⌘N)")
-        .accessibilityLabel(model.section == .shell ? "New session" : "New task")
+        .help(primaryActionTitle)
+        .accessibilityLabel(primaryActionTitle)
+    }
+
+    private func performPrimaryAction() {
+        if model.section == .shell {
+            model.createSession()
+        } else if model.section == .board {
+            model.createTask(status: .todo)
+        } else {
+            model.showCommandPalette = true
+        }
+    }
+
+    private var primaryActionTitle: String {
+        if model.section == .shell { return "New session" }
+        if model.section == .board { return "New task" }
+        return "Command palette"
+    }
+
+    private var primaryActionShortcut: String {
+        if model.section == .shell { return "⌘T" }
+        if model.section == .board { return "⌘N" }
+        return "⌘K"
     }
 
     private var projectsBlock: some View {
@@ -325,15 +424,15 @@ private struct Sidebar: View {
 
     private var newTaskButton: some View {
         Button {
-            if model.section == .shell { model.createSession() } else { model.createTask(status: .todo) }
+            performPrimaryAction()
         } label: {
             HStack(spacing: Spacing.x3) {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .semibold))
-                Text(model.section == .shell ? "New session" : "New task / New agent")
+                Text(primaryActionTitle)
                     .font(.plexSans(14, weight: .semibold))
                 Spacer()
-                Text(model.section == .shell ? "⌘T" : "⌘N")
+                Text(primaryActionShortcut)
                     .font(.plexMono(11, weight: .semibold))
                     .padding(.horizontal, Spacing.x2)
                     .padding(.vertical, 5)
@@ -356,6 +455,8 @@ private struct Sidebar: View {
         .buttonStyle(.plain)
         .padding(.horizontal, Spacing.x4)
         .disabled(model.isCreatingWorkItem)
+        .help(primaryActionTitle)
+        .accessibilityLabel(primaryActionTitle)
     }
 
     private var handleBadge: some View {
