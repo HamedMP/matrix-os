@@ -14,6 +14,7 @@ struct ColumnView: View {
     let column: BoardColumn
     let selectedCardID: Card.ID?
     let onOpenCard: (Card) -> Void
+    var onAddCard: (TaskStatus) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -69,6 +70,14 @@ struct ColumnView: View {
                     RoundedRectangle(cornerRadius: Radius.badge, style: .continuous)
                         .fill(Color.surfaceCard)
                 )
+
+            Button { onAddCard(column.status) } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.inkTertiary)
+            }
+            .buttonStyle(.plain)
+            .help("New task in \(title)")
         }
         .padding(.horizontal, Spacing.x3)
         .padding(.vertical, Spacing.x3)

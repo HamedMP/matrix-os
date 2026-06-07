@@ -49,28 +49,23 @@ struct BoardView: View {
     // MARK: - Board + detail split
 
     private var boardWithDetail: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                if model.phase == .disconnected {
-                    ReconnectingBar(handle: model.profile?.handle ?? "your computer")
-                }
-                if let error = model.openError {
-                    GenericErrorBanner(message: error.message, onRetry: nil)
-                }
+        VStack(spacing: 0) {
+            if model.phase == .disconnected {
+                ReconnectingBar(handle: model.profile?.handle ?? "your computer")
+            }
+            if let error = model.openError {
+                GenericErrorBanner(message: error.message, onRetry: nil)
+            }
+            if selectedBoardCard != nil {
+                detailPane
+            } else {
                 columns
                     .opacity(model.phase == .disconnected ? 0.7 : 1)
                     .saturation(model.phase == .disconnected ? 0.6 : 1)
                     .allowsHitTesting(model.phase != .disconnected)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            if model.selectedCard != nil {
-                detailPane
-                    .frame(width: 520)
-                    .transition(.move(edge: .trailing))
-            }
         }
-        .animation(Motion.panelSwitch, value: model.selectedCard?.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var columns: some View {
@@ -81,8 +76,9 @@ struct BoardView: View {
             ForEach(model.board.columns) { column in
                 ColumnView(
                     column: column,
-                    selectedCardID: model.selectedCard?.id,
-                    onOpenCard: openCard
+                    selectedCardID: selectedBoardCard?.id,
+                    onOpenCard: openCard,
+                    onAddCard: { model.createTask(status: $0) }
                 )
             }
         }
@@ -113,6 +109,13 @@ struct BoardView: View {
 
     // MARK: - Detail pane (panel switcher + terminal)
 
+    private var selectedBoardCard: Card? {
+        guard let selected = model.selectedCard else { return nil }
+        return model.board.columns
+            .flatMap(\.cards)
+            .first { $0.id == selected.id }
+    }
+
     private var detailPane: some View {
         VStack(spacing: 0) {
             detailHeader
@@ -127,7 +130,7 @@ struct BoardView: View {
 
     private var detailHeader: some View {
         HStack(spacing: Spacing.x3) {
-            Text(model.selectedCard?.title ?? "")
+            Text(selectedBoardCard?.title ?? "")
                 .font(.plexSans(14, weight: .medium))
                 .foregroundStyle(Color.inkPrimary)
                 .lineLimit(1)
