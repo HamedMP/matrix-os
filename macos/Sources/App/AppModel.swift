@@ -1421,8 +1421,9 @@ public final class AppModel: ObservableObject {
                     body: CreateSessionRequest(name: name, cwd: nil)
                 )
                 await self?.loadSessions()
-                if let createdName = response.name {
-                    await MainActor.run { self?.openSession(named: createdName) }
+                let requestedName = response.name ?? name
+                if self?.sessions.contains(where: { $0.name == requestedName }) == true {
+                    await MainActor.run { self?.openSession(named: requestedName) }
                 } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {
                     await MainActor.run { self?.openSession(named: created.name) }
                 }

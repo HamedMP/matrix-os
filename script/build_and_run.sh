@@ -66,8 +66,6 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$MIN_SYSTEM_VERSION</string>
   <key>NSHighResolutionCapable</key>
   <true/>
-  <key>NSMainNibFile</key>
-  <string></string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
   <key>CFBundleURLTypes</key>
@@ -84,6 +82,8 @@ cat >"$INFO_PLIST" <<PLIST
 </dict>
 </plist>
 PLIST
+
+codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null
 
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 if [[ -x "$LSREGISTER" ]]; then

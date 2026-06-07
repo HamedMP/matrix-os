@@ -70,7 +70,10 @@ struct MatrixWebShellPanel: View {
                 WebShellView(
                     url: url,
                     bearerToken: token,
-                    onAuthRequired: { authRequired = true }
+                    onAuthRequired: {
+                        authRequired = true
+                        Task { await reloadBearerToken() }
+                    }
                 )
             } else {
                 ContentUnavailableView(
