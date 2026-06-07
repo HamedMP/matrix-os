@@ -1,6 +1,8 @@
+import { execFile as nodeExecFile } from "node:child_process";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { z } from "zod/v4";
 import { requestHasBody } from "../http-body.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal, type RequestPrincipal } from "../request-principal.js";
 import {
@@ -15,13 +17,33 @@ import {
 } from "./proxy-contracts.js";
 
 const DEFAULT_UPSTREAM_ORIGIN = "http://127.0.0.1:4766";
+const DEFAULT_SERVICE_CONTROL_PATH = "/opt/matrix/bin/matrix-symphony-control";
 const DEFAULT_TIMEOUT_MS = 10_000;
+const SERVICE_CONTROL_TIMEOUT_MS = 12_000;
 const BODY_LIMIT_BYTES = 1024;
+
+const SymphonyServiceActionSchema = z.enum(["status", "start", "stop"]);
+const HostSymphonyServiceStatusSchema = z.object({
+  available: z.boolean(),
+  running: z.boolean(),
+  status: z.enum(["running", "starting", "stopping", "stopped", "unavailable"]).optional(),
+  canStart: z.boolean(),
+  canStop: z.boolean(),
+  credentialConfigured: z.boolean().optional(),
+  managedBy: z.string().min(1).max(64).optional(),
+});
+
+export type SymphonyServiceAction = z.infer<typeof SymphonyServiceActionSchema>;
+export type SymphonyServiceStatus = z.infer<typeof HostSymphonyServiceStatusSchema> & {
+  status: "running" | "starting" | "stopping" | "stopped" | "unavailable";
+};
+export type SymphonyServiceControl = (action: SymphonyServiceAction) => Promise<SymphonyServiceStatus>;
 
 export interface ElixirSymphonyProxyDeps {
   upstreamOrigin?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  serviceControl?: SymphonyServiceControl;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }
 
@@ -94,6 +116,78 @@ async function fetchJson(deps: Required<Pick<ElixirSymphonyProxyDeps, "fetchImpl
   } catch (err: unknown) {
     console.warn("[symphony] Elixir proxy request failed:", err instanceof Error ? err.message : String(err));
     return { ok: false, status: 503, body: genericProxyError("service_unavailable", "Symphony is unavailable") };
+  }
+}
+
+function unavailableServiceStatus(): SymphonyServiceStatus {
+  return {
+    available: false,
+    running: false,
+    status: "unavailable",
+    canStart: false,
+    canStop: false,
+    managedBy: "systemd",
+  };
+}
+
+function normalizeServiceStatus(body: unknown): SymphonyServiceStatus {
+  const parsed = HostSymphonyServiceStatusSchema.parse(body);
+  return {
+    ...parsed,
+    status: parsed.status ?? (parsed.running ? "running" : parsed.available ? "stopped" : "unavailable"),
+  };
+}
+
+export function createHostSymphonyServiceControl(controlPath = process.env.SYMPHONY_SERVICE_CONTROL_PATH ?? DEFAULT_SERVICE_CONTROL_PATH): SymphonyServiceControl {
+  return async (action) => {
+    const parsedAction = SymphonyServiceActionSchema.parse(action);
+    const output = await new Promise<string>((resolve, reject) => {
+      nodeExecFile(controlPath, [parsedAction], {
+        timeout: SERVICE_CONTROL_TIMEOUT_MS,
+        maxBuffer: 8 * 1024,
+      }, (err, stdout) => {
+        if (err) {
+          reject(Object.assign(err, { stdout }));
+          return;
+        }
+        resolve(stdout);
+      });
+    }).catch((err: unknown) => {
+      const stdout = typeof err === "object" && err !== null && "stdout" in err && typeof err.stdout === "string"
+        ? err.stdout
+        : "";
+      if (stdout.trim().length > 0) {
+        try {
+          return JSON.stringify(normalizeServiceStatus(JSON.parse(stdout) as unknown));
+        } catch (parseErr: unknown) {
+          console.warn("[symphony] Host service control failure stdout was invalid JSON:", parseErr instanceof Error ? parseErr.message : String(parseErr));
+        }
+      }
+      if (parsedAction === "status") {
+        console.warn("[symphony] Host service status failed:", err instanceof Error ? err.message : String(err));
+        return null;
+      }
+      throw err;
+    });
+
+    if (output === null) return unavailableServiceStatus();
+    try {
+      return normalizeServiceStatus(JSON.parse(output) as unknown);
+    } catch (err: unknown) {
+      console.warn("[symphony] Host service control returned invalid JSON:", err instanceof Error ? err.message : String(err));
+      if (parsedAction === "status") return unavailableServiceStatus();
+      throw err;
+    }
+  };
+}
+
+async function callServiceControl(c: Context, serviceControl: SymphonyServiceControl, action: SymphonyServiceAction): Promise<Response> {
+  try {
+    const service = await serviceControl(action);
+    return c.json({ service });
+  } catch (err: unknown) {
+    console.warn("[symphony] Host service control failed:", err instanceof Error ? err.message : String(err));
+    return c.json(genericProxyError("service_unavailable", "Symphony service control is unavailable"), status(503));
   }
 }
 
@@ -208,6 +302,7 @@ export function createElixirSymphonyProxyRoutes(deps: ElixirSymphonyProxyDeps = 
     fetchImpl: deps.fetchImpl ?? fetch,
     timeoutMs: deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   };
+  const serviceControl = deps.serviceControl ?? createHostSymphonyServiceControl();
   const app = new Hono();
   const emptyLimited = bodyLimit({ maxSize: BODY_LIMIT_BYTES });
 
@@ -220,6 +315,22 @@ export function createElixirSymphonyProxyRoutes(deps: ElixirSymphonyProxyDeps = 
       console.warn("[symphony] Failed to normalize Elixir state:", err instanceof Error ? err.message : String(err));
       return c.json(genericProxyError("invalid_response", "Symphony returned an invalid response"), status(502));
     }
+  }));
+
+  app.get("/service", (c) => withPrincipal(c, deps, async () => {
+    return callServiceControl(c, serviceControl, "status");
+  }));
+
+  app.post("/service/start", emptyLimited, (c) => withPrincipal(c, deps, async () => {
+    const parsed = await parseEmptyJson(c);
+    if (!parsed.ok) return parsed.response;
+    return callServiceControl(c, serviceControl, "start");
+  }));
+
+  app.post("/service/stop", emptyLimited, (c) => withPrincipal(c, deps, async () => {
+    const parsed = await parseEmptyJson(c);
+    if (!parsed.ok) return parsed.response;
+    return callServiceControl(c, serviceControl, "stop");
   }));
 
   app.get("/issues/:issueIdentifier", (c) => withPrincipal(c, deps, async () => {

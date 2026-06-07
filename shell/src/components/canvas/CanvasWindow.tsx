@@ -11,6 +11,7 @@ import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { WorkspaceApp } from "../workspace/WorkspaceApp";
 import { ChatApp } from "../ChatApp";
+import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { Minus, Maximize2 } from "lucide-react";
@@ -457,6 +458,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
             />
           )}
         </div>
+      ) : win.path === "__activity-monitor__" ? (
+        <ActivityMonitorApp />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"

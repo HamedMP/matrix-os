@@ -85,6 +85,12 @@ describe("Symphony app", () => {
       if (url === "/api/symphony/runs/MAT-32/stop") {
         return json({ stopped: true });
       }
+      if (url === "/api/symphony/service") {
+        return json({ service: { available: true, running: true, status: "running", canStart: false, canStop: true, credentialConfigured: true } });
+      }
+      if (url === "/api/symphony/service/start" || url === "/api/symphony/service/stop") {
+        return json({ service: { available: true, running: url.endsWith("/start"), status: url.endsWith("/start") ? "running" : "stopped", canStart: !url.endsWith("/start"), canStop: url.endsWith("/start"), credentialConfigured: true } });
+      }
       return json({ ok: true });
     }));
   });
@@ -198,16 +204,40 @@ describe("Symphony app", () => {
     expect(calls.some((call) => call.url === "/api/symphony/issues/MAT-33")).toBe(false);
   });
 
-  it("refreshes and stops through the Elixir proxy endpoints", async () => {
+  it("refreshes and stops runs through the Elixir proxy endpoints", async () => {
     render(<App />);
     await waitFor(() => expect(screen.getAllByText("MAT-32").length).toBeGreaterThan(0));
 
     fireEvent.click(screen.getByText("Refresh"));
     await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/refresh" && call.init?.method === "POST")).toBe(true));
 
-    fireEvent.click(screen.getByText("Stop"));
+    fireEvent.click(screen.getByText("Stop Run"));
     await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/runs/MAT-32/stop" && call.init?.method === "POST")).toBe(true));
     expect(calls.every((call) => call.init?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it("lets the user start Symphony when the service is stopped", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url === "/api/symphony/state") return json({ error: { code: "service_unavailable" } }, { status: 503 });
+      if (url === "/api/symphony/service") {
+        return json({ service: { available: true, running: false, status: "stopped", canStart: true, canStop: false, credentialConfigured: true } });
+      }
+      if (url === "/api/symphony/service/start") {
+        return json({ service: { available: true, running: true, status: "running", canStart: false, canStop: true, credentialConfigured: true } });
+      }
+      return json({ ok: true });
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Service: stopped")).toBeTruthy());
+    expect(screen.getByText("Symphony is unavailable.")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Start"));
+
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/service/start" && call.init?.method === "POST")).toBe(true));
   });
 
   it("keeps rendered state when the active issue detail endpoint fails", async () => {
@@ -277,6 +307,8 @@ describe("Symphony app", () => {
     expect(appSource).toContain("minmax(0,1fr)");
     expect(appSource).toContain('const RUN_GROUPS: RunGroup[] = ["queue", "running", "needsAttention", "done"]');
     expect(appSource).toContain("AbortSignal.timeout(10_000)");
+    expect(appSource).toContain('"/api/symphony/service/start"');
+    expect(appSource).toContain('"/api/symphony/service/stop"');
     expect(appSource).toContain("withTimeoutSignal(controller.signal, 10_000)");
     expect(appSource).toContain("AbortSignal.any([signal, timeoutSignal])");
     expect(appSource).toContain("if (controller.signal.aborted) return;");
