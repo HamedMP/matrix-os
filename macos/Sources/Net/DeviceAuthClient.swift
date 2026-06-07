@@ -22,7 +22,8 @@ public struct DeviceAuthStart: Codable, Equatable, Sendable {
 /// A successfully issued principal token + identity metadata.
 public struct DeviceAuthToken: Codable, Equatable, Sendable {
     public let accessToken: String
-    public let expiresAt: String?
+    /// Epoch milliseconds when the token expires (the platform sends a JSON number).
+    public let expiresAt: Double?
     public let userId: String?
     public let handle: String?
 }
@@ -44,21 +45,27 @@ public struct DeviceAuthClient: DeviceAuthorizing {
     private let platformURL: URL
     private let session: URLSession
     private let timeout: TimeInterval
+    private let clientId: String
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     public init(
         platformURL: URL,
+        clientId: String = "matrix-os-macos",
         sessionConfiguration: URLSessionConfiguration = .ephemeral,
         timeout: TimeInterval = 10
     ) {
         self.platformURL = platformURL
+        self.clientId = clientId
         self.session = URLSession(configuration: sessionConfiguration)
         self.timeout = timeout
     }
 
+    private struct CodeBody: Encodable { let clientId: String }
+
     public func startDeviceAuth() async throws -> DeviceAuthStart {
-        let (data, http) = try await post(path: "/api/auth/device/code", body: EmptyBody())
+        // RFC 8628 device-code request. The platform requires a clientId.
+        let (data, http) = try await post(path: "/api/auth/device/code", body: CodeBody(clientId: clientId))
         if let mapped = GatewayError.from(statusCode: http.statusCode) {
             throw mapped
         }
