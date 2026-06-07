@@ -137,6 +137,7 @@ describe("device routes", () => {
       expect(verificationUri.searchParams.get("redirect_uri")).toBe(
         "matrixos://auth?status=approved",
       );
+      expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
     });
 
     it("ignores native callbacks for other clients or invalid schemes", async () => {
