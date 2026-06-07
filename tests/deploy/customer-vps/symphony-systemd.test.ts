@@ -159,7 +159,7 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(statusDashboard).toContain("defp tps_graph(samples, now_ms, _current_tokens)");
     expect(statusDashboard).toMatch(/samples\s*\|>\s*prune_graph_samples\(now_ms\)/);
     expect(statusDashboard).toContain("String.length(value) <= width");
-    expect(statusDashboard).toContain("when String.length(value) > max");
+    expect(statusDashboard).toContain("if String.length(value) > max do");
     expect(statusDashboard).not.toContain('Enum.map_join(", ", &format_retry_summary/1)');
     expect(statusDashboard).not.toContain("when byte_size(value) > max");
     expect(statusDashboard).toContain("String.trim_trailing");
@@ -256,10 +256,13 @@ describe("customer VPS Symphony systemd unit", () => {
   it("routes Linear through the Matrix-owned integration bridge by default", async () => {
     const linearClient = await readFile("packages/symphony-elixir/lib/symphony_elixir/linear/client.ex", "utf8");
     const presenter = await readFile("packages/symphony-elixir/lib/symphony_elixir_web/presenter.ex", "utf8");
+    const statusDashboard = await readFile("packages/symphony-elixir/lib/symphony_elixir/status_dashboard.ex", "utf8");
 
     expect(linearClient).toContain("Bridge.credential()");
     expect(linearClient).toContain("bridge_credential = Bridge.credential()");
     expect(linearClient).not.toMatch(/when\s+\w+\s*==\s*Bridge\.credential\(\)/);
+    expect(linearClient).not.toContain("when token == Bridge.credential()");
+    expect(statusDashboard).not.toContain("when String.length(");
     expect(presenter).toContain("is_binary(settings.tracker.api_key) and settings.tracker.api_key == Bridge.credential()");
     expect(linearClient).toContain("PLATFORM_INTERNAL_URL");
     expect(linearClient).toContain("UPGRADE_TOKEN");
