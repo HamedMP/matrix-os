@@ -6,7 +6,7 @@
 //   * clone a git repo into a new project ("Clone repo…").
 //
 // Create/clone open a small native sheet (Form) that calls
-// `model.createProject(name:remote:)` — remote nil = empty, non-nil = clone.
+// `model.createProject(name:remote:startMode:)` — remote nil = empty, non-nil = clone/sync.
 // All styling references DesignSystem tokens only (design.md).
 #if os(macOS)
 import SwiftUI
@@ -91,8 +91,8 @@ struct ProjectPickerRail: View {
         }
         .help("Project: \(activeName)")
         .sheet(item: $sheet) { mode in
-            ProjectCreateSheet(mode: mode) { name, remote in
-                model.createProject(name: name, remote: remote)
+            ProjectCreateSheet(mode: mode) { name, remote, startMode in
+                model.createProject(name: name, remote: remote, startMode: startMode)
             }
         }
     }
@@ -211,8 +211,8 @@ struct NewProjectButton: View {
         .buttonStyle(.plain)
         .help("New project")
         .sheet(item: $sheet) { mode in
-            ProjectCreateSheet(mode: mode) { name, remote in
-                model.createProject(name: name, remote: remote)
+            ProjectCreateSheet(mode: mode) { name, remote, startMode in
+                model.createProject(name: name, remote: remote, startMode: startMode)
             }
         }
     }
@@ -221,14 +221,20 @@ struct NewProjectButton: View {
 /// Native sheet to create an empty project or clone a git remote into one.
 struct ProjectCreateSheet: View {
     let mode: ProjectSheetMode
-    /// (name, remote?) — remote is nil for an empty project.
-    let onConfirm: (String, String?) -> Void
+    /// (name, remote?, start mode) — remote is nil for an empty project.
+    let onConfirm: (String, String?, ProjectStartMode) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var remote = ""
     @State private var colorHex = "#ef4444"
     @State private var startMode: ProjectStartMode = .scratch
+
+    init(mode: ProjectSheetMode, onConfirm: @escaping (String, String?, ProjectStartMode) -> Void) {
+        self.mode = mode
+        self.onConfirm = onConfirm
+        _startMode = State(initialValue: mode.needsRemote ? .github : .scratch)
+    }
 
     private var trimmedRemote: String {
         remote.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -240,16 +246,20 @@ struct ProjectCreateSheet: View {
 
     /// For clone, a remote is required; the name can be derived from it if blank.
     private var canConfirm: Bool {
-        if mode.needsRemote {
+        switch startMode {
+        case .scratch:
+            return !trimmedName.isEmpty
+        case .github:
             return !trimmedRemote.isEmpty
+        case .linear:
+            return false
         }
-        return !trimmedName.isEmpty
     }
 
     /// Derives a project name from a git remote URL when the field is left blank.
     private var resolvedName: String {
         if !trimmedName.isEmpty { return trimmedName }
-        guard mode.needsRemote else { return trimmedName }
+        guard mode.needsRemote || startMode == .github else { return trimmedName }
         let last = trimmedRemote
             .split(separator: "/").last.map(String.init) ?? trimmedRemote
         return last.replacingOccurrences(of: ".git", with: "")
@@ -314,7 +324,7 @@ struct ProjectCreateSheet: View {
                 VStack(spacing: Spacing.x2) {
                     startOption(.scratch, title: "Start from scratch", subtitle: "Create tasks manually and configure integrations later.")
                     startOption(.github, title: "Sync with GitHub Projects", subtitle: "Set up project-scoped sync from a GitHub Project board.")
-                    startOption(.linear, title: "Sync with Linear", subtitle: "Set up project-scoped sync from a Linear team or project.")
+                    startOption(.linear, title: "Sync with Linear", subtitle: "Set up project-scoped sync from a Linear team or project.", isEnabled: false, badge: "Coming soon")
                 }
             }
 
@@ -323,7 +333,7 @@ struct ProjectCreateSheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(mode.confirmLabel) {
-                    onConfirm(resolvedName, trimmedRemote.isEmpty ? nil : trimmedRemote)
+                    onConfirm(resolvedName, trimmedRemote.isEmpty ? nil : trimmedRemote, startMode)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -353,12 +363,26 @@ struct ProjectCreateSheet: View {
         )
     }
 
-    private func startOption(_ option: ProjectStartMode, title: String, subtitle: String) -> some View {
-        Button { startMode = option } label: {
+    private func startOption(_ option: ProjectStartMode, title: String, subtitle: String, isEnabled: Bool = true, badge: String? = nil) -> some View {
+        Button {
+            if isEnabled {
+                startMode = option
+            }
+        } label: {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.plexSans(16, weight: .semibold))
-                    .foregroundStyle(Color.inkPrimary)
+                HStack(spacing: Spacing.x2) {
+                    Text(title)
+                        .font(.plexSans(16, weight: .semibold))
+                        .foregroundStyle(isEnabled ? Color.inkPrimary : Color.inkTertiary)
+                    if let badge {
+                        Text(badge)
+                            .font(.plexSans(11, weight: .semibold))
+                            .foregroundStyle(Color.inkTertiary)
+                            .padding(.horizontal, Spacing.x2)
+                            .frame(height: 20)
+                            .background(Color.surfaceRail, in: Capsule())
+                    }
+                }
                 Text(subtitle)
                     .font(.plexSans(14))
                     .foregroundStyle(Color.inkTertiary)
@@ -373,6 +397,7 @@ struct ProjectCreateSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
     }
 
     private func chooseRepositoryPath() {
@@ -387,11 +412,5 @@ struct ProjectCreateSheet: View {
             }
         }
     }
-}
-
-private enum ProjectStartMode: String, CaseIterable {
-    case scratch
-    case github
-    case linear
 }
 #endif

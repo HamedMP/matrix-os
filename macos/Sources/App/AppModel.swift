@@ -170,6 +170,12 @@ public struct ProjectSummary: Identifiable, Equatable, Sendable {
     }
 }
 
+public enum ProjectStartMode: String, CaseIterable, Sendable {
+    case scratch
+    case github
+    case linear
+}
+
 public struct WorkspaceFileEntry: Identifiable, Equatable, Sendable {
     public let name: String
     public let type: String
@@ -760,14 +766,17 @@ public final class AppModel: ObservableObject {
     }
 
     /// Creates a project (optionally from a git remote) and opens it.
-    public func createProject(name: String, remote: String?) {
+    public func createProject(name: String, remote: String?, startMode: ProjectStartMode = .scratch) {
         guard let client = gatewayClient() else { return }
         openError = nil
         Task { [weak self] in
-            let source = (remote?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                ? remote?.trimmingCharacters(in: .whitespacesAndNewlines)
-                : name.trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-            guard !source.isEmpty else {
+            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedRemote = remote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard startMode != .linear, !trimmedName.isEmpty else {
+                await MainActor.run { self?.openError = .createProjectFailed }
+                return
+            }
+            guard startMode != .github || !trimmedRemote.isEmpty else {
                 await MainActor.run { self?.openError = .createProjectFailed }
                 return
             }
@@ -776,15 +785,26 @@ public final class AppModel: ObservableObject {
                 .components(separatedBy: CharacterSet.alphanumerics.inverted)
                 .filter { !$0.isEmpty }
                 .joined(separator: "-")
-            struct CreateProjectRequest: Encodable { let url: String; let slug: String? }
+            struct CreateProjectRequest: Encodable {
+                let url: String?
+                let slug: String?
+                let name: String?
+                let mode: String
+            }
             struct CreateProjectResponse: Decodable { let project: Project?; struct Project: Decodable { let slug: String } }
             do {
                 let response: CreateProjectResponse = try await client.post(
-                    "/api/projects", body: CreateProjectRequest(url: source, slug: slug.isEmpty ? nil : slug)
+                    "/api/projects",
+                    body: CreateProjectRequest(
+                        url: trimmedRemote.isEmpty ? nil : trimmedRemote,
+                        slug: slug.isEmpty ? nil : slug,
+                        name: trimmedName,
+                        mode: startMode.rawValue
+                    )
                 )
                 await self?.loadProjects()
                 if let slug = response.project?.slug {
-                    self?.ensureProjectIsListed(ProjectSummary(slug: slug, name: name, remote: remote))
+                    self?.ensureProjectIsListed(ProjectSummary(slug: slug, name: trimmedName, remote: trimmedRemote.isEmpty ? nil : trimmedRemote))
                     self?.openProject(slug: slug)
                 }
             } catch {

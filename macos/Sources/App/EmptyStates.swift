@@ -224,8 +224,8 @@ struct MatrixComputerHomeView: View {
         }
         .background(Color.canvasVoid)
         .sheet(item: $projectSheet) { mode in
-            ProjectCreateSheet(mode: mode) { name, remote in
-                model.createProject(name: name, remote: remote)
+            ProjectCreateSheet(mode: mode) { name, remote, startMode in
+                model.createProject(name: name, remote: remote, startMode: startMode)
             }
         }
     }

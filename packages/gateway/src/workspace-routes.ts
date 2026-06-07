@@ -38,12 +38,30 @@ type WorkspaceEventStore = ReturnType<typeof createWorkspaceEventStore>;
 const WORKSPACE_BODY_LIMIT = 64 * 1024;
 
 const CreateProjectSchema = z.object({
-  url: z.string().min(1).max(512),
+  url: z.string().min(1).max(512).optional(),
   slug: z.string().min(1).max(63).optional(),
+  name: z.string().trim().min(1).max(128).optional(),
+  mode: z.enum(["scratch", "github"]).optional(),
   ownerScope: z.object({
     type: z.enum(["user", "org"]),
     id: z.string().min(1).max(128),
   }).optional(),
+}).superRefine((body, ctx) => {
+  const mode = body.mode ?? (body.url ? "github" : "scratch");
+  if (mode === "github" && !body.url) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: "Repository URL is required",
+    });
+  }
+  if (mode === "scratch" && !body.name && !body.slug) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["name"],
+      message: "Project name is required",
+    });
+  }
 });
 
 const CreateWorktreeSchema = z.object({
@@ -244,6 +262,8 @@ export function createWorkspaceRoutes(options: {
     const result = await projectManager.createProject({
       url: body.value.url,
       slug: body.value.slug,
+      name: body.value.name,
+      mode: body.value.mode ?? (body.value.url ? "github" : "scratch"),
       ownerScope,
     });
     if (!result.ok) return c.json({ error: result.error }, status(result.status));
