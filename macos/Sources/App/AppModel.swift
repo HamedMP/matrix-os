@@ -1437,7 +1437,7 @@ public final class AppModel: ObservableObject {
         case .session:
             section = .terminal
         case .home, .board, .settings, .resources:
-            break
+            assertionFailure("focusTab: \(tab.kind) should have returned early above")
         }
         if enabledPanels.contains(tab.panel) {
             activePanel = tab.panel
