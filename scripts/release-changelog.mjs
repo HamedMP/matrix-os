@@ -65,13 +65,18 @@ function parseArgs(argv) {
   return args;
 }
 
-function gitLogSubjects({ base, head }) {
+export function gitLogArgs({ base, head }) {
   const range = base ? `${base}..${head}` : head;
   const args = ["log", "--reverse", "--format=%s"];
   if (!base) {
     args.push(`--max-count=${FALLBACK_MAX_COMMITS}`);
   }
   args.push(range);
+  return args;
+}
+
+function gitLogSubjects({ base, head }) {
+  const args = gitLogArgs({ base, head });
   const output = execFileSync("git", args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
