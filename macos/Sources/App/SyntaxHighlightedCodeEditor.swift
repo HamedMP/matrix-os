@@ -745,21 +745,8 @@ final class EditorScrollHost: NSView {
         needsLayout = true
     }
 
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        // SwiftUI resizes the host by setting its frame, which does not trigger layout()
-        // on a non-autoresizing view. Re-lay the scroll view here so it always fills the
-        // host; otherwise the scroll view stays latched at its initial (narrow) width and
-        // the wrapped text renders in a thin, off-center column.
-        layoutContents()
-    }
-
     override func layout() {
         super.layout()
-        layoutContents()
-    }
-
-    private func layoutContents() {
         let barHeight = (findBar?.isHidden ?? true) ? 0 : findBarHeight
         findBar?.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: findBarHeight)
         scrollView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - barHeight)
