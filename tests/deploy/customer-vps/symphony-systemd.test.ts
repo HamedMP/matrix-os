@@ -4,22 +4,28 @@ import { describe, expect, it } from "vitest";
 describe("customer VPS Symphony systemd unit", () => {
   it("runs Elixir Symphony as a Matrix-owned loopback service", async () => {
     const unit = await readFile("distro/customer-vps/systemd/matrix-symphony.service", "utf8");
+    const gatewayUnit = await readFile("distro/customer-vps/systemd/matrix-gateway.service", "utf8");
     const wrapper = await readFile("distro/customer-vps/host-bin/matrix-symphony", "utf8");
     const buildScript = await readFile("scripts/build-host-bundle.sh", "utf8");
 
     expect(unit).toContain("Description=Matrix OS customer Symphony");
     expect(unit).toContain("User=matrix");
     expect(unit).toContain("Group=matrix");
+    expect(unit).toContain("EnvironmentFile=/opt/matrix/env/symphony.env");
+    expect(unit).not.toContain("EnvironmentFile=/opt/matrix/env/host.env");
+    expect(unit).not.toContain("EnvironmentFile=-/opt/matrix/env/registration.env");
     expect(unit).toContain("Environment=MATRIX_HOME=/home/matrix/home");
     expect(unit).toContain("Environment=SYMPHONY_HOST=127.0.0.1");
     expect(unit).toContain("Environment=SYMPHONY_PORT=4766");
     expect(unit).toContain("Environment=SYMPHONY_WORKSPACE_ROOT=/home/matrix/home/projects/matrix-os/symphony-workspaces");
     expect(unit).toContain("ExecStart=/opt/matrix/bin/matrix-symphony");
-    expect(unit).not.toContain("EnvironmentFile=/opt/matrix/env/host.env");
     expect(unit).toContain("KillMode=mixed");
     expect(unit).toContain("KillSignal=SIGTERM");
     expect(unit).toContain("TimeoutStopSec=30");
     expect(unit).toContain("ConditionPathExists=/opt/matrix/app/packages/symphony-elixir/release/bin/symphony");
+
+    expect(gatewayUnit).toContain("EnvironmentFile=/opt/matrix/env/host.env");
+    expect(gatewayUnit).toContain("Environment=SYMPHONY_PORT=4766");
 
     expect(wrapper).toContain("source /opt/matrix/env/host.env");
     expect(wrapper).toContain("export MATRIX_HOME=\"${MATRIX_HOME:-/home/matrix/home}\"");
@@ -42,6 +48,11 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(cloudInit).toContain("erlang-ssl");
     expect(cloudInit).toContain("matrix-symphony");
     expect(cloudInit).toContain("matrix-symphony-control");
+    expect(cloudInit).toContain("path: /opt/matrix/env/symphony.env");
+    expect(cloudInit).toContain("MATRIX_HANDLE={{handle}}");
+    expect(cloudInit).toContain("PLATFORM_INTERNAL_URL={{platformInternalUrl}}");
+    expect(cloudInit).toContain("UPGRADE_TOKEN={{platformVerificationToken}}");
+    expect(cloudInit).toContain("Environment=SYMPHONY_PORT=4766");
     expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
     expect(cloudInit).toContain("systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
   });
@@ -115,6 +126,14 @@ describe("customer VPS Symphony systemd unit", () => {
 
     expect(syncAgent).not.toContain("ensure_symphony_runtime");
     expect(syncAgent).not.toContain("apt-get install -y");
+    expect(syncAgent).toContain("write_symphony_env()");
+    expect(syncAgent).toContain("/opt/matrix/env/symphony.env");
+    expect(syncAgent).toContain("printf 'MATRIX_HANDLE=%s\\n'");
+    expect(syncAgent).toContain("printf 'PLATFORM_INTERNAL_URL=%s\\n'");
+    expect(syncAgent).toContain("printf 'UPGRADE_TOKEN=%s\\n'");
+    expect(syncAgent).toContain("sudo install -o root -g matrix -m 0640 \"$temp_file\" /opt/matrix/env/symphony.env || status=$?");
+    expect(syncAgent).toContain("rm -f \"$temp_file\"");
+    expect(syncAgent).toContain("return \"$status\"");
     expect(syncAgent).toContain("sudo systemctl enable matrix-symphony.service");
     expect(syncAgent).toContain("sudo systemctl start --no-block matrix-symphony.service");
     expect(syncAgent).toContain("sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true");

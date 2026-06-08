@@ -10,6 +10,7 @@ ConditionPathExists=/opt/matrix/app/packages/symphony-elixir/release/bin/symphon
 [Service]
 User=matrix
 Group=matrix
+EnvironmentFile=/opt/matrix/env/symphony.env
 Environment=MATRIX_HOME=/home/matrix/home
 Environment=SYMPHONY_HOST=127.0.0.1
 Environment=SYMPHONY_PORT=4766

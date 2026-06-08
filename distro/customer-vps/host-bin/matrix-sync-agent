@@ -28,6 +28,19 @@ readonly STAGING_CLEANUP_INTERVAL_SECONDS="${MATRIX_STAGING_CLEANUP_INTERVAL_SEC
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
+write_symphony_env() {
+  local status=0
+  local temp_file
+  temp_file="$(mktemp)"
+  {
+    printf 'MATRIX_HANDLE=%s\n' "${MATRIX_HANDLE:?MATRIX_HANDLE is required}"
+    printf 'PLATFORM_INTERNAL_URL=%s\n' "${PLATFORM_INTERNAL_URL:?PLATFORM_INTERNAL_URL is required}"
+    printf 'UPGRADE_TOKEN=%s\n' "${UPGRADE_TOKEN:?UPGRADE_TOKEN is required}"
+  } >"$temp_file"
+  sudo install -o root -g matrix -m 0640 "$temp_file" /opt/matrix/env/symphony.env || status=$?
+  rm -f "$temp_file"
+  return "$status"
+}
 default_update_channel() {
   local channel="${MATRIX_UPDATE_CHANNEL:-}"
   case "$channel" in
@@ -207,6 +220,8 @@ apply_update() {
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
+  write_symphony_env
+  log "Updated Symphony env"
 
   if [ -d "$extract_dir/systemd" ]; then
     sudo install -d -o root -g root -m 0755 /etc/systemd/system
