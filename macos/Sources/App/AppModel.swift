@@ -1210,28 +1210,6 @@ public final class AppModel: ObservableObject {
         selectedCard?.linkedSessionId ?? selectedCard?.id
     }
 
-    /// All live (cached) terminal sessions, ordered least→most recently used, with the
-    /// active session guaranteed present. The terminal surface renders these together
-    /// (only the active one visible) so switching sessions is instant: inactive views
-    /// stay mounted with their PTY stream + scrollback alive instead of tearing down
-    /// and re-attaching from scratch.
-    public var liveTerminalSessions: [TerminalSession] {
-        var ordered: [TerminalSession] = []
-        var seen = Set<UUID>()
-        for tabID in terminalSessionAccessOrder {
-            if let s = terminalSessions[tabID], seen.insert(s.id).inserted {
-                ordered.append(s)
-            }
-        }
-        for s in terminalSessions.values where seen.insert(s.id).inserted {
-            ordered.append(s)
-        }
-        if let active = terminal, seen.insert(active.id).inserted {
-            ordered.append(active)
-        }
-        return ordered
-    }
-
     /// Creates a project (optionally from a git remote) and opens it.
     public func createProject(name: String, remote: String?, startMode: ProjectStartMode = .scratch) {
         guard let client = gatewayClient() else { return }

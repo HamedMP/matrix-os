@@ -70,23 +70,9 @@ struct RootShellView: View {
 
     @ViewBuilder
     private var sectionContent: some View {
-        ZStack {
-            // Keep the hosted web shell mounted like a persistent browser tab, so
-            // returning to Home never triggers a full reload / re-auth. Other sections
-            // render on top when active.
-            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix Home")
-                .opacity(model.section == .home ? 1 : 0)
-                .allowsHitTesting(model.section == .home)
-                .accessibilityHidden(model.section != .home)
-            nonHomeSection
-        }
-    }
-
-    @ViewBuilder
-    private var nonHomeSection: some View {
         switch model.section {
         case .home:
-            EmptyView()
+            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix Home")
         case .board:
             BoardView(model: model)
         case .terminal:
@@ -760,45 +746,29 @@ private struct TerminalsView: View {
 
     @ViewBuilder
     private var terminalSurface: some View {
-        ZStack {
-            // Keep every live session mounted so switching is instant: inactive
-            // terminals stay alive (PTY stream + scrollback) instead of re-attaching.
-            ForEach(model.liveTerminalSessions, id: \.id) { session in
-                terminalLayer(for: session)
+        if let terminal = model.terminal {
+            TerminalPanelView(session: terminal)
+                .id(terminal.id)
+                .background(Color.surfaceTerminal)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
+                        .strokeBorder(Color.black.opacity(0.35), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.18), radius: 18, y: 8)
+        } else {
+            ZStack {
+                Color.surfaceTerminal
+                VStack(spacing: Spacing.x2) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 28, weight: .light))
+                        .foregroundStyle(Color.terminalMutedInk)
+                    Text("Select a session to open its terminal")
+                        .font(.plexSans(13))
+                        .foregroundStyle(Color.terminalMutedInk)
+                }
             }
-            if model.terminal == nil {
-                terminalEmptyState
-            }
-        }
-        .background(Color.surfaceTerminal)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
-                .strokeBorder(Color.black.opacity(0.35), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.18), radius: 18, y: 8)
-        .animation(.easeInOut(duration: 0.14), value: model.terminal?.id)
-    }
-
-    private func terminalLayer(for session: TerminalSession) -> some View {
-        let isActive = session.id == model.terminal?.id
-        return TerminalPanelView(session: session, isActive: isActive)
-            .opacity(isActive ? 1 : 0)
-            .allowsHitTesting(isActive)
-            .accessibilityHidden(!isActive)
-    }
-
-    private var terminalEmptyState: some View {
-        ZStack {
-            Color.surfaceTerminal
-            VStack(spacing: Spacing.x2) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 28, weight: .light))
-                    .foregroundStyle(Color.terminalMutedInk)
-                Text("Select a session to open its terminal")
-                    .font(.plexSans(13))
-                    .foregroundStyle(Color.terminalMutedInk)
-            }
+            .clipShape(RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
         }
     }
 

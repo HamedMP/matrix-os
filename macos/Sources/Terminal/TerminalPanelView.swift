@@ -18,14 +18,10 @@ public struct TerminalPanelView: View {
     public nonisolated static let rendererConfiguration = TerminalRendererConfiguration(kind: .swiftTerm)
 
     @ObservedObject private var session: TerminalSession
-    /// Whether this is the visible/foreground terminal. Inactive terminals stay mounted
-    /// (alive) but must not grab keyboard focus from the active one.
-    private let isActive: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(session: TerminalSession, isActive: Bool = true) {
+    public init(session: TerminalSession) {
         self.session = session
-        self.isActive = isActive
     }
 
     public var body: some View {
@@ -132,7 +128,7 @@ public struct TerminalPanelView: View {
     // MARK: - Terminal surface
 
     private var terminalSurface: some View {
-        SwiftTermView(session: session, isActive: isActive)
+        SwiftTermView(session: session)
             .id(session.id)
             .background(Color.surfaceTerminal)
     }
@@ -192,7 +188,6 @@ private struct AnimatedEllipsis: View {
 /// - reports size changes back to the session (`resize`).
 private struct SwiftTermView: NSViewRepresentable {
     let session: TerminalSession
-    var isActive: Bool = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(session: session)
@@ -200,7 +195,6 @@ private struct SwiftTermView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TerminalView {
         let view = FocusableTerminalView(frame: .zero)
-        view.isActive = isActive
         view.terminalDelegate = context.coordinator
         context.coordinator.terminalView = view
         let clickRecognizer = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.focusTerminal(_:)))
@@ -242,23 +236,9 @@ private struct SwiftTermView: NSViewRepresentable {
     func updateNSView(_ nsView: TerminalView, context: Context) {
         // Keep the coordinator's reference fresh; sizing is reported via the delegate.
         context.coordinator.terminalView = nsView
-        (nsView as? FocusableTerminalView)?.isActive = isActive
-        // Only the foreground terminal takes keyboard focus. Inactive (hidden-but-alive)
-        // terminals must never steal first responder from the visible one.
-        guard isActive else {
-            context.coordinator.didRequestInitialFocus = false
-            return
-        }
-        // updateNSView re-runs on every session update (output/state changes, because
-        // TerminalPanelView observes the session), so this naturally retries focus until
-        // it succeeds — including once the session attaches and is ready for input.
         guard !context.coordinator.didRequestInitialFocus else { return }
         DispatchQueue.main.async {
-            // .userInitiated forces focus to the newly-active terminal: switching
-            // sessions must move first responder off the previously-focused terminal,
-            // which .initial mode deliberately refuses to do. Gated by
-            // didRequestInitialFocus so it fires once per activation, not every update.
-            if TerminalFocusPolicy.requestFocus(nsView, mode: .userInitiated) {
+            if TerminalFocusPolicy.requestFocus(nsView) {
                 context.coordinator.didRequestInitialFocus = true
             }
         }
@@ -270,18 +250,23 @@ private struct SwiftTermView: NSViewRepresentable {
 
     /// Resolves the best available monospaced font for terminal rendering.
     ///
-    /// Priority: Nerd Fonts first so zellij's powerline separators and glyph icons
-    /// render correctly when one is installed (MesloLGS NF is the common choice),
-    /// then the OPERATOR design font (IBM Plex Mono), then Menlo / Courier as the
-    /// universally-present fallbacks. `NSFont(name:)` lookups are cheap and cached,
-    /// so probing missing families adds no meaningful cost.
+    /// Priority:
+    ///  1. IBM Plex Mono — the OPERATOR design font (bundled or user-installed).
+    ///  2. Menlo — always present on macOS; excellent monospace legibility.
+    ///  3. Courier New — universal fallback.
+    ///  4. System monospaced — last resort.
+    ///
+    /// Nerd Font variants are intentionally excluded: they are almost never
+    /// installed on a standard macOS machine, and falling through the entire list
+    /// on every view creation adds measurable startup latency. If the user wants
+    /// Nerd Font glyphs they can set the font via a future preferences surface.
     private static func terminalFont(size: CGFloat) -> NSFont {
         let preferredFamilies: [String] = [
+            // Nerd Fonts first so zellij powerline/glyph icons render when installed.
             "MesloLGS NF",
             "MesloLGS Nerd Font Mono",
             "JetBrainsMono Nerd Font",
             "Hack Nerd Font",
-            "FiraCode Nerd Font",
             "IBMPlexMono",
             "IBM Plex Mono",
             "Menlo",
@@ -348,13 +333,8 @@ private struct SwiftTermView: NSViewRepresentable {
 }
 
 final class FocusableTerminalView: TerminalView {
-    /// Only the foreground terminal schedules initial focus; hidden-but-alive terminals
-    /// must not grab first responder when they mount.
-    var isActive = true
-
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard isActive else { return }
         TerminalFocusPolicy.scheduleInitialFocus(for: self)
     }
 }
