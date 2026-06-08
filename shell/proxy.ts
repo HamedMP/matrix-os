@@ -90,9 +90,7 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
   const nativeAppSession = requestHeaders.get(MATRIX_NATIVE_APP_SESSION_HEADER)?.trim() === "1";
   requestHeaders.delete(MATRIX_NATIVE_APP_SESSION_HEADER);
   requestHeaders.delete(MATRIX_PLATFORM_SESSION_HEADER);
-  if (nativeAppSession) {
-    requestHeaders.set(MATRIX_PLATFORM_SESSION_HEADER, "native");
-  }
+  requestHeaders.set(MATRIX_PLATFORM_SESSION_HEADER, nativeAppSession ? "native" : "platform");
   return NextResponse.next({ request: { headers: requestHeaders } });
 }
 

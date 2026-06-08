@@ -1497,6 +1497,128 @@ describe("platform proxy routing", () => {
     expect(nativeForwardHeaders.get("x-matrix-platform-session")).toBeNull();
   });
 
+  it("marks native app sessions behind Cloud Run forwarded-host routing", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://alice.matrix-os.com",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      env: { ...process.env, EDGE_ROUTER_SECRET: "edge-secret" },
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
+        authorization: `Bearer ${issued.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ redirectTo: "/" }),
+    });
+
+    expect(exchange.status).toBe(200);
+    const appSession = cookieHeaderFromSetCookie(exchange.headers, [
+      "matrix_app_session",
+      "matrix_native_app_session",
+    ]);
+    const shell = await app.request("/", {
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
+        cookie: appSession,
+      },
+    });
+
+    expect(shell.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://matrixos-alice:3000/");
+    const nativeForwardHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers as HeadersInit);
+    expect(nativeForwardHeaders.get("x-matrix-native-app-session")).toBe("1");
+    expect(nativeForwardHeaders.get("x-platform-user-id")).toBe("user_alice");
+    expect(nativeForwardHeaders.get("x-matrix-edge-secret")).toBeNull();
+  });
+
+  it("marks native app sessions on customer VPS routing behind Cloud Run", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff159",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      status: "running",
+      hetznerServerId: 123459,
+      publicIPv4: "203.0.113.59",
+      imageVersion: "matrix-os-host-2026.06.08-1",
+      provisionedAt: "2026-06-08T12:00:00.000Z",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://alice.matrix-os.com",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("shell", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      env: { ...process.env, EDGE_ROUTER_SECRET: "edge-secret" },
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
+        authorization: `Bearer ${issued.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ redirectTo: "/" }),
+    });
+
+    expect(exchange.status).toBe(200);
+    const appSession = cookieHeaderFromSetCookie(exchange.headers, [
+      "matrix_app_session",
+      "matrix_native_app_session",
+    ]);
+    const shell = await app.request("/", {
+      headers: {
+        host: "matrix-platform-jqxkjdhtkq-ey.a.run.app",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-matrix-edge-secret": "edge-secret",
+        cookie: appSession,
+      },
+    });
+
+    expect(shell.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.59:443/");
+    const nativeForwardHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers as HeadersInit);
+    expect(nativeForwardHeaders.get("x-matrix-native-app-session")).toBe("1");
+    expect(nativeForwardHeaders.get("x-platform-user-id")).toBe("user_alice");
+    expect(nativeForwardHeaders.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(nativeForwardHeaders.get("x-matrix-edge-secret")).toBeNull();
+  });
+
   it("uses x-forwarded-host for app-domain routing behind Cloud Run", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("shell", { status: 200 }),
