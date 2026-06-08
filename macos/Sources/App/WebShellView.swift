@@ -185,6 +185,9 @@ private struct WebShellView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        // Persist the hosted-shell data store so the Home tab keeps its cache across visits
+        // (a non-persistent store forces a full reload every time). Stale Clerk client cookies
+        // are stripped per-load by clearInterferingClerkCookies instead.
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
@@ -288,11 +291,20 @@ private struct WebShellView: NSViewRepresentable {
                     await MainActor.run {
                         guard let self, let webView, self.exchangeGeneration == generation else { return }
                         self.exchangeTask = nil
-                        NativeAppSessionExchange.installCookies(response.cookies, in: webView.configuration.websiteDataStore.httpCookieStore) {
+                        let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+                        NativeAppSessionExchange.installCookies(response.cookies, in: cookieStore) {
                             guard self.exchangeGeneration == generation else { return }
                             let names = response.cookies.map(\.name).joined(separator: ",")
                             webShellLogger.info("Native app session cookies installed names=\(names, privacy: .public)")
-                            webView.load(webShellDestinationRequest(for: destination, token: token))
+                            // The hosted shell authenticates via the native app-session cookies
+                            // (matrix_app_session / matrix_native_app_session). Stale Clerk client
+                            // cookies (accumulated from prior /login redirects) make the platform's
+                            // identity resolution fall back to an unrouted Clerk identity and serve
+                            // the sign-in page. Strip them so we present a clean native-only session.
+                            NativeAppSessionExchange.clearInterferingClerkCookies(in: cookieStore) {
+                                guard self.exchangeGeneration == generation else { return }
+                                webView.load(webShellDestinationRequest(for: destination, token: token))
+                            }
                         }
                     }
                 } catch is CancellationError {
@@ -594,6 +606,33 @@ struct NativeAppSessionExchange {
                 installCookie(at: index + 1, cookies: cookies, store: store, completion: completion)
             }
         }
+    }
+
+    /// Clerk client cookies (`__client*`, `__session*`) and Clerk-domain cookies linger in the
+    /// WKWebView store after a `/login` redirect. When present alongside a valid native app-session,
+    /// the platform resolves an unrouted Clerk identity and serves the sign-in page instead of the
+    /// shell. Remove them so the hosted shell load presents only the native app-session.
+    @MainActor
+    static func clearInterferingClerkCookies(in store: WKHTTPCookieStore, completion: @escaping @MainActor () -> Void) {
+        store.getAllCookies { cookies in
+            let clerkCookies = cookies.filter(isClerkCookie)
+            guard !clerkCookies.isEmpty else {
+                completion()
+                return
+            }
+            let names = clerkCookies.map(\.name).joined(separator: ",")
+            webShellLogger.info("Clearing interfering Clerk cookies before hosted shell load names=\(names, privacy: .public)")
+            Task { @MainActor in
+                deleteCookie(at: 0, cookies: clerkCookies, store: store, completion: completion)
+            }
+        }
+    }
+
+    private static func isClerkCookie(_ cookie: HTTPCookie) -> Bool {
+        let domain = cookie.domain.lowercased()
+        if domain.contains("clerk") { return true }
+        let name = cookie.name
+        return name.hasPrefix("__client") || name.hasPrefix("__session")
     }
 }
 
