@@ -194,11 +194,12 @@ private struct SwiftTermView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> TerminalView {
-        let view = TerminalView(frame: .zero)
+        let view = FocusableTerminalView(frame: .zero)
         view.terminalDelegate = context.coordinator
         context.coordinator.terminalView = view
         let clickRecognizer = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.focusTerminal(_:)))
         clickRecognizer.numberOfClicksRequired = 1
+        clickRecognizer.delaysPrimaryMouseButtonEvents = false
         view.addGestureRecognizer(clickRecognizer)
 
         // OPERATOR look: deep terminal surface + phosphor ink, Plex Mono 12.5.
@@ -215,25 +216,18 @@ private struct SwiftTermView: NSViewRepresentable {
         let dims = view.getTerminal().getDims()
         session.resize(cols: dims.cols, rows: dims.rows)
         session.start()
-        DispatchQueue.main.async { [weak view] in
-            Self.requestInitialFocus(view)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak view] in
-            Self.requestInitialFocus(view)
-        }
         return view
     }
 
     func updateNSView(_ nsView: TerminalView, context: Context) {
         // Keep the coordinator's reference fresh; sizing is reported via the delegate.
         context.coordinator.terminalView = nsView
-    }
-
-    private static func requestInitialFocus(_ view: TerminalView?) {
-        guard let view, let window = view.window else { return }
-        let responder = window.firstResponder
-        guard responder == nil || responder === view || responder === window.contentView || responder === window else { return }
-        window.makeFirstResponder(view)
+        guard !context.coordinator.didRequestInitialFocus else { return }
+        DispatchQueue.main.async {
+            if TerminalFocusPolicy.requestFocus(nsView) {
+                context.coordinator.didRequestInitialFocus = true
+            }
+        }
     }
 
     private static func terminalFont(size: CGFloat) -> NSFont {
@@ -267,6 +261,7 @@ private struct SwiftTermView: NSViewRepresentable {
     final class Coordinator: NSObject, TerminalViewDelegate {
         private let session: TerminalSession
         weak var terminalView: TerminalView?
+        var didRequestInitialFocus = false
 
         init(session: TerminalSession) {
             self.session = session
@@ -274,7 +269,7 @@ private struct SwiftTermView: NSViewRepresentable {
 
         @MainActor @objc func focusTerminal(_ recognizer: NSClickGestureRecognizer) {
             guard let source = recognizer.view as? TerminalView else { return }
-            source.window?.makeFirstResponder(source)
+            _ = TerminalFocusPolicy.requestFocus(source, mode: .userInitiated)
         }
 
         // User keystrokes → PTY.
@@ -303,6 +298,60 @@ private struct SwiftTermView: NSViewRepresentable {
         func clipboardCopy(source: TerminalView, content: Data) {}
         func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    }
+}
+
+final class FocusableTerminalView: TerminalView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        TerminalFocusPolicy.scheduleInitialFocus(for: self)
+    }
+}
+
+enum TerminalFocusPolicy {
+    enum Mode {
+        case initial
+        case userInitiated
+    }
+
+    static let initialFocusRetryDelays: [TimeInterval] = [0, 0.05, 0.15, 0.35]
+
+    static func shouldRequestInitialFocus(
+        hasFirstResponder: Bool,
+        firstResponderIsTerminal: Bool,
+        firstResponderIsRootView: Bool,
+        firstResponderIsWindow: Bool = false
+    ) -> Bool {
+        !hasFirstResponder || firstResponderIsTerminal || firstResponderIsRootView || firstResponderIsWindow
+    }
+
+    @MainActor
+    static func scheduleInitialFocus(for view: TerminalView?) {
+        for delay in initialFocusRetryDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak view] in
+                Task { @MainActor in
+                    _ = requestFocus(view)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    @discardableResult
+    static func requestFocus(_ view: TerminalView?, mode: Mode = .initial) -> Bool {
+        guard let view, let window = view.window else { return false }
+        if mode == .initial {
+            let firstResponder = window.firstResponder
+            let shouldFocus = shouldRequestInitialFocus(
+                hasFirstResponder: firstResponder != nil,
+                firstResponderIsTerminal: firstResponder === view,
+                firstResponderIsRootView: firstResponder === window.contentView,
+                firstResponderIsWindow: firstResponder === window
+            )
+            guard shouldFocus else { return false }
+        }
+        window.makeFirstResponder(view)
+        return window.firstResponder === view
     }
 }
 #endif

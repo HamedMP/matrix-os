@@ -92,6 +92,14 @@ function combinedSetCookie(headers: Headers): string {
   return headers.get("set-cookie") ?? "";
 }
 
+function cookieHeaderFromSetCookie(headers: Headers, names: string[]): string {
+  const raw = combinedSetCookie(headers);
+  return names
+    .map((name) => new RegExp(`(?:^|[\\n,]\\s*)(${name}=[^;,\\n]*)`).exec(raw)?.[1])
+    .filter((value): value is string => Boolean(value))
+    .join("; ");
+}
+
 describe("platform proxy routing", () => {
   let db: PlatformDB;
 
@@ -157,6 +165,8 @@ describe("platform proxy routing", () => {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
+        "x-matrix-native-app-session": "1",
+        "x-matrix-platform-session": "native",
         cookie: "__session=clerk-cookie; other=session",
       },
     });
@@ -171,6 +181,8 @@ describe("platform proxy routing", () => {
     expect(headers.get("authorization")).toBeTruthy();
     expect(headers.get("authorization")).not.toBe("Bearer platform-secret-123");
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
+    expect(headers.get("x-matrix-native-app-session")).toBeNull();
+    expect(headers.get("x-matrix-platform-session")).toBeNull();
     expect(headers.get("cookie")).toBeNull();
   });
 
@@ -1409,8 +1421,9 @@ describe("platform proxy routing", () => {
 
     expect(exchange.status).toBe(200);
     await expect(exchange.json()).resolves.toEqual({ redirectTo: "/runtime?runtime=staging" });
-    const setCookie = exchange.headers.get("set-cookie");
+    const setCookie = combinedSetCookie(exchange.headers);
     expect(setCookie).toContain("matrix_app_session=");
+    expect(setCookie).toContain("matrix_native_app_session=;");
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("SameSite=Lax");
 
@@ -1424,6 +1437,9 @@ describe("platform proxy routing", () => {
 
     expect(shell.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://203.0.113.35:443/");
+    const browserForwardHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers as HeadersInit);
+    expect(browserForwardHeaders.get("x-matrix-native-app-session")).toBeNull();
+    expect(browserForwardHeaders.get("x-matrix-platform-session")).toBeNull();
   });
 
   it("exchanges a native sync JWT for an app session cookie before continuing", async () => {
@@ -1457,12 +1473,16 @@ describe("platform proxy routing", () => {
 
     expect(exchange.status).toBe(200);
     await expect(exchange.json()).resolves.toEqual({ redirectTo: "/" });
-    const setCookie = exchange.headers.get("set-cookie");
+    const setCookie = combinedSetCookie(exchange.headers);
     expect(setCookie).toContain("matrix_app_session=");
+    expect(setCookie).toContain("matrix_native_app_session=");
     expect(setCookie).toContain(encodeURIComponent(issued.token));
     expect(verifyToken).not.toHaveBeenCalled();
 
-    const appSession = setCookie?.split(";", 1)[0] ?? "";
+    const appSession = cookieHeaderFromSetCookie(exchange.headers, [
+      "matrix_app_session",
+      "matrix_native_app_session",
+    ]);
     const shell = await app.request("/", {
       headers: {
         host: "app.matrix-os.com",
@@ -1472,6 +1492,9 @@ describe("platform proxy routing", () => {
 
     expect(shell.status).toBe(200);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://matrixos-alice:3000/");
+    const nativeForwardHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers as HeadersInit);
+    expect(nativeForwardHeaders.get("x-matrix-native-app-session")).toBe("1");
+    expect(nativeForwardHeaders.get("x-matrix-platform-session")).toBeNull();
   });
 
   it("uses x-forwarded-host for app-domain routing behind Cloud Run", async () => {
@@ -1601,8 +1624,10 @@ describe("platform proxy routing", () => {
       error: "Matrix computer unavailable",
       code: "no_runtime",
     });
-    expect(exchange.headers.get("set-cookie")).toContain("matrix_app_session=;");
-    expect(exchange.headers.get("set-cookie")).toContain("Max-Age=0");
+    const setCookie = combinedSetCookie(exchange.headers);
+    expect(setCookie).toContain("matrix_app_session=;");
+    expect(setCookie).toContain("matrix_native_app_session=;");
+    expect(setCookie).toContain("Max-Age=0");
   });
 
   it("revokes the current Clerk session and clears Matrix and Clerk cookies on sign-out", async () => {
@@ -1641,6 +1666,7 @@ describe("platform proxy routing", () => {
     expect(revokeSession).toHaveBeenCalledWith("sess_123");
     const setCookie = combinedSetCookie(res.headers);
     expect(setCookie).toContain("matrix_app_session=;");
+    expect(setCookie).toContain("matrix_native_app_session=;");
     expect(setCookie).toContain("__session=;");
     expect(setCookie).toContain("__client_uat=;");
     expect(setCookie).toContain("__session_safeSuffix-123=;");
@@ -1676,6 +1702,7 @@ describe("platform proxy routing", () => {
     });
     const setCookie = combinedSetCookie(res.headers);
     expect(setCookie).toContain("matrix_app_session=;");
+    expect(setCookie).toContain("matrix_native_app_session=;");
     expect(setCookie).toContain("__session=;");
     expect(setCookie).toContain("__client_uat=;");
     expect(errorSpy).toHaveBeenCalledWith("[auth/app-session] Clerk session revoke failed", "Error");
@@ -2378,8 +2405,10 @@ describe("platform proxy routing", () => {
       error: "Billing upgrade required",
       code: "billing_required",
     });
-    expect(exchange.headers.get("set-cookie")).toContain("matrix_app_session=;");
-    expect(exchange.headers.get("set-cookie")).toContain("Max-Age=0");
+    const setCookie = combinedSetCookie(exchange.headers);
+    expect(setCookie).toContain("matrix_app_session=;");
+    expect(setCookie).toContain("matrix_native_app_session=;");
+    expect(setCookie).toContain("Max-Age=0");
   });
 
   it("serves the shell billing gate from auth-shell for signed-in users before a VPS exists", async () => {

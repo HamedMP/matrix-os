@@ -1,5 +1,6 @@
 #if os(macOS)
 import SwiftUI
+import AppKit
 import DesignSystem
 import MatrixModel
 
@@ -70,7 +71,6 @@ let taskPaneSpecs: [TaskPaneSpec] = [
 struct TaskPaneStrip: View {
     let activePanel: Panel
     let enabledPanels: [Panel]
-    let onToggle: (Panel) -> Void
     let onFocus: (Panel) -> Void
 
     var body: some View {
@@ -79,9 +79,9 @@ struct TaskPaneStrip: View {
                 ForEach(taskPaneSpecs) { pane in
                     TaskPaneButton(
                         pane: pane,
-                        isActive: enabledPanels.contains(pane.panel),
+                        isAvailable: enabledPanels.contains(pane.panel),
                         isFocused: pane.panel == activePanel,
-                        action: { onToggle(pane.panel) }
+                        action: { onFocus(pane.panel) }
                     )
                     .keyboardShortcut(shortcutKey(for: pane.id), modifiers: shortcutModifiers(for: pane.id))
                     .contextMenu {
@@ -117,18 +117,14 @@ struct TaskPaneStrip: View {
 
 private struct TaskPaneButton: View {
     let pane: TaskPaneSpec
-    let isActive: Bool
+    let isAvailable: Bool
     let isFocused: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: Spacing.x1) {
-                Image(systemName: isActive ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(isActive ? Color.signalLive : Color.inkTertiary)
-                Image(systemName: pane.icon)
-                    .font(.system(size: 12, weight: .semibold))
+                AppGlyphTile(symbol: pane.icon, palette: .panel(pane.id), size: 20, isActive: isFocused)
                 Text(pane.title)
                     .font(.plexSans(12, weight: isFocused ? .semibold : .medium))
                     .lineLimit(1)
@@ -141,18 +137,19 @@ private struct TaskPaneButton: View {
             .frame(height: 30)
             .background(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .fill(isActive ? Color.surfaceCard : Color.clear)
+                    .fill(isFocused ? Color.surfaceCard : Color.clear)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .strokeBorder(isFocused ? Color.signalLive.opacity(0.7) : (isActive ? Color.hairlineDark : Color.clear), lineWidth: 1)
+                    .strokeBorder(isFocused ? Color.signalLive.opacity(0.7) : Color.clear, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("\(pane.title) \(pane.shortcut)")
         .accessibilityLabel(pane.title)
-        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .accessibilityHint(isAvailable ? "Available" : "Opens this pane")
+        .accessibilityAddTraits(isFocused ? [.isSelected] : [])
     }
 }
 
@@ -197,8 +194,7 @@ struct TerminalSessionTabStrip: View {
                     Circle()
                         .fill(session.isActive ? Color.signalLive : Color.inkTertiary)
                         .frame(width: 6, height: 6)
-                    Image(systemName: "terminal")
-                        .font(.system(size: 11, weight: .semibold))
+                    AppGlyphTile(symbol: "terminal", palette: .terminal, size: 20, isActive: active)
                     Text(session.name)
                         .font(.plexMono(11, weight: active ? .semibold : .medium))
                         .lineLimit(1)
@@ -236,6 +232,14 @@ struct TerminalSessionTabStrip: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Terminal \(session.name)")
         .accessibilityAddTraits(active ? [.isSelected] : [])
+        .contextMenu {
+            Button("Open Terminal") { onSelect(session.name) }
+            Button("Close Terminal Tab") { onClose(session.name) }
+            Button("Copy Session Name") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(session.name, forType: .string)
+            }
+        }
     }
 }
 
@@ -249,9 +253,7 @@ private struct WorkspaceTabPill: View {
         HStack(spacing: Spacing.x1) {
             Button(action: onSelect) {
                 HStack(spacing: Spacing.x2) {
-                    Image(systemName: icon)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(isActive ? Color.signalLive : Color.inkTertiary)
+                    AppGlyphTile(symbol: icon, palette: .tab(tab.kind), size: 26, isActive: isActive)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(tab.title)
                             .font(.plexSans(12, weight: isActive ? .semibold : .medium))
@@ -271,16 +273,14 @@ private struct WorkspaceTabPill: View {
             }
             .buttonStyle(.plain)
 
-            if tab.kind != .home && tab.kind != .board {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.inkTertiary)
-                        .iconHitTarget(24)
-                }
-                .buttonStyle(.plain)
-                .help("Close tab")
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.inkTertiary)
+                    .iconHitTarget(24)
             }
+            .buttonStyle(.plain)
+            .help("Close tab")
         }
         .padding(.trailing, Spacing.x1)
         .background(
@@ -302,6 +302,14 @@ private struct WorkspaceTabPill: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(tab.title), \(tab.projectName)")
         .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .contextMenu {
+            Button("Open Tab", action: onSelect)
+            Button("Close Tab", action: onClose)
+            Button("Copy Tab Title") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(tab.title, forType: .string)
+            }
+        }
     }
 
     private var icon: String {
@@ -314,8 +322,95 @@ private struct WorkspaceTabPill: View {
             return "checklist"
         case .session:
             return "terminal"
+        case .settings:
+            return "gearshape"
+        case .resources:
+            return "gauge.with.dots.needle.67percent"
         case .app:
             return "square.grid.2x2"
+        }
+    }
+}
+
+struct AppGlyphTile: View {
+    let symbol: String
+    let palette: GlyphPalette
+    let size: CGFloat
+    let isActive: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            palette.top.opacity(isActive ? 1 : 0.86),
+                            palette.bottom.opacity(isActive ? 1 : 0.78),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                        .stroke(Color.white.opacity(isActive ? 0.62 : 0.4), lineWidth: 0.7)
+                        .padding(0.5)
+                }
+                .shadow(color: palette.bottom.opacity(isActive ? 0.26 : 0.12), radius: isActive ? 5 : 2, y: isActive ? 2 : 1)
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.48, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(palette.foreground)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+struct GlyphPalette {
+    let top: Color
+    let bottom: Color
+    let foreground: Color
+
+    static let terminal = GlyphPalette(top: Color(hex: 0x30343B), bottom: Color(hex: 0x101318), foreground: Color(hex: 0xC8F2D0))
+
+    static func tab(_ kind: WorkspaceTab.Kind) -> GlyphPalette {
+        switch kind {
+        case .home:
+            return GlyphPalette(top: Color(hex: 0x88C7FF), bottom: Color(hex: 0x2370D9), foreground: .white)
+        case .board:
+            return GlyphPalette(top: Color(hex: 0x7FD98B), bottom: Color(hex: 0x2F8A47), foreground: .white)
+        case .task:
+            return GlyphPalette(top: Color(hex: 0xFFE08A), bottom: Color(hex: 0xD49B2A), foreground: Color(hex: 0x3A2A0B))
+        case .session:
+            return terminal
+        case .settings:
+            return GlyphPalette(top: Color(hex: 0xD5D8E2), bottom: Color(hex: 0x7D8797), foreground: .white)
+        case .resources:
+            return GlyphPalette(top: Color(hex: 0xB7E8FF), bottom: Color(hex: 0x3298C8), foreground: Color(hex: 0x083547))
+        case .app:
+            return GlyphPalette(top: Color(hex: 0xD7C4FF), bottom: Color(hex: 0x7761D8), foreground: .white)
+        }
+    }
+
+    static func panel(_ id: String) -> GlyphPalette {
+        switch id {
+        case "terminal":
+            return terminal
+        case "editor":
+            return GlyphPalette(top: Color(hex: 0x7EC8FF), bottom: Color(hex: 0x2B74E8), foreground: .white)
+        case "artifacts":
+            return GlyphPalette(top: Color(hex: 0xFFCE86), bottom: Color(hex: 0xD36C28), foreground: .white)
+        case "git":
+            return GlyphPalette(top: Color(hex: 0xAADF8F), bottom: Color(hex: 0x3E8F4A), foreground: .white)
+        case "settings":
+            return GlyphPalette(top: Color(hex: 0xE4E6EC), bottom: Color(hex: 0x8792A3), foreground: .white)
+        case "processes":
+            return GlyphPalette(top: Color(hex: 0xBCE7FF), bottom: Color(hex: 0x368BC0), foreground: Color(hex: 0x073449))
+        case "whiteboard":
+            return GlyphPalette(top: Color(hex: 0xF6A5D7), bottom: Color(hex: 0xB44FD1), foreground: .white)
+        default:
+            return GlyphPalette(top: Color(hex: 0xD7C4FF), bottom: Color(hex: 0x7761D8), foreground: .white)
         }
     }
 }

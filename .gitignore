@@ -28,6 +28,7 @@ coverage/
 .superpowers/
 .remember/
 logs/
+.worktrees/
 
 # Vim swap/recovery files
 *.swp

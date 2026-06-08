@@ -19,9 +19,9 @@ final class DeviceAuthClientTests: XCTestCase {
             XCTAssertEqual(req.httpMethod, "POST")
             let body = requestJSONBody(req)
             XCTAssertEqual(body?["clientId"] as? String, "matrix-os-macos")
-            XCTAssertFalse(body?.keys.contains("redirectUri") ?? true)
+            XCTAssertEqual(body?["redirectUri"] as? String, "matrixos://auth?status=approved")
             let json = """
-            {"deviceCode":"DC","userCode":"ABCD-EFGH","verificationUri":"https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH","expiresIn":900,"interval":5}
+            {"deviceCode":"DC","userCode":"ABCD-EFGH","verificationUri":"https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH&redirect_uri=matrixos%3A%2F%2Fauth%3Fstatus%3Dapproved","expiresIn":900,"interval":5}
             """
             return (httpResponse(req.url!, 200), Data(json.utf8))
         }
@@ -29,7 +29,7 @@ final class DeviceAuthClientTests: XCTestCase {
         let start = try await client.startDeviceAuth()
         XCTAssertEqual(start.deviceCode, "DC")
         XCTAssertEqual(start.userCode, "ABCD-EFGH")
-        XCTAssertFalse(start.verificationUri.contains("redirect_uri="))
+        XCTAssertTrue(start.verificationUri.contains("redirect_uri="))
         XCTAssertEqual(start.interval, 5)
         XCTAssertEqual(start.expiresIn, 900)
     }

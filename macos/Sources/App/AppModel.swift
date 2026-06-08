@@ -21,6 +21,9 @@ import OSLog
 #if canImport(AppKit)
 import AppKit
 #endif
+#if canImport(AuthenticationServices)
+import AuthenticationServices
+#endif
 
 private let appModelLogger = Logger(subsystem: "com.matrixos.native-shell", category: "AppModel")
 
@@ -93,6 +96,8 @@ public enum AppSection: String, CaseIterable, Sendable {
     case home
     case board
     case terminal
+    case settings
+    case resources
     case browser
 
     public var title: String {
@@ -100,6 +105,8 @@ public enum AppSection: String, CaseIterable, Sendable {
         case .home: return "Home"
         case .board: return "Board"
         case .terminal: return "Terminal"
+        case .settings: return "Settings"
+        case .resources: return "Resources"
         case .browser: return "Browser"
         }
     }
@@ -109,7 +116,36 @@ public enum AppSection: String, CaseIterable, Sendable {
         case .home: return "house"
         case .board: return "rectangle.split.3x1"
         case .terminal: return "terminal"
+        case .settings: return "gearshape"
+        case .resources: return "gauge.with.dots.needle.67percent"
         case .browser: return "globe"
+        }
+    }
+}
+
+public enum NativeSettingsSection: String, CaseIterable, Identifiable, Sendable {
+    case account
+    case runtime
+    case editor
+    case workspace
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .account: return "Account"
+        case .runtime: return "Runtime"
+        case .editor: return "Editor"
+        case .workspace: return "Workspace"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .account: return "person.crop.circle"
+        case .runtime: return "desktopcomputer"
+        case .editor: return "chevron.left.forwardslash.chevron.right"
+        case .workspace: return "folder.badge.gearshape"
         }
     }
 }
@@ -139,6 +175,8 @@ public struct WorkspaceTab: Identifiable, Equatable, Sendable {
         case board
         case task
         case session
+        case settings
+        case resources
         case app
     }
 
@@ -237,6 +275,137 @@ public struct PreviewSummary: Identifiable, Equatable, Sendable {
     public let lastStatus: String
 }
 
+public struct SystemResourceRow: Identifiable, Equatable, Sendable {
+    public let label: String
+    public let value: String
+    public let detail: String
+    public let symbol: String
+    public var id: String { label }
+}
+
+public struct NativeSystemInfoSummary: Decodable, Equatable, Sendable {
+    public struct Runtime: Decodable, Equatable, Sendable {
+        public let handle: String?
+        public let machineId: String?
+        public let runtimeSlot: String
+    }
+
+    public struct Build: Decodable, Equatable, Sendable {
+        public let sha: String
+        public let ref: String
+        public let date: String
+    }
+
+    public struct Resources: Decodable, Equatable, Sendable {
+        public let cpuCount: Int
+        public let loadAverage: [Double]
+        public let memoryTotalBytes: Int64
+        public let memoryFreeBytes: Int64
+        public let diskTotalBytes: Int64?
+        public let diskFreeBytes: Int64?
+        public let homeDiskTotalBytes: Int64?
+        public let homeDiskFreeBytes: Int64?
+    }
+
+    public struct Release: Decodable, Equatable, Sendable {
+        public let version: String?
+        public let channel: String?
+    }
+
+    public let version: String
+    public let uptime: Int
+    public let runtime: Runtime
+    public let build: Build
+    public let resources: Resources
+    public let release: Release?
+
+    public var displayRuntimeName: String {
+        guard let handle = runtime.handle?.trimmingCharacters(in: .whitespacesAndNewlines), !handle.isEmpty else {
+            return "Matrix computer"
+        }
+        return handle.prefix(1).uppercased() + handle.dropFirst()
+    }
+
+    public var summaryText: String {
+        let installed = release?.version ?? version
+        let channel = release?.channel.map { " on \($0)" } ?? ""
+        return "\(displayRuntimeName) running \(installed)\(channel)"
+    }
+
+    public var uptimeText: String {
+        Self.formatUptime(seconds: uptime)
+    }
+
+    private static func formatUptime(seconds rawSeconds: Int) -> String {
+        let seconds = max(0, rawSeconds)
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let remainingSeconds = seconds % 60
+
+        if days > 0 {
+            return "\(days)d \(hours)h \(minutes)m"
+        }
+        if hours > 0 {
+            return "\(hours)h \(minutes)m \(remainingSeconds)s"
+        }
+        if minutes > 0 {
+            return "\(minutes)m \(remainingSeconds)s"
+        }
+        return "\(remainingSeconds)s"
+    }
+
+    public var resourceRows: [SystemResourceRow] {
+        let load1 = resources.loadAverage.first ?? 0
+        let memoryUsed = max(0, resources.memoryTotalBytes - resources.memoryFreeBytes)
+        let diskUsage = Self.diskUsage(from: resources)
+        return [
+            SystemResourceRow(
+                label: "CPU",
+                value: "\(resources.cpuCount) cores",
+                detail: "Load \(String(format: "%.2f", load1))",
+                symbol: "cpu"
+            ),
+            SystemResourceRow(
+                label: "Memory",
+                value: Self.formatBytes(memoryUsed),
+                detail: "\(Self.formatBytes(resources.memoryFreeBytes)) available",
+                symbol: "memorychip"
+            ),
+            SystemResourceRow(
+                label: "Disk",
+                value: diskUsage.map { Self.formatBytes(max(0, $0.total - $0.free)) } ?? "Unknown",
+                detail: diskUsage.map { "\(Self.formatBytes($0.free)) available" } ?? "Storage unavailable",
+                symbol: "internaldrive"
+            ),
+        ]
+    }
+
+    private static func diskUsage(from resources: Resources) -> (total: Int64, free: Int64)? {
+        if let homeTotal = resources.homeDiskTotalBytes,
+           let homeFree = resources.homeDiskFreeBytes {
+            return (homeTotal, homeFree)
+        }
+        if let rootTotal = resources.diskTotalBytes,
+           let rootFree = resources.diskFreeBytes {
+            return (rootTotal, rootFree)
+        }
+        return nil
+    }
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        let units = ["B", "KB", "MB", "GB", "TB"]
+        var value = Double(bytes)
+        var index = 0
+        while value >= 1024, index < units.count - 1 {
+            value /= 1024
+            index += 1
+        }
+        if index == 0 { return "\(Int(value)) \(units[index])" }
+        return "\(String(format: "%.1f", value)) \(units[index])"
+    }
+}
+
 @MainActor
 public final class AppModel: ObservableObject {
     // MARK: - Published state (SwiftUI binds to these)
@@ -266,6 +435,7 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var selectedFileData: Data?
     @Published public var selectedFileContent: String = ""
     @Published public private(set) var fileSaveState: String?
+    @Published public private(set) var isLoadingSelectedFile = false
     /// Git branches for the active project.
     @Published public private(set) var gitBranches: [GitBranchSummary] = []
     /// Pull requests for the active project, when GitHub is linked.
@@ -274,10 +444,16 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var gitWorktrees: [GitWorktreeSummary] = []
     /// Preview/artifact records for the active project/task/session.
     @Published public private(set) var previews: [PreviewSummary] = []
+    /// Current runtime/resource summary from `/api/system/info`.
+    @Published public private(set) var systemInfo: NativeSystemInfoSummary?
     /// Shared loading flag for secondary panels.
     @Published public private(set) var isLoadingPanelData = false
     /// Command palette (⌘K) visibility.
     @Published public var showCommandPalette = false
+    /// Search/filter text shared by native tabs and the project task board.
+    @Published public var workspaceSearchQuery = ""
+    /// Selected section inside the native Settings surface.
+    @Published public private(set) var nativeSettingsSection: NativeSettingsSection = .account
 
     /// The currently selected connection profile (nil → onboarding).
     @Published public private(set) var profile: ConnectionProfile?
@@ -296,9 +472,12 @@ public final class AppModel: ObservableObject {
     /// Which pane the detail view is showing. The agent terminal is always the
     /// left split; the right pane defaults to the editor.
     @Published public var activePanel: Panel = .app(slug: "editor")
-    /// Task panes currently visible in the detail surface. Buttons toggle these
-    /// like checkboxes so terminal/editor/git/etc. can be shown together.
+    /// Task panes currently available in the detail surface. Keyboard commands
+    /// and fallback logic use this list when restoring an active panel.
     @Published public private(set) var enabledPanels: [Panel] = [.terminal, .app(slug: "editor")]
+    /// Native editor appearance and text-system preferences.
+    @Published public private(set) var editorTheme: CodeEditorTheme
+    @Published public private(set) var editorPreferences: CodeEditorPreferences
     /// A generic, user-safe error to surface in chrome (nil when clear).
     @Published public private(set) var openError: OperatorError?
     /// Device-auth sign-in progress (drives the onboarding sign-in UI).
@@ -314,12 +493,16 @@ public final class AppModel: ObservableObject {
     private let deviceAuth: any DeviceAuthorizing
     /// Opens an external URL (browser) for device approval. Injected for tests.
     private let openExternalURL: @Sendable (URL) -> Void
+    /// Cancels a native approval browser session if one is currently presented.
+    private let cancelExternalAuth: @MainActor @Sendable () -> Void
     /// Gateway host for the profile created after a successful sign-in.
     private let signInGatewayHost: String
     /// Monotonic token used to ignore stale `openCard` calls that resume after a newer tap.
     private var openCardGeneration = 0
     /// In-flight sign-in task, so a re-tap cancels the previous attempt.
     private var signInTask: Task<Void, Never>?
+    /// Prevents Settings/Resources tab changes from issuing duplicate runtime summary requests.
+    private var isLoadingSystemInfo = false
     /// The project whose tasks the board renders.
     public private(set) var projectSlug: String
     /// Maps workspace session ids / terminal ids to the zellij shell session name
@@ -370,7 +553,8 @@ public final class AppModel: ObservableObject {
             platformURL: URL(string: "https://app.matrix-os.com")!
         ),
         signInGatewayHost: String = "app.matrix-os.com",
-        openExternalURL: @escaping @Sendable (URL) -> Void = AppModel.defaultOpenExternalURL
+        openExternalURL: @escaping @Sendable (URL) -> Void = AppModel.defaultOpenExternalURL,
+        cancelExternalAuth: @escaping @MainActor @Sendable () -> Void = AppModel.defaultCancelExternalAuth
     ) {
         self.principal = principal
         self.projectSlug = projectSlug
@@ -381,7 +565,10 @@ public final class AppModel: ObservableObject {
         self.deviceAuth = deviceAuth
         self.signInGatewayHost = signInGatewayHost
         self.openExternalURL = openExternalURL
+        self.cancelExternalAuth = cancelExternalAuth
         self.hasSelectedProject = false
+        self.editorTheme = Self.loadPersistedEditorTheme()
+        self.editorPreferences = Self.loadPersistedEditorPreferences()
         // If a profile is already known (persisted sign-in), wire the real board
         // loader immediately so the first `refresh()` fetches. Otherwise a
         // placeholder keeps `board` non-nil until `selectProfile`.
@@ -412,6 +599,11 @@ public final class AppModel: ObservableObject {
     private static let handleKey = "matrix.profile.handle"
     private static let hostKey = "matrix.profile.host"
     private static let slotKey = "matrix.profile.slot"
+    private static let editorThemeKey = "matrix.editor.theme"
+    private static let editorFontSizeKey = "matrix.editor.font-size"
+    private static let editorWrapKey = "matrix.editor.wrap-lines"
+    private static let editorTabWidthKey = "matrix.editor.tab-width"
+    private static let editorInvisiblesKey = "matrix.editor.show-invisibles"
 
     /// Loads a previously signed-in profile (non-secret) from UserDefaults.
     public static func loadPersistedProfile() -> ConnectionProfile? {
@@ -429,12 +621,81 @@ public final class AppModel: ObservableObject {
         d.set(profile.runtimeSlot, forKey: Self.slotKey)
     }
 
+    private static func clearPersistedProfile() {
+        let d = UserDefaults.standard
+        d.removeObject(forKey: handleKey)
+        d.removeObject(forKey: hostKey)
+        d.removeObject(forKey: slotKey)
+    }
+
+    private static func loadPersistedEditorTheme() -> CodeEditorTheme {
+        let raw = UserDefaults.standard.string(forKey: editorThemeKey)
+        return raw.flatMap(CodeEditorTheme.init(rawValue:)) ?? .xcodeDark
+    }
+
+    private static func loadPersistedEditorPreferences() -> CodeEditorPreferences {
+        let defaults = UserDefaults.standard
+        var preferences = CodeEditorPreferences.default
+        let fontSize = defaults.double(forKey: editorFontSizeKey)
+        if fontSize > 0 {
+            preferences.fontSize = min(max(fontSize, 11), 20)
+        }
+        if defaults.object(forKey: editorWrapKey) != nil {
+            preferences.wrapsLines = defaults.bool(forKey: editorWrapKey)
+        }
+        let tabWidth = defaults.integer(forKey: editorTabWidthKey)
+        if tabWidth > 0 {
+            preferences.tabWidth = min(max(tabWidth, 2), 8)
+        }
+        if defaults.object(forKey: editorInvisiblesKey) != nil {
+            preferences.showsInvisibleCharacters = defaults.bool(forKey: editorInvisiblesKey)
+        }
+        return preferences
+    }
+
+    public func setEditorTheme(_ theme: CodeEditorTheme) {
+        editorTheme = theme
+        UserDefaults.standard.set(theme.rawValue, forKey: Self.editorThemeKey)
+    }
+
+    public func setEditorFontSize(_ fontSize: Double) {
+        editorPreferences.fontSize = min(max(fontSize, 11), 20)
+        UserDefaults.standard.set(editorPreferences.fontSize, forKey: Self.editorFontSizeKey)
+    }
+
+    public func setEditorWrapsLines(_ wraps: Bool) {
+        editorPreferences.wrapsLines = wraps
+        UserDefaults.standard.set(wraps, forKey: Self.editorWrapKey)
+    }
+
+    public func setEditorTabWidth(_ width: Int) {
+        editorPreferences.tabWidth = min(max(width, 2), 8)
+        UserDefaults.standard.set(editorPreferences.tabWidth, forKey: Self.editorTabWidthKey)
+    }
+
+    public func setEditorShowsInvisibleCharacters(_ shows: Bool) {
+        editorPreferences.showsInvisibleCharacters = shows
+        UserDefaults.standard.set(shows, forKey: Self.editorInvisiblesKey)
+    }
+
     // MARK: - Sign in (device authorization)
 
     /// Default browser opener used outside tests.
     public static let defaultOpenExternalURL: @Sendable (URL) -> Void = { url in
         #if canImport(AppKit)
+        #if canImport(AuthenticationServices)
+        Task { @MainActor in
+            NativeAuthBrowser.shared.open(url)
+        }
+        #else
         NSWorkspace.shared.open(url)
+        #endif
+        #endif
+    }
+
+    public static let defaultCancelExternalAuth: @MainActor @Sendable () -> Void = {
+        #if canImport(AppKit) && canImport(AuthenticationServices)
+        NativeAuthBrowser.shared.cancel()
         #endif
     }
 
@@ -453,6 +714,7 @@ public final class AppModel: ObservableObject {
         signInTask?.cancel()
         signInTask = nil
         signIn = .idle
+        cancelExternalAuth()
     }
 
     public func handleOpenURL(_ url: URL) {
@@ -473,6 +735,58 @@ public final class AppModel: ObservableObject {
         default:
             break
         }
+    }
+
+    public func signOut() {
+        Task { await signOutNow() }
+    }
+
+    public func signOutNow() async {
+        signInTask?.cancel()
+        signInTask = nil
+        cancelExternalAuth()
+        do {
+            try await principal.clear()
+        } catch {
+            appModelLogger.warning("Principal clear failed during sign-out: \(String(describing: error), privacy: .private)")
+        }
+        Self.clearPersistedProfile()
+        terminal?.shutdown()
+        for session in terminalSessions.values {
+            session.shutdown()
+        }
+        profile = nil
+        phase = .needsProfile
+        signIn = .idle
+        hasSelectedProject = false
+        section = .board
+        nativeSettingsSection = .account
+        selectedCard = nil
+        terminal = nil
+        terminalSessions = [:]
+        terminalSessionAccessOrder = []
+        sessions = []
+        projects = []
+        openTabs = []
+        activeTabID = nil
+        activePanel = .app(slug: "editor")
+        enabledPanels = [.terminal, .app(slug: "editor")]
+        fileEntries = []
+        fileTree = []
+        filePanelPath = ""
+        selectedFilePath = nil
+        selectedFileData = nil
+        selectedFileContent = ""
+        isLoadingSelectedFile = false
+        fileSaveState = nil
+        gitBranches = []
+        gitPullRequests = []
+        gitWorktrees = []
+        previews = []
+        systemInfo = nil
+        openError = nil
+        workspaceSearchQuery = ""
+        board = BoardStore(loader: UnconfiguredBoardLoader())
     }
 
     private func runSignIn() async {
@@ -507,7 +821,7 @@ public final class AppModel: ObservableObject {
                     persistProfile(newProfile)
                     selectProfile(newProfile)
                     if !hasSelectedProject {
-                        section = .home
+                        ensureHomeTab(select: true)
                     }
                     signInCompletionID += 1
                     await refresh()
@@ -528,6 +842,9 @@ public final class AppModel: ObservableObject {
         var items = components.queryItems ?? []
         items.removeAll { $0.name == "mode" }
         items.append(URLQueryItem(name: "mode", value: mode.rawValue))
+        if !items.contains(where: { $0.name == "redirect_uri" }) {
+            items.append(URLQueryItem(name: "redirect_uri", value: "matrixos://auth?status=approved"))
+        }
         components.queryItems = items
         return components.url?.absoluteString ?? rawValue
     }
@@ -537,6 +854,7 @@ public final class AppModel: ObservableObject {
     /// Selects a connection profile, rebuilds the gateway client + board store,
     /// and transitions to `.connecting`. The next `refresh()` loads the board.
     public func selectProfile(_ profile: ConnectionProfile) {
+        workspaceSearchQuery = ""
         self.profile = profile
         self.phase = .connecting
         self.openError = nil
@@ -640,7 +958,41 @@ public final class AppModel: ObservableObject {
     }
 
     public func openAppTab(slug: String, title: String) {
-        switchPanel(.app(slug: slug))
+        guard profile != nil else { return }
+        workspaceSearchQuery = ""
+        let kind: WorkspaceTab.Kind
+        let id: String
+        switch slug {
+        case "settings":
+            kind = .settings
+            id = "settings"
+            section = .settings
+        case "resources":
+            kind = .resources
+            id = "resources"
+            section = .resources
+        default:
+            kind = .app
+            id = "app:\(slug)"
+            section = .board
+        }
+        let tab = WorkspaceTab(
+            id: id,
+            title: title,
+            projectSlug: projectSlug,
+            projectName: activeProjectName,
+            kind: kind,
+            panel: .app(slug: slug)
+        )
+        if let index = openTabs.firstIndex(where: { $0.id == id }) {
+            openTabs[index] = tab
+        } else {
+            openTabs.append(tab)
+            trimOpenTabsToLimit(protecting: id)
+        }
+        activeTabID = id
+        activePanel = .app(slug: slug)
+        Task { await loadPanelData(for: .app(slug: slug)) }
     }
 
     /// Resolves the active project slug from the user's projects when unset, so the
@@ -768,19 +1120,43 @@ public final class AppModel: ObservableObject {
     public func openProject(slug: String) {
         guard slug != projectSlug || !hasSelectedProject, let client = gatewayClient() else { return }
         openError = nil
+        workspaceSearchQuery = ""
         projectSlug = slug
         hasSelectedProject = true
         filePanelPath = "projects/\(slug)"
         selectedFilePath = nil
         selectedFileData = nil
         selectedFileContent = ""
+        isLoadingSelectedFile = false
         board = BoardStore(loader: makeLoader(client))
         section = .board
         upsertProjectBoardTab(select: true)
         Task { await refresh() }
     }
 
+    public func openBoardTab() {
+        workspaceSearchQuery = ""
+        if let currentBoardTab = openTabs.first(where: { $0.id == "board:\(projectSlug)" }) {
+            focusTab(id: currentBoardTab.id)
+            return
+        }
+        if let existingBoardTab = openTabs.first(where: { $0.kind == .board }) {
+            focusTab(id: existingBoardTab.id)
+            return
+        }
+        if hasSelectedProject {
+            upsertProjectBoardTab(select: true)
+            return
+        }
+        section = .board
+        activeTabID = nil
+        selectedCard = nil
+        terminal = nil
+        activePanel = .app(slug: "board")
+    }
+
     public func openHome() {
+        workspaceSearchQuery = ""
         hasSelectedProject = false
         selectedCard = nil
         terminal = nil
@@ -790,8 +1166,13 @@ public final class AppModel: ObservableObject {
     }
 
     public func openTerminalSection() {
+        workspaceSearchQuery = ""
         section = .terminal
         Task { await loadSessions() }
+    }
+
+    public func focusNativeSettingsSection(_ section: NativeSettingsSection) {
+        nativeSettingsSection = section
     }
 
     public var activeProjectName: String {
@@ -1033,19 +1414,54 @@ public final class AppModel: ObservableObject {
     /// Opens a workspace tab by reattaching its card/session terminal.
     public func focusTab(id: String) {
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
+        workspaceSearchQuery = ""
         var tab = openTabs[index]
         activeTabID = id
         if tab.kind == .board {
             section = .board
+            if !tab.projectSlug.isEmpty {
+                self.projectSlug = tab.projectSlug
+                hasSelectedProject = true
+            }
             terminal = nil
             selectedCard = nil
+            activePanel = .app(slug: "board")
             return
         }
         if tab.kind == .home {
             section = .home
             terminal = nil
             selectedCard = nil
+            activePanel = .shell
             return
+        }
+        if tab.kind == .settings {
+            section = .settings
+            terminal = nil
+            selectedCard = nil
+            activePanel = .app(slug: "settings")
+            Task { await loadSystemInfo() }
+            return
+        }
+        if tab.kind == .resources {
+            section = .resources
+            terminal = nil
+            selectedCard = nil
+            activePanel = .app(slug: "resources")
+            Task { await loadSystemInfo() }
+            return
+        }
+        switch tab.kind {
+        case .task, .app:
+            section = .board
+            if !tab.projectSlug.isEmpty {
+                projectSlug = tab.projectSlug
+                hasSelectedProject = true
+            }
+        case .session:
+            section = .terminal
+        case .home, .board, .settings, .resources:
+            assertionFailure("focusTab: \(tab.kind) should have returned early above")
         }
         if enabledPanels.contains(tab.panel) {
             activePanel = tab.panel
@@ -1078,14 +1494,12 @@ public final class AppModel: ObservableObject {
     /// Closes a workspace tab. If the active tab closes, focus the nearest
     /// remaining tab; otherwise detach the current terminal.
     public func closeTab(id: String) {
-        if id == "home" || id.hasPrefix("board:") {
-            focusTab(id: id)
-            return
-        }
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
+        let closedTab = openTabs[index]
         let wasActive = activeTabID == id
         openTabs.remove(at: index)
         removeCachedTerminalSession(for: id)
+        reconcileProjectSelectionAfterClosing(closedTab)
         if !wasActive { return }
         terminal = nil
         selectedCard = nil
@@ -1093,11 +1507,60 @@ public final class AppModel: ObservableObject {
         let nextIndex = min(index, openTabs.count - 1)
         guard nextIndex >= 0, openTabs.indices.contains(nextIndex) else {
             activeTabID = nil
+            if id.hasPrefix("board:") {
+                hasSelectedProject = false
+            }
+            if section == .settings || section == .resources {
+                section = .board
+            }
             return
         }
         let next = openTabs[nextIndex]
         activeTabID = next.id
         focusTab(id: next.id)
+    }
+
+    private func reconcileProjectSelectionAfterClosing(_ closedTab: WorkspaceTab) {
+        guard isProjectRelatedTab(closedTab),
+              !hasOpenProjectRelatedTab(for: closedTab.projectSlug),
+              projectSlug == closedTab.projectSlug else { return }
+        hasSelectedProject = false
+    }
+
+    private func hasOpenProjectRelatedTab(for slug: String) -> Bool {
+        openTabs.contains { tab in
+            tab.projectSlug == slug && isProjectRelatedTab(tab)
+        }
+    }
+
+    private func isProjectRelatedTab(_ tab: WorkspaceTab) -> Bool {
+        guard !tab.projectSlug.isEmpty else { return false }
+        switch tab.kind {
+        case .board, .task, .session:
+            return true
+        case .home, .settings, .resources, .app:
+            return false
+        }
+    }
+
+    public func closeActiveTab() {
+        guard let activeTabID else { return }
+        closeTab(id: activeTabID)
+    }
+
+    public func focusNextTab() {
+        focusTab(offset: 1)
+    }
+
+    public func focusPreviousTab() {
+        focusTab(offset: -1)
+    }
+
+    private func focusTab(offset: Int) {
+        guard !openTabs.isEmpty else { return }
+        let currentIndex = activeTabID.flatMap { id in openTabs.firstIndex(where: { $0.id == id }) } ?? 0
+        let nextIndex = (currentIndex + offset + openTabs.count) % openTabs.count
+        focusTab(id: openTabs[nextIndex].id)
     }
 
     /// Closes the open card's terminal and detail pane (Esc / light-dismiss).
@@ -1176,9 +1639,53 @@ public final class AppModel: ObservableObject {
                 await loadPreviews(client: client)
             case "processes":
                 await loadSessions()
+            case "settings", "resources":
+                await loadSystemInfo()
             default:
                 return
             }
+        }
+    }
+
+    public func filteredOpenTabs(matching query: String) -> [WorkspaceTab] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return openTabs }
+        return openTabs.filter { tab in
+            tab.id == activeTabID
+                || tab.title.localizedCaseInsensitiveContains(trimmed)
+                || tab.projectName.localizedCaseInsensitiveContains(trimmed)
+                || tab.kind.rawValue.localizedCaseInsensitiveContains(trimmed)
+        }
+    }
+
+    public func filteredBoardColumns(matching query: String) -> [BoardColumn] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return board.columns }
+        return board.columns.compactMap { column in
+            let cards = column.cards.filter { card in
+                card.title.localizedCaseInsensitiveContains(trimmed)
+                    || card.status.rawValue.localizedCaseInsensitiveContains(trimmed)
+                    || card.priority.rawValue.localizedCaseInsensitiveContains(trimmed)
+                    || card.tags.contains { $0.localizedCaseInsensitiveContains(trimmed) }
+            }
+            guard !cards.isEmpty else { return nil }
+            return BoardColumn(
+                status: column.status,
+                cards: cards
+            )
+        }
+    }
+
+    @MainActor
+    public func loadSystemInfo() async {
+        guard !isLoadingSystemInfo else { return }
+        guard let client = gatewayClient() else { return }
+        isLoadingSystemInfo = true
+        defer { isLoadingSystemInfo = false }
+        do {
+            systemInfo = try await client.get("/api/system/info", as: NativeSystemInfoSummary.self)
+        } catch {
+            appModelLogger.warning("System info load failed: \(String(describing: error), privacy: .private)")
         }
     }
 
@@ -1260,6 +1767,7 @@ public final class AppModel: ObservableObject {
             selectedFilePath = nil
             selectedFileData = nil
             selectedFileContent = ""
+            isLoadingSelectedFile = false
             Task { await loadFiles(client: client) }
             return
         }
@@ -1292,6 +1800,7 @@ public final class AppModel: ObservableObject {
         selectedFilePath = path
         selectedFileData = nil
         selectedFileContent = ""
+        isLoadingSelectedFile = true
         fileSaveState = nil
         let route = fileRoute(path)
         Task { [weak self] in
@@ -1299,14 +1808,18 @@ public final class AppModel: ObservableObject {
                 let data = try await client.getData(route)
                 let text = String(data: data, encoding: .utf8) ?? ""
                 await MainActor.run {
+                    guard self?.selectedFilePath == path else { return }
                     self?.selectedFileData = data
                     self?.selectedFileContent = text
+                    self?.isLoadingSelectedFile = false
                     self?.fileSaveState = nil
                 }
             } catch {
                 await MainActor.run {
+                    guard self?.selectedFilePath == path else { return }
                     self?.selectedFileData = nil
                     self?.selectedFileContent = ""
+                    self?.isLoadingSelectedFile = false
                     self?.fileSaveState = "Couldn't open this file."
                 }
             }
@@ -1338,6 +1851,7 @@ public final class AppModel: ObservableObject {
         selectedFilePath = nil
         selectedFileData = nil
         selectedFileContent = ""
+        isLoadingSelectedFile = false
         Task { await loadPanelData(for: .app(slug: "editor")) }
     }
 
@@ -1573,7 +2087,7 @@ public final class AppModel: ObservableObject {
         let tabID = "board:\(projectSlug)"
         let tab = WorkspaceTab(
             id: tabID,
-            title: activeProjectName,
+            title: "\(activeProjectName) - Tasks",
             projectSlug: projectSlug,
             projectName: activeProjectName,
             kind: .board,
@@ -1592,6 +2106,7 @@ public final class AppModel: ObservableObject {
             activeTabID = tabID
             selectedCard = nil
             terminal = nil
+            activePanel = .app(slug: "board")
         }
     }
 
@@ -1611,6 +2126,45 @@ public final class AppModel: ObservableObject {
         }
     }
 }
+
+#if canImport(AppKit) && canImport(AuthenticationServices)
+@MainActor
+private final class NativeAuthBrowser: NSObject, ASWebAuthenticationPresentationContextProviding {
+    static let shared = NativeAuthBrowser()
+
+    private var session: ASWebAuthenticationSession?
+
+    func open(_ url: URL) {
+        session?.cancel()
+        let nextSession = ASWebAuthenticationSession(url: url, callbackURLScheme: "matrixos") { [weak self] callbackURL, error in
+            Task { @MainActor in
+                self?.session = nil
+                if callbackURL != nil {
+                    NSApp.activate(ignoringOtherApps: true)
+                } else if let error {
+                    appModelLogger.warning("Native auth browser ended without callback: \(String(describing: error), privacy: .private)")
+                }
+            }
+        }
+        nextSession.prefersEphemeralWebBrowserSession = false
+        nextSession.presentationContextProvider = self
+        session = nextSession
+        if !nextSession.start() {
+            session = nil
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func cancel() {
+        session?.cancel()
+        session = nil
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
+    }
+}
+#endif
 
 /// A `BoardLoading` that never fetches — used before a profile is selected or when
 /// URL resolution fails. Always reports a generic misconfiguration so the UI shows

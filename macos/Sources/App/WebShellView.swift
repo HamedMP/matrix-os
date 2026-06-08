@@ -8,6 +8,7 @@ struct MatrixWebShellPanel: View {
     @ObservedObject var model: AppModel
     let url: URL?
     let title: String
+    var openSettingsOnLoad = false
 
     @State private var authState = WebShellAuthState()
 
@@ -69,6 +70,7 @@ struct MatrixWebShellPanel: View {
                     url: url,
                     bearerToken: token,
                     authRevision: authState.authRevision,
+                    openSettingsOnLoad: openSettingsOnLoad,
                     onAuthRequired: {
                         let shouldRetry = authState.markHostedAuthRequired()
                         guard shouldRetry else { return }
@@ -152,6 +154,7 @@ private struct WebShellView: NSViewRepresentable {
     let url: URL
     let bearerToken: String?
     let authRevision: Int
+    let openSettingsOnLoad: Bool
     let onAuthRequired: @MainActor () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -180,6 +183,7 @@ private struct WebShellView: NSViewRepresentable {
         coordinator.lastBearerToken = bearerToken
         coordinator.lastRequestedURL = url
         coordinator.lastAuthRevision = authRevision
+        coordinator.openSettingsOnLoad = openSettingsOnLoad
         coordinator.destinationURL = url
         guard let bearerToken, !bearerToken.isEmpty else {
             coordinator.cancelExchange()
@@ -194,6 +198,7 @@ private struct WebShellView: NSViewRepresentable {
         var lastRequestedURL: URL?
         var lastAuthRevision: Int?
         var destinationURL: URL?
+        var openSettingsOnLoad = false
         private var exchangeTask: Task<Void, Never>?
         private var exchangeGeneration = 0
 
@@ -219,6 +224,12 @@ private struct WebShellView: NSViewRepresentable {
                 return
             }
             decisionHandler(.allow)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard openSettingsOnLoad else { return }
+            openSettingsOnLoad = false
+            webView.evaluateJavaScript(HostedShellSettingsBridge.openSettingsScript, completionHandler: nil)
         }
 
         @MainActor
@@ -305,6 +316,35 @@ private struct WebShellView: NSViewRepresentable {
     }
 }
 
+enum HostedShellSettingsBridge {
+    static let openSettingsScript = """
+    (() => {
+      const selectors = [
+        '[data-testid="dock-settings"]',
+        'button[aria-label="Settings"]',
+        'button[title="Settings"]'
+      ];
+      const open = () => {
+        for (const selector of selectors) {
+          const button = document.querySelector(selector);
+          if (button instanceof HTMLElement) {
+            button.click();
+            return true;
+          }
+        }
+        return false;
+      };
+      if (!open()) {
+        window.setTimeout(() => {
+          if (!open()) {
+            window.setTimeout(open, 350);
+          }
+        }, 150);
+      }
+    })();
+    """
+}
+
 struct NativeAppSessionExchange {
     private struct Body: Encodable {
         let redirectTo: String
@@ -316,9 +356,8 @@ struct NativeAppSessionExchange {
 
     static func request(for destination: URL, token: String) -> URLRequest? {
         guard var comps = URLComponents(url: destination, resolvingAgainstBaseURL: false) else { return nil }
-        let redirectTo = destination.path.isEmpty
-            ? "/"
-            : destination.path + (destination.query.map { "?\($0)" } ?? "")
+        let path = destination.path.isEmpty ? "/" : destination.path
+        let redirectTo = path + (destination.query.map { "?\($0)" } ?? "")
         comps.path = "/api/auth/app-session"
         comps.query = nil
         guard let exchangeURL = comps.url else { return nil }

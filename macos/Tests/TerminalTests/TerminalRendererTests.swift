@@ -24,6 +24,39 @@ final class TerminalRendererTests: XCTestCase {
         XCTAssertEqual(TerminalPanelView.rendererConfiguration.kind, .swiftTerm)
     }
 
+    func testTerminalFocusUsesRetryPolicyAfterWindowAttachment() {
+        XCTAssertEqual(TerminalFocusPolicy.initialFocusRetryDelays, [0, 0.05, 0.15, 0.35])
+    }
+
+    func testInitialTerminalFocusDoesNotStealFromActiveControls() {
+        XCTAssertTrue(TerminalFocusPolicy.shouldRequestInitialFocus(
+            hasFirstResponder: false,
+            firstResponderIsTerminal: false,
+            firstResponderIsRootView: false
+        ))
+        XCTAssertTrue(TerminalFocusPolicy.shouldRequestInitialFocus(
+            hasFirstResponder: true,
+            firstResponderIsTerminal: true,
+            firstResponderIsRootView: false
+        ))
+        XCTAssertTrue(TerminalFocusPolicy.shouldRequestInitialFocus(
+            hasFirstResponder: true,
+            firstResponderIsTerminal: false,
+            firstResponderIsRootView: true
+        ))
+        XCTAssertTrue(TerminalFocusPolicy.shouldRequestInitialFocus(
+            hasFirstResponder: true,
+            firstResponderIsTerminal: false,
+            firstResponderIsRootView: false,
+            firstResponderIsWindow: true
+        ))
+        XCTAssertFalse(TerminalFocusPolicy.shouldRequestInitialFocus(
+            hasFirstResponder: true,
+            firstResponderIsTerminal: false,
+            firstResponderIsRootView: false
+        ))
+    }
+
     func testExperimentalRenderersAreHiddenUnlessExplicitlyAllowed() {
         XCTAssertEqual(
             TerminalRendererConfiguration.available().map(\.kind),

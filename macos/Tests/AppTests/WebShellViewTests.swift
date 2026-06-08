@@ -3,6 +3,17 @@ import XCTest
 @testable import MatrixOS
 
 final class WebShellViewTests: XCTestCase {
+    func testHostedShellSettingsBridgeUsesShellSettingsControls() {
+        let script = HostedShellSettingsBridge.openSettingsScript
+
+        XCTAssertTrue(script.contains("[data-testid=\"dock-settings\"]"))
+        XCTAssertTrue(script.contains("button[aria-label=\"Settings\"]"))
+        XCTAssertTrue(script.contains("button[title=\"Settings\"]"))
+        XCTAssertTrue(script.contains("button.click()"))
+        XCTAssertTrue(script.contains("if (!open())"))
+        XCTAssertFalse(script.contains("window.setTimeout(open, 500)"))
+    }
+
     func testNativeAppSessionExchangePostsBearerTokenToAppSessionEndpoint() throws {
         let destination = try XCTUnwrap(URL(string: "https://app.matrix-os.com/vm/alice?runtime=staging"))
 
@@ -25,6 +36,16 @@ final class WebShellViewTests: XCTestCase {
         let body = try XCTUnwrap(request.httpBody)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
         XCTAssertEqual(json["redirectTo"], "/")
+    }
+
+    func testNativeAppSessionExchangePreservesRootRuntimeQuery() throws {
+        let destination = try XCTUnwrap(URL(string: "https://app.matrix-os.com?runtime=staging"))
+
+        let request = try XCTUnwrap(NativeAppSessionExchange.request(for: destination, token: "principal-token"))
+
+        let body = try XCTUnwrap(request.httpBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
+        XCTAssertEqual(json["redirectTo"], "/?runtime=staging")
     }
 
     func testNativeAppSessionExchangeAcceptsMatrixAppSessionCookie() throws {

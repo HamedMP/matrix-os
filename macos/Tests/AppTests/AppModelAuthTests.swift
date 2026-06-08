@@ -152,6 +152,269 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertTrue(model.openTabs.contains(where: { $0.kind == .task && $0.title == "Fix login" }))
     }
 
+    func testProjectBoardTabUsesTasksTitleAndTaskTabsUseTaskTitle() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "matrix-os",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "matrix-os")
+        let card = Card(
+            id: "task_auth",
+            projectSlug: "matrix-os",
+            title: "Fix native auth",
+            status: .todo,
+            priority: .normal,
+            order: 1,
+            linkedSessionId: nil,
+            updatedAt: "now"
+        )
+        _ = try? await model.openCard(card)
+
+        XCTAssertEqual(model.openTabs.first(where: { $0.kind == .board })?.title, "matrix-os - Tasks")
+        XCTAssertEqual(model.openTabs.first(where: { $0.kind == .task })?.title, "Fix native auth")
+    }
+
+    func testGlobalSettingsAndResourcesOpenDistinctTabs() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openHome()
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.openAppTab(slug: "resources", title: "Resources")
+
+        XCTAssertEqual(model.openTabs.map(\.kind), [.home, .settings, .resources])
+        XCTAssertEqual(model.activeTabID, "resources")
+        XCTAssertEqual(model.openTabs.first(where: { $0.id == "settings" })?.panel, .app(slug: "settings"))
+        XCTAssertEqual(model.openTabs.first(where: { $0.id == "resources" })?.panel, .app(slug: "resources"))
+    }
+
+    func testGenericAppTabClearsStaleSettingsSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.openAppTab(slug: "editor", title: "Editor")
+
+        XCTAssertEqual(model.activeTabID, "app:editor")
+        XCTAssertEqual(model.activePanel, .app(slug: "editor"))
+        XCTAssertEqual(model.section, .board)
+    }
+
+    func testTabAndTaskFilteringIsCaseInsensitive() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let cards = [
+            Card(id: "task_auth", projectSlug: "main", title: "Fix native auth", status: .todo, priority: .normal, order: 1, updatedAt: "now"),
+            Card(id: "task_terminal", projectSlug: "main", title: "Terminal focus", status: .running, priority: .normal, order: 2, updatedAt: "now"),
+        ]
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in StaticBoardLoader(cards: cards) },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "main")
+        await model.refresh()
+        _ = try? await model.openCard(cards[0])
+        model.openAppTab(slug: "settings", title: "Settings")
+
+        XCTAssertEqual(model.filteredOpenTabs(matching: "sett").map(\.id), ["settings"])
+        XCTAssertEqual(model.filteredOpenTabs(matching: "terminal").map(\.id), ["settings"])
+        XCTAssertEqual(model.filteredBoardColumns(matching: "TERMINAL").map(\.status), [.running])
+        XCTAssertEqual(model.filteredBoardColumns(matching: "TERMINAL").flatMap(\.cards).map(\.id), ["task_terminal"])
+        XCTAssertEqual(model.filteredBoardColumns(matching: "missing").count, 0)
+    }
+
+    func testWorkspaceSearchClearsOnNavigationAndSignOut() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.workspaceSearchQuery = "auth"
+        model.openProject(slug: "main")
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+
+        model.workspaceSearchQuery = "settings"
+        model.openAppTab(slug: "settings", title: "Settings")
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+
+        model.workspaceSearchQuery = "terminal"
+        model.focusTab(id: "board:main")
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+
+        model.workspaceSearchQuery = "logout"
+        await model.signOutNow()
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+    }
+
+    func testSystemInfoSummaryLoadsRuntimeAndResourcesWithoutInternalProviderNames() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        AppTestURLProtocol.setHandler { req in
+            XCTAssertEqual(req.url?.path, "/api/system/info")
+            let json = """
+            {
+              "version":"1.2.3",
+              "image":"matrix-host",
+              "runtime":{"handle":"alice","machineId":"machine-secret","runtimeSlot":"primary"},
+              "build":{"sha":"abcdef123456","ref":"main","date":"2026-06-08"},
+              "uptime":3661,
+              "modules":5,
+              "channels":{"telegram":true},
+              "skills":9,
+              "templateVersion":"1",
+              "installedVersion":"1",
+              "startedAt":"2026-06-08T10:00:00.000Z",
+              "resources":{
+                "cpuCount":4,
+                "loadAverage":[0.5,0.4,0.3],
+                "memoryTotalBytes":8589934592,
+                "memoryFreeBytes":2147483648,
+                "diskTotalBytes":107374182400,
+                "diskFreeBytes":53687091200,
+                "homeDiskTotalBytes":107374182400,
+                "homeDiskFreeBytes":53687091200
+              },
+              "release":{"version":"1.2.3","channel":"dev"}
+            }
+            """
+            return (appTestHTTPResponse(req.url!, 200), Data(json.utf8))
+        }
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in
+                GatewayHTTPClient(baseURL: url, tokenProvider: provider, sessionConfiguration: .appTestMocked())
+            },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        await model.loadSystemInfo()
+
+        XCTAssertEqual(model.systemInfo?.displayRuntimeName, "Alice")
+        XCTAssertEqual(model.systemInfo?.uptimeText, "1h 1m 1s")
+        XCTAssertEqual(model.systemInfo?.resourceRows.map(\.label), ["CPU", "Memory", "Disk"])
+        XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("clerk") ?? true)
+        XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("machine-secret") ?? true)
+    }
+
+    func testSystemInfoLoadDeduplicatesConcurrentRequests() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let requestCounter = LockedCounter()
+        AppTestURLProtocol.setHandler { req in
+            XCTAssertEqual(req.url?.path, "/api/system/info")
+            requestCounter.increment()
+            Thread.sleep(forTimeInterval: 0.05)
+            let json = """
+            {
+              "version":"1.2.3",
+              "runtime":{"handle":"alice","machineId":"machine-secret","runtimeSlot":"primary"},
+              "build":{"sha":"abcdef123456","ref":"main","date":"2026-06-08"},
+              "uptime":42,
+              "resources":{
+                "cpuCount":4,
+                "loadAverage":[0.5,0.4,0.3],
+                "memoryTotalBytes":8589934592,
+                "memoryFreeBytes":2147483648,
+                "diskTotalBytes":107374182400,
+                "diskFreeBytes":53687091200,
+                "homeDiskTotalBytes":107374182400,
+                "homeDiskFreeBytes":53687091200
+              },
+              "release":{"version":"1.2.3","channel":"dev"}
+            }
+            """
+            return (appTestHTTPResponse(req.url!, 200), Data(json.utf8))
+        }
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in
+                GatewayHTTPClient(baseURL: url, tokenProvider: provider, sessionConfiguration: .appTestMocked())
+            },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        async let first: Void = model.loadSystemInfo()
+        async let second: Void = model.loadSystemInfo()
+        _ = await (first, second)
+
+        XCTAssertEqual(requestCounter.value, 1)
+        XCTAssertEqual(model.systemInfo?.displayRuntimeName, "Alice")
+    }
+
+    func testSystemInfoPairsHomeDiskFieldsBeforeFallingBackToRootDisk() throws {
+        let json = """
+        {
+          "version":"1.2.3",
+          "runtime":{"handle":"alice","machineId":"machine-secret","runtimeSlot":"primary"},
+          "build":{"sha":"abcdef123456","ref":"main","date":"2026-06-08"},
+          "uptime":42,
+          "resources":{
+            "cpuCount":4,
+            "loadAverage":[0.5,0.4,0.3],
+            "memoryTotalBytes":8589934592,
+            "memoryFreeBytes":2147483648,
+            "diskTotalBytes":107374182400,
+            "diskFreeBytes":32212254720,
+            "homeDiskTotalBytes":53687091200,
+            "homeDiskFreeBytes":null
+          },
+          "release":{"version":"1.2.3","channel":"dev"}
+        }
+        """
+        let info = try JSONDecoder().decode(NativeSystemInfoSummary.self, from: Data(json.utf8))
+        let diskRow = try XCTUnwrap(info.resourceRows.first { $0.label == "Disk" })
+
+        XCTAssertEqual(diskRow.value, "70.0 GB")
+        XCTAssertEqual(diskRow.detail, "30.0 GB available")
+    }
+
     func testTaskPaneTogglesKeepAtLeastOnePaneAndEnableMultiple() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let model = AppModel(
@@ -327,6 +590,193 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.openTabs.first(where: { $0.id == "board:main" })?.panel, .app(slug: "board"))
     }
 
+    func testFocusingHomeTabAfterSettingsRestoresHomeSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openHome()
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.focusTab(id: "home")
+
+        XCTAssertEqual(model.activeTabID, "home")
+        XCTAssertEqual(model.section, .home)
+        XCTAssertEqual(model.activePanel, .shell)
+        XCTAssertNil(model.selectedCard)
+        XCTAssertNil(model.terminal)
+    }
+
+    func testNativeSettingsSectionSelectionUpdatesActiveSidebarSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        XCTAssertEqual(model.nativeSettingsSection, .account)
+        model.focusNativeSettingsSection(.editor)
+
+        XCTAssertEqual(model.nativeSettingsSection, .editor)
+    }
+
+    func testFocusingBoardTabRestoresSelectedProject() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "main")
+        model.openHome()
+        model.focusTab(id: "board:main")
+
+        XCTAssertEqual(model.section, .board)
+        XCTAssertTrue(model.hasSelectedProject)
+        XCTAssertEqual(model.projectSlug, "main")
+    }
+
+    func testOpenBoardTabKeepsActiveTabAndSectionInSync() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "main")
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.openBoardTab()
+
+        XCTAssertEqual(model.activeTabID, "board:main")
+        XCTAssertEqual(model.section, .board)
+        XCTAssertEqual(model.activePanel, .app(slug: "board"))
+    }
+
+    func testHomeAndBoardTabsCanClose() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openHome()
+        model.openProject(slug: "main")
+        model.closeTab(id: "home")
+        model.closeTab(id: "board:main")
+
+        XCTAssertTrue(model.openTabs.isEmpty)
+        XCTAssertNil(model.activeTabID)
+        XCTAssertFalse(model.hasSelectedProject)
+        XCTAssertNil(model.terminal)
+        XCTAssertNil(model.selectedCard)
+    }
+
+    func testClosingLastProjectTabClearsProjectSelectionWhenHomeRemains() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openHome()
+        model.openProject(slug: "main")
+        XCTAssertTrue(model.hasSelectedProject)
+
+        model.closeTab(id: "board:main")
+
+        XCTAssertEqual(model.openTabs.map(\.id), ["home"])
+        XCTAssertEqual(model.activeTabID, "home")
+        XCTAssertEqual(model.section, .home)
+        XCTAssertFalse(model.hasSelectedProject)
+        XCTAssertNil(model.selectedCard)
+        XCTAssertNil(model.terminal)
+    }
+
+    func testFocusingTaskTabAfterSettingsRestoresBoardSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let card = Card(id: "task_login", projectSlug: "main", title: "Fix login", status: .todo, priority: .normal, order: 1, updatedAt: "now")
+
+        model.openProject(slug: "main")
+        _ = try? await model.openCard(card)
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.focusTab(id: "task:main:task_login")
+
+        XCTAssertEqual(model.section, .board)
+        XCTAssertEqual(model.activePanel, .terminal)
+        XCTAssertEqual(model.selectedCard?.id, "task_login")
+        XCTAssertTrue(model.hasSelectedProject)
+    }
+
+    func testFocusingSessionTabAfterResourcesRestoresTerminalSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let sessionCard = Card(id: "matrix_session_alpha", projectSlug: "main", title: "matrix_session_alpha", status: .running, priority: .normal, order: 1, linkedSessionId: "matrix_session_alpha", updatedAt: "now")
+
+        _ = try? await model.openCard(sessionCard)
+        model.openAppTab(slug: "resources", title: "Resources")
+        model.focusTab(id: "session:main:matrix_session_alpha")
+
+        XCTAssertEqual(model.section, .terminal)
+        XCTAssertEqual(model.activePanel, .terminal)
+        XCTAssertEqual(model.selectedCard?.id, "matrix_session_alpha")
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()
@@ -372,13 +822,129 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.profile?.handle, "hamed")
         XCTAssertEqual(model.signInCompletionID, 1)
         XCTAssertEqual(model.section, AppSection.home)
+        XCTAssertEqual(model.activeTabID, "home")
+        XCTAssertEqual(model.openTabs.first?.kind, .home)
+        XCTAssertEqual(model.openTabs.first?.panel, .shell)
         XCTAssertFalse(model.hasSelectedProject)
-        XCTAssertEqual(openedURL.urls.first?.absoluteString, "https://app.matrix-os.com/auth/device?user_code=ABD-EFGH&mode=sign-in")
+        XCTAssertEqual(openedURL.urls.first?.path, "/auth/device")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("mode"), "sign-in")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("redirect_uri"), "matrixos://auth?status=approved")
         withExtendedLifetime(cancellables) {}
+    }
+
+    func testDesktopSignInPreservesSignedNativeRedirectFromPlatform() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        let openedURL = OpenedURLRecorder()
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: nil,
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(
+                start: try makeDeviceAuthStart(
+                    deviceCode: "DC",
+                    userCode: "ABCD-EFGH",
+                    verificationUri: "https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH&redirect_uri=matrixos%3A%2F%2Fauth%3Fstatus%3Dapproved&redirect_sig=signed",
+                    expiresIn: 2,
+                    interval: 1
+                ),
+                polls: [.pending]
+            ),
+            openExternalURL: { openedURL.open($0) }
+        )
+
+        model.beginSignIn(mode: .signIn)
+        try await Task.sleep(nanoseconds: 150_000_000)
+        model.cancelSignIn()
+
+        XCTAssertEqual(openedURL.urls.first?.path, "/auth/device")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("redirect_uri"), "matrixos://auth?status=approved")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("redirect_sig"), "signed")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("mode"), "sign-in")
+    }
+
+    func testSignOutClearsAccountAndReturnsToOnboarding() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        var cancelCount = 0
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in },
+            cancelExternalAuth: { cancelCount += 1 }
+        )
+        model.openHome()
+        model.openProject(slug: "main")
+
+        await model.signOutNow()
+
+        let token = await principal.token()
+        XCTAssertNil(token)
+        XCTAssertNil(model.profile)
+        XCTAssertEqual(model.phase, .needsProfile)
+        XCTAssertTrue(model.openTabs.isEmpty)
+        XCTAssertFalse(model.hasSelectedProject)
+        XCTAssertNil(model.selectedCard)
+        XCTAssertNil(model.terminal)
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+        XCTAssertEqual(cancelCount, 1)
+    }
+
+    func testTabKeyboardNavigationAndCloseActiveTab() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        model.openHome()
+        model.openProject(slug: "main")
+        model.openAppTab(slug: "settings", title: "Settings")
+
+        model.focusPreviousTab()
+        XCTAssertEqual(model.activeTabID, "board:main")
+
+        model.focusNextTab()
+        XCTAssertEqual(model.activeTabID, "settings")
+
+        model.closeActiveTab()
+        XCTAssertFalse(model.openTabs.contains(where: { $0.id == "settings" }))
+        XCTAssertNotEqual(model.activeTabID, "settings")
+    }
+
+    func testClosingLastSettingsTabResetsStaleSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.closeTab(id: "settings")
+
+        XCTAssertNil(model.activeTabID)
+        XCTAssertEqual(model.section, .board)
     }
 
     func testCancellingSignInDoesNotMarkCompletion() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
+        var cancelCount = 0
         let model = AppModel(
             principal: principal,
             projectSlug: "main",
@@ -394,7 +960,8 @@ final class AppModelAuthTests: XCTestCase {
                     interval: 1
                 ),
                 polls: [.pending]
-            )
+            ),
+            cancelExternalAuth: { cancelCount += 1 }
         )
 
         model.beginSignIn(mode: .signIn)
@@ -404,6 +971,7 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.signIn, .idle)
         XCTAssertEqual(model.signInCompletionID, 0)
         XCTAssertNil(token)
+        XCTAssertEqual(cancelCount, 1)
     }
 }
 
@@ -426,6 +994,14 @@ private final class MemoryTokenStore: TokenStoring, @unchecked Sendable {
 private struct EmptyBoardLoader: BoardLoading {
     func fetchTasks(projectSlug: String) async throws -> [Card] {
         []
+    }
+}
+
+private struct StaticBoardLoader: BoardLoading {
+    let cards: [Card]
+
+    func fetchTasks(projectSlug: String) async throws -> [Card] {
+        cards.filter { $0.projectSlug == projectSlug }
     }
 }
 
@@ -463,6 +1039,15 @@ private final class OpenedURLRecorder: @unchecked Sendable {
     }
 }
 
+private extension URL {
+    func queryValue(_ name: String) -> String? {
+        URLComponents(url: self, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == name })?
+            .value
+    }
+}
+
 private struct IdleShellEventSource: ShellEventSource {
     var events: AsyncStream<ServerEvent> {
         get async { AsyncStream { _ in } }
@@ -492,5 +1077,73 @@ private final class MockDeviceAuthorizer: DeviceAuthorizing, @unchecked Sendable
     func pollForToken(deviceCode: String) async throws -> DevicePollResult {
         polls.isEmpty ? .pending : polls.removeFirst()
     }
+}
+
+private final class AppTestURLProtocol: URLProtocol {
+    struct Stub: @unchecked Sendable {
+        let handler: (URLRequest) throws -> (HTTPURLResponse, Data)
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var stub: Stub?
+
+    static func setHandler(_ handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) {
+        lock.lock(); defer { lock.unlock() }
+        stub = Stub(handler: handler)
+    }
+
+    private static func currentStub() -> Stub? {
+        lock.lock(); defer { lock.unlock() }
+        return stub
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let stub = Self.currentStub() else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        do {
+            let (response, data) = try stub.handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+}
+
+private extension URLSessionConfiguration {
+    static func appTestMocked() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [AppTestURLProtocol.self]
+        return config
+    }
+}
+
+private func appTestHTTPResponse(_ url: URL, _ status: Int) -> HTTPURLResponse {
+    HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
 }
 #endif
