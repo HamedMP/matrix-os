@@ -294,12 +294,8 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
             wrapsLines: preferences.wrapsLines
         )
         textView.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-        textView.minSize = NSSize(width: 0, height: 0)
-        // Never cap max width. When wrapping, the container tracks the text view, which the
-        // scroll view sizes to full width via autoresizing; capping max width at an early,
-        // narrow contentSize was pinning the editor into a thin centered column (and, for
-        // dense files like JSON, wrapping to one character per line).
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.minSize = NSSize(width: preferences.wrapsLines ? width : 320, height: 0)
+        textView.maxSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         if preferences.wrapsLines, textView.frame.width < width {
             textView.frame.size.width = width
         }
