@@ -67,6 +67,9 @@ public final class TerminalSession: ObservableObject {
     private var started = false
     /// Latest requested terminal size, re-sent once after each successful attach.
     private var lastSize: (cols: Int, rows: Int)?
+    /// Coalesced pending resize and its debounce task (see `resize`).
+    private var pendingResize: (cols: Int, rows: Int)?
+    private var resizeDebounceTask: Task<Void, Never>?
 
     public init(displayName: String, client: ShellEventSource) {
         self.displayName = displayName
@@ -76,6 +79,7 @@ public final class TerminalSession: ObservableObject {
     deinit {
         consumeTask?.cancel()
         outputFlushTask?.cancel()
+        resizeDebounceTask?.cancel()
     }
 
     /// Installs the output sink (the SwiftTerm feed) before/while starting.
@@ -116,10 +120,27 @@ public final class TerminalSession: ObservableObject {
     /// not spam the server (which made zellij thrash/rearrange panes).
     public func resize(cols: Int, rows: Int) {
         guard cols > 0, rows > 0 else { return }
-        if let last = lastSize, last.cols == cols, last.rows == rows { return }
-        lastSize = (cols, rows)
+        // Coalesce rapid size reports (initial layout, window drags, font changes).
+        // SwiftTerm emits many intermediate grid sizes before settling; forwarding each
+        // makes zellij thrash/rearrange panes and can leave it stuck at an early,
+        // smaller-than-the-view grid. Debounce so only the settled size reaches the
+        // server (the client re-sends it after each attach).
+        pendingResize = (cols, rows)
+        resizeDebounceTask?.cancel()
+        resizeDebounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 90_000_000)
+            guard !Task.isCancelled else { return }
+            self?.flushPendingResize()
+        }
+    }
+
+    private func flushPendingResize() {
+        guard let size = pendingResize else { return }
+        pendingResize = nil
+        if let last = lastSize, last.cols == size.cols, last.rows == size.rows { return }
+        lastSize = size
         let client = self.client
-        Task { await client.resize(cols: cols, rows: rows) }
+        Task { await client.resize(cols: size.cols, rows: size.rows) }
     }
 
     /// Detaches (leaves the session running) and stops consuming.
