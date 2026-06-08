@@ -49,6 +49,22 @@ describe("Terminal Cache", () => {
     });
   });
 
+  it("closes but does not detach a connecting socket when socket retention is disabled", () => {
+    const entry = createMockCachedTerminal({
+      sessionId: "main",
+      ws: {
+        readyState: WebSocket.CONNECTING,
+        send: vi.fn(),
+        close: vi.fn(),
+      } as unknown as WebSocket,
+    });
+
+    cacheTerminal("pane-1", entry, { retainSocket: false });
+
+    expect((entry.ws as unknown as { send: ReturnType<typeof vi.fn> }).send).not.toHaveBeenCalled();
+    expect((entry.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledOnce();
+  });
+
   it("getCached returns null for cache miss", () => {
     expect(getCached("nonexistent")).toBeNull();
   });
