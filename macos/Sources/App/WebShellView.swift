@@ -150,6 +150,7 @@ struct WebShellAuthState: Equatable, Sendable {
             authRevision += 1
         case .hostedSessionRetry:
             hostedAuthRequired = false
+            hostedRetryAttempted = false
             authRevision += 1
         }
     }

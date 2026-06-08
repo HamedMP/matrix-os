@@ -1,4 +1,5 @@
 #if os(macOS)
+import Combine
 import XCTest
 @testable import MatrixOS
 import MatrixBoard
@@ -41,8 +42,7 @@ final class AppModelAuthTests: XCTestCase {
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
-        XCTAssertFalse(state.markHostedAuthRequired())
-        XCTAssertTrue(state.shouldShowSignInPrompt)
+        XCTAssertTrue(state.markHostedAuthRequired())
     }
 
     func testWebShellAuthStateClearsHostedPromptForFreshAutomaticReload() {
@@ -356,8 +356,16 @@ final class AppModelAuthTests: XCTestCase {
             openExternalURL: { openedURL.open($0) }
         )
 
+        let completion = expectation(description: "sign-in completes")
+        var cancellables = Set<AnyCancellable>()
+        model.$signInCompletionID
+            .dropFirst()
+            .filter { $0 > 0 }
+            .sink { _ in completion.fulfill() }
+            .store(in: &cancellables)
+
         model.beginSignIn(mode: SignInMode.signIn)
-        try await Task.sleep(nanoseconds: 1_200_000_000)
+        await fulfillment(of: [completion], timeout: 5)
 
         let token = await principal.token()
         XCTAssertEqual(token, "native-token")
@@ -366,6 +374,7 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.section, AppSection.home)
         XCTAssertFalse(model.hasSelectedProject)
         XCTAssertEqual(openedURL.urls.first?.absoluteString, "https://app.matrix-os.com/auth/device?user_code=ABD-EFGH&mode=sign-in")
+        withExtendedLifetime(cancellables) {}
     }
 
     func testCancellingSignInDoesNotMarkCompletion() async throws {

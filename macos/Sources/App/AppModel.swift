@@ -501,7 +501,6 @@ public final class AppModel: ObservableObject {
                     return
                 case let .approved(token):
                     try await principal.setToken(token.accessToken)
-                    signInCompletionID += 1
                     signIn = .idle
                     let handle = (token.handle?.isEmpty == false ? token.handle : nil) ?? "me"
                     let newProfile = ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil)
@@ -510,6 +509,7 @@ public final class AppModel: ObservableObject {
                     if !hasSelectedProject {
                         section = .home
                     }
+                    signInCompletionID += 1
                     await refresh()
                     return
                 }
