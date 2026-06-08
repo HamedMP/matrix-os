@@ -70,9 +70,23 @@ struct RootShellView: View {
 
     @ViewBuilder
     private var sectionContent: some View {
+        ZStack {
+            // Keep the hosted web shell mounted like a persistent browser tab, so
+            // returning to Home never triggers a full reload / re-auth. Other sections
+            // render on top when active.
+            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix Home")
+                .opacity(model.section == .home ? 1 : 0)
+                .allowsHitTesting(model.section == .home)
+                .accessibilityHidden(model.section != .home)
+            nonHomeSection
+        }
+    }
+
+    @ViewBuilder
+    private var nonHomeSection: some View {
         switch model.section {
         case .home:
-            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Matrix Home")
+            EmptyView()
         case .board:
             BoardView(model: model)
         case .terminal:
