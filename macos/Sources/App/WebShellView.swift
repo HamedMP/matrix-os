@@ -371,26 +371,106 @@ struct NativeAppSessionExchange {
     }
 
     static func perform(request: URLRequest) async throws -> Response {
-        let session = URLSession(configuration: .ephemeral)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = true
+        configuration.httpCookieAcceptPolicy = .always
+        let cookieStorage = configuration.httpCookieStorage
+        let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
         let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw NativeAppSessionExchangeError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw NativeAppSessionExchangeError.unauthorized }
         guard let url = request.url else { throw NativeAppSessionExchangeError.invalidResponse }
-        return try Response(cookies: appSessionCookies(from: http, for: url))
+        return try Response(cookies: appSessionCookies(
+            from: http,
+            storedCookies: cookieStorage?.cookies(for: url) ?? [],
+            for: url
+        ))
     }
 
-    static func appSessionCookies(from response: HTTPURLResponse, for url: URL) throws -> [HTTPCookie] {
-        let fields = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
-            if let key = entry.key as? String, let value = entry.value as? String {
-                result[key] = value
+    static func appSessionCookies(
+        from response: HTTPURLResponse,
+        storedCookies: [HTTPCookie] = [],
+        for url: URL
+    ) throws -> [HTTPCookie] {
+        let headerCookies = response.allHeaderFields.flatMap { entry -> [HTTPCookie] in
+            guard let key = entry.key as? String,
+                  key.caseInsensitiveCompare("Set-Cookie") == .orderedSame else { return [] }
+
+            let values: [String]
+            if let value = entry.value as? String {
+                values = splitSetCookieHeader(value)
+            } else if let value = entry.value as? [String] {
+                values = value.flatMap(splitSetCookieHeader)
+            } else {
+                values = []
+            }
+            return values.flatMap { value in
+                HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": value], for: url)
             }
         }
-        let cookies = HTTPCookie.cookies(withResponseHeaderFields: fields, for: url)
-        guard cookies.contains(where: { $0.name == "matrix_app_session" || $0.name.hasPrefix("matrix_app_session__") }) else {
+
+        var seen = Set<String>()
+        let cookies = (storedCookies + headerCookies).filter { cookie in
+            let key = "\(cookie.name)\u{1f}\(cookie.domain)\u{1f}\(cookie.path)"
+            return seen.insert(key).inserted
+        }
+        guard cookies.contains(where: { $0.name == "matrix_app_session" && !$0.value.isEmpty }),
+              cookies.contains(where: { $0.name == "matrix_native_app_session" && !$0.value.isEmpty }) else {
             throw NativeAppSessionExchangeError.invalidResponse
         }
         return cookies
+    }
+
+    private static func splitSetCookieHeader(_ value: String) -> [String] {
+        value
+            .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .flatMap { splitConcatenatedSetCookieLine(String($0)) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func splitConcatenatedSetCookieLine(_ line: String) -> [String] {
+        var values: [String] = []
+        var start = line.startIndex
+        var index = line.startIndex
+        while index < line.endIndex {
+            guard line[index] == "," else {
+                index = line.index(after: index)
+                continue
+            }
+            var candidate = line.index(after: index)
+            while candidate < line.endIndex, line[candidate] == " " {
+                candidate = line.index(after: candidate)
+            }
+            if beginsCookieName(at: candidate, in: line) {
+                values.append(String(line[start..<index]))
+                start = candidate
+                index = candidate
+                continue
+            }
+            index = line.index(after: index)
+        }
+        values.append(String(line[start..<line.endIndex]))
+        return values
+    }
+
+    private static func beginsCookieName(at index: String.Index, in line: String) -> Bool {
+        var cursor = index
+        var hasName = false
+        while cursor < line.endIndex {
+            let character = line[cursor]
+            if character == "=" {
+                return hasName
+            }
+            guard character.isASCII,
+                  (character.isLetter || character.isNumber || character == "_" || character == "-") else {
+                return false
+            }
+            hasName = true
+            cursor = line.index(after: cursor)
+        }
+        return false
     }
 
     @MainActor

@@ -48,7 +48,58 @@ final class WebShellViewTests: XCTestCase {
         XCTAssertEqual(json["redirectTo"], "/?runtime=staging")
     }
 
-    func testNativeAppSessionExchangeAcceptsMatrixAppSessionCookie() throws {
+    func testNativeAppSessionExchangeAcceptsNativeSessionCookies() throws {
+        let url = try XCTUnwrap(URL(string: "https://app.matrix-os.com/api/auth/app-session"))
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: [
+                "Set-Cookie": [
+                    "matrix_app_session=jwt; Path=/; Secure; HttpOnly; SameSite=Lax",
+                    "matrix_native_app_session=proof; Path=/; Secure; HttpOnly; SameSite=Lax",
+                ].joined(separator: ", ")
+            ]
+        ))
+
+        let cookies = try NativeAppSessionExchange.appSessionCookies(from: response, for: url)
+
+        XCTAssertEqual(cookies.map(\.name), ["matrix_app_session", "matrix_native_app_session"])
+    }
+
+    func testNativeAppSessionExchangeAcceptsURLSessionStoredNativeCookies() throws {
+        let url = try XCTUnwrap(URL(string: "https://app.matrix-os.com/api/auth/app-session"))
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: [:]
+        ))
+        let appCookie = try XCTUnwrap(HTTPCookie(properties: [
+            .domain: "app.matrix-os.com",
+            .path: "/",
+            .name: "matrix_app_session",
+            .value: "jwt",
+            .secure: true,
+        ]))
+        let nativeCookie = try XCTUnwrap(HTTPCookie(properties: [
+            .domain: "app.matrix-os.com",
+            .path: "/",
+            .name: "matrix_native_app_session",
+            .value: "proof",
+            .secure: true,
+        ]))
+
+        let cookies = try NativeAppSessionExchange.appSessionCookies(
+            from: response,
+            storedCookies: [appCookie, nativeCookie],
+            for: url
+        )
+
+        XCTAssertEqual(cookies.map(\.name), ["matrix_app_session", "matrix_native_app_session"])
+    }
+
+    func testNativeAppSessionExchangeRejectsResponseWithoutNativeSessionProofCookie() throws {
         let url = try XCTUnwrap(URL(string: "https://app.matrix-os.com/api/auth/app-session"))
         let response = try XCTUnwrap(HTTPURLResponse(
             url: url,
@@ -57,12 +108,12 @@ final class WebShellViewTests: XCTestCase {
             headerFields: ["Set-Cookie": "matrix_app_session=jwt; Path=/; Secure; HttpOnly; SameSite=Lax"]
         ))
 
-        let cookies = try NativeAppSessionExchange.appSessionCookies(from: response, for: url)
-
-        XCTAssertEqual(cookies.map(\.name), ["matrix_app_session"])
+        XCTAssertThrowsError(try NativeAppSessionExchange.appSessionCookies(from: response, for: url)) { error in
+            XCTAssertEqual(error as? NativeAppSessionExchangeError, .invalidResponse)
+        }
     }
 
-    func testNativeAppSessionExchangeRejectsResponseWithoutMatrixAppSessionCookie() throws {
+    func testNativeAppSessionExchangeRejectsResponseWithoutMatrixSessionCookie() throws {
         let url = try XCTUnwrap(URL(string: "https://app.matrix-os.com/api/auth/app-session"))
         let response = try XCTUnwrap(HTTPURLResponse(
             url: url,
