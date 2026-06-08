@@ -334,8 +334,11 @@ enum HostedShellSettingsBridge {
         return false;
       };
       if (!open()) {
-        window.setTimeout(open, 150);
-        window.setTimeout(open, 500);
+        window.setTimeout(() => {
+          if (!open()) {
+            window.setTimeout(open, 350);
+          }
+        }, 150);
       }
     })();
     """

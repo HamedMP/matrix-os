@@ -10,6 +10,8 @@ final class WebShellViewTests: XCTestCase {
         XCTAssertTrue(script.contains("button[aria-label=\"Settings\"]"))
         XCTAssertTrue(script.contains("button[title=\"Settings\"]"))
         XCTAssertTrue(script.contains("button.click()"))
+        XCTAssertTrue(script.contains("if (!open())"))
+        XCTAssertFalse(script.contains("window.setTimeout(open, 500)"))
     }
 
     func testNativeAppSessionExchangePostsBearerTokenToAppSessionEndpoint() throws {

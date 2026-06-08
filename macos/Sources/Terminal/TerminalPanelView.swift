@@ -216,7 +216,6 @@ private struct SwiftTermView: NSViewRepresentable {
         let dims = view.getTerminal().getDims()
         session.resize(cols: dims.cols, rows: dims.rows)
         session.start()
-        TerminalFocusPolicy.scheduleInitialFocus(for: view)
         return view
     }
 
