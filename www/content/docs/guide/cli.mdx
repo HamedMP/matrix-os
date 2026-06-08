@@ -174,28 +174,21 @@ matrix upload ./README.md projects/demo/README.md
 matrix upload --force ./config.json system/config.json
 matrix download projects/demo/README.md ./README.remote.md
 matrix download --force projects/demo/README.md ./README.remote.md
-matrix download --secret .codex/auth.json ~/.codex/auth.json
 ```
 
-For credential files, add `--secret` so transferred files are written owner-only.
 Regular downloads are written with standard user-readable file permissions.
 
-```bash
-matrix upload --secret ~/.codex/auth.json .codex/auth.json
-```
+## Tool authentication
 
-Agents should run the Matrix CLI command and must not print credential file contents.
-
-## Agent auth scan
-
-`matrix agent auth scan` checks for local AI-agent credential files without reading or printing tokens.
+For GitHub and coding agents, prefer browser/device login inside the Matrix VPS instead of moving credential files from the local machine.
 
 ```bash
-matrix agent auth scan
-matrix agent auth scan --json
+matrix run -it --session setup -- gh auth login
+matrix run -it --session setup -- claude
+matrix run -it --session setup -- codex
 ```
 
-The scan can detect transfer-ready files for Codex, Claude Code file credentials, OpenCode, and Pi. macOS Keychain-only Claude Code credentials are reported as manual because they cannot be moved through generic file upload.
+Agents should not scan local machines for credential files or transfer local secret files as part of setup. If the human explicitly asks to migrate an existing credential, stop and confirm the exact provider, source path, destination path, and reason before running any transfer command.
 
 ## Instance ops
 

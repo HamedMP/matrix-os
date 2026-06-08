@@ -12,23 +12,25 @@ This quickstart gets a developer from zero to a running Matrix workspace.
 ## Fastest path: paste the setup prompt
 
 <Callout type="info" title="Let your coding agent install Matrix">
-  Matrix publishes a setup skill at `https://matrix-os.com/skills.md`. Give the prompt below to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another terminal agent so it can install the CLI, guide `matrix login --profile cloud`, copy approved local agent settings, and start work on your cloud computer.
+  Give the prompt below to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another terminal agent so it can install the CLI, guide `matrix login --profile cloud`, and start work on your cloud computer through in-VPS browser/device login.
 </Callout>
 
 ```text
-Set up Matrix OS so I can use my own cloud computer for coding agents.
+Help me set up Matrix OS, my own cloud dev computer.
 
-First, read the official Matrix agent skill:
-https://matrix-os.com/skills.md
+Steps:
+1. Install the CLI: npm install -g @finnaai/matrix or brew install finnaai/tap/matrix.
+2. Run matrix login --profile cloud. It opens a browser/device login that I will approve.
+3. If no Matrix instance exists, tell me to sign up at https://app.matrix-os.com, then re-run login.
+4. Verify with matrix doctor and matrix whoami.
+5. Start my preferred coding agent inside Matrix with matrix run -it --session setup -- claude or matrix run -it --session setup -- codex. I will complete that tool's own login inside the remote terminal.
 
-Then install the Matrix CLI, help me sign in with matrix login --profile cloud, scan for local AI-agent credentials and settings with matrix agent auth scan, copy only credentials or settings I approve with matrix upload or matrix upload --secret, ask me to run gh auth login inside Matrix, and start my preferred coding agent with matrix run.
-
-Use Claude Code, Codex, OpenCode, Pi, Cursor, Gemini CLI, or another terminal agent if I ask for it.
+Do not scan my local machine for credentials or upload secret files. Everything authenticates through its own browser/device flow.
 ```
 
 <Cards>
-  <Card title="Read the Matrix skill" href="https://matrix-os.com/skills.md">
-    The public skill file agents should follow for hosted Matrix setup.
+  <Card title="Install the Matrix skill" href="https://matrix-os.com/skills.md">
+    Local skill instructions for agents that support file skills, plus the same safe setup flow as this page.
   </Card>
   <Card title="Install the CLI" href="/docs/users/cli">
     Use Homebrew, npm, or the install script, then run the hosted login flow.
@@ -67,7 +69,7 @@ Use Claude Code, Codex, OpenCode, Pi, Cursor, Gemini CLI, or another terminal ag
     gh auth login
     ```
 
-    GitHub credentials live in your Matrix workspace so terminal panes, coding agents, and future IDE surfaces share the same identity.
+    GitHub authenticates inside your Matrix workspace so terminal panes, coding agents, and future IDE surfaces share the same remote identity.
   </Step>
   <Step>
     ### Clone a repo

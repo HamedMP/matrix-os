@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { source } from "@/lib/source";
+import { solutionPages } from "./solutions/data";
 
 const BASE_URL = "https://matrix-os.com";
 
@@ -10,6 +11,24 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: new Date(),
       changeFrequency: "weekly",
       priority: 1,
+    },
+    {
+      url: `${BASE_URL}/contact`,
+      lastModified: new Date(),
+      changeFrequency: "monthly",
+      priority: 0.7,
+    },
+    {
+      url: `${BASE_URL}/use-cases`,
+      lastModified: new Date(),
+      changeFrequency: "monthly",
+      priority: 0.8,
+    },
+    {
+      url: `${BASE_URL}/solutions`,
+      lastModified: new Date(),
+      changeFrequency: "monthly",
+      priority: 0.9,
     },
     {
       url: `${BASE_URL}/whitepaper`,
@@ -38,5 +57,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.7,
   }));
 
-  return [...staticPages, ...docPages];
+  const solutionSitemapPages: MetadataRoute.Sitemap = solutionPages.map((page) => ({
+    url: `${BASE_URL}/solutions/${page.slug}`,
+    lastModified: new Date(),
+    changeFrequency: "monthly" as const,
+    priority: 0.75,
+  }));
+
+  return [...staticPages, ...solutionSitemapPages, ...docPages];
 }

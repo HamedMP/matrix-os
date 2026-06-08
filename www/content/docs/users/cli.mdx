@@ -5,7 +5,7 @@ description: Install and use the Matrix CLI.
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-The Matrix CLI is the local command line for your Matrix computer. It logs in, attaches to remote sessions, syncs files, uploads and downloads one-off files, and exposes machine-readable output for automation.
+The Matrix CLI is the local command line for your Matrix computer. It logs in, attaches to remote sessions, syncs files, uploads and downloads one-off non-secret files, and exposes machine-readable output for automation.
 
 ## Install
 
@@ -68,11 +68,10 @@ Use named sessions for setup and agent workflows so the browser, CLI, and agents
 matrix sync ~/matrixos
 matrix upload ./README.md projects/demo/README.md
 matrix download projects/demo/README.md ./README.remote.md
-matrix upload --secret ~/.codex/auth.json .codex/auth.json
 ```
 
-<Callout type="warn" title="Do not print secrets">
-  Agents may run Matrix CLI commands to transfer credential files, but they must not print credential contents into chat or logs.
+<Callout type="info" title="Authenticate tools inside Matrix">
+  For coding agents and developer tools, prefer browser/device login inside the Matrix VPS. Run `matrix run -it --session setup -- claude`, `matrix run -it --session setup -- codex`, or `matrix run -it --session setup -- gh auth login`, then complete that tool's own login flow in the remote terminal.
 </Callout>
 
 ## Profiles
