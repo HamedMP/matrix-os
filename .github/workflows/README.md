@@ -31,6 +31,7 @@ logs and artifacts.
 | `ci.yml` | Core code validation | `ready-for-ci`, ready PRs, merge queue, `main`, manual | Yes, via `CI Results` |
 | `docker-test.yml` | Legacy/local Docker scenario validation | `ready-for-ci`, ready PRs, merge queue, `main`, nightly, manual | Required when Docker/runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
+| `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release | Manual CLI release | Required for CLI publishing |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 | `docker.yml` | Legacy Docker image publishing/deploy path | `v*` tags, manual | Legacy only, not the customer runtime path |
