@@ -207,7 +207,7 @@ describe("proxy auth: trusted platform native app sessions", () => {
     }
     vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
 
-    const { proxy } = await import("../../shell/proxy");
+    const { proxy } = await import("../../shell/src/proxy");
 
     proxy({
       headers: new Headers({
@@ -251,7 +251,7 @@ describe("proxy auth: trusted platform native app sessions", () => {
     }
     vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
 
-    const { proxy } = await import("../../shell/proxy");
+    const { proxy } = await import("../../shell/src/proxy");
 
     proxy({
       headers: new Headers({
@@ -289,7 +289,7 @@ describe("proxy auth: trusted platform native app sessions", () => {
     }
     vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
 
-    const { proxy } = await import("../../shell/proxy");
+    const { proxy } = await import("../../shell/src/proxy");
 
     const response = proxy({
       headers: new Headers({

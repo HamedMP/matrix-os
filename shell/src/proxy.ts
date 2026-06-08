@@ -3,12 +3,12 @@ import { NextResponse } from "next/server";
 import {
   MATRIX_NATIVE_APP_SESSION_HEADER,
   MATRIX_PLATFORM_SESSION_HEADER,
-} from "./src/lib/platform-session";
+} from "./lib/platform-session";
 import {
   isGatewayProxyPath,
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
-} from "./src/lib/proxy-routes";
+} from "./lib/proxy-routes";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
