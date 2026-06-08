@@ -8,7 +8,7 @@ const GROUPS = [
   ["Faster", new Set(["perf"])],
   ["Polish and reliability", new Set(["build", "chore", "ci", "docs", "refactor", "style", "test"])],
 ];
-const FALLBACK_MAX_COMMITS = 100;
+export const FALLBACK_MAX_COMMITS = 100;
 
 function capitalizeSentence(value) {
   if (!value) return value;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildReleaseChangelog,
+  FALLBACK_MAX_COMMITS,
   gitLogArgs,
   humanizeCommitSubject,
 } from "../../scripts/release-changelog.mjs";
@@ -38,7 +39,7 @@ describe("release changelog generation", () => {
       "log",
       "--reverse",
       "--format=%s",
-      "--max-count=100",
+      `--max-count=${FALLBACK_MAX_COMMITS}`,
       "HEAD",
     ]);
   });
