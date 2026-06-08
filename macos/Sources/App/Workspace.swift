@@ -1478,35 +1478,46 @@ struct NativeSettingsPanel: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        HStack(spacing: 0) {
-            settingsSidebar
-                .frame(width: 214)
-            Rectangle().fill(Color.hairlineDark).frame(width: 1)
-            ScrollView {
-                VStack(alignment: .leading, spacing: Spacing.x5) {
-                    header
-                    HStack(alignment: .top, spacing: Spacing.x4) {
-                        VStack(spacing: Spacing.x4) {
-                            accountSection
-                            editorSection
-                        }
-                        .frame(minWidth: 320, idealWidth: 380, maxWidth: 440)
-
-                        VStack(spacing: Spacing.x4) {
-                            runtimeSection
-                            accessSection
-                        }
-                        .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+        ScrollViewReader { proxy in
+            HStack(spacing: 0) {
+                settingsSidebar { section in
+                    model.focusNativeSettingsSection(section)
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        proxy.scrollTo(section, anchor: .top)
                     }
                 }
-                .padding(Spacing.x5)
-                .frame(maxWidth: 980, alignment: .topLeading)
+                .frame(width: 214)
+                Rectangle().fill(Color.hairlineDark).frame(width: 1)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Spacing.x5) {
+                        header
+                        HStack(alignment: .top, spacing: Spacing.x4) {
+                            VStack(spacing: Spacing.x4) {
+                                accountSection
+                                    .id(NativeSettingsSection.account)
+                                editorSection
+                                    .id(NativeSettingsSection.editor)
+                            }
+                            .frame(minWidth: 320, idealWidth: 380, maxWidth: 440)
+
+                            VStack(spacing: Spacing.x4) {
+                                runtimeSection
+                                    .id(NativeSettingsSection.runtime)
+                                accessSection
+                                    .id(NativeSettingsSection.workspace)
+                            }
+                            .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+                        }
+                    }
+                    .padding(Spacing.x5)
+                    .frame(maxWidth: 980, alignment: .topLeading)
+                }
             }
+            .background(Color.canvasVoid)
         }
-        .background(Color.canvasVoid)
     }
 
-    private var settingsSidebar: some View {
+    private func settingsSidebar(scrollTo: @escaping (NativeSettingsSection) -> Void) -> some View {
         VStack(alignment: .leading, spacing: Spacing.x1) {
             Text("SETTINGS")
                 .font(.plexMono(10, weight: .semibold))
@@ -1514,10 +1525,13 @@ struct NativeSettingsPanel: View {
                 .tracking(1.2)
                 .padding(.horizontal, Spacing.x3)
                 .padding(.bottom, Spacing.x2)
-            settingsNavItem("Account", icon: "person.crop.circle", active: true)
-            settingsNavItem("Runtime", icon: "desktopcomputer", active: false)
-            settingsNavItem("Editor", icon: "chevron.left.forwardslash.chevron.right", active: false)
-            settingsNavItem("Workspace", icon: "folder.badge.gearshape", active: false)
+            ForEach(NativeSettingsSection.allCases) { section in
+                settingsNavItem(
+                    section,
+                    active: model.nativeSettingsSection == section,
+                    action: { scrollTo(section) }
+                )
+            }
             Spacer()
             Button {
                 Task { await model.loadSystemInfo() }
@@ -1540,23 +1554,32 @@ struct NativeSettingsPanel: View {
         .background(Color.surfaceRail)
     }
 
-    private func settingsNavItem(_ title: String, icon: String, active: Bool) -> some View {
-        HStack(spacing: Spacing.x2) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 18)
-            Text(title)
-                .font(.plexSans(13, weight: active ? .semibold : .medium))
-            Spacer()
+    private func settingsNavItem(
+        _ section: NativeSettingsSection,
+        active: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: Spacing.x2) {
+                Image(systemName: section.symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 18)
+                Text(section.title)
+                    .font(.plexSans(13, weight: active ? .semibold : .medium))
+                Spacer()
+            }
         }
+        .buttonStyle(.plain)
         .foregroundStyle(active ? Color.inkPrimary : Color.inkSecondary)
         .padding(.horizontal, Spacing.x3)
         .frame(height: 34)
+        .contentShape(RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .background(active ? Color.surfaceCardRaised : Color.clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
                 .strokeBorder(active ? Color.hairlineDark.opacity(0.9) : Color.clear, lineWidth: 1)
         )
+        .help(section.title)
     }
 
     private var header: some View {

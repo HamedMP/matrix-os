@@ -123,6 +123,33 @@ public enum AppSection: String, CaseIterable, Sendable {
     }
 }
 
+public enum NativeSettingsSection: String, CaseIterable, Identifiable, Sendable {
+    case account
+    case runtime
+    case editor
+    case workspace
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .account: return "Account"
+        case .runtime: return "Runtime"
+        case .editor: return "Editor"
+        case .workspace: return "Workspace"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .account: return "person.crop.circle"
+        case .runtime: return "desktopcomputer"
+        case .editor: return "chevron.left.forwardslash.chevron.right"
+        case .workspace: return "folder.badge.gearshape"
+        }
+    }
+}
+
 /// A live zellij session entry for the Terminals section.
 public struct WorkspaceSession: Identifiable, Equatable, Sendable {
     public let name: String
@@ -425,6 +452,8 @@ public final class AppModel: ObservableObject {
     @Published public var showCommandPalette = false
     /// Search/filter text shared by native tabs and the project task board.
     @Published public var workspaceSearchQuery = ""
+    /// Selected section inside the native Settings surface.
+    @Published public private(set) var nativeSettingsSection: NativeSettingsSection = .account
 
     /// The currently selected connection profile (nil → onboarding).
     @Published public private(set) var profile: ConnectionProfile?
@@ -717,6 +746,8 @@ public final class AppModel: ObservableObject {
         signIn = .idle
         hasSelectedProject = false
         section = .board
+        workspaceSearchQuery = ""
+        nativeSettingsSection = .account
         selectedCard = nil
         terminal = nil
         terminalSessions = [:]
@@ -809,6 +840,7 @@ public final class AppModel: ObservableObject {
     /// Selects a connection profile, rebuilds the gateway client + board store,
     /// and transitions to `.connecting`. The next `refresh()` loads the board.
     public func selectProfile(_ profile: ConnectionProfile) {
+        workspaceSearchQuery = ""
         self.profile = profile
         self.phase = .connecting
         self.openError = nil
@@ -913,6 +945,7 @@ public final class AppModel: ObservableObject {
 
     public func openAppTab(slug: String, title: String) {
         guard profile != nil else { return }
+        workspaceSearchQuery = ""
         let kind: WorkspaceTab.Kind
         let id: String
         switch slug {
@@ -1072,6 +1105,7 @@ public final class AppModel: ObservableObject {
     public func openProject(slug: String) {
         guard slug != projectSlug || !hasSelectedProject, let client = gatewayClient() else { return }
         openError = nil
+        workspaceSearchQuery = ""
         projectSlug = slug
         hasSelectedProject = true
         filePanelPath = "projects/\(slug)"
@@ -1086,6 +1120,7 @@ public final class AppModel: ObservableObject {
     }
 
     public func openHome() {
+        workspaceSearchQuery = ""
         hasSelectedProject = false
         selectedCard = nil
         terminal = nil
@@ -1095,8 +1130,13 @@ public final class AppModel: ObservableObject {
     }
 
     public func openTerminalSection() {
+        workspaceSearchQuery = ""
         section = .terminal
         Task { await loadSessions() }
+    }
+
+    public func focusNativeSettingsSection(_ section: NativeSettingsSection) {
+        nativeSettingsSection = section
     }
 
     public var activeProjectName: String {
@@ -1338,6 +1378,7 @@ public final class AppModel: ObservableObject {
     /// Opens a workspace tab by reattaching its card/session terminal.
     public func focusTab(id: String) {
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
+        workspaceSearchQuery = ""
         var tab = openTabs[index]
         activeTabID = id
         if tab.kind == .board {
@@ -1354,6 +1395,7 @@ public final class AppModel: ObservableObject {
             section = .home
             terminal = nil
             selectedCard = nil
+            activePanel = .shell
             return
         }
         if tab.kind == .settings {

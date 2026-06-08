@@ -232,6 +232,36 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.filteredBoardColumns(matching: "TERMINAL").flatMap(\.cards).map(\.id), ["task_terminal"])
     }
 
+    func testWorkspaceSearchClearsOnNavigationAndSignOut() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.workspaceSearchQuery = "auth"
+        model.openProject(slug: "main")
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+
+        model.workspaceSearchQuery = "settings"
+        model.openAppTab(slug: "settings", title: "Settings")
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+
+        model.workspaceSearchQuery = "terminal"
+        model.focusTab(id: "board:main")
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+
+        model.workspaceSearchQuery = "logout"
+        await model.signOutNow()
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+    }
+
     func testSystemInfoSummaryLoadsRuntimeAndResourcesWithoutInternalProviderNames() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         try await principal.setToken("token")
@@ -486,6 +516,49 @@ final class AppModelAuthTests: XCTestCase {
 
         XCTAssertEqual(model.openTabs.first(where: { $0.id == "home" })?.panel, .shell)
         XCTAssertEqual(model.openTabs.first(where: { $0.id == "board:main" })?.panel, .app(slug: "board"))
+    }
+
+    func testFocusingHomeTabAfterSettingsRestoresHomeSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openHome()
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.focusTab(id: "home")
+
+        XCTAssertEqual(model.activeTabID, "home")
+        XCTAssertEqual(model.section, .home)
+        XCTAssertEqual(model.activePanel, .shell)
+        XCTAssertNil(model.selectedCard)
+        XCTAssertNil(model.terminal)
+    }
+
+    func testNativeSettingsSectionSelectionUpdatesActiveSidebarSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        XCTAssertEqual(model.nativeSettingsSection, .account)
+        model.focusNativeSettingsSection(.editor)
+
+        XCTAssertEqual(model.nativeSettingsSection, .editor)
     }
 
     func testFocusingBoardTabRestoresSelectedProject() async throws {
