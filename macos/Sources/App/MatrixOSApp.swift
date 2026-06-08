@@ -130,9 +130,9 @@ private struct OperatorCommands: Commands {
             Divider()
             Button("Home") { model.openHome() }
                 .keyboardShortcut("1", modifiers: .control)
-            Button("Project Board") { model.section = .board }
+            Button("Project Board") { model.openBoardTab() }
                 .keyboardShortcut("b", modifiers: .command)
-            Button("Board") { model.section = .board }
+            Button("Board") { model.openBoardTab() }
                 .keyboardShortcut("2", modifiers: .control)
             Button("Terminal") { model.openTerminalSection() }
                 .keyboardShortcut("3", modifiers: .control)

@@ -501,6 +501,8 @@ public final class AppModel: ObservableObject {
     private var openCardGeneration = 0
     /// In-flight sign-in task, so a re-tap cancels the previous attempt.
     private var signInTask: Task<Void, Never>?
+    /// Prevents Settings/Resources tab changes from issuing duplicate runtime summary requests.
+    private var isLoadingSystemInfo = false
     /// The project whose tasks the board renders.
     public private(set) var projectSlug: String
     /// Maps workspace session ids / terminal ids to the zellij shell session name
@@ -1132,6 +1134,27 @@ public final class AppModel: ObservableObject {
         Task { await refresh() }
     }
 
+    public func openBoardTab() {
+        workspaceSearchQuery = ""
+        if let currentBoardTab = openTabs.first(where: { $0.id == "board:\(projectSlug)" }) {
+            focusTab(id: currentBoardTab.id)
+            return
+        }
+        if let existingBoardTab = openTabs.first(where: { $0.kind == .board }) {
+            focusTab(id: existingBoardTab.id)
+            return
+        }
+        if hasSelectedProject {
+            upsertProjectBoardTab(select: true)
+            return
+        }
+        section = .board
+        activeTabID = nil
+        selectedCard = nil
+        terminal = nil
+        activePanel = .app(slug: "board")
+    }
+
     public func openHome() {
         workspaceSearchQuery = ""
         hasSelectedProject = false
@@ -1402,6 +1425,7 @@ public final class AppModel: ObservableObject {
             }
             terminal = nil
             selectedCard = nil
+            activePanel = .app(slug: "board")
             return
         }
         if tab.kind == .home {
@@ -1637,21 +1661,27 @@ public final class AppModel: ObservableObject {
     public func filteredBoardColumns(matching query: String) -> [BoardColumn] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return board.columns }
-        return board.columns.map { column in
-            BoardColumn(
+        return board.columns.compactMap { column in
+            let cards = column.cards.filter { card in
+                card.title.localizedCaseInsensitiveContains(trimmed)
+                    || card.status.rawValue.localizedCaseInsensitiveContains(trimmed)
+                    || card.priority.rawValue.localizedCaseInsensitiveContains(trimmed)
+                    || card.tags.contains { $0.localizedCaseInsensitiveContains(trimmed) }
+            }
+            guard !cards.isEmpty else { return nil }
+            return BoardColumn(
                 status: column.status,
-                cards: column.cards.filter { card in
-                    card.title.localizedCaseInsensitiveContains(trimmed)
-                        || card.status.rawValue.localizedCaseInsensitiveContains(trimmed)
-                        || card.priority.rawValue.localizedCaseInsensitiveContains(trimmed)
-                        || card.tags.contains { $0.localizedCaseInsensitiveContains(trimmed) }
-                }
+                cards: cards
             )
         }
     }
 
+    @MainActor
     public func loadSystemInfo() async {
+        guard !isLoadingSystemInfo else { return }
         guard let client = gatewayClient() else { return }
+        isLoadingSystemInfo = true
+        defer { isLoadingSystemInfo = false }
         do {
             systemInfo = try await client.get("/api/system/info", as: NativeSystemInfoSummary.self)
         } catch {
@@ -2076,6 +2106,7 @@ public final class AppModel: ObservableObject {
             activeTabID = tabID
             selectedCard = nil
             terminal = nil
+            activePanel = .app(slug: "board")
         }
     }
 

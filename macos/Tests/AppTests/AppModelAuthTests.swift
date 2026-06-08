@@ -250,7 +250,9 @@ final class AppModelAuthTests: XCTestCase {
 
         XCTAssertEqual(model.filteredOpenTabs(matching: "sett").map(\.id), ["settings"])
         XCTAssertEqual(model.filteredOpenTabs(matching: "terminal").map(\.id), ["settings"])
+        XCTAssertEqual(model.filteredBoardColumns(matching: "TERMINAL").map(\.status), [.running])
         XCTAssertEqual(model.filteredBoardColumns(matching: "TERMINAL").flatMap(\.cards).map(\.id), ["task_terminal"])
+        XCTAssertEqual(model.filteredBoardColumns(matching: "missing").count, 0)
     }
 
     func testWorkspaceSearchClearsOnNavigationAndSignOut() async throws {
@@ -335,6 +337,55 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.systemInfo?.resourceRows.map(\.label), ["CPU", "Memory", "Disk"])
         XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("clerk") ?? true)
         XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("machine-secret") ?? true)
+    }
+
+    func testSystemInfoLoadDeduplicatesConcurrentRequests() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let requestCounter = LockedCounter()
+        AppTestURLProtocol.setHandler { req in
+            XCTAssertEqual(req.url?.path, "/api/system/info")
+            requestCounter.increment()
+            Thread.sleep(forTimeInterval: 0.05)
+            let json = """
+            {
+              "version":"1.2.3",
+              "runtime":{"handle":"alice","machineId":"machine-secret","runtimeSlot":"primary"},
+              "build":{"sha":"abcdef123456","ref":"main","date":"2026-06-08"},
+              "uptime":42,
+              "resources":{
+                "cpuCount":4,
+                "loadAverage":[0.5,0.4,0.3],
+                "memoryTotalBytes":8589934592,
+                "memoryFreeBytes":2147483648,
+                "diskTotalBytes":107374182400,
+                "diskFreeBytes":53687091200,
+                "homeDiskTotalBytes":107374182400,
+                "homeDiskFreeBytes":53687091200
+              },
+              "release":{"version":"1.2.3","channel":"dev"}
+            }
+            """
+            return (appTestHTTPResponse(req.url!, 200), Data(json.utf8))
+        }
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in
+                GatewayHTTPClient(baseURL: url, tokenProvider: provider, sessionConfiguration: .appTestMocked())
+            },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        async let first: Void = model.loadSystemInfo()
+        async let second: Void = model.loadSystemInfo()
+        _ = await (first, second)
+
+        XCTAssertEqual(requestCounter.value, 1)
+        XCTAssertEqual(model.systemInfo?.displayRuntimeName, "Alice")
     }
 
     func testSystemInfoPairsHomeDiskFieldsBeforeFallingBackToRootDisk() throws {
@@ -602,6 +653,28 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.section, .board)
         XCTAssertTrue(model.hasSelectedProject)
         XCTAssertEqual(model.projectSlug, "main")
+    }
+
+    func testOpenBoardTabKeepsActiveTabAndSectionInSync() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "main")
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.openBoardTab()
+
+        XCTAssertEqual(model.activeTabID, "board:main")
+        XCTAssertEqual(model.section, .board)
+        XCTAssertEqual(model.activePanel, .app(slug: "board"))
     }
 
     func testHomeAndBoardTabsCanClose() async throws {
@@ -1043,6 +1116,23 @@ private final class AppTestURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
 }
 
 private extension URLSessionConfiguration {
