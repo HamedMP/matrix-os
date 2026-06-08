@@ -214,7 +214,17 @@ function BillingStatusLoading() {
   );
 }
 
-export function BillingGate({ children }: { children: ReactNode }) {
+export function BillingGate({
+  children,
+  platformSessionActive = false,
+}: {
+  children: ReactNode;
+  platformSessionActive?: boolean;
+}) {
+  if (platformSessionActive) {
+    return <>{children}</>;
+  }
+
   // useSearchParams() (read inside BillingGateInner) requires a <Suspense> boundary so the page
   // is not forced into full client-side rendering; the fallback mirrors the gate's own loading
   // state so there is no visible change while search params resolve.

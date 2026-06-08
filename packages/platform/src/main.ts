@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   getClerkDisplayName,
   getPrimaryClerkEmail,
@@ -122,6 +122,7 @@ const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
 const APP_SESSION_COOKIE = 'matrix_app_session';
+const NATIVE_APP_SESSION_COOKIE = 'matrix_native_app_session';
 const CLERK_SESSION_COOKIE = '__session';
 const CLERK_CLIENT_UAT_COOKIE = '__client_uat';
 const APP_ROUTE_COOKIE = 'matrix_app_route';
@@ -130,6 +131,7 @@ const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const APP_ASSET_ROUTE_TOKEN_PARAM = 'matrix_asset_token';
 const APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS = [APP_ASSET_ROUTE_TOKEN_PARAM] as const;
 const SAFE_CLERK_CLEAR_COOKIE_NAME = /^(?:__session|__client_uat)_[A-Za-z0-9_-]{1,128}$/;
+const NATIVE_APP_SESSION_PROOF_PATTERN = /^[a-f0-9]{64}$/i;
 const BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS = 10_000;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -171,10 +173,14 @@ const customerVpsProxyDispatcher = new Agent({
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
+const NATIVE_APP_SESSION_PROXY_HEADER = 'x-matrix-native-app-session';
+const PLATFORM_SESSION_PROXY_HEADER = 'x-matrix-platform-session';
 const SENSITIVE_PROXY_HEADERS = new Set([
   'authorization',
   'cookie',
   EDGE_SECRET_HEADER,
+  NATIVE_APP_SESSION_PROXY_HEADER,
+  PLATFORM_SESSION_PROXY_HEADER,
   'x-matrix-code-proxy-token',
 ]);
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
@@ -769,9 +775,49 @@ function buildAppSessionCookie(token: string): string {
   ].join('; ');
 }
 
+function buildNativeAppSessionProof(token: string, platformJwtSecret: string): string {
+  return createHmac('sha256', platformJwtSecret)
+    .update(`native-app-session:${token}`)
+    .digest('hex');
+}
+
+function isValidNativeAppSessionProof(
+  token: string | null | undefined,
+  proof: string | null | undefined,
+  platformJwtSecret: string,
+): boolean {
+  if (!token || !proof || !platformJwtSecret || !NATIVE_APP_SESSION_PROOF_PATTERN.test(proof)) {
+    return false;
+  }
+  const expected = buildNativeAppSessionProof(token, platformJwtSecret);
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(proof, 'hex'));
+}
+
+function buildNativeAppSessionCookie(token: string, platformJwtSecret: string): string {
+  return [
+    `${NATIVE_APP_SESSION_COOKIE}=${buildNativeAppSessionProof(token, platformJwtSecret)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    `Max-Age=${CODE_SESSION_EXPIRES_IN_SEC}`,
+  ].join('; ');
+}
+
 function buildClearAppSessionCookie(): string {
   return [
     `${APP_SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ].join('; ');
+}
+
+function buildClearNativeAppSessionCookie(): string {
+  return [
+    `${NATIVE_APP_SESSION_COOKIE}=`,
     'Path=/',
     'HttpOnly',
     'Secure',
@@ -817,6 +863,7 @@ function appendSignOutClearCookies(c: import('hono').Context): void {
   const cookieHeader = c.req.header('cookie');
   const domain = matrixCookieDomainForHost(c.req.header('host'));
   c.header('Set-Cookie', buildClearAppSessionCookie(), { append: true });
+  c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
   for (const name of clerkCookieClearNames(cookieHeader)) {
     c.header('Set-Cookie', buildClearBrowserCookie(name), { append: true });
     if (domain) {
@@ -1339,6 +1386,21 @@ function buildPlatformUserProof(handle: string, userId: string, platformSecret: 
   return createHmac('sha256', handleToken).update(userId).digest('hex');
 }
 
+function shouldMarkNativeAppSession(
+  identity: AppDomainIdentity,
+  authHeader: string | undefined,
+  cookieHeader: string | undefined,
+  platformJwtSecret: string,
+): boolean {
+  if (identity.source !== 'auth') return false;
+  if (authHeader?.startsWith('Bearer ')) return true;
+  return isValidNativeAppSessionProof(
+    readCookie(cookieHeader, APP_SESSION_COOKIE),
+    readCookie(cookieHeader, NATIVE_APP_SESSION_COOKIE),
+    platformJwtSecret,
+  );
+}
+
 export function classifyWebSocketPath(path: string): string {
   try {
     const parsed = new URL(path, 'https://app.matrix-os.com');
@@ -1641,6 +1703,7 @@ async function resolveAppDomainIdentity(opts: {
         return {
           handle: record.handle,
           userId: record.clerkUserId,
+          source: 'auth',
         };
       }
       const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
@@ -1652,6 +1715,7 @@ async function resolveAppDomainIdentity(opts: {
           handle: machine.handle,
           userId: machine.clerkUserId,
           runtimeSlot: machine.runtimeSlot,
+          source: 'auth',
         };
       }
       const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
@@ -1662,6 +1726,7 @@ async function resolveAppDomainIdentity(opts: {
         handle: activeMachine.handle,
         userId: activeMachine.clerkUserId,
         runtimeSlot: activeMachine.runtimeSlot,
+        source: 'auth',
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -3735,8 +3800,10 @@ export function createApp(deps: {
           runtimeSlot: requestedRuntimeSlot,
         });
         if (nativeIdentity) {
+          const nativeToken = authHeader.slice(7);
           applyNoStoreHeaders(c);
-          c.header('Set-Cookie', buildAppSessionCookie(authHeader.slice(7)));
+          c.header('Set-Cookie', buildAppSessionCookie(nativeToken), { append: true });
+          c.header('Set-Cookie', buildNativeAppSessionCookie(nativeToken, platformJwtSecret), { append: true });
           return c.json({ redirectTo });
         }
       } catch (err: unknown) {
@@ -3768,7 +3835,8 @@ export function createApp(deps: {
     const handle = record?.handle ?? machine?.handle;
     if (!handle) {
       applyNoStoreHeaders(c);
-      c.header('Set-Cookie', buildClearAppSessionCookie());
+      c.header('Set-Cookie', buildClearAppSessionCookie(), { append: true });
+      c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
       if (stripeBillingEntitlementsEnabled(appEnv)) {
         const now = new Date();
         const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
@@ -3793,7 +3861,8 @@ export function createApp(deps: {
       expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
     });
     applyNoStoreHeaders(c);
-    c.header('Set-Cookie', buildAppSessionCookie(issued.token));
+    c.header('Set-Cookie', buildAppSessionCookie(issued.token), { append: true });
+    c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
     return c.json({ redirectTo });
   });
 
@@ -4086,6 +4155,9 @@ export function createApp(deps: {
           headers.set('x-platform-verified', buildPlatformUserProof(machine.handle, identity.userId, platformSecret));
         }
       }
+      if (shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
+        headers.set(NATIVE_APP_SESSION_PROXY_HEADER, '1');
+      }
 
       try {
         const upstream = await fetch(targetUrl, {
@@ -4239,6 +4311,9 @@ export function createApp(deps: {
             headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, platformUserId, platformSecret));
           }
         }
+      }
+      if (isAppDomain && shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
+        headers.set(NATIVE_APP_SESSION_PROXY_HEADER, '1');
       }
 
       try {
@@ -4404,6 +4479,9 @@ export function createApp(deps: {
           headers.set('x-platform-verified', buildPlatformUserProof(record.handle, platformUserId, platformSecret));
         }
       }
+    }
+    if (isAppDomain && shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
+      headers.set(NATIVE_APP_SESSION_PROXY_HEADER, '1');
     }
 
     let lastErr: unknown = null;

@@ -1,6 +1,10 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
+  MATRIX_NATIVE_APP_SESSION_HEADER,
+  MATRIX_PLATFORM_SESSION_HEADER,
+} from "./src/lib/platform-session";
+import {
   isGatewayProxyPath,
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
@@ -58,6 +62,7 @@ function rewriteGatewayRequest(request: ProxyRequestLike) {
 }
 
 function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | null {
+  const requestHeaders = new Headers(request.headers);
   const platformAuthHeader = request.headers.get("authorization");
   const platformBearer = platformAuthHeader?.startsWith("Bearer ")
     ? platformAuthHeader.slice(7)
@@ -82,7 +87,13 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
     return rewriteGatewayRequest(request);
   }
 
-  return NextResponse.next();
+  const nativeAppSession = requestHeaders.get(MATRIX_NATIVE_APP_SESSION_HEADER)?.trim() === "1";
+  requestHeaders.delete(MATRIX_NATIVE_APP_SESSION_HEADER);
+  requestHeaders.delete(MATRIX_PLATFORM_SESSION_HEADER);
+  if (nativeAppSession) {
+    requestHeaders.set(MATRIX_PLATFORM_SESSION_HEADER, "native");
+  }
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 // Clerk handler for authenticated routes
@@ -135,6 +146,12 @@ export function proxy(
   const platformResponse = platformVerifiedResponse(request);
   if (platformResponse) {
     return platformResponse;
+  }
+  if (
+    request.headers.has(MATRIX_NATIVE_APP_SESSION_HEADER) ||
+    request.headers.has(MATRIX_PLATFORM_SESSION_HEADER)
+  ) {
+    return new NextResponse("Forbidden", { status: 403 });
   }
   if (isPublicShellPath(request.nextUrl.pathname)) {
     return NextResponse.next();

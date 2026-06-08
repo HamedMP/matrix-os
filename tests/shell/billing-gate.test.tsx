@@ -86,6 +86,27 @@ describe("BillingGate", () => {
     vi.restoreAllMocks();
   });
 
+  it("renders the shell for server-verified native app sessions without Clerk client auth", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.activePlan = null;
+    vi.resetModules();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate platformSessionActive>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(screen.getByText("Matrix workspace")).toBeTruthy();
+    expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("bypasses billing only for explicit test screenshot runs", async () => {
     vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
     clerkState.isLoaded = true;
