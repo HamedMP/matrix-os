@@ -9,9 +9,7 @@ struct MatrixWebShellPanel: View {
     let url: URL?
     let title: String
 
-    @State private var token: String?
-    @State private var didResolveToken = false
-    @State private var authRequired = false
+    @State private var authState = WebShellAuthState()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,25 +52,30 @@ struct MatrixWebShellPanel: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.surfaceCard)
-            } else if !didResolveToken {
+            } else if !authState.didResolveToken {
                 ProgressView()
                     .controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.canvasVoid)
-            } else if authRequired || token == nil {
+            } else if authState.shouldShowSignInPrompt {
                 NoProfileView(
                     onCreate: { model.beginSignIn(mode: .signUp) },
                     onSignIn: { model.beginSignIn(mode: .signIn) },
                     onCancelSignIn: { model.cancelSignIn() },
                     signIn: model.signIn
                 )
-            } else if let url {
+            } else if let url, let token = authState.token {
                 WebShellView(
                     url: url,
                     bearerToken: token,
+                    authRevision: authState.authRevision,
                     onAuthRequired: {
-                        authRequired = true
-                        Task { await reloadBearerToken() }
+                        let shouldRetry = authState.markHostedAuthRequired()
+                        guard shouldRetry else { return }
+                        authState.markResolving()
+                        Task {
+                            await reloadBearerToken()
+                        }
                     }
                 )
             } else {
@@ -88,34 +91,67 @@ struct MatrixWebShellPanel: View {
         .task(id: url) {
             await reloadBearerToken()
         }
-        .onChange(of: model.signIn) { _, _ in
-            Task { await reloadBearerToken() }
+        .onChange(of: model.signInCompletionID) { _, _ in
+            Task {
+                await reloadBearerToken()
+            }
         }
     }
 
     @MainActor
     private func reloadBearerToken() async {
         guard url != nil else {
-            token = nil
-            didResolveToken = true
-            authRequired = false
+            authState.resolveToken(nil)
             return
         }
-        didResolveToken = false
+        authState.markResolving()
         let current = await model.currentBearerToken()
-        token = current
+        authState.resolveToken(current)
+    }
+}
+
+struct WebShellAuthState: Equatable, Sendable {
+    private(set) var token: String?
+    private(set) var didResolveToken = false
+    private(set) var hostedAuthRequired = false
+    private(set) var hostedRetryAttempted = false
+    private(set) var authRevision = 0
+
+    var shouldShowSignInPrompt: Bool {
+        didResolveToken && (token == nil || hostedAuthRequired)
+    }
+
+    mutating func markResolving() {
+        didResolveToken = false
+    }
+
+    mutating func resolveToken(_ nextToken: String?) {
+        token = nextToken
         didResolveToken = true
-        if current != nil {
-            authRequired = false
-        } else {
-            authRequired = true
+        if nextToken == nil {
+            hostedAuthRequired = false
+            hostedRetryAttempted = false
+            authRevision += 1
+            return
         }
+        hostedAuthRequired = false
+        hostedRetryAttempted = false
+        authRevision += 1
+    }
+
+    mutating func markHostedAuthRequired() -> Bool {
+        hostedAuthRequired = true
+        didResolveToken = true
+        guard token != nil, !hostedRetryAttempted else { return false }
+        hostedRetryAttempted = true
+        return true
     }
 }
 
 private struct WebShellView: NSViewRepresentable {
     let url: URL
     let bearerToken: String?
+    let authRevision: Int
     let onAuthRequired: @MainActor () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -135,13 +171,15 @@ private struct WebShellView: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         guard context.coordinator.lastRequestedURL != url
-            || context.coordinator.lastBearerToken != bearerToken else { return }
+            || context.coordinator.lastBearerToken != bearerToken
+            || context.coordinator.lastAuthRevision != authRevision else { return }
         load(url, in: view, coordinator: context.coordinator)
     }
 
     private func load(_ url: URL, in view: WKWebView, coordinator: Coordinator) {
         coordinator.lastBearerToken = bearerToken
         coordinator.lastRequestedURL = url
+        coordinator.lastAuthRevision = authRevision
         coordinator.destinationURL = url
         guard let bearerToken, !bearerToken.isEmpty else {
             coordinator.cancelExchange()
@@ -154,6 +192,7 @@ private struct WebShellView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastBearerToken: String?
         var lastRequestedURL: URL?
+        var lastAuthRevision: Int?
         var destinationURL: URL?
         private var exchangeTask: Task<Void, Never>?
         private var exchangeGeneration = 0
@@ -293,7 +332,9 @@ struct NativeAppSessionExchange {
     }
 
     static func perform(request: URLRequest) async throws -> Response {
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw NativeAppSessionExchangeError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw NativeAppSessionExchangeError.unauthorized }
         guard let url = request.url else { throw NativeAppSessionExchangeError.invalidResponse }
@@ -319,15 +360,19 @@ struct NativeAppSessionExchange {
             completion()
             return
         }
-        var remaining = cookies.count
-        for cookie in cookies {
+        func installCookie(at index: Int) {
+            guard cookies.indices.contains(index) else {
+                completion()
+                return
+            }
+            let cookie = cookies[index]
             store.setCookie(cookie) {
-                remaining -= 1
-                if remaining == 0 {
-                    completion()
+                Task { @MainActor in
+                    installCookie(at: index + 1)
                 }
             }
         }
+        installCookie(at: 0)
     }
 }
 

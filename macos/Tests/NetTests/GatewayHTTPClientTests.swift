@@ -169,7 +169,7 @@ final class GatewayHTTPClientTests: XCTestCase {
             (httpResponse(req.url!, 401), Data("Postgres connection string leaked: postgres://secret".utf8))
         }
         let client = makeClient()
-        await assertThrows(client) { try await $0.get("/x", as: Sample.self) } expecting: { error in
+        await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
             XCTAssertEqual(error, .unauthorized)
         }
     }
@@ -179,7 +179,7 @@ final class GatewayHTTPClientTests: XCTestCase {
             (httpResponse(req.url!, 404), Data("/home/matrix/secret/path not found".utf8))
         }
         let client = makeClient()
-        await assertThrows(client) { try await $0.get("/x", as: Sample.self) } expecting: { error in
+        await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
             XCTAssertEqual(error, .notFound)
         }
     }
@@ -190,7 +190,7 @@ final class GatewayHTTPClientTests: XCTestCase {
                 (httpResponse(req.url!, status), Data("Twilio upstream exploded: account SID AC123".utf8))
             }
             let client = makeClient()
-            await assertThrows(client) { try await $0.get("/x", as: Sample.self) } expecting: { error in
+            await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
                 XCTAssertEqual(error, .server)
             }
         }
@@ -202,7 +202,7 @@ final class GatewayHTTPClientTests: XCTestCase {
             (httpResponse(req.url!, 418), Data("teapot internals".utf8))
         }
         let client = makeClient()
-        await assertThrows(client) { try await $0.get("/x", as: Sample.self) } expecting: { error in
+        await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
             XCTAssertEqual(error, .server)
         }
     }
@@ -212,7 +212,7 @@ final class GatewayHTTPClientTests: XCTestCase {
             (httpResponse(req.url!, 200), Data("not json at all".utf8))
         }
         let client = makeClient()
-        await assertThrows(client) { try await $0.get("/x", as: Sample.self) } expecting: { error in
+        await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
             XCTAssertEqual(error, .decoding)
         }
     }
@@ -220,7 +220,7 @@ final class GatewayHTTPClientTests: XCTestCase {
     func testTransportTimeoutMapsToTimeout() async {
         MockURLProtocol.setHandler { _ in throw URLError(.timedOut) }
         let client = makeClient()
-        await assertThrows(client) { try await $0.get("/x", as: Sample.self) } expecting: { error in
+        await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
             XCTAssertEqual(error, .timeout)
         }
     }
@@ -228,7 +228,7 @@ final class GatewayHTTPClientTests: XCTestCase {
     func testTransportFailureMapsToNetwork() async {
         MockURLProtocol.setHandler { _ in throw URLError(.cannotConnectToHost) }
         let client = makeClient()
-        await assertThrows(client) { try await $0.get("/x", as: Sample.self) } expecting: { error in
+        await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
             XCTAssertEqual(error, .network)
         }
     }
@@ -238,7 +238,7 @@ final class GatewayHTTPClientTests: XCTestCase {
             (httpResponse(req.url!, 500), Data("postgres://user:pass@db internal stack trace".utf8))
         }
         let client = makeClient()
-        await assertThrows(client) { try await $0.get("/x", as: Sample.self) } expecting: { error in
+        await assertThrows(client) { _ = try await $0.get("/x", as: Sample.self) } expecting: { error in
             let text = error.userMessage + " " + String(describing: error)
             XCTAssertFalse(text.lowercased().contains("postgres"))
             XCTAssertFalse(text.contains("stack trace"))

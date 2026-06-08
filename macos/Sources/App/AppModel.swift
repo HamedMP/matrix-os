@@ -136,6 +136,7 @@ public struct WorkspaceSession: Identifiable, Equatable, Sendable {
 public struct WorkspaceTab: Identifiable, Equatable, Sendable {
     public enum Kind: String, Sendable {
         case home
+        case board
         case task
         case session
         case app
@@ -295,10 +296,16 @@ public final class AppModel: ObservableObject {
     /// Which pane the detail view is showing. The agent terminal is always the
     /// left split; the right pane defaults to the editor.
     @Published public var activePanel: Panel = .app(slug: "editor")
+    /// Task panes currently visible in the detail surface. Buttons toggle these
+    /// like checkboxes so terminal/editor/git/etc. can be shown together.
+    @Published public private(set) var enabledPanels: [Panel] = [.terminal, .app(slug: "editor")]
     /// A generic, user-safe error to surface in chrome (nil when clear).
     @Published public private(set) var openError: OperatorError?
     /// Device-auth sign-in progress (drives the onboarding sign-in UI).
     @Published public private(set) var signIn: SignInState = .idle
+    /// Monotonic marker for completed sign-ins. Cancellation returns `signIn` to
+    /// idle too, so hosted-shell recovery listens to this instead of idle alone.
+    @Published public private(set) var signInCompletionID = 0
 
     // MARK: - Dependencies
 
@@ -456,9 +463,9 @@ public final class AppModel: ObservableObject {
             .value
         switch status {
         case "approved":
-            if case let .awaitingApproval(code, uri) = signIn {
-                signIn = .awaitingApproval(userCode: code, verificationUri: uri)
-            }
+            // Approval is now owned by the polling loop. Keep this legacy deep
+            // link as a no-op so older browser callbacks do not regress state.
+            break
         case "expired":
             signIn = .failed("Sign-in expired. Try again.")
         case "error":
@@ -499,6 +506,10 @@ public final class AppModel: ObservableObject {
                     let newProfile = ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil)
                     persistProfile(newProfile)
                     selectProfile(newProfile)
+                    if !hasSelectedProject {
+                        section = .home
+                    }
+                    signInCompletionID += 1
                     await refresh()
                     return
                 }
@@ -765,6 +776,7 @@ public final class AppModel: ObservableObject {
         selectedFileContent = ""
         board = BoardStore(loader: makeLoader(client))
         section = .board
+        upsertProjectBoardTab(select: true)
         Task { await refresh() }
     }
 
@@ -772,9 +784,9 @@ public final class AppModel: ObservableObject {
         hasSelectedProject = false
         selectedCard = nil
         terminal = nil
-        activeTabID = nil
         section = .home
         activePanel = .shell
+        ensureHomeTab(select: true)
     }
 
     public func openTerminalSection() {
@@ -1020,9 +1032,28 @@ public final class AppModel: ObservableObject {
 
     /// Opens a workspace tab by reattaching its card/session terminal.
     public func focusTab(id: String) {
-        guard let tab = openTabs.first(where: { $0.id == id }) else { return }
+        guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
+        var tab = openTabs[index]
         activeTabID = id
-        activePanel = tab.panel
+        if tab.kind == .board {
+            section = .board
+            terminal = nil
+            selectedCard = nil
+            return
+        }
+        if tab.kind == .home {
+            section = .home
+            terminal = nil
+            selectedCard = nil
+            return
+        }
+        if enabledPanels.contains(tab.panel) {
+            activePanel = tab.panel
+        } else {
+            activePanel = enabledPanels.first ?? .terminal
+            tab.panel = activePanel
+            openTabs[index] = tab
+        }
         selectedCard = tab.card
         if let cachedTerminal = terminalSessions[id] {
             markTerminalSessionUsed(id)
@@ -1047,7 +1078,7 @@ public final class AppModel: ObservableObject {
     /// Closes a workspace tab. If the active tab closes, focus the nearest
     /// remaining tab; otherwise detach the current terminal.
     public func closeTab(id: String) {
-        guard id != "home" else {
+        if id == "home" || id.hasPrefix("board:") {
             focusTab(id: id)
             return
         }
@@ -1096,11 +1127,31 @@ public final class AppModel: ObservableObject {
     /// Switches the active detail panel (⌘1/2/3). US1 only renders Terminal.
     public func switchPanel(_ panel: Panel) {
         activePanel = panel
+        if !enabledPanels.contains(panel) {
+            enabledPanels.append(panel)
+        }
         if let activeTabID,
            let index = openTabs.firstIndex(where: { $0.id == activeTabID }) {
             openTabs[index].panel = panel
         }
         Task { await loadPanelData(for: panel) }
+    }
+
+    public func togglePanel(_ panel: Panel) {
+        if enabledPanels.contains(panel) {
+            guard enabledPanels.count > 1 else { return }
+            enabledPanels.removeAll { $0 == panel }
+            if activePanel == panel {
+                activePanel = enabledPanels.first ?? .terminal
+                if let activeTabID,
+                   let index = openTabs.firstIndex(where: { $0.id == activeTabID }) {
+                    openTabs[index].panel = activePanel
+                }
+            }
+            return
+        }
+        enabledPanels.append(panel)
+        switchPanel(panel)
     }
 
     public func loadSelectedTabPanel() {
@@ -1518,10 +1569,37 @@ public final class AppModel: ObservableObject {
         return tab.id
     }
 
+    private func upsertProjectBoardTab(select: Bool) {
+        let tabID = "board:\(projectSlug)"
+        let tab = WorkspaceTab(
+            id: tabID,
+            title: activeProjectName,
+            projectSlug: projectSlug,
+            projectName: activeProjectName,
+            kind: .board,
+            panel: .app(slug: "board")
+        )
+        if let index = openTabs.firstIndex(where: { $0.id == tabID }) {
+            openTabs[index] = tab
+        } else if let firstWorkTab = openTabs.firstIndex(where: { $0.kind != .home }) {
+            openTabs.insert(tab, at: firstWorkTab)
+            trimOpenTabsToLimit(protecting: tabID)
+        } else {
+            openTabs.append(tab)
+            trimOpenTabsToLimit(protecting: tabID)
+        }
+        if select {
+            activeTabID = tabID
+            selectedCard = nil
+            terminal = nil
+        }
+    }
+
     private func trimOpenTabsToLimit(protecting protectedID: String) {
+        let currentBoardID = "board:\(projectSlug)"
         while openTabs.count > 16 {
             guard let evictIndex = openTabs.firstIndex(where: { tab in
-                tab.id != "home" && tab.id != protectedID
+                tab.kind != .home && tab.id != currentBoardID && tab.id != protectedID
             }) else {
                 return
             }

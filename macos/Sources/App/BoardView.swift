@@ -62,8 +62,17 @@ struct BoardView: View {
                     Task { await model.refresh() }
                 })
             }
+            workspaceTabsHeader
             if selectedBoardCard != nil {
-                detailPane
+                HSplitView {
+                    columns
+                        .frame(minWidth: 420)
+                        .opacity(model.phase == .disconnected ? 0.7 : 1)
+                        .saturation(model.phase == .disconnected ? 0.6 : 1)
+                        .allowsHitTesting(model.phase != .disconnected)
+                    detailPane
+                        .frame(minWidth: 520)
+                }
             } else {
                 columns
                     .opacity(model.phase == .disconnected ? 0.7 : 1)
@@ -72,6 +81,23 @@ struct BoardView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var workspaceTabsHeader: some View {
+        if !model.openTabs.isEmpty {
+            WorkspaceTabStrip(
+                tabs: model.openTabs,
+                activeID: model.activeTabID,
+                isCreating: model.isCreatingWorkItem,
+                onSelect: model.focusTab,
+                onClose: model.closeTab,
+                onCreate: { model.createTask(status: .todo) }
+            )
+            .padding(.horizontal, Spacing.x3)
+            .padding(.vertical, Spacing.x2)
+            Divider().overlay(Color.hairlineDark)
+        }
     }
 
     private var hasTaskDetail: Bool {
@@ -147,9 +173,14 @@ struct BoardView: View {
         VStack(spacing: 0) {
             detailHeader
             Divider().overlay(Color.hairlineDark)
-            TaskPaneStrip(activePanel: model.activePanel, onSelect: model.switchPanel)
+            TaskPaneStrip(
+                activePanel: model.activePanel,
+                enabledPanels: model.enabledPanels,
+                onToggle: model.togglePanel,
+                onFocus: model.switchPanel
+            )
             Divider().overlay(Color.hairlineDark)
-            panelBody
+            enabledPanelBody
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.surfaceRail)
@@ -159,42 +190,70 @@ struct BoardView: View {
     }
 
     private var detailHeader: some View {
-        VStack(spacing: 0) {
-            if model.openTabs.isEmpty {
-                HStack {
-                    Text(selectedBoardCard?.title ?? "Task terminal")
-                        .font(.plexSans(13, weight: .semibold))
-                        .foregroundStyle(Color.inkPrimary)
-                        .lineLimit(1)
-                    Spacer()
-                    Button(action: model.closeCard) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Color.inkTertiary)
-                            .iconHitTarget(30)
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(.cancelAction)
-                }
-                .padding(.horizontal, Spacing.x4)
-                .padding(.vertical, Spacing.x2)
-            } else {
-                WorkspaceTabStrip(
-                    tabs: model.openTabs,
-                    activeID: model.activeTabID,
-                    isCreating: model.isCreatingWorkItem,
-                    onSelect: model.focusTab,
-                    onClose: model.closeTab,
-                    onCreate: { model.createTask(status: .todo) }
-                )
+        HStack {
+            Text(selectedBoardCard?.title ?? "Task")
+                .font(.plexSans(13, weight: .semibold))
+                .foregroundStyle(Color.inkPrimary)
+                .lineLimit(1)
+            Spacer()
+            Button(action: model.closeCard) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.inkTertiary)
+                    .iconHitTarget(30)
             }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
         }
+        .padding(.horizontal, Spacing.x4)
+        .padding(.vertical, Spacing.x2)
         .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
-    private var panelBody: some View {
-        switch model.activePanel {
+    private var enabledPanelBody: some View {
+        let panes = taskPaneSpecs.filter { model.enabledPanels.contains($0.panel) }
+        if panes.count <= 1, let pane = panes.first {
+            panelBody(for: pane.panel)
+        } else if panes.isEmpty {
+            placeholderPane("Choose a task pane to continue.")
+        } else {
+            HSplitView {
+                ForEach(panes) { pane in
+                    VStack(spacing: 0) {
+                        HStack(spacing: Spacing.x2) {
+                            Image(systemName: pane.icon)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(pane.panel == model.activePanel ? Color.signalLive : Color.inkTertiary)
+                            Text(pane.title)
+                                .font(.plexSans(12, weight: pane.panel == model.activePanel ? .semibold : .medium))
+                                .foregroundStyle(Color.inkPrimary)
+                            Spacer()
+                            Button { model.togglePanel(pane.panel) } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Color.inkTertiary)
+                                    .iconHitTarget(24)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Close \(pane.title)")
+                        }
+                        .padding(.horizontal, Spacing.x3)
+                        .frame(height: 32)
+                        .background(Color.surfaceCard)
+                        Divider().overlay(Color.hairlineDark)
+                        panelBody(for: pane.panel)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .frame(minWidth: 320)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func panelBody(for panel: Panel) -> some View {
+        switch panel {
         case .terminal:
             boardTerminalSurface
         case .shell:

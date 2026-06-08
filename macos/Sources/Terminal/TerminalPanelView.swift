@@ -15,6 +15,8 @@ private typealias Color = SwiftUI.Color
 /// - Top strip: session name + status badge + "● LIVE" / "↓ N new" affordance.
 /// - Calm inline states: `reconnecting…` (amber), `session exited` (grey) — never raw errors.
 public struct TerminalPanelView: View {
+    public nonisolated static let rendererConfiguration = TerminalRendererConfiguration(kind: .swiftTerm)
+
     @ObservedObject private var session: TerminalSession
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -214,8 +216,10 @@ private struct SwiftTermView: NSViewRepresentable {
         session.resize(cols: dims.cols, rows: dims.rows)
         session.start()
         DispatchQueue.main.async { [weak view] in
-            guard let view else { return }
-            view.window?.makeFirstResponder(view)
+            Self.requestInitialFocus(view)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak view] in
+            Self.requestInitialFocus(view)
         }
         return view
     }
@@ -223,6 +227,13 @@ private struct SwiftTermView: NSViewRepresentable {
     func updateNSView(_ nsView: TerminalView, context: Context) {
         // Keep the coordinator's reference fresh; sizing is reported via the delegate.
         context.coordinator.terminalView = nsView
+    }
+
+    private static func requestInitialFocus(_ view: TerminalView?) {
+        guard let view, let window = view.window else { return }
+        let responder = window.firstResponder
+        guard responder == nil || responder === view || responder === window.contentView || responder === window else { return }
+        window.makeFirstResponder(view)
     }
 
     private static func terminalFont(size: CGFloat) -> NSFont {
