@@ -74,7 +74,7 @@ struct MatrixWebShellPanel: View {
                         guard shouldRetry else { return }
                         authState.markResolving()
                         Task {
-                            await reloadBearerToken(source: .hostedSessionRetry)
+                            await reloadBearerToken()
                         }
                     }
                 )
@@ -93,30 +93,24 @@ struct MatrixWebShellPanel: View {
         }
         .onChange(of: model.signInCompletionID) { _, _ in
             Task {
-                await reloadBearerToken(source: .explicitSignIn)
+                await reloadBearerToken()
             }
         }
     }
 
     @MainActor
-    private func reloadBearerToken(source: WebShellAuthState.TokenResolutionSource = .automatic) async {
+    private func reloadBearerToken() async {
         guard url != nil else {
-            authState.resolveToken(nil, source: source)
+            authState.resolveToken(nil)
             return
         }
         authState.markResolving()
         let current = await model.currentBearerToken()
-        authState.resolveToken(current, source: source)
+        authState.resolveToken(current)
     }
 }
 
 struct WebShellAuthState: Equatable, Sendable {
-    enum TokenResolutionSource: Sendable {
-        case automatic
-        case explicitSignIn
-        case hostedSessionRetry
-    }
-
     private(set) var token: String?
     private(set) var didResolveToken = false
     private(set) var hostedAuthRequired = false
@@ -131,7 +125,7 @@ struct WebShellAuthState: Equatable, Sendable {
         didResolveToken = false
     }
 
-    mutating func resolveToken(_ nextToken: String?, source: TokenResolutionSource = .automatic) {
+    mutating func resolveToken(_ nextToken: String?) {
         token = nextToken
         didResolveToken = true
         if nextToken == nil {
@@ -140,20 +134,9 @@ struct WebShellAuthState: Equatable, Sendable {
             authRevision += 1
             return
         }
-        switch source {
-        case .automatic:
-            hostedAuthRequired = false
-            hostedRetryAttempted = false
-            authRevision += 1
-        case .explicitSignIn:
-            hostedAuthRequired = false
-            hostedRetryAttempted = false
-            authRevision += 1
-        case .hostedSessionRetry:
-            hostedAuthRequired = false
-            hostedRetryAttempted = false
-            authRevision += 1
-        }
+        hostedAuthRequired = false
+        hostedRetryAttempted = false
+        authRevision += 1
     }
 
     mutating func markHostedAuthRequired() -> Bool {

@@ -25,7 +25,7 @@ final class AppModelAuthTests: XCTestCase {
 
         state.resolveToken("old-token")
         _ = state.markHostedAuthRequired()
-        state.resolveToken("new-token", source: .explicitSignIn)
+        state.resolveToken("new-token")
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "new-token")
@@ -38,7 +38,7 @@ final class AppModelAuthTests: XCTestCase {
 
         XCTAssertTrue(state.markHostedAuthRequired())
 
-        state.resolveToken("native-token", source: .hostedSessionRetry)
+        state.resolveToken("native-token")
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
@@ -50,7 +50,7 @@ final class AppModelAuthTests: XCTestCase {
 
         state.resolveToken("native-token")
         _ = state.markHostedAuthRequired()
-        state.resolveToken("native-token", source: .automatic)
+        state.resolveToken("native-token")
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
