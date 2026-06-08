@@ -493,6 +493,8 @@ public final class AppModel: ObservableObject {
     private let deviceAuth: any DeviceAuthorizing
     /// Opens an external URL (browser) for device approval. Injected for tests.
     private let openExternalURL: @Sendable (URL) -> Void
+    /// Cancels a native approval browser session if one is currently presented.
+    private let cancelExternalAuth: @MainActor @Sendable () -> Void
     /// Gateway host for the profile created after a successful sign-in.
     private let signInGatewayHost: String
     /// Monotonic token used to ignore stale `openCard` calls that resume after a newer tap.
@@ -549,7 +551,8 @@ public final class AppModel: ObservableObject {
             platformURL: URL(string: "https://app.matrix-os.com")!
         ),
         signInGatewayHost: String = "app.matrix-os.com",
-        openExternalURL: @escaping @Sendable (URL) -> Void = AppModel.defaultOpenExternalURL
+        openExternalURL: @escaping @Sendable (URL) -> Void = AppModel.defaultOpenExternalURL,
+        cancelExternalAuth: @escaping @MainActor @Sendable () -> Void = AppModel.defaultCancelExternalAuth
     ) {
         self.principal = principal
         self.projectSlug = projectSlug
@@ -560,6 +563,7 @@ public final class AppModel: ObservableObject {
         self.deviceAuth = deviceAuth
         self.signInGatewayHost = signInGatewayHost
         self.openExternalURL = openExternalURL
+        self.cancelExternalAuth = cancelExternalAuth
         self.hasSelectedProject = false
         self.editorTheme = Self.loadPersistedEditorTheme()
         self.editorPreferences = Self.loadPersistedEditorPreferences()
@@ -687,6 +691,12 @@ public final class AppModel: ObservableObject {
         #endif
     }
 
+    public static let defaultCancelExternalAuth: @MainActor @Sendable () -> Void = {
+        #if canImport(AppKit) && canImport(AuthenticationServices)
+        NativeAuthBrowser.shared.cancel()
+        #endif
+    }
+
     /// Starts the device-authorization sign-in: requests a device code, opens the
     /// verification page in the browser, and polls until approved. On success it
     /// stores the principal token, builds a profile, and loads the board.
@@ -702,6 +712,7 @@ public final class AppModel: ObservableObject {
         signInTask?.cancel()
         signInTask = nil
         signIn = .idle
+        cancelExternalAuth()
     }
 
     public func handleOpenURL(_ url: URL) {
@@ -731,6 +742,7 @@ public final class AppModel: ObservableObject {
     public func signOutNow() async {
         signInTask?.cancel()
         signInTask = nil
+        cancelExternalAuth()
         do {
             try await principal.clear()
         } catch {
@@ -746,7 +758,6 @@ public final class AppModel: ObservableObject {
         signIn = .idle
         hasSelectedProject = false
         section = .board
-        workspaceSearchQuery = ""
         nativeSettingsSection = .account
         selectedCard = nil
         terminal = nil
@@ -772,6 +783,7 @@ public final class AppModel: ObservableObject {
         previews = []
         systemInfo = nil
         openError = nil
+        workspaceSearchQuery = ""
         board = BoardStore(loader: UnconfiguredBoardLoader())
     }
 
@@ -2109,6 +2121,11 @@ private final class NativeAuthBrowser: NSObject, ASWebAuthenticationPresentation
             session = nil
             NSWorkspace.shared.open(url)
         }
+    }
+
+    func cancel() {
+        session?.cancel()
+        session = nil
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {

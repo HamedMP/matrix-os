@@ -773,6 +773,7 @@ final class AppModelAuthTests: XCTestCase {
     func testSignOutClearsAccountAndReturnsToOnboarding() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         try await principal.setToken("token")
+        var cancelCount = 0
         let model = AppModel(
             principal: principal,
             projectSlug: "main",
@@ -780,7 +781,8 @@ final class AppModelAuthTests: XCTestCase {
             makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
             makeLoader: { _ in EmptyBoardLoader() },
             deviceAuth: MockDeviceAuthorizer(),
-            openExternalURL: { _ in }
+            openExternalURL: { _ in },
+            cancelExternalAuth: { cancelCount += 1 }
         )
         model.openHome()
         model.openProject(slug: "main")
@@ -795,6 +797,8 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertFalse(model.hasSelectedProject)
         XCTAssertNil(model.selectedCard)
         XCTAssertNil(model.terminal)
+        XCTAssertEqual(model.workspaceSearchQuery, "")
+        XCTAssertEqual(cancelCount, 1)
     }
 
     func testTabKeyboardNavigationAndCloseActiveTab() async throws {
@@ -846,6 +850,7 @@ final class AppModelAuthTests: XCTestCase {
 
     func testCancellingSignInDoesNotMarkCompletion() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
+        var cancelCount = 0
         let model = AppModel(
             principal: principal,
             projectSlug: "main",
@@ -861,7 +866,8 @@ final class AppModelAuthTests: XCTestCase {
                     interval: 1
                 ),
                 polls: [.pending]
-            )
+            ),
+            cancelExternalAuth: { cancelCount += 1 }
         )
 
         model.beginSignIn(mode: .signIn)
@@ -871,6 +877,7 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.signIn, .idle)
         XCTAssertEqual(model.signInCompletionID, 0)
         XCTAssertNil(token)
+        XCTAssertEqual(cancelCount, 1)
     }
 }
 

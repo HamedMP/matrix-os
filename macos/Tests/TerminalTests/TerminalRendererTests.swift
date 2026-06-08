@@ -44,6 +44,12 @@ final class TerminalRendererTests: XCTestCase {
             firstResponderIsTerminal: false,
             firstResponderIsRootView: true
         ))
+        XCTAssertTrue(TerminalFocusPolicy.shouldRequestInitialFocus(
+            hasFirstResponder: true,
+            firstResponderIsTerminal: false,
+            firstResponderIsRootView: false,
+            firstResponderIsWindow: true
+        ))
         XCTAssertFalse(TerminalFocusPolicy.shouldRequestInitialFocus(
             hasFirstResponder: true,
             firstResponderIsTerminal: false,

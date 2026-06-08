@@ -319,9 +319,10 @@ enum TerminalFocusPolicy {
     static func shouldRequestInitialFocus(
         hasFirstResponder: Bool,
         firstResponderIsTerminal: Bool,
-        firstResponderIsRootView: Bool
+        firstResponderIsRootView: Bool,
+        firstResponderIsWindow: Bool = false
     ) -> Bool {
-        !hasFirstResponder || firstResponderIsTerminal || firstResponderIsRootView
+        !hasFirstResponder || firstResponderIsTerminal || firstResponderIsRootView || firstResponderIsWindow
     }
 
     @MainActor
@@ -344,7 +345,8 @@ enum TerminalFocusPolicy {
             let shouldFocus = shouldRequestInitialFocus(
                 hasFirstResponder: firstResponder != nil,
                 firstResponderIsTerminal: firstResponder === view,
-                firstResponderIsRootView: firstResponder === window.contentView
+                firstResponderIsRootView: firstResponder === window.contentView,
+                firstResponderIsWindow: firstResponder === window
             )
             guard shouldFocus else { return false }
         }
