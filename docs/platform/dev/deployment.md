@@ -78,12 +78,12 @@ Do not copy `PIPEDREAM_*`, Clerk server secrets, platform DB credentials, or `PL
 ## Updating Platform Auth and Device-Login Pages
 
 `app.matrix-os.com` sign-in, sign-up, billing handoff, provisioning handoff, and
-CLI device-login pages are served by the platform Docker service. Pulling
-`main` on the platform VPS is not enough: the running `distro-platform-1`
-container keeps serving the previously built image until the platform service is
-rebuilt and recreated.
+CLI/native device-login pages are served by the platform Cloud Run service.
+Publishing a customer host bundle is not enough for these routes: Cloud Run
+keeps serving the previously deployed image until the platform service is
+rebuilt and promoted.
 
-Rebuild the platform Docker service whenever a PR changes:
+Deploy the platform Cloud Run service whenever a PR changes:
 
 - `packages/platform/src/auth-routes.ts`
 - `packages/platform/src/main.ts` auth, sign-in, sign-up, billing, or provisioning routes
@@ -91,8 +91,14 @@ Rebuild the platform Docker service whenever a PR changes:
 - `distro/docker-compose.platform.yml` for `platform` or `auth-shell`
 - platform pages that users reach at `app.matrix-os.com`
 
-On the platform VPS, keep the main checkout clean and deploy from a manual
-worktree pointed at `origin/main`:
+`.github/workflows/platform-cloud-run.yml` automatically builds, smokes, and
+promotes the production Cloud Run revision on `main` when platform/app-shell
+inputs change. For an immediate manual deployment, dispatch `Platform Cloud Run`
+with `environment=production` and `promote=true`.
+
+Legacy platform VPS Docker deployments should only be used if Cloud Run is not
+the active serving path. On the platform VPS, keep the main checkout clean and
+deploy from a manual worktree pointed at `origin/main`:
 
 ```bash
 git fetch origin main

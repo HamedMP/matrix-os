@@ -1,6 +1,20 @@
 name: Platform Cloud Run
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/platform/**"
+      - "packages/observability/**"
+      - "packages/clerk-sync/**"
+      - "shell/**"
+      - "distro/customer-vps/**"
+      - "scripts/start-platform-cloud-run.sh"
+      - "Dockerfile.platform"
+      - "cloudbuild.platform.yaml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
   workflow_dispatch:
     inputs:
       environment:
@@ -22,14 +36,14 @@ permissions:
   id-token: write
 
 concurrency:
-  group: platform-cloud-run-${{ inputs.environment }}
+  group: platform-cloud-run-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     name: Build and deploy platform
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
@@ -253,7 +267,7 @@ jobs:
           curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url" >/dev/null
 
       - name: Promote revision
-        if: ${{ inputs.promote }}
+        if: ${{ github.event_name == 'push' || inputs.promote }}
         run: |
           set -euo pipefail
           if [ -z "${CANDIDATE_REVISION:-}" ]; then
