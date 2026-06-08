@@ -25,12 +25,6 @@ Paste this into Claude, Codex, Cursor, Cline, or another coding agent:
 Set up Matrix OS so I can use my own cloud computer for coding agents,
 terminal sessions, and project work.
 
-First, read the official Matrix agent skill:
-
-```text
-https://matrix-os.com/skills.md
-```
-
 If your runtime supports file skills, install it:
 
 ```bash
@@ -41,16 +35,17 @@ Then show me this checklist:
 
 1. Install or update the Matrix CLI
 2. Run `matrix login --profile cloud` and wait for my Matrix instance to be ready
-3. Run `matrix agent auth scan` and ask which found credentials I want copied
-4. Transfer approved credentials with `matrix upload --secret`
-5. Start my preferred coding agent on Matrix with `matrix run`
+3. Verify with `matrix doctor` and `matrix whoami`
+4. Start my preferred coding agent on Matrix with `matrix run`
+5. Let me complete that tool's browser/device login inside the remote terminal
 6. Explain the reconnect and recovery commands only after the main path works
 
 Then proceed step by step. Keep the happy path small:
 
 ```bash
 matrix login --profile cloud
-matrix agent auth scan
+matrix doctor
+matrix whoami
 matrix run -it --session setup -- claude
 ```
 
@@ -92,24 +87,15 @@ Wait for provisioning, then run `matrix login --profile cloud` again.
 
 ## Step 3: Configure and run agents inside Matrix
 
-Run:
+Use browser/device login inside the Matrix VPS. Do not scan the local machine for credential files, and do not transfer local secret files as part of onboarding.
+
+For GitHub:
 
 ```bash
-matrix agent auth scan
+matrix run -it --session setup -- gh auth login
 ```
 
-If the scan finds local credential files and I approve copying them, use only the matching Matrix CLI transfer command. Do not read or print the file contents:
-
-```bash
-matrix upload --secret ~/.codex/auth.json .codex/auth.json
-matrix upload --secret ~/.claude/.credentials.json .claude/.credentials.json
-matrix upload --secret ~/.local/share/opencode/auth.json .local/share/opencode/auth.json
-matrix upload --secret ~/.pi/agent/auth.json .pi/agent/auth.json
-```
-
-If Claude Code is available only through macOS Keychain, do not extract it. Launch Claude on Matrix and let me complete remote login.
-
-For a remote agent session, run one command at a time:
+For a coding agent, run one command at a time:
 
 ```bash
 matrix run -it --session setup -- claude

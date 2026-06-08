@@ -1,0 +1,80 @@
+---
+title: Shell
+description: Use the Matrix web UI at app.matrix-os.com.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+The Matrix shell is the web UI at `https://app.matrix-os.com`. It gives you Canvas, Terminal, files, apps, integrations, settings, and access to the AI kernel.
+
+## Developer setup in the shell
+
+<Steps>
+  <Step>
+    ### Open Terminal
+
+    From the shell, open Terminal. This starts a persistent session on your Matrix computer.
+  </Step>
+  <Step>
+    ### Authenticate GitHub
+
+    ```bash
+    gh auth login
+    ```
+
+    Use the GitHub CLI flow that matches your account. Credentials are stored in the Matrix workspace.
+  </Step>
+  <Step>
+    ### Clone your project
+
+    ```bash
+    mkdir -p ~/projects
+    cd ~/projects
+    git clone git@github.com:owner/repo.git
+    ```
+  </Step>
+  <Step>
+    ### Start your dev server
+
+    ```bash
+    cd ~/projects/repo
+    pnpm install
+    pnpm dev
+    ```
+
+    Matrix can expose previews through authenticated routes when the project supports a dev server.
+  </Step>
+  <Step>
+    ### Launch an agent
+
+    In another session or pane, run the coding agent you want to use:
+
+    ```bash
+    codex
+    claude
+    opencode
+    hermes
+    ```
+  </Step>
+</Steps>
+
+## What persists
+
+- Shell sessions and recent output.
+- Source repositories under `~/projects`.
+- Files and app state under your Matrix home.
+- GitHub auth and agent credentials you install in the workspace.
+- Matrix skills synced into supported agent discovery paths.
+
+<Callout type="info" title="Same state from browser and CLI">
+  The web Terminal and `matrix shell connect` attach to the same session model. You can start work in the browser and reconnect from your local terminal later.
+</Callout>
+
+## Useful surfaces
+
+- **Canvas**: visual workspace for apps, terminals, files, and generated tools.
+- **Terminal**: persistent shell sessions for coding and agent work.
+- **Files**: browse Matrix home, projects, generated apps, and system files.
+- **Integrations**: connect GitHub, Gmail, Calendar, Drive, Slack, Discord, and other platform-owned integrations.
+- **Settings**: manage profile, billing, runtime, and connected services.

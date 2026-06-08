@@ -1,0 +1,106 @@
+---
+title: Quickstart
+description: Create a Matrix computer and start working from the shell.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+This quickstart gets a developer from zero to a running Matrix workspace.
+
+## Fastest path: paste the setup prompt
+
+<Callout type="info" title="Let your coding agent install Matrix">
+  Give the prompt below to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another terminal agent so it can install the CLI, guide `matrix login --profile cloud`, and start work on your cloud computer through in-VPS browser/device login.
+</Callout>
+
+```text
+Help me set up Matrix OS, my own cloud dev computer.
+
+Steps:
+1. Install the CLI: npm install -g @finnaai/matrix or brew install finnaai/tap/matrix.
+2. Run matrix login --profile cloud. It opens a browser/device login that I will approve.
+3. If no Matrix instance exists, tell me to sign up at https://app.matrix-os.com, then re-run login.
+4. Verify with matrix doctor and matrix whoami.
+5. Start my preferred coding agent inside Matrix with matrix run -it --session setup -- claude or matrix run -it --session setup -- codex. I will complete that tool's own login inside the remote terminal.
+
+Do not scan my local machine for credentials or upload secret files. Everything authenticates through its own browser/device flow.
+```
+
+<Cards>
+  <Card title="Install the Matrix skill" href="https://matrix-os.com/skills.md">
+    Local skill instructions for agents that support file skills, plus the same safe setup flow as this page.
+  </Card>
+  <Card title="Install the CLI" href="/docs/users/cli">
+    Use Homebrew, npm, or the install script, then run the hosted login flow.
+  </Card>
+</Cards>
+
+## Manual setup
+
+<Steps>
+  <Step>
+    ### Sign up
+
+    Go to `https://app.matrix-os.com`, create your account, and choose your Matrix handle. The handle becomes your Matrix identity and workspace address.
+  </Step>
+  <Step>
+    ### Choose power and region
+
+    Pick the Matrix power level and region that match your workload. More power is useful for full-stack dev servers, parallel test runs, and multiple coding agents.
+  </Step>
+  <Step>
+    ### Complete billing
+
+    Complete checkout for the hosted runtime. A hosted Matrix computer requires an active plan before provisioning.
+  </Step>
+  <Step>
+    ### Land in the shell
+
+    When provisioning finishes, Matrix opens the web shell. Use it to chat with Matrix, open Terminal, browse files, start apps, and connect services.
+  </Step>
+  <Step>
+    ### Authenticate GitHub
+
+    Open Terminal and run:
+
+    ```bash
+    gh auth login
+    ```
+
+    GitHub authenticates inside your Matrix workspace so terminal panes, coding agents, and future IDE surfaces share the same remote identity.
+  </Step>
+  <Step>
+    ### Clone a repo
+
+    ```bash
+    mkdir -p ~/projects
+    cd ~/projects
+    git clone git@github.com:owner/repo.git
+    ```
+  </Step>
+</Steps>
+
+<Callout type="info" title="Alternative: ask the Matrix onboarding skill">
+  If you use Codex or another Matrix-aware agent, ask it to onboard the repo into Matrix OS. The Matrix onboarding flow can guide GitHub auth, CLI login, repo clone, shell setup, and preview checks.
+</Callout>
+
+## First useful commands
+
+```bash
+matrix login --profile cloud
+matrix doctor
+matrix shell connect -c setup
+matrix run -it --session setup -- gh auth login
+matrix run -it --session setup -- codex
+```
+
+Use `Ctrl-\ Ctrl-\` to detach from an attached terminal without killing the remote session.
+
+## What to do next
+
+- Install the [Matrix CLI](/docs/users/cli) on your laptop.
+- Learn the [web shell](/docs/users/shell).
+- Launch a [coding agent](/docs/users/coding-agents).
+- Review [settings and billing](/docs/users/settings-billing).

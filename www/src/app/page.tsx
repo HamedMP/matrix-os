@@ -1,28 +1,44 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
+import Script from "next/script";
 import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { ScrollScreenshot, BodyOverflow } from "@/components/landing/ScrollScreenshot";
 import { LandingBilling } from "@/components/landing/LandingBilling";
 import { LandingTelemetry } from "@/components/landing/LandingTelemetry";
 import { AgentSetupCopyButton } from "@/components/landing/AgentSetupCopyButton";
+import { solutionPages } from "./solutions/data";
 import {
   ArrowRightIcon,
+  BotIcon,
   BrainCircuitIcon,
+  BriefcaseBusinessIcon,
+  CalendarIcon,
+  CheckCircle2Icon,
+  CloudIcon,
+  FileTextIcon,
+  GraduationCapIcon,
+  GitPullRequestIcon,
   GithubIcon,
   GlobeIcon,
+  Layers3Icon,
   LinkedinIcon,
+  MailIcon,
   MessageCircleIcon,
+  RocketIcon,
+  SearchIcon,
   ShieldCheckIcon,
+  TerminalIcon,
+  WorkflowIcon,
 } from "lucide-react";
 
 const faqItems = [
-  { q: "What happens to my data?", a: "Everything is a file on your system. Apps, data, settings, your AI's memory. Copy a folder to back up your entire OS. No vendor lock-in. No opaque databases." },
-  { q: "Do I need to code?", a: "No. You describe what you want in plain English. The AI writes the code, saves it as a file, and it appears on your desktop. You never touch a line of code unless you want to." },
-  { q: "What if something breaks?", a: "The OS heals itself. A built-in agent monitors for problems and fixes them automatically. Everything is versioned with git, so nothing is ever truly lost." },
-  { q: "Is it private?", a: "You can self-host it on your own server. Your data never leaves your machine unless you want it to. Open source under AGPL-3.0-or-later, auditable by anyone." },
-  { q: "How is this different from ChatGPT?", a: "ChatGPT is a chat window that forgets you. Matrix OS is an operating system that remembers you, builds software for you, runs on every device, and works while you sleep." },
-  { q: "What does it cost?", a: "Signup is free. Provisioning a hosted Matrix computer starts a 3-day trial through Clerk Billing because the private VPS has real runtime cost. The open source platform remains available for self-hosting." },
+  { q: "Is Matrix another AI editor?", a: "No. Matrix is the always-on cloud computer where coding agents get repos, terminals, previews, files, auth, and review loops that keep running after your laptop closes." },
+  { q: "Which agents can I use?", a: "Bring Claude Code, Codex, Cursor, OpenCode, Pi, Gemini CLI, and terminal agents. Matrix also hosts Matrix-native agents like Hermes and OpenClaw-style assistants for workflows and connected tools." },
+  { q: "What is Symphony?", a: "Symphony is the Matrix orchestration layer for autonomous coding: parallel sessions, task queues, terminal runs, previews, PR review, and handoff between agents and humans." },
+  { q: "What is Hermes?", a: "Hermes is the Matrix-native agent for workflows and connected tools. It can work across GitHub, Linear, Slack, Gmail, Calendar, Drive, billing, settings, and Matrix apps with your permission." },
+  { q: "What happens to my data?", a: "Your files live in your Matrix home and workspace data lives in your Matrix database. Matrix is built around owner-controlled data, exportability, and isolated hosted computers." },
+  { q: "What does it cost?", a: "Signup is free. Provisioning a hosted Matrix computer starts a 3-day trial through Clerk Billing because the private VPS has real runtime cost. Teams, enterprises, and universities can contact us for guided pilots." },
 ];
 
 const jsonLd = JSON.stringify({
@@ -31,7 +47,7 @@ const jsonLd = JSON.stringify({
     { "@type": "Organization", name: "Matrix OS", url: "https://matrix-os.com", logo: "https://matrix-os.com/rabbit.svg",
       sameAs: ["https://github.com/HamedMP/matrix-os", "https://x.com/joinmatrixos", "https://discord.gg/cSBBQWtPwV"] },
     { "@type": "SoftwareApplication", name: "Matrix OS", url: "https://matrix-os.com", applicationCategory: "OperatingSystem",
-      operatingSystem: "Web, Docker", description: "An AI-native operating system that generates software from conversation.",
+      operatingSystem: "Web", description: "A computer in the cloud for coding agents and AI workflows.",
       offers: { "@type": "Offer", price: "0", priceCurrency: "USD" } },
     { "@type": "FAQPage", mainEntity: faqItems.map((item) => ({
         "@type": "Question", name: item.q, acceptedAnswer: { "@type": "Answer", text: item.a } })) },
@@ -55,15 +71,20 @@ type NavLinkConfig = {
 };
 
 const navLinks: NavLinkConfig[] = [
-  { label: "features", href: "#features" },
-  { label: "developers", href: "#developers" },
-  { label: "billing", href: "#pricing" },
+  { label: "cloud dev", href: "#cloud-dev" },
+  { label: "solutions", href: "/solutions" },
+  { label: "symphony", href: "#symphony" },
+  { label: "teams", href: "#teams" },
+  { label: "docs", href: "/docs" },
 ];
 
 type FooterLinkItem = { label: string; href: string };
 
 const footerProductLinks: readonly FooterLinkItem[] = [
   { label: "Docs", href: "/docs" },
+  { label: "Solutions", href: "/solutions" },
+  { label: "Use Cases", href: "/use-cases" },
+  { label: "Contact", href: "/contact" },
   { label: "Releases", href: "/releases" },
   { label: "Agent Skill", href: "/skills.md" },
   { label: "Whitepaper", href: "/whitepaper" },
@@ -81,14 +102,16 @@ const footerSocialIcons = [
   { label: "GitHub", href: "https://github.com/HamedMP/matrix-os", Icon: GithubIcon },
 ] as const;
 
-const COPYABLE_AGENT_SETUP_PROMPT = `Set up Matrix OS so I can use my own cloud computer for coding agents.
+const COPYABLE_AGENT_SETUP_PROMPT = `Help me set up Matrix OS, my own cloud dev computer.
 
-First, read the official Matrix agent skill:
-https://matrix-os.com/skills.md
+Steps:
+1. Install the CLI: npm install -g @finnaai/matrix or brew install finnaai/tap/matrix.
+2. Run matrix login --profile cloud. It opens a browser/device login that I will approve.
+3. If no Matrix instance exists, tell me to sign up at https://app.matrix-os.com, then re-run login.
+4. Verify with matrix doctor and matrix whoami.
+5. Start my preferred coding agent inside Matrix with matrix run -it --session setup -- claude or matrix run -it --session setup -- codex. I will complete that tool's own login inside the remote terminal.
 
-Then install the Matrix CLI, help me sign in with matrix login --profile cloud, scan for local AI-agent credentials with matrix agent auth scan, copy only credentials I approve with matrix upload --secret, and start my preferred coding agent with matrix run.
-
-Use Claude Code, Codex, OpenCode, Pi, Cursor, Gemini CLI, or another terminal agent if I ask for it.`;
+Do not scan my local machine for credentials or upload secret files. Everything authenticates through its own browser/device flow.`;
 
 const agentBrands = [
   { name: "Claude Code", logo: "/agents/claude-code.svg" },
@@ -99,10 +122,16 @@ const agentBrands = [
   { name: "Gemini CLI", logo: "/agents/gemini.svg" },
 ] as const;
 
+const heroTrustItems = [
+  { Icon: ShieldCheckIcon, label: "Private cloud computer" },
+  { Icon: TerminalIcon, label: "All your coding agents" },
+  { Icon: GlobeIcon, label: "Work from any screen" },
+] as const;
+
 export const metadata: Metadata = {
-  title: "Matrix OS - Your computer, in the cloud",
+  title: "Matrix OS - A cloud computer for AI coding agents",
   description:
-    "An AI-native operating system that generates software from conversation. Open any browser, sign in, and your apps, files, and AI are ready.",
+    "Matrix gives developers a hosted cloud computer for Claude, Codex, Cursor, OpenCode, Hermes, OpenClaw-style agents, persistent terminals, previews, workflows, and connected tools.",
 };
 
 const LOGO_DEFAULT_STYLE: React.CSSProperties = {};
@@ -129,7 +158,7 @@ export default function LandingPage() {
   return (
     <div style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: "var(--font-inter), Inter, system-ui, sans-serif", position: "relative" }}>
       {/* react-doctor-disable-next-line react-doctor/no-danger -- jsonLd is JSON.stringify of a static module-scope object (trusted, no user input); standard JSON-LD injection */}
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
+      <Script id="landing-json-ld" type="application/ld+json" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: jsonLd }} />
       <LandingTelemetry />
       <BodyOverflow />
       <svg style={{ position: "fixed", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 50, opacity: 0.12 }}>
@@ -284,16 +313,22 @@ export default function LandingPage() {
 
       <NavIsland />
       <HeroSection />
+      <CloudDevSection />
+      <SolutionLinksSection />
+      <AudienceSection />
       <AgentSetupSection />
       <PreviewSection />
-      <AboutSection />
 
       <div className="mx-auto max-w-[1100px] px-8">
         <div style={{ height: 1, backgroundColor: c.border }} />
       </div>
 
-      <FeaturesSection />
+      <SymphonySection />
+      <HermesSection />
+      <ProfessionalWorkflowsSection />
+      <BeyondDevelopersSection />
       <HowItWorksSection />
+      <DeploymentChoiceSection />
 
       <LandingBilling />
 
@@ -310,12 +345,12 @@ function AgentSetupSection() {
       <div className="mx-auto max-w-[1100px] px-6 md:px-8">
         <div className="grid gap-8 md:grid-cols-[0.88fr_1.12fr] md:items-stretch">
           <div className="flex flex-col justify-center">
-            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>For coding agents</p>
-            <h2 className="mb-5 max-w-xl text-[clamp(1.8rem,4vw,3.2rem)] font-semibold leading-[1.12]" style={{ color: c.forest }}>
-              Paste one message. Let your agent install Matrix.
+            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>Bring your agent</p>
+            <h2 className="mb-5 max-w-xl text-[clamp(1.8rem,4vw,3.2rem)] font-normal leading-[1.12]" style={{ color: c.forest }}>
+              Paste one message. Move your agent into Matrix.
             </h2>
             <p className="max-w-xl text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-              Matrix publishes a setup skill at <code>matrix-os.com/skills.md</code>. Give it to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another coding agent so it can install the CLI, guide <code>matrix login --profile cloud</code>, and start work on your cloud computer with <code>matrix run</code>.
+              Matrix publishes a setup skill at <code>matrix-os.com/skills.md</code>. Give it to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another coding agent so it can install the CLI, guide <code>matrix login --profile cloud</code>, attach to your cloud shell, and start work with <code>matrix run</code>.
             </p>
             <div className="mt-7 flex flex-wrap gap-3" aria-label="Supported coding agents">
               {agentBrands.map((brand) => (
@@ -354,9 +389,9 @@ function AgentSetupSection() {
                 style={{ border: `1px solid ${c.border}`, color: c.forest }}>
                 Open skills.md <ArrowRightIcon className="size-3.5" />
               </a>
-              <Link href="/docs/guide/developer-workflow" className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-center text-[10px] font-medium uppercase tracking-[0.08em] transition-opacity duration-300 hover:opacity-80 sm:px-4 sm:text-[11px] sm:tracking-[0.12em]"
+              <Link href="/docs/users/quickstart" className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full px-3 py-2 text-center text-[10px] font-medium uppercase tracking-[0.08em] transition-opacity duration-300 hover:opacity-80 sm:px-4 sm:text-[11px] sm:tracking-[0.12em]"
                 style={{ border: `1px solid ${c.border}`, color: c.forest }}>
-                Developer workflow
+                Quickstart
               </Link>
             </nav>
           </div>
@@ -434,25 +469,35 @@ function HeroSection() {
   return (
     <section className="relative min-h-[78svh] overflow-hidden pt-32 pb-20 md:min-h-[82svh] md:pt-28 md:pb-24" style={{ backgroundColor: c.pageBg }}>
       <div className="relative mx-auto grid min-h-[calc(78svh-13rem)] max-w-[980px] items-center gap-8 px-6 md:min-h-[calc(82svh-13rem)] md:grid-cols-[minmax(0,1fr)_minmax(0,0.92fr)] md:gap-10 md:px-8 lg:max-w-[1040px] lg:gap-12">
-        <div className="relative z-10 max-w-[22rem] md:max-w-[26rem]">
-          <h1 className="text-[2.65rem] md:text-[3.25rem] leading-[1.1] mb-6" style={{ color: c.forest }}>
-            Your computer, in the cloud.
+        <div className="relative z-10 max-w-[24rem] md:max-w-[30rem]">
+          <p className="mb-5 inline-flex rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em]"
+            style={{ border: `1px solid ${c.border}`, backgroundColor: "rgba(250,250,245,0.5)", color: c.subtle }}>
+            Cloud computer for agents
+          </p>
+          <h1 className="text-[2.55rem] md:text-[3.3rem] leading-[1.05] mb-6" style={{ color: c.forest }}>
+            A computer in the cloud for your AI agents.
           </h1>
           <p className="text-[16px] leading-[1.8] mb-8" style={{ color: c.mutedFg }}>
-            A personal computer that lives in the cloud. Open any browser, sign in, and everything is ready: your apps, your files, your way.
+            Use Claude, Codex, Cursor, OpenCode, Pi, Gemini CLI, Hermes, and OpenClaw-style agents in one private hosted computer. They get terminals, repos, previews, files, connected tools, workflows, and time to keep working after your laptop closes.
           </p>
-          <SignedOut>
-            <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="get_started" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-              style={{ backgroundColor: c.forest, color: c.pageBg }}>
-              Get Started <ArrowRightIcon className="size-3.5" />
-            </a>
-          </SignedOut>
-          <SignedIn>
-            <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="open_app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-8 py-3 text-[13px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
-              style={{ backgroundColor: c.forest, color: c.pageBg }}>
-              Open Matrix OS <ArrowRightIcon className="size-3.5" />
-            </a>
-          </SignedIn>
+          <div className="flex flex-wrap gap-3">
+            <SignedOut>
+              <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="start_cloud_dev" className="inline-flex items-center gap-2 rounded-full px-7 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+                style={{ backgroundColor: c.forest, color: c.pageBg }}>
+                Start cloud dev <ArrowRightIcon className="size-3.5" />
+              </a>
+            </SignedOut>
+            <SignedIn>
+              <a href="https://app.matrix-os.com" data-ph-event="marketing_cta_clicked" data-ph-location="hero" data-ph-target="open_app" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full px-7 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+                style={{ backgroundColor: c.forest, color: c.pageBg }}>
+                Open Matrix OS <ArrowRightIcon className="size-3.5" />
+              </a>
+            </SignedIn>
+            <Link href="/docs/users/quickstart" className="inline-flex items-center gap-2 rounded-full px-7 py-3 text-[12px] tracking-[0.12em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
+              style={{ border: `1px solid ${c.border}`, color: c.forest, backgroundColor: "rgba(250,250,245,0.42)" }}>
+              Read quickstart
+            </Link>
+          </div>
           <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
             <a
               href="https://discord.gg/cSBBQWtPwV"
@@ -471,6 +516,23 @@ function HeroSection() {
             >
               Agent setup
             </a>
+            <Link
+              href="/solutions"
+              className="nav-link text-[11px] tracking-[0.16em] uppercase"
+              style={{ color: c.subtle }}
+            >
+              Solutions
+            </Link>
+          </div>
+          <div className="mt-8 grid gap-2 border-t pt-5 sm:grid-cols-3" style={{ borderColor: c.border }}>
+            {heroTrustItems.map((item) => (
+              <div key={item.label} className="flex items-center gap-2.5 text-[12px]" style={{ color: c.forest }}>
+                <span className="grid size-8 shrink-0 place-items-center rounded-full" style={{ backgroundColor: "rgba(67,78,63,0.08)", color: c.ember }}>
+                  <item.Icon className="size-3.5" />
+                </span>
+                <span>{item.label}</span>
+              </div>
+            ))}
           </div>
         </div>
         <div className="relative z-0 mx-auto w-full max-w-[340px] md:mx-0 md:max-w-none md:justify-self-end">
@@ -493,15 +555,169 @@ function HeroSection() {
   );
 }
 
+const cloudDevCards = [
+  { Icon: CloudIcon, title: "The agent gets a computer", desc: "Matrix is not a dashboard. It is a private hosted computer with files, shells, apps, previews, workflows, and memory." },
+  { Icon: TerminalIcon, title: "Use all your coding agents there", desc: "Run Claude, Codex, Cursor, OpenCode, Pi, Gemini CLI, or another terminal agent inside Matrix instead of your local laptop." },
+  { Icon: BotIcon, title: "Run AI agents like Hermes", desc: "Hermes and OpenClaw-style assistants can work across connected tools, scheduled workflows, apps, and approvals." },
+] as const;
+
+function CloudDevSection() {
+  return (
+    <section id="cloud-dev" className="relative py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="grid gap-10 md:grid-cols-[0.95fr_1.05fr] md:items-end">
+          <div>
+            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>Why Matrix</p>
+            <h2 className="max-w-xl text-[clamp(1.9rem,4vw,3.4rem)] font-normal leading-[1.08]" style={{ color: c.forest }}>
+              Local development was not built for autonomous agents.
+            </h2>
+          </div>
+          <div className="grid gap-4 text-[15px] leading-[1.85]" style={{ color: c.mutedFg }}>
+            <p>
+              Coding agents and AI assistants need their own computer: a place to clone repos, run tests, keep previews open, authenticate tools, remember context, and wait for humans without losing state.
+            </p>
+            <p style={{ color: c.subtle }}>
+              Matrix turns your devices into viewers. The work stays in the Matrix computer, so agents can keep running while you switch screens, sleep, travel, or share context with teammates.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-10 grid gap-4 md:grid-cols-3">
+          {cloudDevCards.map((item) => (
+            <article key={item.title} className="rounded-[16px] p-6"
+              style={{ backgroundColor: "rgba(250,250,245,0.38)", border: `1px solid ${c.border}` }}>
+              <item.Icon className="mb-5 size-5" style={{ color: c.ember }} />
+              <h3 className="mb-3 text-[15px] font-semibold" style={{ color: c.forest }}>{item.title}</h3>
+              <p className="text-[13px] leading-[1.75]" style={{ color: c.mutedFg }}>{item.desc}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const highlightedSolutions = solutionPages.slice(0, 6);
+
+function SolutionLinksSection() {
+  return (
+    <section id="solutions" className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="mb-9 grid gap-6 md:grid-cols-[0.92fr_1.08fr] md:items-end">
+          <div>
+            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>Solutions</p>
+            <h2 className="text-[clamp(1.85rem,4vw,3.2rem)] font-normal leading-[1.1]" style={{ color: c.forest }}>
+              Same cloud computer. Different agents and jobs.
+            </h2>
+          </div>
+          <p className="text-[15px] leading-[1.85]" style={{ color: c.mutedFg }}>
+            Start with developers, but make the cloud-computer story easy for every buyer to understand: coding agents, Hermes hosting, OpenClaw-style assistants, enterprise pilots, universities, and professional workflows.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          {highlightedSolutions.map((item) => (
+            <Link
+              key={item.slug}
+              href={`/solutions/${item.slug}`}
+              className="group flex min-h-[14.5rem] flex-col rounded-[18px] p-5 transition-transform duration-300 hover:-translate-y-0.5"
+              style={{ backgroundColor: "rgba(250,250,245,0.42)", border: `1px solid ${c.border}` }}
+            >
+              <p className="mb-4 text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: c.ember }}>{item.eyebrow}</p>
+              <h3 className="mb-3 text-[1.05rem] font-semibold leading-[1.25]" style={{ color: c.forest }}>{item.title}</h3>
+              <p className="line-clamp-3 text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.description}</p>
+              <span className="mt-auto inline-flex items-center gap-2 pt-5 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: c.forest }}>
+                Read page <ArrowRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </Link>
+          ))}
+        </div>
+
+        <div className="mt-5">
+          <Link
+            href="/solutions"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.12em]"
+            style={{ backgroundColor: c.forest, color: c.pageBg }}
+          >
+            View all solution pages <ArrowRightIcon className="size-3.5" />
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const audienceCards = [
+  {
+    label: "Individual developers",
+    title: "Give your coding agents a cloud computer today",
+    desc: "Sign up, install the Matrix CLI, install the Matrix skill in your coding agent, and run Claude, Codex, Cursor, OpenCode, Pi, or Gemini CLI inside your Matrix computer.",
+    action: "Developer quickstart",
+    href: "/docs/users/quickstart",
+  },
+  {
+    label: "Teams and enterprise",
+    title: "Try the latest AI tools without putting corporate laptops at risk",
+    desc: "Give developers isolated cloud computers for AI coding experiments, autonomous agents, previews, and tool trials while keeping local machines and company environments separate.",
+    action: "Contact Matrix",
+    href: "/contact?audience=enterprise",
+  },
+  {
+    label: "Universities",
+    title: "Standard workspaces for AI-native software courses",
+    desc: "Provision repeatable cloud computers for classes, labs, research groups, and hackathons so students can use modern coding agents without local setup drift.",
+    action: "Plan a pilot",
+    href: "/contact?audience=university",
+  },
+] as const;
+
+function AudienceSection() {
+  return (
+    <section id="teams" className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="mb-8 max-w-2xl">
+          <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>Who it is for</p>
+          <h2 className="text-[clamp(1.85rem,4vw,3.2rem)] font-normal leading-[1.1]" style={{ color: c.forest }}>
+            Start with developers. Expand to teams, enterprises, and universities.
+          </h2>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          {audienceCards.map((item) => (
+            <article key={item.label} className="flex min-h-[18rem] flex-col rounded-[18px] p-6"
+              style={{ backgroundColor: "rgba(250,250,245,0.42)", border: `1px solid ${c.border}` }}>
+              <p className="mb-5 text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: c.ember }}>{item.label}</p>
+              <h3 className="mb-4 text-[1.15rem] font-semibold leading-[1.2]" style={{ color: c.forest }}>{item.title}</h3>
+              <p className="text-[13px] leading-[1.75]" style={{ color: c.mutedFg }}>{item.desc}</p>
+              {item.label === "Individual developers" ? (
+                <p className="mt-4 text-[12px] leading-[1.7]" style={{ color: c.subtle }}>
+                  Mac app: planned. Today: web shell, CLI, and Matrix skill.
+                </p>
+              ) : null}
+              <Link
+                href={item.href}
+                className="mt-auto inline-flex items-center gap-2 pt-6 text-[11px] font-semibold uppercase tracking-[0.12em] transition-opacity hover:opacity-70"
+                style={{ color: c.forest }}
+              >
+                {item.action} <ArrowRightIcon className="size-3.5" />
+              </Link>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function PreviewSection() {
   return (
     <section id="preview" className="relative overflow-hidden pt-8 pb-14 md:pt-12 md:pb-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8">
         <ScrollScreenshot />
         <div className="mt-10 max-w-2xl mx-auto text-center">
-          <h3 className="text-[1.1rem] font-semibold mb-3" style={{ color: c.forest }}>A real desktop, in your browser</h3>
+          <h3 className="text-[1.1rem] font-normal mb-3" style={{ color: c.forest }}>A real cloud workstation, in your browser</h3>
           <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-            Your Matrix instance isn&apos;t just a dashboard: it&apos;s a full visual operating system. A desktop with windows, a dock, wallpapers, and all your apps arranged exactly how you like. It feels like sitting at your own computer, except it runs in the cloud and follows you everywhere.
+            Your Matrix instance isn&apos;t just a dashboard: it&apos;s a full visual operating system for developer work. Terminals, apps, files, previews, and agent sessions stay together in one cloud workspace that follows you everywhere.
           </p>
         </div>
       </div>
@@ -509,25 +725,187 @@ function PreviewSection() {
   );
 }
 
-function AboutSection() {
+const symphonyCards = [
+  { label: "Parallel", title: "Run multiple coding agents", desc: "Split work across Claude, Codex, Cursor, OpenCode, or Gemini CLI sessions without blocking your laptop." },
+  { label: "Visible", title: "See status at a glance", desc: "Track what each agent is reading, editing, testing, previewing, and waiting on before you review." },
+  { label: "Reviewable", title: "Merge only what survives review", desc: "Keep human control over branches, diffs, checks, browser previews, and PRs." },
+] as const;
+
+function SymphonySection() {
   return (
-    <section id="about" className="py-16 md:py-24" style={{ backgroundColor: c.pageBg }}>
-      <div className="mx-auto max-w-[1100px] px-8">
-        <div className="grid gap-12 md:grid-cols-[1fr_1.2fr] md:gap-16">
+    <section id="symphony" className="py-16 md:py-24" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="grid gap-10 md:grid-cols-[0.95fr_1.05fr] md:items-center">
           <div>
-            <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>About</p>
-            <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2]" style={{ color: c.forest }}>
-              Your computer, in the cloud.
+            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>Symphony</p>
+            <h2 className="max-w-xl text-[clamp(1.9rem,4vw,3.4rem)] font-normal leading-[1.08]" style={{ color: c.forest }}>
+              Autonomous coding orchestration for the cloud.
+            </h2>
+            <p className="mt-6 max-w-xl text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
+              Symphony is the Matrix layer for assigning work, running agents in parallel, keeping terminal sessions alive, and turning output into reviewable changes.
+            </p>
+          </div>
+
+          <div className="rounded-[20px] p-5 md:p-6" style={{ border: `1px solid ${c.border}`, backgroundColor: "rgba(67,78,63,0.07)" }}>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: c.subtle }}>Agent queue</p>
+                <p className="mt-1 text-[13px]" style={{ color: c.mutedFg }}>3 active sessions · 2 ready for review</p>
+              </div>
+              <WorkflowIcon className="size-5" style={{ color: c.ember }} />
+            </div>
+            <div className="grid gap-3">
+              {[
+                ["Codex", "Refactor billing checkout", "running tests", "+82 -19"],
+                ["Claude Code", "Add CLI quickstart", "ready for review", "+54 -8"],
+                ["Hermes", "Turn Discord feedback into Linear tasks", "waiting on approval", "+0 -0"],
+              ].map(([agent, task, state, diff]) => (
+                <div key={task} className="grid grid-cols-[1fr_auto] gap-3 rounded-[12px] p-4"
+                  style={{ backgroundColor: "rgba(250,250,245,0.58)", border: `1px solid ${c.border}` }}>
+                  <div>
+                    <p className="text-[12px] font-semibold" style={{ color: c.forest }}>{agent}</p>
+                    <p className="mt-1 text-[13px]" style={{ color: c.deep }}>{task}</p>
+                    <p className="mt-2 text-[11px] uppercase tracking-[0.12em]" style={{ color: c.subtle }}>{state}</p>
+                  </div>
+                  <span className="self-start rounded-full px-2.5 py-1 text-[11px] font-medium" style={{ color: c.forest, backgroundColor: "rgba(208,111,37,0.1)" }}>{diff}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
+          {symphonyCards.map((item) => (
+            <article key={item.title} className="rounded-[16px] p-5" style={{ border: `1px solid ${c.border}`, backgroundColor: "rgba(250,250,245,0.34)" }}>
+              <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: c.ember }}>{item.label}</p>
+              <h3 className="mb-2 text-[15px] font-semibold" style={{ color: c.forest }}>{item.title}</h3>
+              <p className="text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.desc}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const hermesCards = [
+  { Icon: WorkflowIcon, title: "Build workflows", desc: "Turn recurring product, support, finance, and engineering work into Matrix workflows that can run on schedule." },
+  { Icon: Layers3Icon, title: "Connect every tool", desc: "Work across GitHub, Linear, Slack, Discord, Gmail, Calendar, Drive, Sentry, Datadog, billing, and Matrix apps." },
+  { Icon: RocketIcon, title: "Ship apps and automations", desc: "Create internal tools, dashboards, trackers, reports, and app workflows in the same Matrix workspace." },
+] as const;
+
+function HermesSection() {
+  return (
+    <section id="hermes" className="py-16 md:py-24" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="rounded-[22px] p-6 md:p-8" style={{ border: `1px solid ${c.border}`, backgroundColor: "rgba(50,53,46,0.9)", color: c.pageBg }}>
+          <div className="grid gap-8 md:grid-cols-[0.9fr_1.1fr] md:items-center">
+            <div>
+              <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: "rgba(226,226,207,0.62)" }}>Hermes</p>
+              <h2 className="text-[clamp(1.9rem,4vw,3.35rem)] font-normal leading-[1.08]">
+                The Matrix-native agent for workflows and connected tools.
+              </h2>
+              <p className="mt-6 text-[15px] leading-[1.85]" style={{ color: "rgba(226,226,207,0.76)" }}>
+                Coding agents build software. Hermes runs the operating system around them: tool connections, scheduled workflows, notifications, approvals, memory, and everyday actions.
+              </p>
+            </div>
+            <div className="grid gap-3">
+              {hermesCards.map((item) => (
+                <article key={item.title} className="grid grid-cols-[2.25rem_1fr] gap-3 rounded-[14px] p-4"
+                  style={{ backgroundColor: "rgba(250,250,245,0.07)", border: "1px solid rgba(226,226,207,0.14)" }}>
+                  <span className="grid size-9 place-items-center rounded-[10px]" style={{ backgroundColor: "rgba(208,111,37,0.16)", color: c.ember }}>
+                    <item.Icon className="size-4" />
+                  </span>
+                  <div>
+                    <h3 className="text-[14px] font-semibold">{item.title}</h3>
+                    <p className="mt-1 text-[13px] leading-[1.6]" style={{ color: "rgba(226,226,207,0.68)" }}>{item.desc}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const professionalWorkflows = [
+  {
+    Icon: MailIcon,
+    title: "Inbox and follow-ups",
+    desc: "Hermes can summarize unread mail, draft replies, flag urgent threads, and remind you who needs an answer.",
+    example: "Draft replies for my important emails and list the ones I should approve.",
+  },
+  {
+    Icon: CalendarIcon,
+    title: "Meeting prep",
+    desc: "Pull notes, calendar context, CRM details, documents, and prior decisions into one brief before the call.",
+    example: "Prepare me for tomorrow's investor meeting with open questions and next steps.",
+  },
+  {
+    Icon: SearchIcon,
+    title: "Research reports",
+    desc: "Run browser-backed research, compare sources, collect links, and produce a clean report in your workspace.",
+    example: "Research three competitors and summarize pricing, positioning, and product gaps.",
+  },
+  {
+    Icon: FileTextIcon,
+    title: "Docs and dashboards",
+    desc: "Turn recurring work into reports, trackers, summaries, and internal tools that stay connected to the same context.",
+    example: "Create a weekly operating dashboard from GitHub, Linear, Slack, and calendar activity.",
+  },
+] as const;
+
+function ProfessionalWorkflowsSection() {
+  return (
+    <section id="professional-workflows" className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="mb-9 grid gap-6 md:grid-cols-[0.9fr_1.1fr] md:items-end">
+          <div>
+            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>Professional assistant</p>
+            <h2 className="text-[clamp(1.85rem,4vw,3.2rem)] font-normal leading-[1.1]" style={{ color: c.forest }}>
+              Host Hermes as an assistant that can use real tools.
             </h2>
           </div>
-          <div className="flex flex-col gap-6 md:pt-10">
-            <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-              Matrix OS gives you a full personal computer that runs in the cloud. Open any browser, sign in, and you have your desktop: your apps, your files, your settings, ready to go. No installs, no setup, nothing to maintain.
-            </p>
-            <p className="text-[15px] leading-[1.9]" style={{ color: c.mutedFg }}>
-              Just tell it what you need. An AI assistant builds your apps, organizes your workspace, and keeps everything running. It works on any device, from anywhere, and picks up right where you left off.
-            </p>
-          </div>
+          <p className="text-[15px] leading-[1.85]" style={{ color: c.mutedFg }}>
+            The assistant should do the work, not only answer questions. Matrix gives Hermes a persistent computer for recurring professional workflows.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {professionalWorkflows.map((item) => (
+            <article key={item.title} className="rounded-[18px] p-5 md:p-6"
+              style={{ backgroundColor: "rgba(250,250,245,0.42)", border: `1px solid ${c.border}` }}>
+              <div className="mb-5 flex items-start gap-4">
+                <span className="grid size-11 shrink-0 place-items-center rounded-full" style={{ backgroundColor: "rgba(208,111,37,0.1)", color: c.ember }}>
+                  <item.Icon className="size-5" />
+                </span>
+                <div>
+                  <h3 className="text-[16px] font-semibold leading-[1.25]" style={{ color: c.forest }}>{item.title}</h3>
+                  <p className="mt-2 text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.desc}</p>
+                </div>
+              </div>
+              <div className="rounded-[14px] p-4" style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: c.subtle }}>Example</p>
+                <p className="text-[13px] italic leading-[1.7]" style={{ color: c.deep }}>&quot;{item.example}&quot;</p>
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <div className="mt-6 flex flex-col gap-3 rounded-[18px] p-5 sm:flex-row sm:items-center sm:justify-between"
+          style={{ backgroundColor: "rgba(50,53,46,0.9)", border: `1px solid ${c.border}`, color: c.pageBg }}>
+          <p className="max-w-2xl text-[13px] leading-[1.7]" style={{ color: "rgba(226,226,207,0.76)" }}>
+            Want Hermes hosted for a professional workflow, not a coding workflow?
+          </p>
+          <Link
+            href="/contact?audience=hermes-hosting"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.12em]"
+            style={{ backgroundColor: c.pageBg, color: c.forest }}
+          >
+            Talk to Matrix <ArrowRightIcon className="size-3.5" />
+          </Link>
         </div>
       </div>
     </section>
@@ -553,9 +931,9 @@ const featureNetworkDevices = [
 ] as const;
 
 const featurePills = [
-  { Icon: BrainCircuitIcon, title: "Always running", desc: "Your instance never sleeps. Apps, data, and AI stay online 24/7 whether you're connected or not." },
-  { Icon: ShieldCheckIcon, title: "Private by design", desc: "Your own database, files, and runtime. Fully isolated. Nobody else can see in." },
-  { Icon: GlobeIcon, title: "Any screen, anywhere", desc: "Phone, laptop, friend's computer: open a browser and you're home." },
+  { Icon: BrainCircuitIcon, title: "Agent-ready context", desc: "Repos, docs, logs, skills, settings, and terminal history stay in one place for humans and agents." },
+  { Icon: ShieldCheckIcon, title: "Private by design", desc: "Your own database, files, runtime, and cloud computer. Fully isolated and owner-controlled." },
+  { Icon: GlobeIcon, title: "Any screen, anywhere", desc: "Browser, CLI, phone, laptop, or teammate's machine: attach to the same running workspace." },
 ] as const;
 
 function FeaturesSection() {
@@ -593,14 +971,14 @@ function FeaturesSection() {
         <div className="mb-10 grid items-center gap-10 md:mb-14 md:grid-cols-2 md:gap-14">
           <div>
             <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>The platform</p>
-            <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.15] mb-8" style={{ color: c.forest }}>
-              Built around you.
+            <h2 className="text-[clamp(1.75rem,4vw,3rem)] font-normal leading-[1.15] mb-8" style={{ color: c.forest }}>
+              Built around the persistent workspace.
             </h2>
             <p className="text-[15px] leading-[1.9] mb-5" style={{ color: c.mutedFg }}>
-              Your Matrix instance runs 24/7 in the cloud: always on, always yours. Connect from your phone on the train, your laptop at home, or a friend&apos;s computer at a cafe. Every device sees the same workspace, instantly.
+              Your Matrix instance runs 24/7 in the cloud: always on, always yours. Connect from the web shell, local CLI, your laptop at home, or a phone on the train. Every surface sees the same workspace instantly.
             </p>
             <p className="text-[15px] leading-[1.9]" style={{ color: c.subtle }}>
-              Devices come and go. Your instance never stops. Close your laptop and pick up on your phone; everything is exactly where you left it. No syncing, no waiting, no setup.
+              Devices come and go. Agents come and go. The Matrix computer keeps the source of truth alive.
             </p>
           </div>
 
@@ -616,6 +994,92 @@ function FeaturesSection() {
               <p className="text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.desc}</p>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const beyondCards = [
+  {
+    Icon: BriefcaseBusinessIcon,
+    label: "Professionals",
+    title: "A cloud assistant with its own computer",
+    desc: "Use Matrix as a personal operator for planning, research, follow-ups, docs, dashboards, and recurring work.",
+    href: "/solutions/professional-ai-assistant-cloud-computer",
+  },
+  {
+    Icon: BotIcon,
+    label: "Hermes hosting",
+    title: "Host a Matrix-native agent without DevOps",
+    desc: "Give Hermes an always-on home for connected tools, scheduled workflows, approvals, and notifications.",
+    href: "/solutions/hermes-ai-agent-hosting",
+  },
+  {
+    Icon: ShieldCheckIcon,
+    label: "Enterprise",
+    title: "AI experiments away from managed laptops",
+    desc: "Give builders isolated Matrix computers for trials, prototypes, and agent workflows when IT policy blocks local installs.",
+    href: "/solutions/enterprise-ai-coding-lab",
+  },
+  {
+    Icon: GraduationCapIcon,
+    label: "Universities",
+    title: "Repeatable labs for AI-native development",
+    desc: "Provision the same cloud dev environment for students, cohorts, workshops, and research groups.",
+    href: "/solutions/university-ai-development-lab",
+  },
+] as const;
+
+function BeyondDevelopersSection() {
+  return (
+    <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="mb-9 grid gap-6 md:grid-cols-[0.9fr_1.1fr] md:items-end">
+          <div>
+            <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>Beyond developers</p>
+            <h2 className="text-[clamp(1.85rem,4vw,3.2rem)] font-normal leading-[1.1]" style={{ color: c.forest }}>
+              The same cloud computer can support teams, pilots, and programs.
+            </h2>
+          </div>
+          <p className="text-[15px] leading-[1.85]" style={{ color: c.mutedFg }}>
+            Start with a developer workspace, then use the same persistent computer for secure pilots, shared labs, and AI workflows that need real tools.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {beyondCards.map((item) => (
+            <Link
+              key={item.title}
+              href={item.href}
+              className="group flex min-h-[16rem] flex-col rounded-[18px] p-6 transition-transform duration-300 hover:-translate-y-0.5"
+              style={{ backgroundColor: "rgba(250,250,245,0.42)", border: `1px solid ${c.border}` }}
+            >
+              <span className="mb-5 grid size-10 place-items-center rounded-full" style={{ backgroundColor: "rgba(208,111,37,0.1)", color: c.ember }}>
+                <item.Icon className="size-4" />
+              </span>
+              <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: c.ember }}>{item.label}</p>
+              <h3 className="mb-3 text-[1.05rem] font-semibold leading-[1.25]" style={{ color: c.forest }}>{item.title}</h3>
+              <p className="text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>{item.desc}</p>
+              <span className="mt-auto inline-flex items-center gap-2 pt-6 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: c.forest }}>
+                Explore <ArrowRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </Link>
+          ))}
+        </div>
+
+        <div className="mt-5 flex flex-col gap-3 rounded-[18px] p-5 sm:flex-row sm:items-center sm:justify-between"
+          style={{ backgroundColor: "rgba(67,78,63,0.08)", border: `1px solid ${c.border}` }}>
+          <p className="max-w-2xl text-[13px] leading-[1.7]" style={{ color: c.mutedFg }}>
+            Running an enterprise evaluation, university pilot, professional workflow, or Hermes hosting rollout?
+          </p>
+          <Link
+            href="/contact"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.12em]"
+            style={{ backgroundColor: c.forest, color: c.pageBg }}
+          >
+            Contact us <ArrowRightIcon className="size-3.5" />
+          </Link>
         </div>
       </div>
     </section>
@@ -701,9 +1165,9 @@ function FeatureNetworkDiagram() {
 }
 
 const howItWorksSteps = [
-  { step: "01", title: "Create a free account", desc: "Sign up in seconds. No credit card, no setup wizard, no downloads." },
-  { step: "02", title: "Start the hosted trial", desc: "When you provision a Matrix computer, Clerk starts the 3-day trial and collects the card required for the private VPS." },
-  { step: "03", title: "Bring your own agent", desc: "Connect your preferred AI: Claude, GPT, Hermes, or any model you trust. Your instance, your agent, your rules." },
+  { step: "01", title: "Provision your Matrix computer", desc: "Choose power and region, start the hosted trial, and get a private cloud workstation for development." },
+  { step: "02", title: "Connect tools and repos", desc: "Open the shell, run GitHub auth, clone the repo, and attach from the web UI or Matrix CLI." },
+  { step: "03", title: "Run agents and workflows", desc: "Launch Claude, Codex, Cursor, OpenCode, Pi, Gemini CLI, or Hermes in persistent sessions." },
 ] as const;
 
 function HowItWorksSection() {
@@ -711,8 +1175,8 @@ function HowItWorksSection() {
     <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8">
         <p className="text-[11px] tracking-[0.3em] uppercase mb-6" style={{ color: c.subtle }}>How It Works</p>
-        <h2 className="mb-8 text-[clamp(1.75rem,4vw,3rem)] font-semibold leading-[1.2] md:mb-12" style={{ color: c.forest }}>
-          Free to start, deliberate when you provision.
+        <h2 className="mb-8 text-[clamp(1.75rem,4vw,3rem)] font-normal leading-[1.2] md:mb-12" style={{ color: c.forest }}>
+          From signup to autonomous cloud dev.
         </h2>
 
         <div className="grid gap-8 md:grid-cols-3 md:gap-10">
@@ -725,6 +1189,101 @@ function HowItWorksSection() {
               <p className="text-[14px] leading-[1.8]" style={{ color: c.mutedFg }}>{item.desc}</p>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const hostedMatrixPoints = [
+  "Choose region and power during signup",
+  "Managed runtime, updates, shell, CLI, and previews",
+  "Hermes and coding agents keep running while devices sleep",
+  "Best path for teams, pilots, professionals, and universities",
+] as const;
+
+const guidedPilotPoints = [
+  "Dedicated pilot path for teams, enterprise labs, and universities",
+  "Isolated cloud computers for AI coding experiments",
+  "Developer onboarding through CLI, docs, and Matrix skills",
+  "Clear rollout plan for tools, regions, billing, and approvals",
+] as const;
+
+function DeploymentChoiceSection() {
+  return (
+    <section id="deployment" className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-8">
+        <div className="mb-9 max-w-2xl">
+          <p className="mb-5 text-[11px] uppercase tracking-[0.3em]" style={{ color: c.subtle }}>Hosted Matrix</p>
+          <h2 className="text-[clamp(1.85rem,4vw,3.2rem)] font-normal leading-[1.1]" style={{ color: c.forest }}>
+            Start with a private cloud computer.
+          </h2>
+          <p className="mt-5 text-[15px] leading-[1.85]" style={{ color: c.mutedFg }}>
+            Matrix is a hosted runtime today. You choose region and power, then run agents, shells, previews, tools, and workflows inside an always-on Matrix computer.
+          </p>
+        </div>
+
+        <div className="grid gap-5 md:grid-cols-2">
+          <article className="relative overflow-hidden rounded-[22px] p-6 md:p-7"
+            style={{ backgroundColor: "rgba(250,250,245,0.58)", border: `1px solid ${c.border}`, boxShadow: "0 24px 70px rgba(50,53,46,0.08)" }}>
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="grid size-12 place-items-center rounded-[14px]" style={{ backgroundColor: "rgba(208,111,37,0.12)", color: c.ember }}>
+                  <CloudIcon className="size-5" />
+                </span>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: c.ember }}>Recommended</p>
+                  <h3 className="mt-1 text-[18px] font-semibold" style={{ color: c.forest }}>Hosted Matrix</h3>
+                </div>
+              </div>
+              <span className="rounded-full px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ backgroundColor: "rgba(67,78,63,0.08)", color: c.forest }}>
+                Managed
+              </span>
+            </div>
+            <ul className="grid gap-3">
+              {hostedMatrixPoints.map((point) => (
+                <li key={point} className="flex gap-3 text-[13px] leading-[1.65]" style={{ color: c.mutedFg }}>
+                  <CheckCircle2Icon className="mt-0.5 size-4 shrink-0" style={{ color: c.ember }} />
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+            <a
+              href="https://app.matrix-os.com"
+              className="mt-7 inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.12em]"
+              style={{ backgroundColor: c.forest, color: c.pageBg }}
+            >
+              Start hosted <ArrowRightIcon className="size-3.5" />
+            </a>
+          </article>
+
+          <article className="rounded-[22px] p-6 md:p-7"
+            style={{ backgroundColor: "rgba(67,78,63,0.06)", border: `1px solid ${c.border}` }}>
+            <div className="mb-6 flex items-center gap-3">
+              <span className="grid size-12 place-items-center rounded-[14px]" style={{ backgroundColor: "rgba(67,78,63,0.08)", color: c.forest }}>
+                <BriefcaseBusinessIcon className="size-5" />
+              </span>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em]" style={{ color: c.subtle }}>For organizations</p>
+                <h3 className="mt-1 text-[18px] font-semibold" style={{ color: c.forest }}>Guided pilot</h3>
+              </div>
+            </div>
+            <ul className="grid gap-3">
+              {guidedPilotPoints.map((point) => (
+                <li key={point} className="flex gap-3 text-[13px] leading-[1.65]" style={{ color: c.mutedFg }}>
+                  <CheckCircle2Icon className="mt-0.5 size-4 shrink-0" style={{ color: c.forest }} />
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+            <Link
+              href="/contact?audience=enterprise"
+              className="mt-7 inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-[11px] font-semibold uppercase tracking-[0.12em]"
+              style={{ border: `1px solid ${c.border}`, color: c.forest, backgroundColor: "rgba(250,250,245,0.38)" }}
+            >
+              Plan a pilot <ArrowRightIcon className="size-3.5" />
+            </Link>
+          </article>
         </div>
       </div>
     </section>
@@ -753,16 +1312,16 @@ function FinalCtaSection() {
   return (
     <section className="py-14 md:py-20" style={{ backgroundColor: c.pageBg }}>
       <div className="mx-auto max-w-[1100px] px-8 text-center">
-        <h2 className="text-[clamp(2rem,6vw,4.5rem)] font-bold leading-[1.1] mb-6" style={{ color: c.forest }}>
+        <h2 className="text-[clamp(2rem,6vw,4.5rem)] font-normal leading-[1.1] mb-6" style={{ color: c.forest }}>
           Ready to begin?
         </h2>
         <p className="text-[15px] mb-10 max-w-md mx-auto" style={{ color: c.mutedFg }}>
-          Your personal cloud computer is waiting. Set up takes less than a minute.
+          Start with one cloud workspace. Add agents, tools, workflows, and teammates as the work grows.
         </p>
         <SignedOut>
           <a href="https://app.matrix-os.com" className="inline-flex items-center gap-2 rounded-full px-10 py-4 text-[13px] tracking-[0.15em] uppercase font-medium transition-opacity duration-300 hover:opacity-80"
             style={{ backgroundColor: c.forest, color: c.pageBg }}>
-            Get Started Free <ArrowRightIcon className="size-4" />
+            Start cloud dev <ArrowRightIcon className="size-4" />
           </a>
         </SignedOut>
         <SignedIn>

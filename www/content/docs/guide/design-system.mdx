@@ -47,7 +47,7 @@ The shell injects `--matrix-*` variables into app iframes via the OS bridge. App
 
 | Variable | Default | Usage |
 |----------|---------|-------|
-| `--matrix-font-sans` | `"Inter", system-ui, sans-serif` | Body text |
+| `--matrix-font-sans` | `"Instrument Sans", system-ui, sans-serif` | Body text |
 | `--matrix-font-mono` | `"JetBrains Mono", monospace` | Code, data |
 | `--matrix-radius` | `0.75rem` | Base border-radius |
 
@@ -55,17 +55,18 @@ The shell injects `--matrix-*` variables into app iframes via the OS bridge. App
 
 The palette is warm and organic:
 
-- **Background**: Lavender `#ece5f0` -- the canvas everything floats on
-- **Primary**: Terracotta `#c2703a` -- the signature accent, used for buttons, links, and focus rings
+- **Background**: Cream `#f6f4ed` -- the canvas around navigation and secondary surfaces
+- **Primary**: Forest `#434e3f` -- the stable brand color for primary UI and emphasis
+- **Accent**: Ember `#d06f25` -- the signature accent, used for active states, links, and focus rings
 - **Foreground**: Warm black `#1c1917` -- softer than pure black, matching the organic feel
 - **Cards**: White `#ffffff` -- clean surfaces with subtle shadow for depth
-- **Border**: Lavender tint `#d8d0de` -- barely visible structure
+- **Border**: Warm stone `#d6d3c8` -- barely visible structure
 
 ### Surface Hierarchy
 
 Three levels of elevation:
 
-1. **Background** (`--matrix-bg`): The lowest surface. Lavender canvas.
+1. **Background** (`--matrix-bg`): The lowest surface. Cream canvas.
 2. **Card** (`--matrix-card`): Content panels with subtle shadow.
 3. **Elevated** (`--matrix-popover`): Floating elements with backdrop blur and pronounced shadow.
 
@@ -85,7 +86,7 @@ Three levels of elevation:
 
 ### Font Choices
 
-The shell uses Inter for UI text and JetBrains Mono for code. Apps should inherit via `var(--matrix-font-sans)` rather than redeclaring fonts.
+The shell uses Instrument Sans for UI text and JetBrains Mono for code. Apps should inherit via `var(--matrix-font-sans)` rather than redeclaring fonts.
 
 For display headings in standalone apps, distinctive alternatives are encouraged: DM Serif Display, Space Grotesk, Sora, Fraunces, or Outfit.
 

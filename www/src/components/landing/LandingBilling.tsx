@@ -156,7 +156,7 @@ export function LandingBilling() {
             Hosted plans
           </span>
           <h2
-            className="mb-6 mt-7 text-[clamp(2rem,4.4vw,3.4rem)] font-semibold leading-[1.05] tracking-[-0.02em]"
+            className="mb-6 mt-7 text-[clamp(2rem,4.4vw,3.4rem)] font-normal leading-[1.05]"
             style={{ color: colors.forest }}
           >
             Build your AI computer.

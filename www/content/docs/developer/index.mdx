@@ -1,12 +1,12 @@
 ---
-title: Developer Overview
-description: Technical reference for building on and contributing to Matrix OS.
+title: Contributor Overview
+description: Technical reference for building on, operating, and contributing to Matrix OS.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Callout } from 'fumadocs-ui/components/callout';
 
-This section covers the technical internals of Matrix OS for developers who want to understand the architecture, contribute to the project, build apps, or extend the system.
+This section covers Matrix OS for contributors who want to understand the architecture, contribute to the project, build apps, operate dev VPSes, or extend the agent/skill system.
 
 <Callout type="info" title="AI-generated documentation">
   For a comprehensive, always-up-to-date reference generated from the source code, see the [Matrix OS DeepWiki](https://deepwiki.com/HamedMP/matrix-os/).
@@ -61,6 +61,16 @@ The gateway's dispatcher manages a serial FIFO queue by default, ensuring only o
 
 <Cards>
   <Card
+    title="Dev VPS"
+    description="Develop Matrix inside a user/dev VPS with hot reload, previews, tunnels, and runtime caveats."
+    href="/docs/developer/dev-vps"
+  />
+  <Card
+    title="Agent Matrix Skills"
+    description="Canonical Matrix skills for Claude, Codex, Hermes, Agent, and the Matrix kernel."
+    href="/docs/developer/agent-skills"
+  />
+  <Card
     title="Architecture"
     description="Detailed system architecture: kernel, gateway, dispatcher, request flow."
     href="/docs/developer/architecture"
@@ -84,6 +94,16 @@ The gateway's dispatcher manages a serial FIFO queue by default, ensuring only o
     title="Testing"
     description="TDD approach, running tests, coverage targets, and test structure."
     href="/docs/developer/testing"
+  />
+  <Card
+    title="Review Pipeline"
+    description="Pre-PR checks, React audit, pattern scanning, and review passes."
+    href="/docs/developer/review-pipeline"
+  />
+  <Card
+    title="Releases"
+    description="Host bundles, channels, customer VPS updates, and verification."
+    href="/docs/developer/releases"
   />
   <Card
     title="Contributing"

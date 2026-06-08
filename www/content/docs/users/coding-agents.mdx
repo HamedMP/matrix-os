@@ -1,0 +1,49 @@
+---
+title: Coding Agents
+description: Run supported coding agents inside Matrix OS.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Matrix OS is designed for coding agents that run on the Matrix computer, not on your laptop. The agent gets the same shell, files, repo, dev server, and Matrix skills that you see in the web shell.
+
+## Supported agents
+
+| Agent | Typical command | Notes |
+| --- | --- | --- |
+| Claude Code | `claude` | Sign in if the CLI asks. Matrix skills are synced into Claude skill discovery. |
+| Codex | `codex` | Use the Matrix onboarding plugin/skills when available. |
+| Pi | `pi` | Use it from a named Matrix shell session when installed. |
+| OpenCode | `opencode` | Sign in or configure provider credentials as needed. |
+| Hermes | `hermes` | Install/sync the Matrix skill pack and set the Matrix gateway URL. |
+
+## Start an agent from the CLI
+
+```bash
+matrix shell connect -c setup
+matrix run -it --session setup -- codex
+matrix run -it --session setup -- claude
+matrix run -it --session setup -- opencode
+matrix run -it --session setup -- hermes
+```
+
+## Start an agent from the web shell
+
+```bash
+cd ~/projects/repo
+codex
+```
+
+Use one named session per major workflow. For example: `setup`, `frontend`, `review`, `release`.
+
+## Benefits
+
+- Agents keep running even when your laptop closes.
+- Dev servers and tests run on the same machine the agent edits.
+- Browser, CLI, and agent sessions share the same workspace.
+- Work can continue from another device without copying repo state.
+- Matrix skills teach agents how to build Matrix apps, use the design system, and debug common app failures.
+
+<Callout type="warn" title="Credentials remain your responsibility">
+  Sign in to each coding agent only through its own supported CLI flow. Do not paste API keys into chats, docs, or public logs.
+</Callout>
