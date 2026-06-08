@@ -141,7 +141,9 @@ struct WebShellAuthState: Equatable, Sendable {
         }
         switch source {
         case .automatic:
-            break
+            hostedAuthRequired = false
+            hostedRetryAttempted = false
+            authRevision += 1
         case .explicitSignIn:
             hostedAuthRequired = false
             hostedRetryAttempted = false

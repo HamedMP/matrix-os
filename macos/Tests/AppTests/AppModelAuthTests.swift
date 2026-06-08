@@ -8,14 +8,14 @@ import MatrixTerminal
 
 @MainActor
 final class AppModelAuthTests: XCTestCase {
-    func testWebShellAuthStateKeepsPromptWhenHostedShellRequiresAuth() {
+    func testWebShellAuthStateClearsPromptOnAutomaticValidTokenReload() {
         var state = WebShellAuthState()
 
         state.resolveToken("native-token")
         _ = state.markHostedAuthRequired()
         state.resolveToken("native-token")
 
-        XCTAssertTrue(state.shouldShowSignInPrompt)
+        XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
     }
 
@@ -45,14 +45,14 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertTrue(state.shouldShowSignInPrompt)
     }
 
-    func testWebShellAuthStateDoesNotClearHostedPromptAfterCancelledReload() {
+    func testWebShellAuthStateClearsHostedPromptForFreshAutomaticReload() {
         var state = WebShellAuthState()
 
         state.resolveToken("native-token")
         _ = state.markHostedAuthRequired()
         state.resolveToken("native-token", source: .automatic)
 
-        XCTAssertTrue(state.shouldShowSignInPrompt)
+        XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
     }
 
