@@ -232,7 +232,7 @@ private struct SwiftTermView: NSViewRepresentable {
     private static func requestInitialFocus(_ view: TerminalView?) {
         guard let view, let window = view.window else { return }
         let responder = window.firstResponder
-        guard responder == nil || responder === view || responder === window.contentView else { return }
+        guard responder == nil || responder === view || responder === window.contentView || responder === window else { return }
         window.makeFirstResponder(view)
     }
 

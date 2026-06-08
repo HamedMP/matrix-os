@@ -72,6 +72,7 @@ struct MatrixWebShellPanel: View {
                     onAuthRequired: {
                         let shouldRetry = authState.markHostedAuthRequired()
                         guard shouldRetry else { return }
+                        authState.markResolving()
                         Task {
                             await reloadBearerToken(source: .hostedSessionRetry)
                         }
