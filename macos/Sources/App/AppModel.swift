@@ -549,6 +549,13 @@ public final class AppModel: ObservableObject {
         d.set(profile.runtimeSlot, forKey: Self.slotKey)
     }
 
+    private static func clearPersistedProfile() {
+        let d = UserDefaults.standard
+        d.removeObject(forKey: handleKey)
+        d.removeObject(forKey: hostKey)
+        d.removeObject(forKey: slotKey)
+    }
+
     private static func loadPersistedEditorTheme() -> CodeEditorTheme {
         let raw = UserDefaults.standard.string(forKey: editorThemeKey)
         return raw.flatMap(CodeEditorTheme.init(rawValue:)) ?? .xcodeDark
@@ -645,6 +652,54 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    public func signOut() {
+        Task { await signOutNow() }
+    }
+
+    public func signOutNow() async {
+        signInTask?.cancel()
+        signInTask = nil
+        do {
+            try await principal.clear()
+        } catch {
+            appModelLogger.warning("Principal clear failed during sign-out: \(String(describing: error), privacy: .private)")
+        }
+        Self.clearPersistedProfile()
+        terminal?.shutdown()
+        for session in terminalSessions.values {
+            session.shutdown()
+        }
+        profile = nil
+        phase = .needsProfile
+        signIn = .idle
+        hasSelectedProject = false
+        section = .board
+        selectedCard = nil
+        terminal = nil
+        terminalSessions = [:]
+        terminalSessionAccessOrder = []
+        sessions = []
+        projects = []
+        openTabs = []
+        activeTabID = nil
+        activePanel = .app(slug: "editor")
+        enabledPanels = [.terminal, .app(slug: "editor")]
+        fileEntries = []
+        fileTree = []
+        filePanelPath = ""
+        selectedFilePath = nil
+        selectedFileData = nil
+        selectedFileContent = ""
+        fileSaveState = nil
+        gitBranches = []
+        gitPullRequests = []
+        gitWorktrees = []
+        previews = []
+        systemInfo = nil
+        openError = nil
+        board = BoardStore(loader: UnconfiguredBoardLoader())
+    }
+
     private func runSignIn() async {
         do {
             let start = try await deviceAuth.startDeviceAuth()
@@ -698,6 +753,9 @@ public final class AppModel: ObservableObject {
         var items = components.queryItems ?? []
         items.removeAll { $0.name == "mode" }
         items.append(URLQueryItem(name: "mode", value: mode.rawValue))
+        if !items.contains(where: { $0.name == "redirect_uri" }) {
+            items.append(URLQueryItem(name: "redirect_uri", value: "matrixos://auth?status=approved"))
+        }
         components.queryItems = items
         return components.url?.absoluteString ?? rawValue
     }
@@ -1331,6 +1389,26 @@ public final class AppModel: ObservableObject {
         let next = openTabs[nextIndex]
         activeTabID = next.id
         focusTab(id: next.id)
+    }
+
+    public func closeActiveTab() {
+        guard let activeTabID else { return }
+        closeTab(id: activeTabID)
+    }
+
+    public func focusNextTab() {
+        focusTab(offset: 1)
+    }
+
+    public func focusPreviousTab() {
+        focusTab(offset: -1)
+    }
+
+    private func focusTab(offset: Int) {
+        guard !openTabs.isEmpty else { return }
+        let currentIndex = activeTabID.flatMap { id in openTabs.firstIndex(where: { $0.id == id }) } ?? 0
+        let nextIndex = (currentIndex + offset + openTabs.count) % openTabs.count
+        focusTab(id: openTabs[nextIndex].id)
     }
 
     /// Closes the open card's terminal and detail pane (Esc / light-dismiss).

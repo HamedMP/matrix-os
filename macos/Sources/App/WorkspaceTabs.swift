@@ -1,5 +1,6 @@
 #if os(macOS)
 import SwiftUI
+import AppKit
 import DesignSystem
 import MatrixModel
 
@@ -234,6 +235,14 @@ struct TerminalSessionTabStrip: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Terminal \(session.name)")
         .accessibilityAddTraits(active ? [.isSelected] : [])
+        .contextMenu {
+            Button("Open Terminal") { onSelect(session.name) }
+            Button("Close Terminal Tab") { onClose(session.name) }
+            Button("Copy Session Name") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(session.name, forType: .string)
+            }
+        }
     }
 }
 
@@ -296,6 +305,14 @@ private struct WorkspaceTabPill: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(tab.title), \(tab.projectName)")
         .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .contextMenu {
+            Button("Open Tab", action: onSelect)
+            Button("Close Tab", action: onClose)
+            Button("Copy Tab Title") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(tab.title, forType: .string)
+            }
+        }
     }
 
     private var icon: String {
@@ -318,7 +335,7 @@ private struct WorkspaceTabPill: View {
     }
 }
 
-private struct AppGlyphTile: View {
+struct AppGlyphTile: View {
     let symbol: String
     let palette: GlyphPalette
     let size: CGFloat
@@ -353,7 +370,7 @@ private struct AppGlyphTile: View {
     }
 }
 
-private struct GlyphPalette {
+struct GlyphPalette {
     let top: Color
     let bottom: Color
     let foreground: Color

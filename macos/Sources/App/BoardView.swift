@@ -45,7 +45,7 @@ struct BoardView: View {
             if model.hasSelectedProject {
                 boardWithDetail
             } else {
-                ProjectSelectionRequiredView()
+                ProjectSelectionRequiredView(model: model)
             }
         }
     }
@@ -216,7 +216,7 @@ struct BoardView: View {
             case "git":
                 GitPanel(model: model)
             case "settings":
-                MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Settings", openSettingsOnLoad: true)
+                NativeSettingsPanel(model: model)
             case "processes":
                 ProcessesPanel(model: model)
             case "whiteboard":

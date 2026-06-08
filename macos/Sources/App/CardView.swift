@@ -9,6 +9,7 @@
 // A value-type SwiftUI view — never rebuilds the whole list.
 #if os(macOS)
 import SwiftUI
+import AppKit
 import DesignSystem
 import MatrixModel
 
@@ -43,6 +44,19 @@ struct CardView: View {
         // .dropDestination). The lifted preview reuses the same chrome.
         .draggable(card.id) {
             dragPreview
+        }
+        .contextMenu {
+            Button("Open Task", action: onOpen)
+            Button("Copy Task ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(card.id, forType: .string)
+            }
+            if let session = card.linkedSessionId, !session.isEmpty {
+                Button("Copy Session ID") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(session, forType: .string)
+                }
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySummary)

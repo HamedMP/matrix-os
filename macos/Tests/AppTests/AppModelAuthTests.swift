@@ -600,8 +600,96 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.signInCompletionID, 1)
         XCTAssertEqual(model.section, AppSection.home)
         XCTAssertFalse(model.hasSelectedProject)
-        XCTAssertEqual(openedURL.urls.first?.absoluteString, "https://app.matrix-os.com/auth/device?user_code=ABD-EFGH&mode=sign-in")
+        XCTAssertEqual(openedURL.urls.first?.path, "/auth/device")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("mode"), "sign-in")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("redirect_uri"), "matrixos://auth?status=approved")
         withExtendedLifetime(cancellables) {}
+    }
+
+    func testDesktopSignInPreservesSignedNativeRedirectFromPlatform() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        let openedURL = OpenedURLRecorder()
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: nil,
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(
+                start: try makeDeviceAuthStart(
+                    deviceCode: "DC",
+                    userCode: "ABCD-EFGH",
+                    verificationUri: "https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH&redirect_uri=matrixos%3A%2F%2Fauth%3Fstatus%3Dapproved&redirect_sig=signed",
+                    expiresIn: 2,
+                    interval: 1
+                ),
+                polls: [.pending]
+            ),
+            openExternalURL: { openedURL.open($0) }
+        )
+
+        model.beginSignIn(mode: .signIn)
+        try await Task.sleep(nanoseconds: 150_000_000)
+        model.cancelSignIn()
+
+        XCTAssertEqual(openedURL.urls.first?.path, "/auth/device")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("redirect_uri"), "matrixos://auth?status=approved")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("redirect_sig"), "signed")
+        XCTAssertEqual(openedURL.urls.first?.queryValue("mode"), "sign-in")
+    }
+
+    func testSignOutClearsAccountAndReturnsToOnboarding() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        model.openHome()
+        model.openProject(slug: "main")
+
+        await model.signOutNow()
+
+        let token = await principal.token()
+        XCTAssertNil(token)
+        XCTAssertNil(model.profile)
+        XCTAssertEqual(model.phase, .needsProfile)
+        XCTAssertTrue(model.openTabs.isEmpty)
+        XCTAssertFalse(model.hasSelectedProject)
+        XCTAssertNil(model.selectedCard)
+        XCTAssertNil(model.terminal)
+    }
+
+    func testTabKeyboardNavigationAndCloseActiveTab() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        model.openHome()
+        model.openProject(slug: "main")
+        model.openAppTab(slug: "settings", title: "Settings")
+
+        model.focusPreviousTab()
+        XCTAssertEqual(model.activeTabID, "board:main")
+
+        model.focusNextTab()
+        XCTAssertEqual(model.activeTabID, "settings")
+
+        model.closeActiveTab()
+        XCTAssertFalse(model.openTabs.contains(where: { $0.id == "settings" }))
+        XCTAssertNotEqual(model.activeTabID, "settings")
     }
 
     func testCancellingSignInDoesNotMarkCompletion() async throws {
@@ -695,6 +783,15 @@ private final class OpenedURLRecorder: @unchecked Sendable {
 
     func open(_ url: URL) {
         urls.append(url)
+    }
+}
+
+private extension URL {
+    func queryValue(_ name: String) -> String? {
+        URLComponents(url: self, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == name })?
+            .value
     }
 }
 

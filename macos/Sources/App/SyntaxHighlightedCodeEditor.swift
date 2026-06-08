@@ -100,7 +100,7 @@ public struct CodeEditorPreferences: Equatable, Sendable {
 
     public static let `default` = CodeEditorPreferences(
         fontSize: 13,
-        wrapsLines: false,
+        wrapsLines: true,
         tabWidth: 4,
         showsInvisibleCharacters: false
     )
@@ -130,6 +130,7 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
     let filePath: String?
     let theme: CodeEditorTheme
     var preferences: CodeEditorPreferences = .default
+    var isEditable = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -144,6 +145,8 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
 
         let textView = NSTextView()
         textView.isRichText = false
+        textView.isEditable = isEditable
+        textView.isSelectable = true
         textView.drawsBackground = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -170,6 +173,7 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         context.coordinator.theme = theme
         context.coordinator.preferences = preferences
         context.coordinator.filePath = filePath
+        context.coordinator.isEditable = isEditable
         context.coordinator.applyHighlight {
             apply(text: text, to: textView, theme: theme, filePath: filePath, preferences: preferences)
         }
@@ -183,10 +187,12 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
             ruler.needsDisplay = true
         }
         applyLayoutPreferences(to: textView, in: scrollView, preferences: preferences)
-        if textView.string != text || context.coordinator.needsHighlight || context.coordinator.theme != theme || context.coordinator.preferences != preferences || context.coordinator.filePath != filePath {
+        textView.isEditable = isEditable
+        if textView.string != text || context.coordinator.needsHighlight || context.coordinator.theme != theme || context.coordinator.preferences != preferences || context.coordinator.filePath != filePath || context.coordinator.isEditable != isEditable {
             context.coordinator.theme = theme
             context.coordinator.preferences = preferences
             context.coordinator.filePath = filePath
+            context.coordinator.isEditable = isEditable
             context.coordinator.needsHighlight = false
             context.coordinator.applyHighlight {
                 apply(text: text, to: textView, theme: theme, filePath: filePath, preferences: preferences)
@@ -209,8 +215,8 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         textView.insertionPointColor = theme.foreground
         textView.textColor = theme.foreground
         textView.font = Self.editorFont(size: preferences.fontSize)
-        textView.defaultParagraphStyle = Self.paragraphStyle(tabWidth: preferences.tabWidth, fontSize: preferences.fontSize)
-        textView.textStorage?.setAttributedString(Self.highlighted(text, filePath: filePath, theme: theme, preferences: preferences))
+        textView.defaultParagraphStyle = Self.paragraphStyle(tabWidth: preferences.tabWidth, fontSize: preferences.fontSize, wrapsLines: preferences.wrapsLines)
+        textView.textStorage?.setAttributedString(Self.highlightedText(text, filePath: filePath, theme: theme, preferences: preferences))
         textView.setSelectedRange(NSRange(location: min(selected.location, (text as NSString).length), length: 0))
         textView.needsDisplay = true
         textView.layoutManager?.ensureLayout(for: textView.textContainer!)
@@ -224,15 +230,15 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         return NSFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
     }
 
-    private static func paragraphStyle(tabWidth: Int, fontSize: Double) -> NSParagraphStyle {
+    private static func paragraphStyle(tabWidth: Int, fontSize: Double, wrapsLines: Bool) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         let width = max(2, min(tabWidth, 8))
         style.defaultTabInterval = CGFloat(width) * editorFont(size: fontSize).spaceWidth
-        style.lineBreakMode = .byClipping
+        style.lineBreakMode = wrapsLines ? .byWordWrapping : .byClipping
         return style
     }
 
-    private static func highlighted(_ text: String, filePath: String?, theme: CodeEditorTheme, preferences: CodeEditorPreferences) -> NSAttributedString {
+    static func highlightedText(_ text: String, filePath: String?, theme: CodeEditorTheme, preferences: CodeEditorPreferences) -> NSAttributedString {
         let nsText = text as NSString
         let fullRange = NSRange(location: 0, length: nsText.length)
         let language = syntaxLanguage(for: filePath)
@@ -241,7 +247,7 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
             attributes: [
                 .font: editorFont(size: preferences.fontSize),
                 .foregroundColor: theme.foreground,
-                .paragraphStyle: paragraphStyle(tabWidth: preferences.tabWidth, fontSize: preferences.fontSize),
+                .paragraphStyle: paragraphStyle(tabWidth: preferences.tabWidth, fontSize: preferences.fontSize, wrapsLines: preferences.wrapsLines),
             ]
         )
         if preferences.showsInvisibleCharacters {
@@ -307,6 +313,7 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         var theme: CodeEditorTheme?
         var preferences: CodeEditorPreferences?
         var filePath: String?
+        var isEditable = true
         var needsHighlight = false
         private var isApplyingHighlight = false
 

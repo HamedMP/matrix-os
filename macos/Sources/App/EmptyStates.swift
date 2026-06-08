@@ -7,6 +7,7 @@
 // behind it goes read-only with a faint desaturation.
 #if os(macOS)
 import SwiftUI
+import AppKit
 import DesignSystem
 
 /// "No Matrix computer yet" onboarding empty state. The CTA hands off to the
@@ -319,22 +320,156 @@ struct MatrixComputerHomeView: View {
 }
 
 struct ProjectSelectionRequiredView: View {
+    @ObservedObject var model: AppModel
+    @State private var sheet: ProjectSheetMode?
+
     var body: some View {
-        VStack(spacing: Spacing.x4) {
-            Image(systemName: "rectangle.split.3x1")
-                .font(.system(size: 42, weight: .light))
-                .foregroundStyle(Color.signalLive)
-            Text("Choose a project")
-                .font(.plexSans(28, weight: .semibold))
-                .foregroundStyle(Color.inkPrimary)
-            Text("Kanban boards are project-specific. Select a project in the sidebar or create a new project to open its tasks.")
-                .font(.plexSans(15))
-                .foregroundStyle(Color.inkTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 460)
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.x5) {
+                HStack(alignment: .center, spacing: Spacing.x3) {
+                    AppGlyphTile(symbol: "rectangle.split.3x1", palette: .tab(.board), size: 46, isActive: true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Projects")
+                            .font(.plexSans(28, weight: .semibold))
+                            .foregroundStyle(Color.inkPrimary)
+                        Text("Open a workspace board or create a new project.")
+                            .font(.plexSans(14))
+                            .foregroundStyle(Color.inkTertiary)
+                    }
+                    Spacer()
+                    Button {
+                        sheet = .create
+                    } label: {
+                        Label("New Project", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+                if model.projects.isEmpty {
+                    emptyProjects
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: Spacing.x3)], spacing: Spacing.x3) {
+                        ForEach(model.projects) { project in
+                            projectCard(project)
+                        }
+                        createCard
+                    }
+                }
+            }
+            .padding(Spacing.x6)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.canvasVoid)
+        .sheet(item: $sheet) { mode in
+            ProjectCreateSheet(mode: mode) { name, remote, startMode in
+                model.createProject(name: name, remote: remote, startMode: startMode)
+            }
+        }
+    }
+
+    private var emptyProjects: some View {
+        VStack(alignment: .leading, spacing: Spacing.x3) {
+            Label("No projects yet", systemImage: "folder.badge.plus")
+                .font(.plexSans(16, weight: .semibold))
+                .foregroundStyle(Color.inkPrimary)
+            Text("Create a scratch workspace or clone a GitHub repository to load its tasks.")
+                .font(.plexSans(13))
+                .foregroundStyle(Color.inkTertiary)
+            HStack(spacing: Spacing.x2) {
+                Button("Create Project") { sheet = .create }
+                    .buttonStyle(.borderedProminent)
+                Button("Clone Repository") { sheet = .clone }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(Spacing.x5)
+        .frame(maxWidth: 520, alignment: .leading)
+        .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
+                .strokeBorder(Color.hairlineDark, lineWidth: 1)
+        )
+    }
+
+    private func projectCard(_ project: ProjectSummary) -> some View {
+        Button {
+            model.openProject(slug: project.slug)
+        } label: {
+            VStack(alignment: .leading, spacing: Spacing.x3) {
+                ProjectAvatarIcon(name: project.name, slug: project.slug, isActive: false, size: 44)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(project.name)
+                        .font(.plexSans(15, weight: .semibold))
+                        .foregroundStyle(Color.inkPrimary)
+                        .lineLimit(1)
+                    Text(project.remote ?? project.slug)
+                        .font(.plexSans(12))
+                        .foregroundStyle(Color.inkTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                HStack {
+                    Text("Open Tasks")
+                        .font(.plexSans(12, weight: .semibold))
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(projectAccentColor(slug: project.slug))
+            }
+            .padding(Spacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 160, alignment: .leading)
+            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
+                    .strokeBorder(Color.hairlineDark.opacity(0.8), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Open Tasks") { model.openProject(slug: project.slug) }
+            Button("Copy Project Slug") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(project.slug, forType: .string)
+            }
+        }
+    }
+
+    private var createCard: some View {
+        Button { sheet = .create } label: {
+            VStack(alignment: .leading, spacing: Spacing.x3) {
+                Image(systemName: "plus")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(Color.signalLive)
+                    .frame(width: 44, height: 44)
+                    .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.hairlineDark, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    )
+                Text("New project")
+                    .font(.plexSans(15, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                Text("Create or clone a workspace.")
+                    .font(.plexSans(12))
+                    .foregroundStyle(Color.inkTertiary)
+                Spacer()
+            }
+            .padding(Spacing.x4)
+            .frame(maxWidth: .infinity, minHeight: 160, alignment: .leading)
+            .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
+                    .strokeBorder(Color.hairlineDark.opacity(0.8), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Create Project") { sheet = .create }
+            Button("Clone Repository") { sheet = .clone }
+        }
     }
 }
 

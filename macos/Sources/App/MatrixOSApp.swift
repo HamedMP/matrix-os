@@ -110,7 +110,6 @@ private struct RootView: View {
     var body: some View {
         RootShellView(model: model)
             .background(WindowVibrancy())
-            .preferredColorScheme(.light)
     }
 }
 
@@ -127,16 +126,29 @@ private struct OperatorCommands: Commands {
             Button("New Task") { model.newCardPlaceholder() }
                 .keyboardShortcut("n", modifiers: .command)
             Button("New Session") { model.createSession() }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .keyboardShortcut("t", modifiers: .command)
             Divider()
             Button("Home") { model.openHome() }
                 .keyboardShortcut("1", modifiers: .control)
+            Button("Project Board") { model.section = .board }
+                .keyboardShortcut("b", modifiers: .command)
             Button("Board") { model.section = .board }
                 .keyboardShortcut("2", modifiers: .control)
             Button("Terminal") { model.openTerminalSection() }
                 .keyboardShortcut("3", modifiers: .control)
+            Button("Settings") { model.openAppTab(slug: "settings", title: "Settings") }
+                .keyboardShortcut(",", modifiers: .command)
             Button("Browser") { model.section = .browser }
                 .keyboardShortcut("4", modifiers: .control)
+            Divider()
+            Button("Refresh") { Task { await model.refresh() } }
+                .keyboardShortcut("r", modifiers: .command)
+            Button("Close Tab") { model.closeActiveTab() }
+                .keyboardShortcut("w", modifiers: .command)
+            Button("Next Tab") { model.focusNextTab() }
+                .keyboardShortcut("]", modifiers: .command)
+            Button("Previous Tab") { model.focusPreviousTab() }
+                .keyboardShortcut("[", modifiers: .command)
             Divider()
             Button("Terminal Panel") { model.switchPanel(.terminal) }
                 .keyboardShortcut("1", modifiers: .command)

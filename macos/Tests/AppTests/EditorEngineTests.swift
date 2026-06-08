@@ -1,5 +1,6 @@
 #if os(macOS)
 import XCTest
+import AppKit
 @testable import MatrixOS
 
 final class EditorEngineTests: XCTestCase {
@@ -43,7 +44,24 @@ final class EditorEngineTests: XCTestCase {
         let preferences = CodeEditorPreferences.default
         XCTAssertEqual(preferences.fontSize, 13)
         XCTAssertEqual(preferences.tabWidth, 4)
-        XCTAssertFalse(preferences.wrapsLines)
+        XCTAssertTrue(preferences.wrapsLines)
+    }
+
+    @MainActor
+    func testPreviewSyntaxHighlighterColorsKeywordsAndStrings() {
+        let highlighted = SyntaxHighlightedCodeEditor.highlightedText(
+            #"let title = "Matrix""#,
+            filePath: "App.swift",
+            theme: .xcodeDark,
+            preferences: .default
+        )
+
+        let nsText = highlighted.string as NSString
+        let keywordRange = nsText.range(of: "let")
+        let stringRange = nsText.range(of: "\"Matrix\"")
+
+        XCTAssertNotNil(highlighted.attribute(.foregroundColor, at: keywordRange.location, effectiveRange: nil))
+        XCTAssertNotNil(highlighted.attribute(.foregroundColor, at: stringRange.location, effectiveRange: nil))
     }
 }
 #endif

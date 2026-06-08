@@ -219,6 +219,19 @@ private struct ProjectListRowButton: View {
         .help(project.name)
         .accessibilityLabel(project.name)
         .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .contextMenu {
+            Button("Open Tasks", action: onOpen)
+            Button("Copy Project Slug") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(project.slug, forType: .string)
+            }
+            if let remote = project.remote, !remote.isEmpty {
+                Button("Copy Remote URL") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(remote, forType: .string)
+                }
+            }
+        }
     }
 }
 
