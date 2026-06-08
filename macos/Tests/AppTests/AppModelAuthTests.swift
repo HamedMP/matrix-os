@@ -279,6 +279,7 @@ final class AppModelAuthTests: XCTestCase {
         await model.loadSystemInfo()
 
         XCTAssertEqual(model.systemInfo?.displayRuntimeName, "Alice")
+        XCTAssertEqual(model.systemInfo?.uptimeText, "1h 1m 1s")
         XCTAssertEqual(model.systemInfo?.resourceRows.map(\.label), ["CPU", "Memory", "Disk"])
         XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("clerk") ?? true)
         XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("machine-secret") ?? true)
@@ -504,6 +505,33 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertFalse(model.hasSelectedProject)
         XCTAssertNil(model.terminal)
         XCTAssertNil(model.selectedCard)
+    }
+
+    func testClosingLastProjectTabClearsProjectSelectionWhenHomeRemains() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openHome()
+        model.openProject(slug: "main")
+        XCTAssertTrue(model.hasSelectedProject)
+
+        model.closeTab(id: "board:main")
+
+        XCTAssertEqual(model.openTabs.map(\.id), ["home"])
+        XCTAssertEqual(model.activeTabID, "home")
+        XCTAssertEqual(model.section, .home)
+        XCTAssertFalse(model.hasSelectedProject)
+        XCTAssertNil(model.selectedCard)
+        XCTAssertNil(model.terminal)
     }
 
     func testFocusingTaskTabAfterSettingsRestoresBoardSection() async throws {

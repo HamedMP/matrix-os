@@ -1619,7 +1619,7 @@ struct NativeSettingsPanel: View {
             if let info = model.systemInfo {
                 settingRow("Runtime", value: info.displayRuntimeName, icon: "desktopcomputer")
                 settingRow("Version", value: info.version, icon: "shippingbox")
-                settingRow("Uptime", value: info.summaryText, icon: "clock")
+                settingRow("Uptime", value: info.uptimeText, icon: "clock")
                 ForEach(info.resourceRows) { row in
                     settingRow(row.label, value: "\(row.value) · \(row.detail)", icon: row.symbol)
                 }

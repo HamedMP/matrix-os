@@ -305,6 +305,29 @@ public struct NativeSystemInfoSummary: Decodable, Equatable, Sendable {
         return "\(displayRuntimeName) running \(installed)\(channel)"
     }
 
+    public var uptimeText: String {
+        Self.formatUptime(seconds: uptime)
+    }
+
+    private static func formatUptime(seconds rawSeconds: Int) -> String {
+        let seconds = max(0, rawSeconds)
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let remainingSeconds = seconds % 60
+
+        if days > 0 {
+            return "\(days)d \(hours)h \(minutes)m"
+        }
+        if hours > 0 {
+            return "\(hours)h \(minutes)m \(remainingSeconds)s"
+        }
+        if minutes > 0 {
+            return "\(minutes)m \(remainingSeconds)s"
+        }
+        return "\(remainingSeconds)s"
+    }
+
     public var resourceRows: [SystemResourceRow] {
         let load1 = resources.loadAverage.first ?? 0
         let memoryUsed = max(0, resources.memoryTotalBytes - resources.memoryFreeBytes)
@@ -1383,9 +1406,11 @@ public final class AppModel: ObservableObject {
     /// remaining tab; otherwise detach the current terminal.
     public func closeTab(id: String) {
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
+        let closedTab = openTabs[index]
         let wasActive = activeTabID == id
         openTabs.remove(at: index)
         removeCachedTerminalSession(for: id)
+        reconcileProjectSelectionAfterClosing(closedTab)
         if !wasActive { return }
         terminal = nil
         selectedCard = nil
@@ -1404,6 +1429,29 @@ public final class AppModel: ObservableObject {
         let next = openTabs[nextIndex]
         activeTabID = next.id
         focusTab(id: next.id)
+    }
+
+    private func reconcileProjectSelectionAfterClosing(_ closedTab: WorkspaceTab) {
+        guard isProjectRelatedTab(closedTab),
+              !hasOpenProjectRelatedTab(for: closedTab.projectSlug),
+              projectSlug == closedTab.projectSlug else { return }
+        hasSelectedProject = false
+    }
+
+    private func hasOpenProjectRelatedTab(for slug: String) -> Bool {
+        openTabs.contains { tab in
+            tab.projectSlug == slug && isProjectRelatedTab(tab)
+        }
+    }
+
+    private func isProjectRelatedTab(_ tab: WorkspaceTab) -> Bool {
+        guard !tab.projectSlug.isEmpty else { return false }
+        switch tab.kind {
+        case .board, .task, .session:
+            return true
+        case .home, .settings, .resources, .app:
+            return false
+        }
     }
 
     public func closeActiveTab() {
