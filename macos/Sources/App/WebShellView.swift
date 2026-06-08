@@ -68,8 +68,13 @@ struct MatrixWebShellPanel: View {
                 WebShellView(
                     url: url,
                     bearerToken: token,
+                    authRevision: authState.authRevision,
                     onAuthRequired: {
-                        authState.markHostedAuthRequired()
+                        let shouldRetry = authState.markHostedAuthRequired()
+                        guard shouldRetry else { return }
+                        Task {
+                            await reloadBearerToken(source: .hostedSessionRetry)
+                        }
                     }
                 )
             } else {
@@ -85,12 +90,9 @@ struct MatrixWebShellPanel: View {
         .task(id: url) {
             await reloadBearerToken()
         }
-        .onChange(of: model.signIn) { oldValue, newValue in
+        .onChange(of: model.signInCompletionID) { _, _ in
             Task {
-                let source: WebShellAuthState.TokenResolutionSource = oldValue != .idle && newValue == .idle
-                    ? .explicitSignIn
-                    : .automatic
-                await reloadBearerToken(source: source)
+                await reloadBearerToken(source: .explicitSignIn)
             }
         }
     }
@@ -111,11 +113,14 @@ struct WebShellAuthState: Equatable, Sendable {
     enum TokenResolutionSource: Sendable {
         case automatic
         case explicitSignIn
+        case hostedSessionRetry
     }
 
     private(set) var token: String?
     private(set) var didResolveToken = false
     private(set) var hostedAuthRequired = false
+    private(set) var hostedRetryAttempted = false
+    private(set) var authRevision = 0
 
     var shouldShowSignInPrompt: Bool {
         didResolveToken && (token == nil || hostedAuthRequired)
@@ -128,20 +133,38 @@ struct WebShellAuthState: Equatable, Sendable {
     mutating func resolveToken(_ nextToken: String?, source: TokenResolutionSource = .automatic) {
         token = nextToken
         didResolveToken = true
-        if nextToken == nil || source == .explicitSignIn {
+        if nextToken == nil {
             hostedAuthRequired = false
+            hostedRetryAttempted = false
+            authRevision += 1
+            return
+        }
+        switch source {
+        case .automatic:
+            break
+        case .explicitSignIn:
+            hostedAuthRequired = false
+            hostedRetryAttempted = false
+            authRevision += 1
+        case .hostedSessionRetry:
+            hostedAuthRequired = false
+            authRevision += 1
         }
     }
 
-    mutating func markHostedAuthRequired() {
+    mutating func markHostedAuthRequired() -> Bool {
         hostedAuthRequired = true
         didResolveToken = true
+        guard token != nil, !hostedRetryAttempted else { return false }
+        hostedRetryAttempted = true
+        return true
     }
 }
 
 private struct WebShellView: NSViewRepresentable {
     let url: URL
     let bearerToken: String?
+    let authRevision: Int
     let onAuthRequired: @MainActor () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -161,13 +184,15 @@ private struct WebShellView: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         guard context.coordinator.lastRequestedURL != url
-            || context.coordinator.lastBearerToken != bearerToken else { return }
+            || context.coordinator.lastBearerToken != bearerToken
+            || context.coordinator.lastAuthRevision != authRevision else { return }
         load(url, in: view, coordinator: context.coordinator)
     }
 
     private func load(_ url: URL, in view: WKWebView, coordinator: Coordinator) {
         coordinator.lastBearerToken = bearerToken
         coordinator.lastRequestedURL = url
+        coordinator.lastAuthRevision = authRevision
         coordinator.destinationURL = url
         guard let bearerToken, !bearerToken.isEmpty else {
             coordinator.cancelExchange()
@@ -180,6 +205,7 @@ private struct WebShellView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastBearerToken: String?
         var lastRequestedURL: URL?
+        var lastAuthRevision: Int?
         var destinationURL: URL?
         private var exchangeTask: Task<Void, Never>?
         private var exchangeGeneration = 0

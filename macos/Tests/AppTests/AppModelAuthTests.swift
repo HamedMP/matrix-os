@@ -12,7 +12,7 @@ final class AppModelAuthTests: XCTestCase {
         var state = WebShellAuthState()
 
         state.resolveToken("native-token")
-        state.markHostedAuthRequired()
+        _ = state.markHostedAuthRequired()
         state.resolveToken("native-token")
 
         XCTAssertTrue(state.shouldShowSignInPrompt)
@@ -23,11 +23,37 @@ final class AppModelAuthTests: XCTestCase {
         var state = WebShellAuthState()
 
         state.resolveToken("old-token")
-        state.markHostedAuthRequired()
+        _ = state.markHostedAuthRequired()
         state.resolveToken("new-token", source: .explicitSignIn)
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "new-token")
+    }
+
+    func testWebShellAuthStateRetriesHostedAuthOnceWithNativeToken() {
+        var state = WebShellAuthState()
+
+        state.resolveToken("native-token")
+
+        XCTAssertTrue(state.markHostedAuthRequired())
+
+        state.resolveToken("native-token", source: .hostedSessionRetry)
+
+        XCTAssertFalse(state.shouldShowSignInPrompt)
+        XCTAssertEqual(state.token, "native-token")
+        XCTAssertFalse(state.markHostedAuthRequired())
+        XCTAssertTrue(state.shouldShowSignInPrompt)
+    }
+
+    func testWebShellAuthStateDoesNotClearHostedPromptAfterCancelledReload() {
+        var state = WebShellAuthState()
+
+        state.resolveToken("native-token")
+        _ = state.markHostedAuthRequired()
+        state.resolveToken("native-token", source: .automatic)
+
+        XCTAssertTrue(state.shouldShowSignInPrompt)
+        XCTAssertEqual(state.token, "native-token")
     }
 
     func testRefreshRequiresTokenEvenWhenProfileIsPersisted() async {
@@ -336,9 +362,39 @@ final class AppModelAuthTests: XCTestCase {
         let token = await principal.token()
         XCTAssertEqual(token, "native-token")
         XCTAssertEqual(model.profile?.handle, "hamed")
+        XCTAssertEqual(model.signInCompletionID, 1)
         XCTAssertEqual(model.section, AppSection.home)
         XCTAssertFalse(model.hasSelectedProject)
         XCTAssertEqual(openedURL.urls.first?.absoluteString, "https://app.matrix-os.com/auth/device?user_code=ABD-EFGH&mode=sign-in")
+    }
+
+    func testCancellingSignInDoesNotMarkCompletion() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: nil,
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(
+                start: try makeDeviceAuthStart(
+                    deviceCode: "device-1",
+                    userCode: "ABD-EFGH",
+                    verificationUri: "https://app.matrix-os.com/auth/device",
+                    expiresIn: 600,
+                    interval: 1
+                ),
+                polls: [.pending]
+            )
+        )
+
+        model.beginSignIn(mode: .signIn)
+        model.cancelSignIn()
+
+        let token = await principal.token()
+        XCTAssertEqual(model.signIn, .idle)
+        XCTAssertEqual(model.signInCompletionID, 0)
+        XCTAssertNil(token)
     }
 }
 

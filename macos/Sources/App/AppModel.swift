@@ -303,6 +303,9 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var openError: OperatorError?
     /// Device-auth sign-in progress (drives the onboarding sign-in UI).
     @Published public private(set) var signIn: SignInState = .idle
+    /// Monotonic marker for completed sign-ins. Cancellation returns `signIn` to
+    /// idle too, so hosted-shell recovery listens to this instead of idle alone.
+    @Published public private(set) var signInCompletionID = 0
 
     // MARK: - Dependencies
 
@@ -498,6 +501,7 @@ public final class AppModel: ObservableObject {
                     return
                 case let .approved(token):
                     try await principal.setToken(token.accessToken)
+                    signInCompletionID += 1
                     signIn = .idle
                     let handle = (token.handle?.isEmpty == false ? token.handle : nil) ?? "me"
                     let newProfile = ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil)
