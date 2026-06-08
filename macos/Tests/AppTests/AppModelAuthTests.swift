@@ -18,6 +18,8 @@ final class AppModelAuthTests: XCTestCase {
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
+        XCTAssertFalse(state.markHostedAuthRequired())
+        XCTAssertTrue(state.shouldShowSignInPrompt)
     }
 
     func testWebShellAuthStateClearsPromptAfterExplicitSignInReload() {
@@ -42,18 +44,20 @@ final class AppModelAuthTests: XCTestCase {
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
-        XCTAssertTrue(state.markHostedAuthRequired())
+        XCTAssertFalse(state.markHostedAuthRequired())
+        XCTAssertTrue(state.shouldShowSignInPrompt)
     }
 
-    func testWebShellAuthStateClearsHostedPromptForFreshAutomaticReload() {
+    func testWebShellAuthStateClearsHostedPromptForExplicitReload() {
         var state = WebShellAuthState()
 
         state.resolveToken("native-token")
         _ = state.markHostedAuthRequired()
-        state.resolveToken("native-token")
+        state.resolveToken("native-token", resetHostedRetry: true)
 
         XCTAssertFalse(state.shouldShowSignInPrompt)
         XCTAssertEqual(state.token, "native-token")
+        XCTAssertTrue(state.markHostedAuthRequired())
     }
 
     func testRefreshRequiresTokenEvenWhenProfileIsPersisted() async {
@@ -893,6 +897,73 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertNil(model.terminal)
         XCTAssertEqual(model.workspaceSearchQuery, "")
         XCTAssertEqual(cancelCount, 1)
+    }
+
+    func testHostedShellAuthRequiredKeepsNativeSessionAndDoesNotSignOut() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        model.openHome()
+        model.openProject(slug: "main")
+
+        // The hosted web shell reported it needs re-auth (server redirected to
+        // /login). The native device-auth principal + gateway session are still
+        // valid, so this must NOT sign the user out — doing so caused the redirect
+        // -> sign-out -> re-show login loop. It only flags the hosted shell.
+        model.markHostedShellAuthRequired()
+
+        let token = await principal.token()
+        XCTAssertEqual(token, "token")
+        XCTAssertNotNil(model.profile)
+        XCTAssertNotEqual(model.phase, .needsProfile)
+        XCTAssertFalse(model.openTabs.isEmpty)
+        XCTAssertTrue(model.hostedShellNeedsSignIn)
+    }
+
+    func testHostedShellAuthorizedClearsNeedsSignInFlag() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.markHostedShellAuthRequired()
+        XCTAssertTrue(model.hostedShellNeedsSignIn)
+
+        model.markHostedShellAuthorized()
+        XCTAssertFalse(model.hostedShellNeedsSignIn)
+    }
+
+    func testSignOutClearsHostedShellNeedsSignInFlag() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.markHostedShellAuthRequired()
+        await model.signOutNow()
+
+        XCTAssertFalse(model.hostedShellNeedsSignIn)
+        XCTAssertEqual(model.phase, .needsProfile)
     }
 
     func testTabKeyboardNavigationAndCloseActiveTab() async throws {

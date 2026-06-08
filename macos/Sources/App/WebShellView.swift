@@ -3,6 +3,9 @@ import SwiftUI
 import WebKit
 import AppKit
 import DesignSystem
+import OSLog
+
+private let webShellLogger = Logger(subsystem: "com.matrixos.native-shell", category: "WebShell")
 
 struct MatrixWebShellPanel: View {
     @ObservedObject var model: AppModel
@@ -73,10 +76,18 @@ struct MatrixWebShellPanel: View {
                     openSettingsOnLoad: openSettingsOnLoad,
                     onAuthRequired: {
                         let shouldRetry = authState.markHostedAuthRequired()
-                        guard shouldRetry else { return }
-                        authState.markResolving()
-                        Task {
-                            await reloadBearerToken()
+                        if shouldRetry {
+                            authState.markResolving()
+                            Task {
+                                await reloadBearerToken()
+                            }
+                        } else {
+                            // Retry exhausted: the hosted web session needs sign-in.
+                            // `markHostedAuthRequired()` already set the panel to show
+                            // the native sign-in prompt. Do NOT sign out — the native
+                            // principal/gateway session is still valid; signing out
+                            // here caused a redirect -> sign-out -> re-show loop.
+                            model.markHostedShellAuthRequired()
                         }
                     }
                 )
@@ -91,24 +102,31 @@ struct MatrixWebShellPanel: View {
             }
         }
         .task(id: url) {
-            await reloadBearerToken()
+            await reloadBearerToken(resetHostedRetry: true)
         }
         .onChange(of: model.signInCompletionID) { _, _ in
             Task {
-                await reloadBearerToken()
+                await reloadBearerToken(resetHostedRetry: true)
             }
         }
     }
 
     @MainActor
-    private func reloadBearerToken() async {
+    private func reloadBearerToken(resetHostedRetry: Bool = false) async {
         guard url != nil else {
-            authState.resolveToken(nil)
+            webShellLogger.info("Hosted shell token skipped because url is nil")
+            authState.resolveToken(nil, resetHostedRetry: true)
             return
+        }
+        if resetHostedRetry {
+            // A fresh attempt (URL change or completed sign-in): re-arm the hosted
+            // shell so a previously-flagged needs-sign-in state does not stick.
+            model.markHostedShellAuthorized()
         }
         authState.markResolving()
         let current = await model.currentBearerToken()
-        authState.resolveToken(current)
+        webShellLogger.info("Hosted shell token resolved present=\(current != nil, privacy: .public)")
+        authState.resolveToken(current, resetHostedRetry: resetHostedRetry)
     }
 }
 
@@ -127,7 +145,8 @@ struct WebShellAuthState: Equatable, Sendable {
         didResolveToken = false
     }
 
-    mutating func resolveToken(_ nextToken: String?) {
+    mutating func resolveToken(_ nextToken: String?, resetHostedRetry: Bool = false) {
+        let tokenChanged = nextToken != token
         token = nextToken
         didResolveToken = true
         if nextToken == nil {
@@ -137,7 +156,9 @@ struct WebShellAuthState: Equatable, Sendable {
             return
         }
         hostedAuthRequired = false
-        hostedRetryAttempted = false
+        if resetHostedRetry || tokenChanged {
+            hostedRetryAttempted = false
+        }
         authRevision += 1
     }
 
@@ -185,8 +206,10 @@ private struct WebShellView: NSViewRepresentable {
         coordinator.lastAuthRevision = authRevision
         coordinator.openSettingsOnLoad = openSettingsOnLoad
         coordinator.destinationURL = url
+        webShellLogger.info("Hosted shell load requested host=\(url.host() ?? "unknown", privacy: .public) path=\(url.path, privacy: .public) tokenPresent=\((bearerToken?.isEmpty == false), privacy: .public)")
         guard let bearerToken, !bearerToken.isEmpty else {
             coordinator.cancelExchange()
+            webShellLogger.warning("Hosted shell loading without bearer token")
             view.load(webShellDestinationRequest(for: url, token: bearerToken))
             return
         }
@@ -212,35 +235,52 @@ private struct WebShellView: NSViewRepresentable {
                 decisionHandler(.allow)
                 return
             }
-            if shouldHandleAsAuthRequired(url) {
+            webShellLogger.info("WK navigation requested host=\(url.host() ?? "unknown", privacy: .public) path=\(url.path, privacy: .public)")
+            switch WebShellNavigationPolicy.decision(for: url, destinationURL: destinationURL) {
+            case .authRequired:
+                webShellLogger.warning("WK navigation treated as hosted auth required path=\(url.path, privacy: .public)")
                 onAuthRequired()
                 decisionHandler(.cancel)
-                return
-            }
-            if Self.shouldOpenExternally(url) {
+            case .external:
                 cancelExchange()
+                webShellLogger.info("WK navigation opened externally host=\(url.host() ?? "unknown", privacy: .public) path=\(url.path, privacy: .public)")
                 NSWorkspace.shared.open(url)
                 decisionHandler(.cancel)
-                return
+            case .allow:
+                decisionHandler(.allow)
             }
-            decisionHandler(.allow)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            if let url = webView.url {
+                webShellLogger.info("WK navigation finished host=\(url.host() ?? "unknown", privacy: .public) path=\(url.path, privacy: .public)")
+            } else {
+                webShellLogger.info("WK navigation finished without current url")
+            }
             guard openSettingsOnLoad else { return }
             openSettingsOnLoad = false
             webView.evaluateJavaScript(HostedShellSettingsBridge.openSettingsScript, completionHandler: nil)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            webShellLogger.warning("WK navigation failed error=\(String(describing: error), privacy: .private)")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            webShellLogger.warning("WK provisional navigation failed error=\(String(describing: error), privacy: .private)")
         }
 
         @MainActor
         func exchangeAppSession(for destination: URL, token: String, in webView: WKWebView) {
             cancelExchange()
             guard let request = NativeAppSessionExchange.request(for: destination, token: token) else {
+                webShellLogger.warning("Native app session exchange request could not be built")
                 onAuthRequired()
                 return
             }
             exchangeGeneration += 1
             let generation = exchangeGeneration
+            webShellLogger.info("Native app session exchange started host=\(destination.host() ?? "unknown", privacy: .public) path=\(destination.path, privacy: .public)")
             exchangeTask = Task { [weak self, weak webView] in
                 do {
                     let response = try await NativeAppSessionExchange.perform(request: request)
@@ -250,6 +290,8 @@ private struct WebShellView: NSViewRepresentable {
                         self.exchangeTask = nil
                         NativeAppSessionExchange.installCookies(response.cookies, in: webView.configuration.websiteDataStore.httpCookieStore) {
                             guard self.exchangeGeneration == generation else { return }
+                            let names = response.cookies.map(\.name).joined(separator: ",")
+                            webShellLogger.info("Native app session cookies installed names=\(names, privacy: .public)")
                             webView.load(webShellDestinationRequest(for: destination, token: token))
                         }
                     }
@@ -261,6 +303,7 @@ private struct WebShellView: NSViewRepresentable {
                     await MainActor.run {
                         guard let self, self.exchangeGeneration == generation else { return }
                         self.exchangeTask = nil
+                        webShellLogger.warning("Native app session exchange failed error=\(String(describing: error), privacy: .private)")
                         self.onAuthRequired()
                     }
                 }
@@ -279,40 +322,46 @@ private struct WebShellView: NSViewRepresentable {
         init(onAuthRequired: @escaping @MainActor () -> Void) {
             self.onAuthRequired = onAuthRequired
         }
+    }
+}
 
-        private func shouldHandleAsAuthRequired(_ url: URL) -> Bool {
-            guard let destinationHost = destinationURL?.host()?.lowercased(),
-                  let host = url.host()?.lowercased(),
-                  host == destinationHost else { return false }
-            let path = url.path.lowercased()
-            return Self.isAuthPath(path)
-        }
+enum WebShellNavigationDecision: Equatable {
+    case allow
+    case authRequired
+    case external
+}
 
-        private static func shouldOpenExternally(_ url: URL) -> Bool {
-            guard let host = url.host()?.lowercased() else { return false }
-            let path = url.path.lowercased()
-            if host.contains("clerk") || host.contains("accounts.") {
-                return true
-            }
-            return isAuthPath(path)
+enum WebShellNavigationPolicy {
+    static func decision(for url: URL, destinationURL: URL?) -> WebShellNavigationDecision {
+        if isAuthNavigation(url) {
+            return .authRequired
         }
+        return .allow
+    }
 
-        private static func isAuthPath(_ path: String) -> Bool {
-            path == "/sign-in"
-                || path.hasPrefix("/sign-in/")
-                || path == "/sign-up"
-                || path.hasPrefix("/sign-up/")
-                || path == "/login"
-                || path.hasPrefix("/login/")
-                || path == "/oauth"
-                || path.hasPrefix("/oauth/")
-                || path == "/sso"
-                || path.hasPrefix("/sso/")
-                || path == "/auth/device"
-                || path.hasPrefix("/auth/device/")
-                || path == "/auth/callback"
-                || path.hasPrefix("/auth/callback/")
+    private static func isAuthNavigation(_ url: URL) -> Bool {
+        guard let host = url.host()?.lowercased() else { return false }
+        if host.contains("clerk") || host.contains("accounts.") {
+            return true
         }
+        return isAuthPath(url.path.lowercased())
+    }
+
+    private static func isAuthPath(_ path: String) -> Bool {
+        path == "/sign-in"
+            || path.hasPrefix("/sign-in/")
+            || path == "/sign-up"
+            || path.hasPrefix("/sign-up/")
+            || path == "/login"
+            || path.hasPrefix("/login/")
+            || path == "/oauth"
+            || path.hasPrefix("/oauth/")
+            || path == "/sso"
+            || path.hasPrefix("/sso/")
+            || path == "/auth/device"
+            || path.hasPrefix("/auth/device/")
+            || path == "/auth/callback"
+            || path.hasPrefix("/auth/callback/")
     }
 }
 
@@ -346,6 +395,11 @@ enum HostedShellSettingsBridge {
 }
 
 struct NativeAppSessionExchange {
+    private static let sessionCookieNames = Set([
+        "matrix_app_session",
+        "matrix_native_app_session",
+    ])
+
     private struct Body: Encodable {
         let redirectTo: String
     }
@@ -379,6 +433,7 @@ struct NativeAppSessionExchange {
         defer { session.invalidateAndCancel() }
         let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw NativeAppSessionExchangeError.invalidResponse }
+        webShellLogger.info("Native app session response status=\(http.statusCode, privacy: .public)")
         guard (200..<300).contains(http.statusCode) else { throw NativeAppSessionExchangeError.unauthorized }
         guard let url = request.url else { throw NativeAppSessionExchangeError.invalidResponse }
         return try Response(cookies: appSessionCookies(
@@ -417,8 +472,12 @@ struct NativeAppSessionExchange {
         }
         guard cookies.contains(where: { $0.name == "matrix_app_session" && !$0.value.isEmpty }),
               cookies.contains(where: { $0.name == "matrix_native_app_session" && !$0.value.isEmpty }) else {
+            let names = cookies.map(\.name).joined(separator: ",")
+            webShellLogger.warning("Native app session response missing required cookies names=\(names, privacy: .public)")
             throw NativeAppSessionExchangeError.invalidResponse
         }
+        let names = cookies.map(\.name).joined(separator: ",")
+        webShellLogger.info("Native app session cookies parsed names=\(names, privacy: .public)")
         return cookies
     }
 
@@ -475,23 +534,66 @@ struct NativeAppSessionExchange {
 
     @MainActor
     static func installCookies(_ cookies: [HTTPCookie], in store: WKHTTPCookieStore, completion: @escaping @MainActor () -> Void) {
-        guard !cookies.isEmpty else {
+        let sessionCookies = cookies.filter { sessionCookieNames.contains($0.name) }
+        guard !sessionCookies.isEmpty else {
             completion()
             return
         }
-        func installCookie(at index: Int) {
-            guard cookies.indices.contains(index) else {
-                completion()
-                return
-            }
-            let cookie = cookies[index]
-            store.setCookie(cookie) {
-                Task { @MainActor in
-                    installCookie(at: index + 1)
+
+        store.getAllCookies { existingCookies in
+            let staleCookies = existingCookies.filter(shouldReplaceExistingCookie)
+            let staleNames = staleCookies.map(\.name).joined(separator: ",")
+            webShellLogger.info("Replacing stale native session cookies count=\(staleCookies.count, privacy: .public) names=\(staleNames, privacy: .public)")
+            Task { @MainActor in
+                deleteCookie(at: 0, cookies: staleCookies, store: store) {
+                    installCookie(at: 0, cookies: sessionCookies, store: store, completion: completion)
                 }
             }
         }
-        installCookie(at: 0)
+    }
+
+    private static func shouldReplaceExistingCookie(_ cookie: HTTPCookie) -> Bool {
+        guard sessionCookieNames.contains(cookie.name) else { return false }
+        let normalizedDomain = cookie.domain
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return normalizedDomain == "app.matrix-os.com" || normalizedDomain == "matrix-os.com"
+    }
+
+    @MainActor
+    private static func deleteCookie(
+        at index: Int,
+        cookies: [HTTPCookie],
+        store: WKHTTPCookieStore,
+        completion: @escaping @MainActor () -> Void
+    ) {
+        guard cookies.indices.contains(index) else {
+            completion()
+            return
+        }
+        store.delete(cookies[index]) {
+            Task { @MainActor in
+                deleteCookie(at: index + 1, cookies: cookies, store: store, completion: completion)
+            }
+        }
+    }
+
+    @MainActor
+    private static func installCookie(
+        at index: Int,
+        cookies: [HTTPCookie],
+        store: WKHTTPCookieStore,
+        completion: @escaping @MainActor () -> Void
+    ) {
+        guard cookies.indices.contains(index) else {
+            completion()
+            return
+        }
+        store.setCookie(cookies[index]) {
+            Task { @MainActor in
+                installCookie(at: index + 1, cookies: cookies, store: store, completion: completion)
+            }
+        }
     }
 }
 
@@ -500,9 +602,11 @@ enum NativeAppSessionExchangeError: Error, Equatable {
     case unauthorized
 }
 
-private func webShellDestinationRequest(for url: URL, token: String?) -> URLRequest {
-    var request = URLRequest(url: url)
+func webShellDestinationRequest(for url: URL, token: String?) -> URLRequest {
+    var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData)
     request.timeoutInterval = 20
+    request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+    request.setValue("no-cache", forHTTPHeaderField: "Pragma")
     if let token, !token.isEmpty {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }

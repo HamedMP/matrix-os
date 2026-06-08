@@ -485,6 +485,10 @@ public final class AppModel: ObservableObject {
     /// Monotonic marker for completed sign-ins. Cancellation returns `signIn` to
     /// idle too, so hosted-shell recovery listens to this instead of idle alone.
     @Published public private(set) var signInCompletionID = 0
+    /// True when the hosted web shell reported it needs (re)authentication. The
+    /// native principal/gateway session remain valid; this only gates the hosted
+    /// shell panel's sign-in prompt and prevents a redirect/sign-out loop.
+    @Published public private(set) var hostedShellNeedsSignIn = false
 
     // MARK: - Dependencies
 
@@ -741,6 +745,21 @@ public final class AppModel: ObservableObject {
         Task { await signOutNow() }
     }
 
+    /// Hosted web shell (WKWebView at app.matrix-os.com) needs (re)authentication.
+    /// Non-destructive: the native device-auth principal and gateway session stay
+    /// valid, so we DO NOT sign out — that previously caused a redirect-to-/login
+    /// -> native sign-out -> workspace re-show loop. We only flag the hosted shell
+    /// so its panel shows the sign-in prompt without retrying forever.
+    public func markHostedShellAuthRequired() {
+        appModelLogger.warning("Hosted shell needs sign-in; keeping native session (no sign-out)")
+        hostedShellNeedsSignIn = true
+    }
+
+    /// Hosted web shell authenticated (loaded a non-auth page on the app host).
+    public func markHostedShellAuthorized() {
+        hostedShellNeedsSignIn = false
+    }
+
     public func signOutNow() async {
         signInTask?.cancel()
         signInTask = nil
@@ -758,6 +777,7 @@ public final class AppModel: ObservableObject {
         profile = nil
         phase = .needsProfile
         signIn = .idle
+        hostedShellNeedsSignIn = false
         hasSelectedProject = false
         section = .board
         nativeSettingsSection = .account
@@ -816,6 +836,7 @@ public final class AppModel: ObservableObject {
                 case let .approved(token):
                     try await principal.setToken(token.accessToken)
                     signIn = .idle
+                    hostedShellNeedsSignIn = false
                     let handle = (token.handle?.isEmpty == false ? token.handle : nil) ?? "me"
                     let newProfile = ConnectionProfile(handle: handle, gatewayHost: signInGatewayHost, runtimeSlot: nil)
                     persistProfile(newProfile)
@@ -2136,16 +2157,11 @@ private final class NativeAuthBrowser: NSObject, ASWebAuthenticationPresentation
 
     func open(_ url: URL) {
         session?.cancel()
-        let nextSession = ASWebAuthenticationSession(url: url, callbackURLScheme: "matrixos") { [weak self] callbackURL, error in
-            Task { @MainActor in
-                self?.session = nil
-                if callbackURL != nil {
-                    NSApp.activate(ignoringOtherApps: true)
-                } else if let error {
-                    appModelLogger.warning("Native auth browser ended without callback: \(String(describing: error), privacy: .private)")
-                }
-            }
-        }
+        let nextSession = ASWebAuthenticationSession(
+            url: url,
+            callbackURLScheme: "matrixos",
+            completionHandler: Self.makeCompletionHandler()
+        )
         nextSession.prefersEphemeralWebBrowserSession = false
         nextSession.presentationContextProvider = self
         session = nextSession
@@ -2162,6 +2178,23 @@ private final class NativeAuthBrowser: NSObject, ASWebAuthenticationPresentation
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
+    }
+
+    nonisolated private static func makeCompletionHandler() -> (URL?, Error?) -> Void {
+        { callbackURL, error in
+            Task { @MainActor in
+                NativeAuthBrowser.shared.finish(callbackURL: callbackURL, error: error)
+            }
+        }
+    }
+
+    private func finish(callbackURL: URL?, error: Error?) {
+        session = nil
+        if callbackURL != nil {
+            NSApp.activate(ignoringOtherApps: true)
+        } else if let error {
+            appModelLogger.warning("Native auth browser ended without callback: \(String(describing: error), privacy: .private)")
+        }
     }
 }
 #endif
