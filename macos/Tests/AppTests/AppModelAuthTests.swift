@@ -692,6 +692,26 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertNotEqual(model.activeTabID, "settings")
     }
 
+    func testClosingLastSettingsTabResetsStaleSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.closeTab(id: "settings")
+
+        XCTAssertNil(model.activeTabID)
+        XCTAssertEqual(model.section, .board)
+    }
+
     func testCancellingSignInDoesNotMarkCompletion() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let model = AppModel(

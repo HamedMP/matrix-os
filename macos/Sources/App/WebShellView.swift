@@ -228,6 +228,7 @@ private struct WebShellView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard openSettingsOnLoad else { return }
+            openSettingsOnLoad = false
             webView.evaluateJavaScript(HostedShellSettingsBridge.openSettingsScript, completionHandler: nil)
         }
 

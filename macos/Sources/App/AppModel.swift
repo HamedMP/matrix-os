@@ -1384,6 +1384,9 @@ public final class AppModel: ObservableObject {
             if id.hasPrefix("board:") {
                 hasSelectedProject = false
             }
+            if section == .settings || section == .resources {
+                section = .board
+            }
             return
         }
         let next = openTabs[nextIndex]
