@@ -294,8 +294,12 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
             wrapsLines: preferences.wrapsLines
         )
         textView.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-        textView.minSize = NSSize(width: preferences.wrapsLines ? width : 320, height: 0)
-        textView.maxSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        textView.minSize = NSSize(width: 0, height: 0)
+        // Never cap max width. When wrapping, the container tracks the text view, which the
+        // scroll view sizes to full width via autoresizing; capping max width at an early,
+        // narrow contentSize was pinning the editor into a thin centered column (and, for
+        // dense files like JSON, wrapping to one character per line).
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         if preferences.wrapsLines, textView.frame.width < width {
             textView.frame.size.width = width
         }
@@ -745,8 +749,21 @@ final class EditorScrollHost: NSView {
         needsLayout = true
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // SwiftUI resizes the host by setting its frame, which does not trigger layout()
+        // on a non-autoresizing view. Re-lay the scroll view here so it always fills the
+        // host; otherwise the scroll view stays latched at its initial (narrow) width and
+        // the wrapped text renders in a thin, off-center column.
+        layoutContents()
+    }
+
     override func layout() {
         super.layout()
+        layoutContents()
+    }
+
+    private func layoutContents() {
         let barHeight = (findBar?.isHidden ?? true) ? 0 : findBarHeight
         findBar?.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: findBarHeight)
         scrollView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - barHeight)
