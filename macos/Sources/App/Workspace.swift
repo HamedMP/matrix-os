@@ -930,7 +930,7 @@ private struct TerminalsView: View {
 
 struct EditorPanel: View {
     @ObservedObject var model: AppModel
-    @State private var viewMode: EditorViewMode = .preview
+    @State private var viewMode: EditorViewMode = .code
 
     private var fileKind: EditorFileKind {
         EditorFileKind(path: model.selectedFilePath)
@@ -1015,6 +1015,15 @@ struct EditorPanel: View {
                         description: Text("Choose a project file to inspect or edit.")
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if model.isLoadingSelectedFile {
+                    VStack(spacing: Spacing.x3) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading \(URL(fileURLWithPath: model.selectedFilePath ?? "").lastPathComponent)")
+                            .font(.plexSans(13, weight: .medium))
+                            .foregroundStyle(Color.inkSecondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if fileKind == .image {
                     ImageFilePreview(data: model.selectedFileData, path: model.selectedFilePath)
                 } else if fileKind == .markdown && viewMode == .preview {
@@ -1030,6 +1039,7 @@ struct EditorPanel: View {
                         preferences: model.editorPreferences,
                         isEditable: false
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     SyntaxHighlightedCodeEditor(
                         text: $model.selectedFileContent,
@@ -1037,6 +1047,7 @@ struct EditorPanel: View {
                         theme: model.editorTheme,
                         preferences: model.editorPreferences
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(minWidth: 360, maxWidth: .infinity)
@@ -1468,26 +1479,91 @@ struct NativeSettingsPanel: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.x5) {
-                header
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: Spacing.x4)], spacing: Spacing.x4) {
-                    accountSection
-                    runtimeSection
-                    editorSection
-                    accessSection
+        HStack(spacing: 0) {
+            settingsSidebar
+                .frame(width: 214)
+            Rectangle().fill(Color.hairlineDark).frame(width: 1)
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.x5) {
+                    header
+                    HStack(alignment: .top, spacing: Spacing.x4) {
+                        VStack(spacing: Spacing.x4) {
+                            accountSection
+                            editorSection
+                        }
+                        .frame(minWidth: 320, idealWidth: 380, maxWidth: 440)
+
+                        VStack(spacing: Spacing.x4) {
+                            runtimeSection
+                            accessSection
+                        }
+                        .frame(minWidth: 360, idealWidth: 440, maxWidth: 520)
+                    }
                 }
+                .padding(Spacing.x5)
+                .frame(maxWidth: 980, alignment: .topLeading)
             }
-            .padding(Spacing.x5)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color.surfaceCard)
+        .background(Color.canvasVoid)
         .task { await model.loadSystemInfo() }
+    }
+
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: Spacing.x1) {
+            Text("SETTINGS")
+                .font(.plexMono(10, weight: .semibold))
+                .foregroundStyle(Color.inkTertiary)
+                .tracking(1.2)
+                .padding(.horizontal, Spacing.x3)
+                .padding(.bottom, Spacing.x2)
+            settingsNavItem("Account", icon: "person.crop.circle", active: true)
+            settingsNavItem("Runtime", icon: "desktopcomputer", active: false)
+            settingsNavItem("Editor", icon: "chevron.left.forwardslash.chevron.right", active: false)
+            settingsNavItem("Workspace", icon: "folder.badge.gearshape", active: false)
+            Spacer()
+            Button {
+                Task { await model.loadSystemInfo() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+                    .font(.plexSans(12, weight: .semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.inkSecondary)
+            .padding(Spacing.x3)
+            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .strokeBorder(Color.hairlineDark.opacity(0.75), lineWidth: 1)
+            )
+            .help("Refresh settings")
+        }
+        .padding(Spacing.x3)
+        .background(Color.surfaceRail)
+    }
+
+    private func settingsNavItem(_ title: String, icon: String, active: Bool) -> some View {
+        HStack(spacing: Spacing.x2) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 18)
+            Text(title)
+                .font(.plexSans(13, weight: active ? .semibold : .medium))
+            Spacer()
+        }
+        .foregroundStyle(active ? Color.inkPrimary : Color.inkSecondary)
+        .padding(.horizontal, Spacing.x3)
+        .frame(height: 34)
+        .background(active ? Color.surfaceCardRaised : Color.clear, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                .strokeBorder(active ? Color.hairlineDark.opacity(0.9) : Color.clear, lineWidth: 1)
+        )
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: Spacing.x3) {
-            AppGlyphTile(symbol: "gearshape", palette: .tab(.settings), size: 42, isActive: true)
+            AppGlyphTile(symbol: "gearshape", palette: .tab(.settings), size: 46, isActive: true)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Settings")
                     .font(.plexSans(24, weight: .semibold))
@@ -1497,12 +1573,6 @@ struct NativeSettingsPanel: View {
                     .foregroundStyle(Color.inkTertiary)
             }
             Spacer()
-            Button {
-                Task { await model.loadSystemInfo() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(.bordered)
         }
     }
 
@@ -1512,19 +1582,33 @@ struct NativeSettingsPanel: View {
             settingRow("Computer", value: model.profile?.gatewayHost ?? "No runtime selected", icon: "server.rack")
             Divider().overlay(Color.hairlineDark)
             HStack(spacing: Spacing.x2) {
-                Button(role: .destructive) {
+                Button {
                     model.signOut()
                 } label: {
                     Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.surfaceCard)
+                .padding(.horizontal, Spacing.x3)
+                .frame(height: 34)
+                .background(Color.signalBlocked, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
                 if let url = model.shellURL() {
                     Button {
                         NSWorkspace.shared.open(url)
                     } label: {
                         Label("Open Web Shell", systemImage: "arrow.up.right.square")
+                            .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.inkPrimary)
+                    .padding(.horizontal, Spacing.x3)
+                    .frame(height: 34)
+                    .background(Color.surfaceCardRaised, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                            .strokeBorder(Color.hairlineDark.opacity(0.8), lineWidth: 1)
+                    )
                 }
             }
         }
@@ -1578,7 +1662,15 @@ struct NativeSettingsPanel: View {
                 Label("Open Resource Manager", systemImage: "gauge.with.dots.needle.67percent")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.inkPrimary)
+            .padding(.horizontal, Spacing.x3)
+            .frame(height: 34)
+            .background(Color.surfaceCardRaised, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .strokeBorder(Color.hairlineDark.opacity(0.8), lineWidth: 1)
+            )
         }
     }
 
@@ -1595,7 +1687,7 @@ struct NativeSettingsPanel: View {
         }
         .padding(Spacing.x4)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
+        .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.panel, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
                 .strokeBorder(Color.hairlineDark.opacity(0.75), lineWidth: 1)
@@ -1619,7 +1711,11 @@ struct NativeSettingsPanel: View {
             Spacer(minLength: 0)
         }
         .padding(Spacing.x2)
-        .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                .strokeBorder(Color.hairlineDark.opacity(0.55), lineWidth: 1)
+        )
     }
 
     private var themeBinding: Binding<CodeEditorTheme> {

@@ -204,9 +204,22 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         textView.isHorizontallyResizable = !preferences.wrapsLines
         textView.autoresizingMask = preferences.wrapsLines ? [.width] : []
         textView.textContainer?.widthTracksTextView = preferences.wrapsLines
-        let width = preferences.wrapsLines ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude
+        let width = Self.resolvedTextContainerWidth(
+            contentWidth: scrollView.contentSize.width,
+            boundsWidth: scrollView.bounds.width,
+            wrapsLines: preferences.wrapsLines
+        )
         textView.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        textView.minSize = NSSize(width: preferences.wrapsLines ? width : 320, height: 0)
         textView.maxSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        if preferences.wrapsLines, textView.frame.width < width {
+            textView.frame.size.width = width
+        }
+    }
+
+    nonisolated static func resolvedTextContainerWidth(contentWidth: CGFloat, boundsWidth: CGFloat, wrapsLines: Bool) -> CGFloat {
+        guard wrapsLines else { return CGFloat.greatestFiniteMagnitude }
+        return max(contentWidth, boundsWidth, 320)
     }
 
     private func apply(text: String, to textView: NSTextView, theme: CodeEditorTheme, filePath: String?, preferences: CodeEditorPreferences) {

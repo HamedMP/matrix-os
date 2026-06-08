@@ -155,7 +155,6 @@ struct BoardView: View {
             TaskPaneStrip(
                 activePanel: model.activePanel,
                 enabledPanels: model.enabledPanels,
-                onToggle: model.togglePanel,
                 onFocus: model.switchPanel
             )
             Divider().overlay(Color.hairlineDark)

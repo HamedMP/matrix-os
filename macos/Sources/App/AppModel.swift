@@ -21,6 +21,9 @@ import OSLog
 #if canImport(AppKit)
 import AppKit
 #endif
+#if canImport(AuthenticationServices)
+import AuthenticationServices
+#endif
 
 private let appModelLogger = Logger(subsystem: "com.matrixos.native-shell", category: "AppModel")
 
@@ -372,6 +375,7 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var selectedFileData: Data?
     @Published public var selectedFileContent: String = ""
     @Published public private(set) var fileSaveState: String?
+    @Published public private(set) var isLoadingSelectedFile = false
     /// Git branches for the active project.
     @Published public private(set) var gitBranches: [GitBranchSummary] = []
     /// Pull requests for the active project, when GitHub is linked.
@@ -406,8 +410,8 @@ public final class AppModel: ObservableObject {
     /// Which pane the detail view is showing. The agent terminal is always the
     /// left split; the right pane defaults to the editor.
     @Published public var activePanel: Panel = .app(slug: "editor")
-    /// Task panes currently visible in the detail surface. Buttons toggle these
-    /// like checkboxes so terminal/editor/git/etc. can be shown together.
+    /// Task panes currently available in the detail surface. Keyboard commands
+    /// and fallback logic use this list when restoring an active panel.
     @Published public private(set) var enabledPanels: [Panel] = [.terminal, .app(slug: "editor")]
     /// Native editor appearance and text-system preferences.
     @Published public private(set) var editorTheme: CodeEditorTheme
@@ -611,7 +615,13 @@ public final class AppModel: ObservableObject {
     /// Default browser opener used outside tests.
     public static let defaultOpenExternalURL: @Sendable (URL) -> Void = { url in
         #if canImport(AppKit)
+        #if canImport(AuthenticationServices)
+        Task { @MainActor in
+            NativeAuthBrowser.shared.open(url)
+        }
+        #else
         NSWorkspace.shared.open(url)
+        #endif
         #endif
     }
 
@@ -690,6 +700,7 @@ public final class AppModel: ObservableObject {
         selectedFilePath = nil
         selectedFileData = nil
         selectedFileContent = ""
+        isLoadingSelectedFile = false
         fileSaveState = nil
         gitBranches = []
         gitPullRequests = []
@@ -732,7 +743,7 @@ public final class AppModel: ObservableObject {
                     persistProfile(newProfile)
                     selectProfile(newProfile)
                     if !hasSelectedProject {
-                        section = .home
+                        ensureHomeTab(select: true)
                     }
                     signInCompletionID += 1
                     await refresh()
@@ -1034,6 +1045,7 @@ public final class AppModel: ObservableObject {
         selectedFilePath = nil
         selectedFileData = nil
         selectedFileContent = ""
+        isLoadingSelectedFile = false
         board = BoardStore(loader: makeLoader(client))
         section = .board
         upsertProjectBoardTab(select: true)
@@ -1611,6 +1623,7 @@ public final class AppModel: ObservableObject {
             selectedFilePath = nil
             selectedFileData = nil
             selectedFileContent = ""
+            isLoadingSelectedFile = false
             Task { await loadFiles(client: client) }
             return
         }
@@ -1643,6 +1656,7 @@ public final class AppModel: ObservableObject {
         selectedFilePath = path
         selectedFileData = nil
         selectedFileContent = ""
+        isLoadingSelectedFile = true
         fileSaveState = nil
         let route = fileRoute(path)
         Task { [weak self] in
@@ -1650,14 +1664,18 @@ public final class AppModel: ObservableObject {
                 let data = try await client.getData(route)
                 let text = String(data: data, encoding: .utf8) ?? ""
                 await MainActor.run {
+                    guard self?.selectedFilePath == path else { return }
                     self?.selectedFileData = data
                     self?.selectedFileContent = text
+                    self?.isLoadingSelectedFile = false
                     self?.fileSaveState = nil
                 }
             } catch {
                 await MainActor.run {
+                    guard self?.selectedFilePath == path else { return }
                     self?.selectedFileData = nil
                     self?.selectedFileContent = ""
+                    self?.isLoadingSelectedFile = false
                     self?.fileSaveState = "Couldn't open this file."
                 }
             }
@@ -1689,6 +1707,7 @@ public final class AppModel: ObservableObject {
         selectedFilePath = nil
         selectedFileData = nil
         selectedFileContent = ""
+        isLoadingSelectedFile = false
         Task { await loadPanelData(for: .app(slug: "editor")) }
     }
 
@@ -1962,6 +1981,40 @@ public final class AppModel: ObservableObject {
         }
     }
 }
+
+#if canImport(AppKit) && canImport(AuthenticationServices)
+@MainActor
+private final class NativeAuthBrowser: NSObject, ASWebAuthenticationPresentationContextProviding {
+    static let shared = NativeAuthBrowser()
+
+    private var session: ASWebAuthenticationSession?
+
+    func open(_ url: URL) {
+        session?.cancel()
+        let nextSession = ASWebAuthenticationSession(url: url, callbackURLScheme: "matrixos") { [weak self] callbackURL, error in
+            Task { @MainActor in
+                self?.session = nil
+                if callbackURL != nil {
+                    NSApp.activate(ignoringOtherApps: true)
+                } else if let error {
+                    appModelLogger.warning("Native auth browser ended without callback: \(String(describing: error), privacy: .private)")
+                }
+            }
+        }
+        nextSession.prefersEphemeralWebBrowserSession = false
+        nextSession.presentationContextProvider = self
+        session = nextSession
+        if !nextSession.start() {
+            session = nil
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
+    }
+}
+#endif
 
 /// A `BoardLoading` that never fetches — used before a profile is selected or when
 /// URL resolution fails. Always reports a generic misconfiguration so the UI shows

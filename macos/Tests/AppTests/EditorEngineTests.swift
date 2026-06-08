@@ -47,6 +47,25 @@ final class EditorEngineTests: XCTestCase {
         XCTAssertTrue(preferences.wrapsLines)
     }
 
+    func testWrappedEditorNeverStartsWithZeroWidthTextContainer() {
+        XCTAssertEqual(
+            SyntaxHighlightedCodeEditor.resolvedTextContainerWidth(contentWidth: 0, boundsWidth: 0, wrapsLines: true),
+            320
+        )
+        XCTAssertEqual(
+            SyntaxHighlightedCodeEditor.resolvedTextContainerWidth(contentWidth: 180, boundsWidth: 260, wrapsLines: true),
+            320
+        )
+        XCTAssertEqual(
+            SyntaxHighlightedCodeEditor.resolvedTextContainerWidth(contentWidth: 900, boundsWidth: 700, wrapsLines: true),
+            900
+        )
+        XCTAssertEqual(
+            SyntaxHighlightedCodeEditor.resolvedTextContainerWidth(contentWidth: 0, boundsWidth: 0, wrapsLines: false),
+            CGFloat.greatestFiniteMagnitude
+        )
+    }
+
     @MainActor
     func testPreviewSyntaxHighlighterColorsKeywordsAndStrings() {
         let highlighted = SyntaxHighlightedCodeEditor.highlightedText(

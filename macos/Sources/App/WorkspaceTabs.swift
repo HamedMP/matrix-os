@@ -71,7 +71,6 @@ let taskPaneSpecs: [TaskPaneSpec] = [
 struct TaskPaneStrip: View {
     let activePanel: Panel
     let enabledPanels: [Panel]
-    let onToggle: (Panel) -> Void
     let onFocus: (Panel) -> Void
 
     var body: some View {
@@ -80,9 +79,9 @@ struct TaskPaneStrip: View {
                 ForEach(taskPaneSpecs) { pane in
                     TaskPaneButton(
                         pane: pane,
-                        isActive: enabledPanels.contains(pane.panel),
+                        isAvailable: enabledPanels.contains(pane.panel),
                         isFocused: pane.panel == activePanel,
-                        action: { onToggle(pane.panel) }
+                        action: { onFocus(pane.panel) }
                     )
                     .keyboardShortcut(shortcutKey(for: pane.id), modifiers: shortcutModifiers(for: pane.id))
                     .contextMenu {
@@ -118,16 +117,13 @@ struct TaskPaneStrip: View {
 
 private struct TaskPaneButton: View {
     let pane: TaskPaneSpec
-    let isActive: Bool
+    let isAvailable: Bool
     let isFocused: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: Spacing.x1) {
-                Image(systemName: isActive ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(isActive ? Color.signalLive : Color.inkTertiary)
                 AppGlyphTile(symbol: pane.icon, palette: .panel(pane.id), size: 20, isActive: isFocused)
                 Text(pane.title)
                     .font(.plexSans(12, weight: isFocused ? .semibold : .medium))
@@ -141,18 +137,19 @@ private struct TaskPaneButton: View {
             .frame(height: 30)
             .background(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .fill(isActive ? Color.surfaceCard : Color.clear)
+                    .fill(isFocused ? Color.surfaceCard : Color.clear)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .strokeBorder(isFocused ? Color.signalLive.opacity(0.7) : (isActive ? Color.hairlineDark : Color.clear), lineWidth: 1)
+                    .strokeBorder(isFocused ? Color.signalLive.opacity(0.7) : Color.clear, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("\(pane.title) \(pane.shortcut)")
         .accessibilityLabel(pane.title)
-        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .accessibilityHint(isAvailable ? "Available" : "Opens this pane")
+        .accessibilityAddTraits(isFocused ? [.isSelected] : [])
     }
 }
 
