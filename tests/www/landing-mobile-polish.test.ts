@@ -30,7 +30,8 @@ describe("www landing mobile polish", () => {
     expect(landing).toContain("<nav className=\"mt-4 grid grid-cols-2");
     expect(landing).toContain("grid grid-cols-2");
     expect(landing).toContain("Open skills.md");
-    expect(landing).toContain("Developer workflow");
+    expect(landing).toContain('href="/docs/users/quickstart"');
+    expect(landing).toContain("Quickstart");
   });
 
   it("uses tighter landing section spacing than the original blanket rhythm", async () => {
