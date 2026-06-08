@@ -24,6 +24,10 @@ final class TerminalRendererTests: XCTestCase {
         XCTAssertEqual(TerminalPanelView.rendererConfiguration.kind, .swiftTerm)
     }
 
+    func testTerminalFocusUsesRetryPolicyAfterWindowAttachment() {
+        XCTAssertEqual(TerminalFocusPolicy.initialFocusRetryDelays, [0, 0.05, 0.15, 0.35])
+    }
+
     func testExperimentalRenderersAreHiddenUnlessExplicitlyAllowed() {
         XCTAssertEqual(
             TerminalRendererConfiguration.available().map(\.kind),

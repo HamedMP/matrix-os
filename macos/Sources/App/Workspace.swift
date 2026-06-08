@@ -78,8 +78,7 @@ struct RootShellView: View {
         case .terminal:
             TerminalsView(model: model)
         case .settings:
-            SettingsPanel(model: model)
-                .task { await model.loadSystemInfo() }
+            MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Settings", openSettingsOnLoad: true)
         case .resources:
             ResourcesPanel(model: model)
                 .task { await model.loadSystemInfo() }
@@ -704,7 +703,7 @@ private struct TerminalsView: View {
             case "git":
                 GitPanel(model: model)
             case "settings":
-                SettingsPanel(model: model)
+                MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Settings", openSettingsOnLoad: true)
             case "processes":
                 ProcessesPanel(model: model)
             case "whiteboard":
@@ -1392,48 +1391,6 @@ struct ProcessesPanel: View {
         }
         .padding(Spacing.x4)
         .background(Color.surfaceCard)
-    }
-}
-
-struct SettingsPanel: View {
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.x4) {
-            Label("Settings", systemImage: "gearshape")
-                .font(.plexSans(16, weight: .semibold))
-            if let info = model.systemInfo {
-                inspectorLikeRow("Runtime", value: info.displayRuntimeName, icon: "macwindow")
-                inspectorLikeRow("Version", value: info.release?.version ?? info.version, icon: "shippingbox")
-                inspectorLikeRow("Channel", value: info.release?.channel ?? "Current", icon: "antenna.radiowaves.left.and.right")
-            }
-            inspectorLikeRow("Project", value: model.projectSlug, icon: "folder")
-            inspectorLikeRow("Card", value: model.selectedCard?.title ?? "No task selected", icon: "rectangle.and.text.magnifyingglass")
-            inspectorLikeRow("Session", value: model.selectedCard?.linkedSessionId ?? "No linked session", icon: "terminal")
-            inspectorLikeRow("Worktree", value: model.selectedCard?.linkedWorktreeId ?? "~/projects/\(model.projectSlug)", icon: "arrow.triangle.branch")
-            Spacer()
-        }
-        .padding(Spacing.x4)
-        .background(Color.surfaceCard)
-    }
-
-    private func inspectorLikeRow(_ title: String, value: String, icon: String) -> some View {
-        HStack(spacing: Spacing.x2) {
-            Image(systemName: icon)
-                .foregroundStyle(Color.signalLive)
-                .frame(width: 18)
-            Text(title)
-                .font(.plexSans(12, weight: .medium))
-                .foregroundStyle(Color.inkSecondary)
-            Spacer()
-            Text(value)
-                .font(.plexMono(11))
-                .foregroundStyle(Color.inkTertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .padding(Spacing.x3)
-        .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
     }
 }
 

@@ -194,11 +194,12 @@ private struct SwiftTermView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> TerminalView {
-        let view = TerminalView(frame: .zero)
+        let view = FocusableTerminalView(frame: .zero)
         view.terminalDelegate = context.coordinator
         context.coordinator.terminalView = view
         let clickRecognizer = NSClickGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.focusTerminal(_:)))
         clickRecognizer.numberOfClicksRequired = 1
+        clickRecognizer.delaysPrimaryMouseButtonEvents = false
         view.addGestureRecognizer(clickRecognizer)
 
         // OPERATOR look: deep terminal surface + phosphor ink, Plex Mono 12.5.
@@ -215,12 +216,7 @@ private struct SwiftTermView: NSViewRepresentable {
         let dims = view.getTerminal().getDims()
         session.resize(cols: dims.cols, rows: dims.rows)
         session.start()
-        DispatchQueue.main.async { [weak view] in
-            Self.requestInitialFocus(view)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak view] in
-            Self.requestInitialFocus(view)
-        }
+        TerminalFocusPolicy.scheduleInitialFocus(for: view)
         return view
     }
 
@@ -229,17 +225,10 @@ private struct SwiftTermView: NSViewRepresentable {
         context.coordinator.terminalView = nsView
         guard !context.coordinator.didRequestInitialFocus else { return }
         DispatchQueue.main.async {
-            if Self.requestInitialFocus(nsView) {
+            if TerminalFocusPolicy.requestFocus(nsView) {
                 context.coordinator.didRequestInitialFocus = true
             }
         }
-    }
-
-    @discardableResult
-    private static func requestInitialFocus(_ view: TerminalView?) -> Bool {
-        guard let view, let window = view.window else { return false }
-        window.makeFirstResponder(view)
-        return window.firstResponder === view
     }
 
     private static func terminalFont(size: CGFloat) -> NSFont {
@@ -281,7 +270,7 @@ private struct SwiftTermView: NSViewRepresentable {
 
         @MainActor @objc func focusTerminal(_ recognizer: NSClickGestureRecognizer) {
             guard let source = recognizer.view as? TerminalView else { return }
-            source.window?.makeFirstResponder(source)
+            _ = TerminalFocusPolicy.requestFocus(source)
         }
 
         // User keystrokes → PTY.
@@ -310,6 +299,36 @@ private struct SwiftTermView: NSViewRepresentable {
         func clipboardCopy(source: TerminalView, content: Data) {}
         func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    }
+}
+
+final class FocusableTerminalView: TerminalView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        TerminalFocusPolicy.scheduleInitialFocus(for: self)
+    }
+}
+
+enum TerminalFocusPolicy {
+    static let initialFocusRetryDelays: [TimeInterval] = [0, 0.05, 0.15, 0.35]
+
+    @MainActor
+    static func scheduleInitialFocus(for view: TerminalView?) {
+        for delay in initialFocusRetryDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak view] in
+                Task { @MainActor in
+                    _ = requestFocus(view)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    @discardableResult
+    static func requestFocus(_ view: TerminalView?) -> Bool {
+        guard let view, let window = view.window else { return false }
+        window.makeFirstResponder(view)
+        return window.firstResponder === view
     }
 }
 #endif

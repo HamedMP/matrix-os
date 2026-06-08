@@ -459,6 +459,53 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.openTabs.first(where: { $0.id == "board:main" })?.panel, .app(slug: "board"))
     }
 
+    func testFocusingBoardTabRestoresSelectedProject() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "main")
+        model.openHome()
+        model.focusTab(id: "board:main")
+
+        XCTAssertEqual(model.section, .board)
+        XCTAssertTrue(model.hasSelectedProject)
+        XCTAssertEqual(model.projectSlug, "main")
+    }
+
+    func testHomeAndBoardTabsCanClose() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openHome()
+        model.openProject(slug: "main")
+        model.closeTab(id: "home")
+        model.closeTab(id: "board:main")
+
+        XCTAssertTrue(model.openTabs.isEmpty)
+        XCTAssertNil(model.activeTabID)
+        XCTAssertFalse(model.hasSelectedProject)
+        XCTAssertNil(model.terminal)
+        XCTAssertNil(model.selectedCard)
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()

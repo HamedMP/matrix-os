@@ -250,7 +250,7 @@ struct BoardView: View {
             case "git":
                 GitPanel(model: model)
             case "settings":
-                SettingsPanel(model: model)
+                MatrixWebShellPanel(model: model, url: model.shellURL(), title: "Settings", openSettingsOnLoad: true)
             case "processes":
                 ProcessesPanel(model: model)
             case "whiteboard":

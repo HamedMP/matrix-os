@@ -271,16 +271,14 @@ private struct WorkspaceTabPill: View {
             }
             .buttonStyle(.plain)
 
-            if tab.kind != .home && tab.kind != .board {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.inkTertiary)
-                        .iconHitTarget(24)
-                }
-                .buttonStyle(.plain)
-                .help("Close tab")
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.inkTertiary)
+                    .iconHitTarget(24)
             }
+            .buttonStyle(.plain)
+            .help("Close tab")
         }
         .padding(.trailing, Spacing.x1)
         .background(

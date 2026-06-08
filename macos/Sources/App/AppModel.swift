@@ -1179,6 +1179,10 @@ public final class AppModel: ObservableObject {
         activeTabID = id
         if tab.kind == .board {
             section = .board
+            if !tab.projectSlug.isEmpty {
+                self.projectSlug = tab.projectSlug
+                hasSelectedProject = true
+            }
             terminal = nil
             selectedCard = nil
             return
@@ -1236,10 +1240,6 @@ public final class AppModel: ObservableObject {
     /// Closes a workspace tab. If the active tab closes, focus the nearest
     /// remaining tab; otherwise detach the current terminal.
     public func closeTab(id: String) {
-        if id == "home" || id.hasPrefix("board:") {
-            focusTab(id: id)
-            return
-        }
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else { return }
         let wasActive = activeTabID == id
         openTabs.remove(at: index)
@@ -1251,6 +1251,9 @@ public final class AppModel: ObservableObject {
         let nextIndex = min(index, openTabs.count - 1)
         guard nextIndex >= 0, openTabs.indices.contains(nextIndex) else {
             activeTabID = nil
+            if id.hasPrefix("board:") {
+                hasSelectedProject = false
+            }
             return
         }
         let next = openTabs[nextIndex]
