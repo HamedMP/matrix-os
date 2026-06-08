@@ -12,9 +12,6 @@ on:
       - "scripts/start-platform-cloud-run.sh"
       - "Dockerfile.platform"
       - "cloudbuild.platform.yaml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
   workflow_dispatch:
     inputs:
       environment:
