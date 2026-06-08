@@ -71,7 +71,6 @@ type NavLinkConfig = {
 };
 
 const navLinks: NavLinkConfig[] = [
-  { label: "cloud dev", href: "#cloud-dev" },
   { label: "solutions", href: "/solutions" },
   { label: "symphony", href: "#symphony" },
   { label: "teams", href: "#teams" },
@@ -273,7 +272,7 @@ export default function LandingPage() {
             display: inline-flex;
             min-width: 0;
             align-items: center;
-            gap: 1.05rem;
+            gap: 1.35rem;
           }
           .nav-actions {
             grid-column: 3;
@@ -294,7 +293,7 @@ export default function LandingPage() {
           .nav-links {
             grid-column: 2;
             justify-self: center;
-            gap: 0.35rem;
+            gap: 1.65rem;
           }
           .nav-actions {
             grid-column: 3;
