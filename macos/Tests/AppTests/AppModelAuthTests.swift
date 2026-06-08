@@ -285,6 +285,33 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("machine-secret") ?? true)
     }
 
+    func testSystemInfoPairsHomeDiskFieldsBeforeFallingBackToRootDisk() throws {
+        let json = """
+        {
+          "version":"1.2.3",
+          "runtime":{"handle":"alice","machineId":"machine-secret","runtimeSlot":"primary"},
+          "build":{"sha":"abcdef123456","ref":"main","date":"2026-06-08"},
+          "uptime":42,
+          "resources":{
+            "cpuCount":4,
+            "loadAverage":[0.5,0.4,0.3],
+            "memoryTotalBytes":8589934592,
+            "memoryFreeBytes":2147483648,
+            "diskTotalBytes":107374182400,
+            "diskFreeBytes":32212254720,
+            "homeDiskTotalBytes":53687091200,
+            "homeDiskFreeBytes":null
+          },
+          "release":{"version":"1.2.3","channel":"dev"}
+        }
+        """
+        let info = try JSONDecoder().decode(NativeSystemInfoSummary.self, from: Data(json.utf8))
+        let diskRow = try XCTUnwrap(info.resourceRows.first { $0.label == "Disk" })
+
+        XCTAssertEqual(diskRow.value, "70.0 GB")
+        XCTAssertEqual(diskRow.detail, "30.0 GB available")
+    }
+
     func testTaskPaneTogglesKeepAtLeastOnePaneAndEnableMultiple() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let model = AppModel(

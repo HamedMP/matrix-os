@@ -7,5 +7,6 @@ export const MATRIX_PLATFORM_SESSION_HEADER = "x-matrix-platform-session";
 
 export function hasServerVerifiedMatrixSession(headers: PlatformSessionHeaders): boolean {
   const marker = headers.get(MATRIX_PLATFORM_SESSION_HEADER)?.trim();
-  return marker === "native" && marker.length <= MAX_PLATFORM_HEADER_LENGTH;
+  if (!marker || marker.length > MAX_PLATFORM_HEADER_LENGTH) return false;
+  return marker === "native";
 }

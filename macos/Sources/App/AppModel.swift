@@ -331,9 +331,7 @@ public struct NativeSystemInfoSummary: Decodable, Equatable, Sendable {
     public var resourceRows: [SystemResourceRow] {
         let load1 = resources.loadAverage.first ?? 0
         let memoryUsed = max(0, resources.memoryTotalBytes - resources.memoryFreeBytes)
-        let diskTotal = resources.homeDiskTotalBytes ?? resources.diskTotalBytes
-        let diskFree = resources.homeDiskFreeBytes ?? resources.diskFreeBytes
-        let diskUsed = diskTotal.map { max(0, $0 - (diskFree ?? 0)) }
+        let diskUsage = Self.diskUsage(from: resources)
         return [
             SystemResourceRow(
                 label: "CPU",
@@ -349,11 +347,23 @@ public struct NativeSystemInfoSummary: Decodable, Equatable, Sendable {
             ),
             SystemResourceRow(
                 label: "Disk",
-                value: diskUsed.map(Self.formatBytes) ?? "Unknown",
-                detail: diskFree.map { "\(Self.formatBytes($0)) available" } ?? "Storage unavailable",
+                value: diskUsage.map { Self.formatBytes(max(0, $0.total - $0.free)) } ?? "Unknown",
+                detail: diskUsage.map { "\(Self.formatBytes($0.free)) available" } ?? "Storage unavailable",
                 symbol: "internaldrive"
             ),
         ]
+    }
+
+    private static func diskUsage(from resources: Resources) -> (total: Int64, free: Int64)? {
+        if let homeTotal = resources.homeDiskTotalBytes,
+           let homeFree = resources.homeDiskFreeBytes {
+            return (homeTotal, homeFree)
+        }
+        if let rootTotal = resources.diskTotalBytes,
+           let rootFree = resources.diskFreeBytes {
+            return (rootTotal, rootFree)
+        }
+        return nil
     }
 
     private static func formatBytes(_ bytes: Int64) -> String {

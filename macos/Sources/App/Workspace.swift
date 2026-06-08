@@ -81,7 +81,6 @@ struct RootShellView: View {
             NativeSettingsPanel(model: model)
         case .resources:
             ResourcesPanel(model: model)
-                .task { await model.loadSystemInfo() }
         case .browser:
             BrowserPageView()
         }
