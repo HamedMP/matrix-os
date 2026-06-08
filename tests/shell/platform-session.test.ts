@@ -15,6 +15,12 @@ describe("platform session detection", () => {
     }))).toBe(true);
   });
 
+  it("accepts the shell proxy's trusted platform session marker", () => {
+    expect(hasServerVerifiedMatrixSession(headers({
+      [MATRIX_PLATFORM_SESSION_HEADER]: "platform",
+    }))).toBe(true);
+  });
+
   it("does not trust forwarded platform identity headers directly", () => {
     expect(hasServerVerifiedMatrixSession(headers({
       "x-platform-user-id": "user_alice",
