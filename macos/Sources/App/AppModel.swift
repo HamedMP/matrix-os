@@ -972,6 +972,7 @@ public final class AppModel: ObservableObject {
         default:
             kind = .app
             id = "app:\(slug)"
+            section = .board
         }
         let tab = WorkspaceTab(
             id: id,

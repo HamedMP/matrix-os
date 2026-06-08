@@ -205,6 +205,27 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.openTabs.first(where: { $0.id == "resources" })?.panel, .app(slug: "resources"))
     }
 
+    func testGenericAppTabClearsStaleSettingsSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.openAppTab(slug: "editor", title: "Editor")
+
+        XCTAssertEqual(model.activeTabID, "app:editor")
+        XCTAssertEqual(model.activePanel, .app(slug: "editor"))
+        XCTAssertEqual(model.section, .board)
+    }
+
     func testTabAndTaskFilteringIsCaseInsensitive() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         try await principal.setToken("token")
