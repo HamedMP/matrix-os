@@ -270,7 +270,7 @@ private struct SwiftTermView: NSViewRepresentable {
 
         @MainActor @objc func focusTerminal(_ recognizer: NSClickGestureRecognizer) {
             guard let source = recognizer.view as? TerminalView else { return }
-            _ = TerminalFocusPolicy.requestFocus(source)
+            _ = TerminalFocusPolicy.requestFocus(source, mode: .userInitiated)
         }
 
         // User keystrokes → PTY.
@@ -310,7 +310,20 @@ final class FocusableTerminalView: TerminalView {
 }
 
 enum TerminalFocusPolicy {
+    enum Mode {
+        case initial
+        case userInitiated
+    }
+
     static let initialFocusRetryDelays: [TimeInterval] = [0, 0.05, 0.15, 0.35]
+
+    static func shouldRequestInitialFocus(
+        hasFirstResponder: Bool,
+        firstResponderIsTerminal: Bool,
+        firstResponderIsRootView: Bool
+    ) -> Bool {
+        !hasFirstResponder || firstResponderIsTerminal || firstResponderIsRootView
+    }
 
     @MainActor
     static func scheduleInitialFocus(for view: TerminalView?) {
@@ -325,8 +338,17 @@ enum TerminalFocusPolicy {
 
     @MainActor
     @discardableResult
-    static func requestFocus(_ view: TerminalView?) -> Bool {
+    static func requestFocus(_ view: TerminalView?, mode: Mode = .initial) -> Bool {
         guard let view, let window = view.window else { return false }
+        if mode == .initial {
+            let firstResponder = window.firstResponder
+            let shouldFocus = shouldRequestInitialFocus(
+                hasFirstResponder: firstResponder != nil,
+                firstResponderIsTerminal: firstResponder === view,
+                firstResponderIsRootView: firstResponder === window.contentView
+            )
+            guard shouldFocus else { return false }
+        }
         window.makeFirstResponder(view)
         return window.firstResponder === view
     }

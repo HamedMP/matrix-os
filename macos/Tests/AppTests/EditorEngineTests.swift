@@ -32,5 +32,18 @@ final class EditorEngineTests: XCTestCase {
     func testSyntaxHighlightedCodeEditorReportsNativeEngineMetadata() {
         XCTAssertEqual(SyntaxHighlightedCodeEditor.engineConfiguration.kind, .textKitNative)
     }
+
+    func testNativeEditorHasAwardGradeThemeChoicesAndPreferences() {
+        XCTAssertTrue(CodeEditorTheme.allCases.contains(.xcodeDark))
+        XCTAssertTrue(CodeEditorTheme.allCases.contains(.solarizedLight))
+        XCTAssertTrue(CodeEditorTheme.allCases.contains(.oneDark))
+        XCTAssertTrue(CodeEditorTheme.xcodeDark.isDark)
+        XCTAssertFalse(CodeEditorTheme.solarizedLight.isDark)
+
+        let preferences = CodeEditorPreferences.default
+        XCTAssertEqual(preferences.fontSize, 13)
+        XCTAssertEqual(preferences.tabWidth, 4)
+        XCTAssertFalse(preferences.wrapsLines)
+    }
 }
 #endif

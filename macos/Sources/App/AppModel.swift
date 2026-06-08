@@ -409,6 +409,9 @@ public final class AppModel: ObservableObject {
     /// Task panes currently visible in the detail surface. Buttons toggle these
     /// like checkboxes so terminal/editor/git/etc. can be shown together.
     @Published public private(set) var enabledPanels: [Panel] = [.terminal, .app(slug: "editor")]
+    /// Native editor appearance and text-system preferences.
+    @Published public private(set) var editorTheme: CodeEditorTheme
+    @Published public private(set) var editorPreferences: CodeEditorPreferences
     /// A generic, user-safe error to surface in chrome (nil when clear).
     @Published public private(set) var openError: OperatorError?
     /// Device-auth sign-in progress (drives the onboarding sign-in UI).
@@ -492,6 +495,8 @@ public final class AppModel: ObservableObject {
         self.signInGatewayHost = signInGatewayHost
         self.openExternalURL = openExternalURL
         self.hasSelectedProject = false
+        self.editorTheme = Self.loadPersistedEditorTheme()
+        self.editorPreferences = Self.loadPersistedEditorPreferences()
         // If a profile is already known (persisted sign-in), wire the real board
         // loader immediately so the first `refresh()` fetches. Otherwise a
         // placeholder keeps `board` non-nil until `selectProfile`.
@@ -522,6 +527,11 @@ public final class AppModel: ObservableObject {
     private static let handleKey = "matrix.profile.handle"
     private static let hostKey = "matrix.profile.host"
     private static let slotKey = "matrix.profile.slot"
+    private static let editorThemeKey = "matrix.editor.theme"
+    private static let editorFontSizeKey = "matrix.editor.font-size"
+    private static let editorWrapKey = "matrix.editor.wrap-lines"
+    private static let editorTabWidthKey = "matrix.editor.tab-width"
+    private static let editorInvisiblesKey = "matrix.editor.show-invisibles"
 
     /// Loads a previously signed-in profile (non-secret) from UserDefaults.
     public static func loadPersistedProfile() -> ConnectionProfile? {
@@ -537,6 +547,56 @@ public final class AppModel: ObservableObject {
         d.set(profile.handle, forKey: Self.handleKey)
         d.set(profile.gatewayHost, forKey: Self.hostKey)
         d.set(profile.runtimeSlot, forKey: Self.slotKey)
+    }
+
+    private static func loadPersistedEditorTheme() -> CodeEditorTheme {
+        let raw = UserDefaults.standard.string(forKey: editorThemeKey)
+        return raw.flatMap(CodeEditorTheme.init(rawValue:)) ?? .xcodeDark
+    }
+
+    private static func loadPersistedEditorPreferences() -> CodeEditorPreferences {
+        let defaults = UserDefaults.standard
+        var preferences = CodeEditorPreferences.default
+        let fontSize = defaults.double(forKey: editorFontSizeKey)
+        if fontSize > 0 {
+            preferences.fontSize = min(max(fontSize, 11), 20)
+        }
+        if defaults.object(forKey: editorWrapKey) != nil {
+            preferences.wrapsLines = defaults.bool(forKey: editorWrapKey)
+        }
+        let tabWidth = defaults.integer(forKey: editorTabWidthKey)
+        if tabWidth > 0 {
+            preferences.tabWidth = min(max(tabWidth, 2), 8)
+        }
+        if defaults.object(forKey: editorInvisiblesKey) != nil {
+            preferences.showsInvisibleCharacters = defaults.bool(forKey: editorInvisiblesKey)
+        }
+        return preferences
+    }
+
+    public func setEditorTheme(_ theme: CodeEditorTheme) {
+        editorTheme = theme
+        UserDefaults.standard.set(theme.rawValue, forKey: Self.editorThemeKey)
+    }
+
+    public func setEditorFontSize(_ fontSize: Double) {
+        editorPreferences.fontSize = min(max(fontSize, 11), 20)
+        UserDefaults.standard.set(editorPreferences.fontSize, forKey: Self.editorFontSizeKey)
+    }
+
+    public func setEditorWrapsLines(_ wraps: Bool) {
+        editorPreferences.wrapsLines = wraps
+        UserDefaults.standard.set(wraps, forKey: Self.editorWrapKey)
+    }
+
+    public func setEditorTabWidth(_ width: Int) {
+        editorPreferences.tabWidth = min(max(width, 2), 8)
+        UserDefaults.standard.set(editorPreferences.tabWidth, forKey: Self.editorTabWidthKey)
+    }
+
+    public func setEditorShowsInvisibleCharacters(_ shows: Bool) {
+        editorPreferences.showsInvisibleCharacters = shows
+        UserDefaults.standard.set(shows, forKey: Self.editorInvisiblesKey)
     }
 
     // MARK: - Sign in (device authorization)
@@ -1208,6 +1268,18 @@ public final class AppModel: ObservableObject {
             activePanel = .app(slug: "resources")
             Task { await loadSystemInfo() }
             return
+        }
+        switch tab.kind {
+        case .task, .app:
+            section = .board
+            if !tab.projectSlug.isEmpty {
+                projectSlug = tab.projectSlug
+                hasSelectedProject = true
+            }
+        case .session:
+            section = .terminal
+        case .home, .board, .settings, .resources:
+            break
         }
         if enabledPanels.contains(tab.panel) {
             activePanel = tab.panel

@@ -62,16 +62,8 @@ struct BoardView: View {
                     Task { await model.refresh() }
                 })
             }
-            if selectedBoardCard != nil {
-                HSplitView {
-                    columns
-                        .frame(minWidth: 420)
-                        .opacity(model.phase == .disconnected ? 0.7 : 1)
-                        .saturation(model.phase == .disconnected ? 0.6 : 1)
-                        .allowsHitTesting(model.phase != .disconnected)
-                    detailPane
-                        .frame(minWidth: 520)
-                }
+            if activeDetailCard != nil {
+                detailPane
             } else {
                 columns
                     .opacity(model.phase == .disconnected ? 0.7 : 1)
@@ -152,6 +144,10 @@ struct BoardView: View {
             .first { $0.id == selected.id }
     }
 
+    private var activeDetailCard: Card? {
+        selectedBoardCard ?? model.selectedCard
+    }
+
     private var detailPane: some View {
         VStack(spacing: 0) {
             detailHeader
@@ -174,7 +170,7 @@ struct BoardView: View {
 
     private var detailHeader: some View {
         HStack {
-            Text(selectedBoardCard?.title ?? "Task")
+            Text(activeDetailCard?.title ?? "Task")
                 .font(.plexSans(13, weight: .semibold))
                 .foregroundStyle(Color.inkPrimary)
                 .lineLimit(1)
@@ -196,41 +192,11 @@ struct BoardView: View {
     @ViewBuilder
     private var enabledPanelBody: some View {
         let panes = taskPaneSpecs.filter { model.enabledPanels.contains($0.panel) }
-        if panes.count <= 1, let pane = panes.first {
-            panelBody(for: pane.panel)
-        } else if panes.isEmpty {
-            placeholderPane("Choose a task pane to continue.")
+        let active = model.enabledPanels.contains(model.activePanel) ? model.activePanel : panes.first?.panel
+        if let active {
+            panelBody(for: active)
         } else {
-            HSplitView {
-                ForEach(panes) { pane in
-                    VStack(spacing: 0) {
-                        HStack(spacing: Spacing.x2) {
-                            Image(systemName: pane.icon)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(pane.panel == model.activePanel ? Color.signalLive : Color.inkTertiary)
-                            Text(pane.title)
-                                .font(.plexSans(12, weight: pane.panel == model.activePanel ? .semibold : .medium))
-                                .foregroundStyle(Color.inkPrimary)
-                            Spacer()
-                            Button { model.togglePanel(pane.panel) } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Color.inkTertiary)
-                                    .iconHitTarget(24)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Close \(pane.title)")
-                        }
-                        .padding(.horizontal, Spacing.x3)
-                        .frame(height: 32)
-                        .background(Color.surfaceCard)
-                        Divider().overlay(Color.hairlineDark)
-                        panelBody(for: pane.panel)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    .frame(minWidth: 320)
-                }
-            }
+            placeholderPane("Choose a task pane to continue.")
         }
     }
 

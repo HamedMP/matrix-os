@@ -506,6 +506,54 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertNil(model.selectedCard)
     }
 
+    func testFocusingTaskTabAfterSettingsRestoresBoardSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let card = Card(id: "task_login", projectSlug: "main", title: "Fix login", status: .todo, priority: .normal, order: 1, updatedAt: "now")
+
+        model.openProject(slug: "main")
+        _ = try? await model.openCard(card)
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.focusTab(id: "task:main:task_login")
+
+        XCTAssertEqual(model.section, .board)
+        XCTAssertEqual(model.activePanel, .terminal)
+        XCTAssertEqual(model.selectedCard?.id, "task_login")
+        XCTAssertTrue(model.hasSelectedProject)
+    }
+
+    func testFocusingSessionTabAfterResourcesRestoresTerminalSection() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let sessionCard = Card(id: "matrix_session_alpha", projectSlug: "main", title: "matrix_session_alpha", status: .running, priority: .normal, order: 1, linkedSessionId: "matrix_session_alpha", updatedAt: "now")
+
+        _ = try? await model.openCard(sessionCard)
+        model.openAppTab(slug: "resources", title: "Resources")
+        model.focusTab(id: "session:main:matrix_session_alpha")
+
+        XCTAssertEqual(model.section, .terminal)
+        XCTAssertEqual(model.activePanel, .terminal)
+        XCTAssertEqual(model.selectedCard?.id, "matrix_session_alpha")
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()

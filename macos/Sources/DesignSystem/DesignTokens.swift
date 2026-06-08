@@ -12,7 +12,7 @@ import SwiftUI
 extension Color {
     /// Creates a `Color` from a 24-bit RGB hex value (e.g. `0x9EF01A`) with optional opacity.
     /// Tokens are P3-friendly; SwiftUI resolves them in the display's working color space.
-    init(hex: UInt32, opacity: Double = 1.0) {
+    public init(hex: UInt32, opacity: Double = 1.0) {
         let red = Double((hex >> 16) & 0xFF) / 255.0
         let green = Double((hex >> 8) & 0xFF) / 255.0
         let blue = Double(hex & 0xFF) / 255.0

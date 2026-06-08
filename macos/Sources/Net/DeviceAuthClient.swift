@@ -52,25 +52,30 @@ public struct DeviceAuthClient: DeviceAuthorizing {
     public init(
         platformURL: URL,
         clientId: String = "matrix-os-macos",
+        redirectUri: String? = "matrixos://auth?status=approved",
         sessionConfiguration: URLSessionConfiguration = .ephemeral,
         timeout: TimeInterval = 10
     ) {
         self.platformURL = platformURL
         self.clientId = clientId
+        self.redirectUri = redirectUri
         self.session = URLSession(configuration: sessionConfiguration)
         self.timeout = timeout
     }
 
+    private let redirectUri: String?
+
     private struct CodeBody: Encodable {
         let clientId: String
+        let redirectUri: String?
     }
 
     public func startDeviceAuth() async throws -> DeviceAuthStart {
-        // RFC 8628 device-code request. The app polls for approval, so do not
-        // ask the browser to deep-link back and accidentally open another app.
+        // RFC 8628 device-code request. The app polls for approval, while the
+        // redirect only brings the existing native app back to the foreground.
         let (data, http) = try await post(
             path: "/api/auth/device/code",
-            body: CodeBody(clientId: clientId)
+            body: CodeBody(clientId: clientId, redirectUri: redirectUri)
         )
         if let mapped = GatewayError.from(statusCode: http.statusCode) {
             throw mapped

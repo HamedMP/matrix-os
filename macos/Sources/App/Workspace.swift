@@ -900,7 +900,6 @@ private struct TerminalsView: View {
 
 struct EditorPanel: View {
     @ObservedObject var model: AppModel
-    @State private var theme: CodeEditorTheme = .matrixLight
     @State private var viewMode: EditorViewMode = .preview
 
     private var fileKind: EditorFileKind {
@@ -963,14 +962,7 @@ struct EditorPanel: View {
                         .frame(width: 150)
                     }
                     if fileKind == .code {
-                        Picker("Theme", selection: $theme) {
-                            ForEach(CodeEditorTheme.allCases) { theme in
-                                Text(theme.rawValue).tag(theme)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 230)
+                        editorSettingsMenu
                     }
                     if let state = model.fileSaveState {
                         Text(state)
@@ -998,12 +990,13 @@ struct EditorPanel: View {
                 } else if fileKind == .markdown && viewMode == .preview {
                     MarkdownRenderedPreview(markdown: model.selectedFileContent)
                 } else if fileKind == .code && viewMode == .preview {
-                    CodeReadOnlyPreview(text: model.selectedFileContent, filePath: model.selectedFilePath, theme: theme)
+                    CodeReadOnlyPreview(text: model.selectedFileContent, filePath: model.selectedFilePath, theme: model.editorTheme, preferences: model.editorPreferences)
                 } else {
                     SyntaxHighlightedCodeEditor(
                         text: $model.selectedFileContent,
                         filePath: model.selectedFilePath,
-                        theme: theme
+                        theme: model.editorTheme,
+                        preferences: model.editorPreferences
                     )
                 }
             }
@@ -1011,12 +1004,70 @@ struct EditorPanel: View {
         }
         .background(Color.surfaceCard)
     }
+
+    private var editorSettingsMenu: some View {
+        Menu {
+            Picker("Theme", selection: themeBinding) {
+                ForEach(CodeEditorTheme.allCases) { theme in
+                    Text(theme.rawValue).tag(theme)
+                }
+            }
+            Divider()
+            Toggle("Wrap lines", isOn: wrapBinding)
+            Toggle("Show invisibles", isOn: invisiblesBinding)
+            Divider()
+            Stepper("Font \(Int(model.editorPreferences.fontSize)) pt", value: fontSizeBinding, in: 11...20, step: 1)
+            Stepper("Tab width \(model.editorPreferences.tabWidth)", value: tabWidthBinding, in: 2...8)
+        } label: {
+            Label(model.editorTheme.rawValue, systemImage: "paintpalette")
+                .labelStyle(.titleAndIcon)
+        }
+        .menuStyle(.button)
+        .controlSize(.small)
+        .help("Editor appearance")
+    }
+
+    private var themeBinding: Binding<CodeEditorTheme> {
+        Binding(
+            get: { model.editorTheme },
+            set: { model.setEditorTheme($0) }
+        )
+    }
+
+    private var wrapBinding: Binding<Bool> {
+        Binding(
+            get: { model.editorPreferences.wrapsLines },
+            set: { model.setEditorWrapsLines($0) }
+        )
+    }
+
+    private var invisiblesBinding: Binding<Bool> {
+        Binding(
+            get: { model.editorPreferences.showsInvisibleCharacters },
+            set: { model.setEditorShowsInvisibleCharacters($0) }
+        )
+    }
+
+    private var fontSizeBinding: Binding<Double> {
+        Binding(
+            get: { model.editorPreferences.fontSize },
+            set: { model.setEditorFontSize($0) }
+        )
+    }
+
+    private var tabWidthBinding: Binding<Int> {
+        Binding(
+            get: { model.editorPreferences.tabWidth },
+            set: { model.setEditorTabWidth($0) }
+        )
+    }
 }
 
 private struct CodeReadOnlyPreview: View {
     let text: String
     let filePath: String?
     let theme: CodeEditorTheme
+    let preferences: CodeEditorPreferences
 
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
@@ -1028,8 +1079,8 @@ private struct CodeReadOnlyPreview: View {
                             .foregroundStyle(Color.inkTertiary)
                             .frame(width: 42, alignment: .trailing)
                         Text(line.isEmpty ? " " : line)
-                            .font(.plexMono(13))
-                            .foregroundStyle(theme == .terminalDark ? Color.terminalInk : Color.inkPrimary)
+                            .font(.plexMono(preferences.fontSize))
+                            .foregroundStyle(theme.isDark ? Color.terminalInk : Color.inkPrimary)
                             .textSelection(.enabled)
                     }
                     .padding(.vertical, 1)
@@ -1038,7 +1089,7 @@ private struct CodeReadOnlyPreview: View {
             .padding(Spacing.x4)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(theme == .terminalDark ? Color.surfaceTerminal : Color.surfaceCard)
+        .background(theme.isDark ? Color.surfaceTerminal : Color.surfaceCard)
     }
 
     private var lines: [String] {

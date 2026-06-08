@@ -3,25 +3,41 @@ import SwiftUI
 import AppKit
 import DesignSystem
 
-enum CodeEditorTheme: String, CaseIterable, Identifiable {
+public enum CodeEditorTheme: String, CaseIterable, Identifiable {
     case matrixLight = "Matrix Light"
     case xcodeLight = "Xcode"
+    case xcodeDark = "Xcode Dark"
+    case solarizedLight = "Solarized"
     case terminalDark = "Terminal"
+    case oneDark = "One Dark"
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
+
+    public var isDark: Bool {
+        switch self {
+        case .xcodeDark, .terminalDark, .oneDark:
+            return true
+        case .matrixLight, .xcodeLight, .solarizedLight:
+            return false
+        }
+    }
 
     var background: NSColor {
         switch self {
         case .matrixLight: return NSColor.matrixHex(0xFFFFFF)
         case .xcodeLight: return NSColor(calibratedWhite: 0.99, alpha: 1)
+        case .xcodeDark: return NSColor.matrixHex(0x1F2024)
+        case .solarizedLight: return NSColor.matrixHex(0xFDF6E3)
         case .terminalDark: return NSColor.matrixHex(0x0C0D10)
+        case .oneDark: return NSColor.matrixHex(0x282C34)
         }
     }
 
     var foreground: NSColor {
         switch self {
         case .matrixLight, .xcodeLight: return NSColor.matrixHex(0x32352E)
-        case .terminalDark: return NSColor.matrixHex(0xE8EAED)
+        case .solarizedLight: return NSColor.matrixHex(0x586E75)
+        case .xcodeDark, .terminalDark, .oneDark: return NSColor.matrixHex(0xE8EAED)
         }
     }
 
@@ -29,7 +45,10 @@ enum CodeEditorTheme: String, CaseIterable, Identifiable {
         switch self {
         case .matrixLight: return NSColor(Color.signalLive)
         case .xcodeLight: return NSColor(calibratedRed: 0.58, green: 0.16, blue: 0.66, alpha: 1)
+        case .xcodeDark: return NSColor.matrixHex(0xFC5FA3)
+        case .solarizedLight: return NSColor.matrixHex(0x859900)
         case .terminalDark: return NSColor(calibratedRed: 0.67, green: 0.82, blue: 1.0, alpha: 1)
+        case .oneDark: return NSColor.matrixHex(0xC678DD)
         }
     }
 
@@ -37,14 +56,20 @@ enum CodeEditorTheme: String, CaseIterable, Identifiable {
         switch self {
         case .matrixLight: return NSColor(calibratedRed: 0.62, green: 0.31, blue: 0.12, alpha: 1)
         case .xcodeLight: return NSColor(calibratedRed: 0.74, green: 0.25, blue: 0.12, alpha: 1)
+        case .xcodeDark: return NSColor.matrixHex(0xFC6A5D)
+        case .solarizedLight: return NSColor.matrixHex(0x2AA198)
         case .terminalDark: return NSColor(calibratedRed: 0.84, green: 0.70, blue: 0.45, alpha: 1)
+        case .oneDark: return NSColor.matrixHex(0x98C379)
         }
     }
 
     var comment: NSColor {
         switch self {
         case .matrixLight, .xcodeLight: return NSColor.matrixHex(0x7A7768)
+        case .solarizedLight: return NSColor.matrixHex(0x93A1A1)
+        case .xcodeDark: return NSColor.matrixHex(0x6C7986)
         case .terminalDark: return NSColor.matrixHex(0x9BA1AC)
+        case .oneDark: return NSColor.matrixHex(0x7F848E)
         }
     }
 
@@ -52,9 +77,33 @@ enum CodeEditorTheme: String, CaseIterable, Identifiable {
         switch self {
         case .matrixLight: return NSColor.matrixHex(0xF0EDE4)
         case .xcodeLight: return NSColor(calibratedWhite: 0.95, alpha: 1)
+        case .xcodeDark: return NSColor.matrixHex(0x25262B)
+        case .solarizedLight: return NSColor.matrixHex(0xEEE8D5)
         case .terminalDark: return NSColor(calibratedWhite: 0.08, alpha: 1)
+        case .oneDark: return NSColor.matrixHex(0x21252B)
         }
     }
+}
+
+public struct CodeEditorPreferences: Equatable, Sendable {
+    public var fontSize: Double
+    public var wrapsLines: Bool
+    public var tabWidth: Int
+    public var showsInvisibleCharacters: Bool
+
+    public init(fontSize: Double, wrapsLines: Bool, tabWidth: Int, showsInvisibleCharacters: Bool) {
+        self.fontSize = fontSize
+        self.wrapsLines = wrapsLines
+        self.tabWidth = tabWidth
+        self.showsInvisibleCharacters = showsInvisibleCharacters
+    }
+
+    public static let `default` = CodeEditorPreferences(
+        fontSize: 13,
+        wrapsLines: false,
+        tabWidth: 4,
+        showsInvisibleCharacters: false
+    )
 }
 
 private extension NSColor {
@@ -68,12 +117,19 @@ private extension NSColor {
     }
 }
 
+private extension NSFont {
+    var spaceWidth: CGFloat {
+        (" " as NSString).size(withAttributes: [.font: self]).width
+    }
+}
+
 struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
     nonisolated static let engineConfiguration = EditorEngineConfiguration(kind: .textKitNative)
 
     @Binding var text: String
     let filePath: String?
     let theme: CodeEditorTheme
+    var preferences: CodeEditorPreferences = .default
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -91,17 +147,20 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         textView.drawsBackground = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
         textView.allowsUndo = true
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 14, height: 14)
         textView.textContainer?.lineFragmentPadding = 0
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isHorizontallyResizable = false
+        textView.isHorizontallyResizable = !preferences.wrapsLines
         textView.isVerticallyResizable = true
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
+        textView.autoresizingMask = preferences.wrapsLines ? [.width] : []
+        applyLayoutPreferences(to: textView, in: scrollView, preferences: preferences)
 
         scrollView.documentView = textView
         scrollView.verticalRulerView = LineNumberRulerView(textView: textView, theme: theme)
@@ -109,9 +168,10 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         scrollView.rulersVisible = true
         context.coordinator.textView = textView
         context.coordinator.theme = theme
+        context.coordinator.preferences = preferences
         context.coordinator.filePath = filePath
         context.coordinator.applyHighlight {
-            apply(text: text, to: textView, theme: theme, filePath: filePath)
+            apply(text: text, to: textView, theme: theme, filePath: filePath, preferences: preferences)
         }
         return scrollView
     }
@@ -122,43 +182,71 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
             ruler.theme = theme
             ruler.needsDisplay = true
         }
-        if textView.string != text || context.coordinator.needsHighlight || context.coordinator.theme != theme || context.coordinator.filePath != filePath {
+        applyLayoutPreferences(to: textView, in: scrollView, preferences: preferences)
+        if textView.string != text || context.coordinator.needsHighlight || context.coordinator.theme != theme || context.coordinator.preferences != preferences || context.coordinator.filePath != filePath {
             context.coordinator.theme = theme
+            context.coordinator.preferences = preferences
             context.coordinator.filePath = filePath
             context.coordinator.needsHighlight = false
             context.coordinator.applyHighlight {
-                apply(text: text, to: textView, theme: theme, filePath: filePath)
+                apply(text: text, to: textView, theme: theme, filePath: filePath, preferences: preferences)
             }
         }
     }
 
-    private func apply(text: String, to textView: NSTextView, theme: CodeEditorTheme, filePath: String?) {
+    private func applyLayoutPreferences(to textView: NSTextView, in scrollView: NSScrollView, preferences: CodeEditorPreferences) {
+        textView.isHorizontallyResizable = !preferences.wrapsLines
+        textView.autoresizingMask = preferences.wrapsLines ? [.width] : []
+        textView.textContainer?.widthTracksTextView = preferences.wrapsLines
+        let width = preferences.wrapsLines ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude
+        textView.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        textView.maxSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+    }
+
+    private func apply(text: String, to textView: NSTextView, theme: CodeEditorTheme, filePath: String?, preferences: CodeEditorPreferences) {
         let selected = textView.selectedRange()
         textView.backgroundColor = theme.background
         textView.insertionPointColor = theme.foreground
         textView.textColor = theme.foreground
-        textView.font = Self.editorFont(size: 13)
-        textView.textStorage?.setAttributedString(Self.highlighted(text, filePath: filePath, theme: theme))
+        textView.font = Self.editorFont(size: preferences.fontSize)
+        textView.defaultParagraphStyle = Self.paragraphStyle(tabWidth: preferences.tabWidth, fontSize: preferences.fontSize)
+        textView.textStorage?.setAttributedString(Self.highlighted(text, filePath: filePath, theme: theme, preferences: preferences))
         textView.setSelectedRange(NSRange(location: min(selected.location, (text as NSString).length), length: 0))
         textView.needsDisplay = true
         textView.layoutManager?.ensureLayout(for: textView.textContainer!)
     }
 
-    private static func editorFont(size: CGFloat) -> NSFont {
+    private static func editorFont(size: Double) -> NSFont {
+        let pointSize = CGFloat(size)
         for name in ["JetBrainsMono Nerd Font Mono", "JetBrains Mono", "SFMono-Regular", "Menlo"] {
-            if let font = NSFont(name: name, size: size) { return font }
+            if let font = NSFont(name: name, size: pointSize) { return font }
         }
-        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        return NSFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
     }
 
-    private static func highlighted(_ text: String, filePath: String?, theme: CodeEditorTheme) -> NSAttributedString {
+    private static func paragraphStyle(tabWidth: Int, fontSize: Double) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        let width = max(2, min(tabWidth, 8))
+        style.defaultTabInterval = CGFloat(width) * editorFont(size: fontSize).spaceWidth
+        style.lineBreakMode = .byClipping
+        return style
+    }
+
+    private static func highlighted(_ text: String, filePath: String?, theme: CodeEditorTheme, preferences: CodeEditorPreferences) -> NSAttributedString {
         let nsText = text as NSString
         let fullRange = NSRange(location: 0, length: nsText.length)
         let language = syntaxLanguage(for: filePath)
         let output = NSMutableAttributedString(
             string: text,
-            attributes: [.font: editorFont(size: 13), .foregroundColor: theme.foreground]
+            attributes: [
+                .font: editorFont(size: preferences.fontSize),
+                .foregroundColor: theme.foreground,
+                .paragraphStyle: paragraphStyle(tabWidth: preferences.tabWidth, fontSize: preferences.fontSize),
+            ]
         )
+        if preferences.showsInvisibleCharacters {
+            apply(pattern: #" |\t"#, color: theme.comment.withAlphaComponent(0.55), to: output, range: fullRange)
+        }
         apply(pattern: #""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`"#, color: theme.string, to: output, range: fullRange)
         if language.supportsLineComments {
             apply(pattern: language.commentPattern, color: theme.comment, to: output, range: fullRange)
@@ -217,6 +305,7 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         @Binding var text: String
         weak var textView: NSTextView?
         var theme: CodeEditorTheme?
+        var preferences: CodeEditorPreferences?
         var filePath: String?
         var needsHighlight = false
         private var isApplyingHighlight = false
