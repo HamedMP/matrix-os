@@ -228,6 +228,7 @@ final class AppModelAuthTests: XCTestCase {
         model.openAppTab(slug: "settings", title: "Settings")
 
         XCTAssertEqual(model.filteredOpenTabs(matching: "sett").map(\.id), ["settings"])
+        XCTAssertEqual(model.filteredOpenTabs(matching: "terminal").map(\.id), ["settings"])
         XCTAssertEqual(model.filteredBoardColumns(matching: "TERMINAL").flatMap(\.cards).map(\.id), ["task_terminal"])
     }
 

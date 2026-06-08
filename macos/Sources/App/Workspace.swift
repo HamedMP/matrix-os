@@ -1504,7 +1504,6 @@ struct NativeSettingsPanel: View {
             }
         }
         .background(Color.canvasVoid)
-        .task { await model.loadSystemInfo() }
     }
 
     private var settingsSidebar: some View {

@@ -1572,7 +1572,8 @@ public final class AppModel: ObservableObject {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return openTabs }
         return openTabs.filter { tab in
-            tab.title.localizedCaseInsensitiveContains(trimmed)
+            tab.id == activeTabID
+                || tab.title.localizedCaseInsensitiveContains(trimmed)
                 || tab.projectName.localizedCaseInsensitiveContains(trimmed)
                 || tab.kind.rawValue.localizedCaseInsensitiveContains(trimmed)
         }
