@@ -10,6 +10,11 @@ export interface CachedTerminal {
   ws: WebSocket;
   lastSeq: number;
   sessionId: string;
+  socketRetained?: boolean;
+}
+
+interface CacheTerminalOptions {
+  retainSocket?: boolean;
 }
 
 const MAX_CACHED = 20;
@@ -22,14 +27,36 @@ function terminalCacheDebug(event: string, details: Record<string, unknown>): vo
   console.info("[terminal-debug][cache]", event, details);
 }
 
-export function cacheTerminal(paneId: string, entry: CachedTerminal): void {
+function detachAndCloseSocket(ws: WebSocket): void {
+  if (ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify({ type: "detach" }));
+    } catch (e: unknown) {
+      console.warn("Cache detach:", e instanceof Error ? e.message : e);
+    }
+  }
+  if (ws.readyState !== WebSocket.CLOSED) {
+    try {
+      ws.close();
+    } catch (e: unknown) {
+      console.warn("Cache ws.close:", e instanceof Error ? e.message : e);
+    }
+  }
+}
+
+export function cacheTerminal(paneId: string, entry: CachedTerminal, options: CacheTerminalOptions = {}): void {
   terminalCacheDebug("cache-put", {
     paneId,
     sessionId: entry.sessionId,
     lastSeq: entry.lastSeq,
     cacheSizeBefore: cache.size,
+    retainSocket: options.retainSocket !== false,
   });
   cache.delete(paneId);
+  if (options.retainSocket === false) {
+    detachAndCloseSocket(entry.ws);
+  }
+  entry.socketRetained = options.retainSocket !== false;
   while (cache.size >= MAX_CACHED) {
     const oldest = cache.keys().next().value!;
     const evicted = cache.get(oldest);
@@ -39,8 +66,7 @@ export function cacheTerminal(paneId: string, entry: CachedTerminal): void {
         paneId: oldest,
         sessionId: evicted.sessionId,
       });
-      try { evicted.ws.send(JSON.stringify({ type: "detach" })); } catch (e: unknown) { console.warn("Cache eviction detach:", e instanceof Error ? e.message : e); }
-      try { evicted.ws.close(); } catch (e: unknown) { console.warn("Cache eviction ws.close:", e instanceof Error ? e.message : e); }
+      detachAndCloseSocket(evicted.ws);
       try { evicted.terminal.dispose(); } catch (e: unknown) { console.warn("Cache eviction dispose:", e instanceof Error ? e.message : e); }
     }
   }

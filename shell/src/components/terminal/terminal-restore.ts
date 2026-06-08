@@ -19,15 +19,17 @@ export function getCachedTerminalRestorePlan(cached: CachedTerminal | null): Cac
     };
   }
 
-  const reuseSocket = cached.ws.readyState === WebSocket.OPEN || cached.ws.readyState === WebSocket.CONNECTING;
   const hasTerminalElement = Boolean((cached.terminal as { element?: HTMLElement }).element);
+  const reuseSocket = cached.ws.readyState === WebSocket.OPEN || cached.ws.readyState === WebSocket.CONNECTING;
+  const socketWasIntentionallyDetached = cached.socketRetained === false;
+  const reuseTerminal = hasTerminalElement && (reuseSocket || socketWasIntentionallyDetached);
 
   return {
     cached,
-    reuseTerminal: reuseSocket && hasTerminalElement,
+    reuseTerminal,
     reuseSocket,
     sessionId: cached.sessionId || null,
-    lastSeq: reuseSocket && hasTerminalElement ? cached.lastSeq : 0,
+    lastSeq: reuseTerminal ? cached.lastSeq : 0,
   };
 }
 
