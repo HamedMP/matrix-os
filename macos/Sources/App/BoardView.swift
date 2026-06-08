@@ -62,7 +62,6 @@ struct BoardView: View {
                     Task { await model.refresh() }
                 })
             }
-            workspaceTabsHeader
             if selectedBoardCard != nil {
                 HSplitView {
                     columns
@@ -83,23 +82,6 @@ struct BoardView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    @ViewBuilder
-    private var workspaceTabsHeader: some View {
-        if !model.openTabs.isEmpty {
-            WorkspaceTabStrip(
-                tabs: model.openTabs,
-                activeID: model.activeTabID,
-                isCreating: model.isCreatingWorkItem,
-                onSelect: model.focusTab,
-                onClose: model.closeTab,
-                onCreate: { model.createTask(status: .todo) }
-            )
-            .padding(.horizontal, Spacing.x3)
-            .padding(.vertical, Spacing.x2)
-            Divider().overlay(Color.hairlineDark)
-        }
-    }
-
     private var hasTaskDetail: Bool {
         guard let activeID = model.activeTabID,
               let tab = model.openTabs.first(where: { $0.id == activeID }) else {
@@ -114,10 +96,11 @@ struct BoardView: View {
         // Pinch / ⌘+/⌘-/⌘0 scale the lanes (Conductor-style zoom).
         let effectiveZoom = clampZoom(zoom * pinch)
         let laneWidth: CGFloat = 280
-        let unscaledWidth = laneWidth * CGFloat(model.board.columns.count)
+        let columnsToRender = model.filteredBoardColumns(matching: model.workspaceSearchQuery)
+        let unscaledWidth = laneWidth * CGFloat(columnsToRender.count)
         return ScrollView(.horizontal, showsIndicators: true) {
             HStack(alignment: .top, spacing: 0) {
-                ForEach(model.board.columns) { column in
+                ForEach(columnsToRender) { column in
                     ColumnView(
                         column: column,
                         selectedCardID: selectedBoardCard?.id,

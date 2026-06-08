@@ -152,6 +152,138 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertTrue(model.openTabs.contains(where: { $0.kind == .task && $0.title == "Fix login" }))
     }
 
+    func testProjectBoardTabUsesTasksTitleAndTaskTabsUseTaskTitle() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "matrix-os",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "matrix-os")
+        let card = Card(
+            id: "task_auth",
+            projectSlug: "matrix-os",
+            title: "Fix native auth",
+            status: .todo,
+            priority: .normal,
+            order: 1,
+            linkedSessionId: nil,
+            updatedAt: "now"
+        )
+        _ = try? await model.openCard(card)
+
+        XCTAssertEqual(model.openTabs.first(where: { $0.kind == .board })?.title, "matrix-os - Tasks")
+        XCTAssertEqual(model.openTabs.first(where: { $0.kind == .task })?.title, "Fix native auth")
+    }
+
+    func testGlobalSettingsAndResourcesOpenDistinctTabs() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openHome()
+        model.openAppTab(slug: "settings", title: "Settings")
+        model.openAppTab(slug: "resources", title: "Resources")
+
+        XCTAssertEqual(model.openTabs.map(\.kind), [.home, .settings, .resources])
+        XCTAssertEqual(model.activeTabID, "resources")
+        XCTAssertEqual(model.openTabs.first(where: { $0.id == "settings" })?.panel, .app(slug: "settings"))
+        XCTAssertEqual(model.openTabs.first(where: { $0.id == "resources" })?.panel, .app(slug: "resources"))
+    }
+
+    func testTabAndTaskFilteringIsCaseInsensitive() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let cards = [
+            Card(id: "task_auth", projectSlug: "main", title: "Fix native auth", status: .todo, priority: .normal, order: 1, updatedAt: "now"),
+            Card(id: "task_terminal", projectSlug: "main", title: "Terminal focus", status: .running, priority: .normal, order: 2, updatedAt: "now"),
+        ]
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in StaticBoardLoader(cards: cards) },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.openProject(slug: "main")
+        await model.refresh()
+        _ = try? await model.openCard(cards[0])
+        model.openAppTab(slug: "settings", title: "Settings")
+
+        XCTAssertEqual(model.filteredOpenTabs(matching: "sett").map(\.id), ["settings"])
+        XCTAssertEqual(model.filteredBoardColumns(matching: "TERMINAL").flatMap(\.cards).map(\.id), ["task_terminal"])
+    }
+
+    func testSystemInfoSummaryLoadsRuntimeAndResourcesWithoutInternalProviderNames() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        AppTestURLProtocol.setHandler { req in
+            XCTAssertEqual(req.url?.path, "/api/system/info")
+            let json = """
+            {
+              "version":"1.2.3",
+              "image":"matrix-host",
+              "runtime":{"handle":"alice","machineId":"machine-secret","runtimeSlot":"primary"},
+              "build":{"sha":"abcdef123456","ref":"main","date":"2026-06-08"},
+              "uptime":3661,
+              "modules":5,
+              "channels":{"telegram":true},
+              "skills":9,
+              "templateVersion":"1",
+              "installedVersion":"1",
+              "startedAt":"2026-06-08T10:00:00.000Z",
+              "resources":{
+                "cpuCount":4,
+                "loadAverage":[0.5,0.4,0.3],
+                "memoryTotalBytes":8589934592,
+                "memoryFreeBytes":2147483648,
+                "diskTotalBytes":107374182400,
+                "diskFreeBytes":53687091200,
+                "homeDiskTotalBytes":107374182400,
+                "homeDiskFreeBytes":53687091200
+              },
+              "release":{"version":"1.2.3","channel":"dev"}
+            }
+            """
+            return (appTestHTTPResponse(req.url!, 200), Data(json.utf8))
+        }
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in
+                GatewayHTTPClient(baseURL: url, tokenProvider: provider, sessionConfiguration: .appTestMocked())
+            },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        await model.loadSystemInfo()
+
+        XCTAssertEqual(model.systemInfo?.displayRuntimeName, "Alice")
+        XCTAssertEqual(model.systemInfo?.resourceRows.map(\.label), ["CPU", "Memory", "Disk"])
+        XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("clerk") ?? true)
+        XCTAssertFalse(model.systemInfo?.summaryText.lowercased().contains("machine-secret") ?? true)
+    }
+
     func testTaskPaneTogglesKeepAtLeastOnePaneAndEnableMultiple() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let model = AppModel(
@@ -429,6 +561,14 @@ private struct EmptyBoardLoader: BoardLoading {
     }
 }
 
+private struct StaticBoardLoader: BoardLoading {
+    let cards: [Card]
+
+    func fetchTasks(projectSlug: String) async throws -> [Card] {
+        cards.filter { $0.projectSlug == projectSlug }
+    }
+}
+
 private func makeDeviceAuthStart(
     deviceCode: String,
     userCode: String,
@@ -492,5 +632,56 @@ private final class MockDeviceAuthorizer: DeviceAuthorizing, @unchecked Sendable
     func pollForToken(deviceCode: String) async throws -> DevicePollResult {
         polls.isEmpty ? .pending : polls.removeFirst()
     }
+}
+
+private final class AppTestURLProtocol: URLProtocol {
+    struct Stub: @unchecked Sendable {
+        let handler: (URLRequest) throws -> (HTTPURLResponse, Data)
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var stub: Stub?
+
+    static func setHandler(_ handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) {
+        lock.lock(); defer { lock.unlock() }
+        stub = Stub(handler: handler)
+    }
+
+    private static func currentStub() -> Stub? {
+        lock.lock(); defer { lock.unlock() }
+        return stub
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let stub = Self.currentStub() else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        do {
+            let (response, data) = try stub.handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private extension URLSessionConfiguration {
+    static func appTestMocked() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [AppTestURLProtocol.self]
+        return config
+    }
+}
+
+private func appTestHTTPResponse(_ url: URL, _ status: Int) -> HTTPURLResponse {
+    HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
 }
 #endif

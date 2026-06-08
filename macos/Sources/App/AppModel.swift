@@ -93,6 +93,8 @@ public enum AppSection: String, CaseIterable, Sendable {
     case home
     case board
     case terminal
+    case settings
+    case resources
     case browser
 
     public var title: String {
@@ -100,6 +102,8 @@ public enum AppSection: String, CaseIterable, Sendable {
         case .home: return "Home"
         case .board: return "Board"
         case .terminal: return "Terminal"
+        case .settings: return "Settings"
+        case .resources: return "Resources"
         case .browser: return "Browser"
         }
     }
@@ -109,6 +113,8 @@ public enum AppSection: String, CaseIterable, Sendable {
         case .home: return "house"
         case .board: return "rectangle.split.3x1"
         case .terminal: return "terminal"
+        case .settings: return "gearshape"
+        case .resources: return "gauge.with.dots.needle.67percent"
         case .browser: return "globe"
         }
     }
@@ -139,6 +145,8 @@ public struct WorkspaceTab: Identifiable, Equatable, Sendable {
         case board
         case task
         case session
+        case settings
+        case resources
         case app
     }
 
@@ -237,6 +245,104 @@ public struct PreviewSummary: Identifiable, Equatable, Sendable {
     public let lastStatus: String
 }
 
+public struct SystemResourceRow: Identifiable, Equatable, Sendable {
+    public let label: String
+    public let value: String
+    public let detail: String
+    public let symbol: String
+    public var id: String { label }
+}
+
+public struct NativeSystemInfoSummary: Decodable, Equatable, Sendable {
+    public struct Runtime: Decodable, Equatable, Sendable {
+        public let handle: String?
+        public let machineId: String?
+        public let runtimeSlot: String
+    }
+
+    public struct Build: Decodable, Equatable, Sendable {
+        public let sha: String
+        public let ref: String
+        public let date: String
+    }
+
+    public struct Resources: Decodable, Equatable, Sendable {
+        public let cpuCount: Int
+        public let loadAverage: [Double]
+        public let memoryTotalBytes: Int64
+        public let memoryFreeBytes: Int64
+        public let diskTotalBytes: Int64?
+        public let diskFreeBytes: Int64?
+        public let homeDiskTotalBytes: Int64?
+        public let homeDiskFreeBytes: Int64?
+    }
+
+    public struct Release: Decodable, Equatable, Sendable {
+        public let version: String?
+        public let channel: String?
+    }
+
+    public let version: String
+    public let uptime: Int
+    public let runtime: Runtime
+    public let build: Build
+    public let resources: Resources
+    public let release: Release?
+
+    public var displayRuntimeName: String {
+        guard let handle = runtime.handle?.trimmingCharacters(in: .whitespacesAndNewlines), !handle.isEmpty else {
+            return "Matrix computer"
+        }
+        return handle.prefix(1).uppercased() + handle.dropFirst()
+    }
+
+    public var summaryText: String {
+        let installed = release?.version ?? version
+        let channel = release?.channel.map { " on \($0)" } ?? ""
+        return "\(displayRuntimeName) running \(installed)\(channel)"
+    }
+
+    public var resourceRows: [SystemResourceRow] {
+        let load1 = resources.loadAverage.first ?? 0
+        let memoryUsed = max(0, resources.memoryTotalBytes - resources.memoryFreeBytes)
+        let diskTotal = resources.homeDiskTotalBytes ?? resources.diskTotalBytes
+        let diskFree = resources.homeDiskFreeBytes ?? resources.diskFreeBytes
+        let diskUsed = diskTotal.map { max(0, $0 - (diskFree ?? 0)) }
+        return [
+            SystemResourceRow(
+                label: "CPU",
+                value: "\(resources.cpuCount) cores",
+                detail: "Load \(String(format: "%.2f", load1))",
+                symbol: "cpu"
+            ),
+            SystemResourceRow(
+                label: "Memory",
+                value: Self.formatBytes(memoryUsed),
+                detail: "\(Self.formatBytes(resources.memoryFreeBytes)) available",
+                symbol: "memorychip"
+            ),
+            SystemResourceRow(
+                label: "Disk",
+                value: diskUsed.map(Self.formatBytes) ?? "Unknown",
+                detail: diskFree.map { "\(Self.formatBytes($0)) available" } ?? "Storage unavailable",
+                symbol: "internaldrive"
+            ),
+        ]
+    }
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        let units = ["B", "KB", "MB", "GB", "TB"]
+        var value = Double(bytes)
+        var index = 0
+        while value >= 1024, index < units.count - 1 {
+            value /= 1024
+            index += 1
+        }
+        if index == 0 { return "\(Int(value)) \(units[index])" }
+        return "\(String(format: "%.1f", value)) \(units[index])"
+    }
+}
+
 @MainActor
 public final class AppModel: ObservableObject {
     // MARK: - Published state (SwiftUI binds to these)
@@ -274,10 +380,14 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var gitWorktrees: [GitWorktreeSummary] = []
     /// Preview/artifact records for the active project/task/session.
     @Published public private(set) var previews: [PreviewSummary] = []
+    /// Current runtime/resource summary from `/api/system/info`.
+    @Published public private(set) var systemInfo: NativeSystemInfoSummary?
     /// Shared loading flag for secondary panels.
     @Published public private(set) var isLoadingPanelData = false
     /// Command palette (⌘K) visibility.
     @Published public var showCommandPalette = false
+    /// Search/filter text shared by native tabs and the project task board.
+    @Published public var workspaceSearchQuery = ""
 
     /// The currently selected connection profile (nil → onboarding).
     @Published public private(set) var profile: ConnectionProfile?
@@ -640,7 +750,39 @@ public final class AppModel: ObservableObject {
     }
 
     public func openAppTab(slug: String, title: String) {
-        switchPanel(.app(slug: slug))
+        guard profile != nil else { return }
+        let kind: WorkspaceTab.Kind
+        let id: String
+        switch slug {
+        case "settings":
+            kind = .settings
+            id = "settings"
+            section = .settings
+        case "resources":
+            kind = .resources
+            id = "resources"
+            section = .resources
+        default:
+            kind = .app
+            id = "app:\(slug)"
+        }
+        let tab = WorkspaceTab(
+            id: id,
+            title: title,
+            projectSlug: projectSlug,
+            projectName: activeProjectName,
+            kind: kind,
+            panel: .app(slug: slug)
+        )
+        if let index = openTabs.firstIndex(where: { $0.id == id }) {
+            openTabs[index] = tab
+        } else {
+            openTabs.append(tab)
+            trimOpenTabsToLimit(protecting: id)
+        }
+        activeTabID = id
+        activePanel = .app(slug: slug)
+        Task { await loadPanelData(for: .app(slug: slug)) }
     }
 
     /// Resolves the active project slug from the user's projects when unset, so the
@@ -1047,6 +1189,22 @@ public final class AppModel: ObservableObject {
             selectedCard = nil
             return
         }
+        if tab.kind == .settings {
+            section = .settings
+            terminal = nil
+            selectedCard = nil
+            activePanel = .app(slug: "settings")
+            Task { await loadSystemInfo() }
+            return
+        }
+        if tab.kind == .resources {
+            section = .resources
+            terminal = nil
+            selectedCard = nil
+            activePanel = .app(slug: "resources")
+            Task { await loadSystemInfo() }
+            return
+        }
         if enabledPanels.contains(tab.panel) {
             activePanel = tab.panel
         } else {
@@ -1176,9 +1334,46 @@ public final class AppModel: ObservableObject {
                 await loadPreviews(client: client)
             case "processes":
                 await loadSessions()
+            case "settings", "resources":
+                await loadSystemInfo()
             default:
                 return
             }
+        }
+    }
+
+    public func filteredOpenTabs(matching query: String) -> [WorkspaceTab] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return openTabs }
+        return openTabs.filter { tab in
+            tab.title.localizedCaseInsensitiveContains(trimmed)
+                || tab.projectName.localizedCaseInsensitiveContains(trimmed)
+                || tab.kind.rawValue.localizedCaseInsensitiveContains(trimmed)
+        }
+    }
+
+    public func filteredBoardColumns(matching query: String) -> [BoardColumn] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return board.columns }
+        return board.columns.map { column in
+            BoardColumn(
+                status: column.status,
+                cards: column.cards.filter { card in
+                    card.title.localizedCaseInsensitiveContains(trimmed)
+                        || card.status.rawValue.localizedCaseInsensitiveContains(trimmed)
+                        || card.priority.rawValue.localizedCaseInsensitiveContains(trimmed)
+                        || card.tags.contains { $0.localizedCaseInsensitiveContains(trimmed) }
+                }
+            )
+        }
+    }
+
+    public func loadSystemInfo() async {
+        guard let client = gatewayClient() else { return }
+        do {
+            systemInfo = try await client.get("/api/system/info", as: NativeSystemInfoSummary.self)
+        } catch {
+            appModelLogger.warning("System info load failed: \(String(describing: error), privacy: .private)")
         }
     }
 
@@ -1573,7 +1768,7 @@ public final class AppModel: ObservableObject {
         let tabID = "board:\(projectSlug)"
         let tab = WorkspaceTab(
             id: tabID,
-            title: activeProjectName,
+            title: "\(activeProjectName) - Tasks",
             projectSlug: projectSlug,
             projectName: activeProjectName,
             kind: .board,

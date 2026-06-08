@@ -227,13 +227,19 @@ private struct SwiftTermView: NSViewRepresentable {
     func updateNSView(_ nsView: TerminalView, context: Context) {
         // Keep the coordinator's reference fresh; sizing is reported via the delegate.
         context.coordinator.terminalView = nsView
+        guard !context.coordinator.didRequestInitialFocus else { return }
+        DispatchQueue.main.async {
+            if Self.requestInitialFocus(nsView) {
+                context.coordinator.didRequestInitialFocus = true
+            }
+        }
     }
 
-    private static func requestInitialFocus(_ view: TerminalView?) {
-        guard let view, let window = view.window else { return }
-        let responder = window.firstResponder
-        guard responder == nil || responder === view || responder === window.contentView || responder === window else { return }
+    @discardableResult
+    private static func requestInitialFocus(_ view: TerminalView?) -> Bool {
+        guard let view, let window = view.window else { return false }
         window.makeFirstResponder(view)
+        return window.firstResponder === view
     }
 
     private static func terminalFont(size: CGFloat) -> NSFont {
@@ -267,6 +273,7 @@ private struct SwiftTermView: NSViewRepresentable {
     final class Coordinator: NSObject, TerminalViewDelegate {
         private let session: TerminalSession
         weak var terminalView: TerminalView?
+        var didRequestInitialFocus = false
 
         init(session: TerminalSession) {
             self.session = session

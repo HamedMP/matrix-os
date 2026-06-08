@@ -314,6 +314,10 @@ private struct WorkspaceTabPill: View {
             return "checklist"
         case .session:
             return "terminal"
+        case .settings:
+            return "gearshape"
+        case .resources:
+            return "gauge.with.dots.needle.67percent"
         case .app:
             return "square.grid.2x2"
         }

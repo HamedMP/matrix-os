@@ -20,8 +20,41 @@ struct RootShellView: View {
                 HStack(spacing: 0) {
                     Sidebar(model: model)
                     Rectangle().fill(Color.hairlineDark).frame(width: 1)
-                    sectionContent
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    VStack(spacing: 0) {
+                        if !model.openTabs.isEmpty {
+                            HStack(spacing: Spacing.x2) {
+                                WorkspaceTabStrip(
+                                    tabs: model.filteredOpenTabs(matching: model.workspaceSearchQuery),
+                                    activeID: model.activeTabID,
+                                    isCreating: model.isCreatingWorkItem,
+                                    onSelect: model.focusTab,
+                                    onClose: model.closeTab,
+                                    onCreate: { model.createTask(status: .todo) }
+                                )
+                                .frame(maxWidth: .infinity)
+                                HStack(spacing: Spacing.x1) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(Color.inkTertiary)
+                                    TextField("Filter", text: $model.workspaceSearchQuery)
+                                        .textFieldStyle(.plain)
+                                        .font(.plexSans(12))
+                                }
+                                .padding(.horizontal, Spacing.x2)
+                                .frame(width: 180, height: 34)
+                                .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                                        .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
+                                )
+                            }
+                            .padding(.horizontal, Spacing.x3)
+                            .padding(.vertical, Spacing.x2)
+                            Divider().overlay(Color.hairlineDark)
+                        }
+                        sectionContent
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
         }
@@ -44,6 +77,12 @@ struct RootShellView: View {
             BoardView(model: model)
         case .terminal:
             TerminalsView(model: model)
+        case .settings:
+            SettingsPanel(model: model)
+                .task { await model.loadSystemInfo() }
+        case .resources:
+            ResourcesPanel(model: model)
+                .task { await model.loadSystemInfo() }
         case .browser:
             BrowserPageView()
         }
@@ -240,6 +279,10 @@ private struct Sidebar: View {
             model.openHome()
         } else if section == .terminal {
             model.openTerminalSection()
+        } else if section == .settings {
+            model.openAppTab(slug: "settings", title: "Settings")
+        } else if section == .resources {
+            model.openAppTab(slug: "resources", title: "Resources")
         } else {
             model.section = section
         }
@@ -1357,8 +1400,13 @@ struct SettingsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.x4) {
-            Label("Task Settings", systemImage: "slider.horizontal.3")
+            Label("Settings", systemImage: "gearshape")
                 .font(.plexSans(16, weight: .semibold))
+            if let info = model.systemInfo {
+                inspectorLikeRow("Runtime", value: info.displayRuntimeName, icon: "macwindow")
+                inspectorLikeRow("Version", value: info.release?.version ?? info.version, icon: "shippingbox")
+                inspectorLikeRow("Channel", value: info.release?.channel ?? "Current", icon: "antenna.radiowaves.left.and.right")
+            }
             inspectorLikeRow("Project", value: model.projectSlug, icon: "folder")
             inspectorLikeRow("Card", value: model.selectedCard?.title ?? "No task selected", icon: "rectangle.and.text.magnifyingglass")
             inspectorLikeRow("Session", value: model.selectedCard?.linkedSessionId ?? "No linked session", icon: "terminal")
@@ -1386,6 +1434,61 @@ struct SettingsPanel: View {
         }
         .padding(Spacing.x3)
         .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+    }
+}
+
+struct ResourcesPanel: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.x4) {
+            HStack {
+                Label("Resources", systemImage: "gauge.with.dots.needle.67percent")
+                    .font(.plexSans(16, weight: .semibold))
+                Spacer()
+                Button { Task { await model.loadSystemInfo() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .iconHitTarget(30)
+                }
+                .buttonStyle(.plain)
+                .help("Refresh resources")
+            }
+            if let info = model.systemInfo {
+                Text(info.summaryText)
+                    .font(.plexSans(13, weight: .medium))
+                    .foregroundStyle(Color.inkSecondary)
+                ForEach(info.resourceRows) { row in
+                    HStack(spacing: Spacing.x3) {
+                        Image(systemName: row.symbol)
+                            .foregroundStyle(Color.signalLive)
+                            .frame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.label)
+                                .font(.plexSans(12, weight: .medium))
+                                .foregroundStyle(Color.inkSecondary)
+                            Text(row.detail)
+                                .font(.plexSans(11))
+                                .foregroundStyle(Color.inkTertiary)
+                        }
+                        Spacer()
+                        Text(row.value)
+                            .font(.plexMono(12, weight: .semibold))
+                            .foregroundStyle(Color.inkPrimary)
+                    }
+                    .padding(Spacing.x3)
+                    .background(Color.surfaceRail, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                }
+            } else {
+                ContentUnavailableView(
+                    "Resources unavailable",
+                    systemImage: "gauge.with.dots.needle.67percent",
+                    description: Text("Connect your Matrix computer to inspect CPU, memory, and storage.")
+                )
+            }
+            Spacer()
+        }
+        .padding(Spacing.x4)
+        .background(Color.surfaceCard)
     }
 }
 #endif
