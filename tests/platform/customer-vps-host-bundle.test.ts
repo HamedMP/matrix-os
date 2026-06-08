@@ -376,6 +376,10 @@ describe('customer VPS host bundle', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
+    expect(syncAgent).toContain('write_symphony_env()');
+    expect(syncAgent).toContain('/opt/matrix/env/symphony.env');
+    expect(syncAgent).toContain('sudo install -o root -g matrix -m 0640 "$temp_file" /opt/matrix/env/symphony.env || status=$?');
+    expect(syncAgent).toContain('rm -f "$temp_file"');
     expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
     expect(syncAgent).toContain('Messaging runtimes missing; units installed but not enabled');
