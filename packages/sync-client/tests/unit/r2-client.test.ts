@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
-  AuthRejectedError,
-  downloadFile,
-  requestPresignedUrls,
-} from "../../src/daemon/r2-client.js";
+    AuthRejectedError,
+    downloadFile,
+    requestPresignedUrls,
+    uploadFile,
+  } from "../../src/daemon/r2-client.js";
+
+const HASH_A = `sha256:${"a".repeat(64)}`;
 
 describe("daemon/r2-client", () => {
   let tempDir: string;
@@ -62,6 +65,118 @@ describe("daemon/r2-client", () => {
     ).rejects.toBeInstanceOf(AuthRejectedError);
   });
 
+  it("uploads multipart presigned files and completes them through the gateway", async () => {
+    const localPath = join(tempDir, "large.bin");
+    await writeFile(localPath, "hello world");
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      const href = String(url);
+      if (href === "https://r2.example.test/part-1") {
+        expect(init?.method).toBe("PUT");
+        expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("5");
+        return new Response(null, { status: 200, headers: { ETag: '"etag-1"' } });
+      }
+      if (href === "https://r2.example.test/part-2") {
+        expect(init?.method).toBe("PUT");
+        expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("5");
+        return new Response(null, { status: 200, headers: { ETag: '"etag-2"' } });
+      }
+      if (href === "https://r2.example.test/part-3") {
+        expect(init?.method).toBe("PUT");
+        expect((init?.headers as Record<string, string>)["Content-Length"]).toBe("1");
+        return new Response(null, { status: 200, headers: { ETag: '"etag-3"' } });
+      }
+      if (href === "https://app.matrix-os.com/api/sync/multipart/complete") {
+        expect(init?.method).toBe("POST");
+        expect(JSON.parse(String(init?.body))).toEqual({
+          path: "large.bin",
+          uploadId: "upload-123",
+          parts: [
+            { partNumber: 1, etag: '"etag-1"' },
+            { partNumber: 2, etag: '"etag-2"' },
+            { partNumber: 3, etag: '"etag-3"' },
+          ],
+        });
+        return new Response(JSON.stringify({ etag: '"complete-etag"' }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    });
+
+    await uploadFile(
+      {
+        path: "large.bin",
+        url: "",
+        expiresIn: 900,
+        multipart: {
+          uploadId: "upload-123",
+          partSize: 5,
+          partUrls: [
+            "https://r2.example.test/part-1",
+            "https://r2.example.test/part-2",
+            "https://r2.example.test/part-3",
+          ],
+        },
+      },
+      localPath,
+      { gatewayUrl: "https://app.matrix-os.com", token: "token" },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(timeoutSpy).toHaveBeenCalledWith(60_000);
+  });
+
+  it("aborts multipart uploads when a part upload fails", async () => {
+    const localPath = join(tempDir, "large.bin");
+    await writeFile(localPath, "helloworld");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const href = String(url);
+      if (href === "https://r2.example.test/part-1") {
+        return new Response(null, { status: 200, headers: { ETag: '"etag-1"' } });
+      }
+      if (href === "https://r2.example.test/part-2") {
+        return new Response("failed", { status: 503 });
+      }
+      if (href === "https://app.matrix-os.com/api/sync/multipart/abort") {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    });
+
+    await expect(
+      uploadFile(
+        {
+          path: "large.bin",
+          url: "",
+          expiresIn: 900,
+          multipart: {
+            uploadId: "upload-123",
+            partSize: 5,
+            partUrls: [
+              "https://r2.example.test/part-1",
+              "https://r2.example.test/part-2",
+            ],
+          },
+        },
+        localPath,
+        { gatewayUrl: "https://app.matrix-os.com", token: "token" },
+      ),
+    ).rejects.toThrow(/upload failed/i);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/sync/multipart/abort",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ path: "large.bin", uploadId: "upload-123" }),
+      }),
+    );
+  });
+
   it("verifies download hashes before replacing the destination file", async () => {
     const finalPath = join(tempDir, "notes", "today.md");
     const body = Buffer.from("tampered");
@@ -95,6 +210,100 @@ describe("daemon/r2-client", () => {
     expect(
       (await readdir(join(tempDir, "notes"))).filter((name) => name.endsWith(".tmp")),
     ).toEqual([]);
+  });
+
+  it("streams downloads without requiring arrayBuffer", async () => {
+    const finalPath = join(tempDir, "notes", "streamed.md");
+    const body = Buffer.from("hello streamed world");
+    const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(body.subarray(0, 5));
+        controller.enqueue(body.subarray(5));
+        controller.close();
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": String(body.length) }),
+      body: stream,
+      arrayBuffer: vi.fn(async () => {
+        throw new Error("arrayBuffer should not be used");
+      }),
+    } as unknown as Response);
+
+    await downloadFile("https://example.test/get", finalPath, hash, {
+      expectedSize: body.length,
+      maxBytes: body.length,
+    });
+
+    expect(await readFile(finalPath, "utf8")).toBe("hello streamed world");
+  });
+
+  it("rejects oversized streamed downloads before final rename", async () => {
+    const finalPath = join(tempDir, "notes", "too-large.md");
+    const body = Buffer.from("too large");
+    const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, { status: 200 }),
+    );
+
+    await expect(
+      downloadFile("https://example.test/get", finalPath, hash, {
+        maxBytes: body.length - 1,
+      }),
+    ).rejects.toThrow(/exceeded/i);
+
+    await expect(stat(finalPath)).rejects.toThrow(/ENOENT/);
+    expect(await readdir(join(tempDir, "notes")).catch(() => [])).toEqual([]);
+  });
+
+  it("cancels the response body before rejecting oversized content-length", async () => {
+    const finalPath = join(tempDir, "notes", "declared-too-large.md");
+    const cancel = vi.fn(async () => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": "100" }),
+      body: { cancel } as unknown as ReadableStream<Uint8Array>,
+    } as unknown as Response);
+
+    await expect(
+      downloadFile("https://example.test/get", finalPath, HASH_A, {
+        maxBytes: 10,
+      }),
+    ).rejects.toThrow(/exceeded 10 bytes/);
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    await expect(stat(finalPath)).rejects.toThrow(/ENOENT/);
+  });
+
+  it("cancels an unfinished response stream when it exceeds maxBytes mid-read", async () => {
+    const finalPath = join(tempDir, "notes", "stream-too-large.md");
+    const body = Buffer.from("too large");
+    const hash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+    const cancel = vi.fn(async () => {});
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(body.subarray(0, 3));
+        controller.enqueue(body.subarray(3));
+      },
+      cancel,
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(stream, { status: 200 }),
+    );
+
+    await expect(
+      downloadFile("https://example.test/get", finalPath, hash, {
+        maxBytes: body.length - 1,
+      }),
+    ).rejects.toThrow(/exceeded/i);
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    await expect(stat(finalPath)).rejects.toThrow(/ENOENT/);
+    expect(await readdir(join(tempDir, "notes")).catch(() => [])).toEqual([]);
   });
 
   it("does not clobber stale PID-based temp files from an earlier crash", async () => {

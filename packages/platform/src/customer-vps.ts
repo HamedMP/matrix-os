@@ -829,7 +829,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             ? JSON.stringify({ channel: target.channel })
             : '{}';
         try {
-          const res = await fetch(`https://${machine.publicIPv4}:443/api/internal/upgrade`, {
+          const res = await fetch(`https://${machine.publicIPv4}:443/api/system/update`, {
             method: 'POST',
             headers: {
               'authorization': `Bearer ${token}`,

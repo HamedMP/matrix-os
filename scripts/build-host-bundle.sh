@@ -47,6 +47,9 @@ else
 fi
 pnpm --filter '@finnaai/matrix' build
 node "$ROOT_DIR/scripts/build-default-apps.mjs" "$ROOT_DIR/home/apps"
+(cd "$ROOT_DIR/packages/symphony-elixir" && \
+  MIX_DEPS_PATH="$DIST_DIR/symphony-deps" MIX_BUILD_PATH="$DIST_DIR/symphony-build" MIX_ENV=prod mix deps.get --only prod && \
+  MIX_DEPS_PATH="$DIST_DIR/symphony-deps" MIX_BUILD_PATH="$DIST_DIR/symphony-build" MIX_ENV=prod mix release symphony --path "$DIST_DIR/symphony-release" --overwrite)
 
 curl --fail --location --max-time 120 "$NODE_URL" -o "$DIST_DIR/$NODE_ARCHIVE"
 curl --fail --location --max-time 30 "$NODE_BASE_URL/SHASUMS256.txt" -o "$DIST_DIR/SHASUMS256.txt"
@@ -58,6 +61,7 @@ mv "$STAGE_DIR/runtime/$NODE_DIST" "$STAGE_DIR/runtime/node"
 curl --fail --location --max-time 180 "$ZELLIJ_URL" -o "$DIST_DIR/$ZELLIJ_ARCHIVE"
 tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij
 chmod 0755 "$STAGE_DIR/bin/zellij"
+test -x "$STAGE_DIR/bin/zellij"
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
 tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"
@@ -72,11 +76,13 @@ cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
 cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"
 # The bundle is usually extracted as root:root during in-place upgrades, while
 # the systemd units execute these wrappers as the matrix user.
-chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
+chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+mkdir -p "$STAGE_DIR/app/packages/symphony-elixir/release"
+cp -a "$DIST_DIR/symphony-release/." "$STAGE_DIR/app/packages/symphony-elixir/release/"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"

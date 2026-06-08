@@ -13,6 +13,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { findTsxLoader } from '../src/lib/find-tsx-loader.mjs';
+import { assertSupportedNodeRuntime } from '../src/lib/node-runtime-guard.mjs';
+
+assertSupportedNodeRuntime(process.argv.slice(2), process.version);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(here, '..');
@@ -20,14 +23,14 @@ const pkgRoot = resolve(here, '..');
 const tsxLoader = findTsxLoader(pkgRoot);
 if (!tsxLoader) {
   console.error(
-    'matrix CLI: tsx loader not found. Reinstall with `npm i -g @finnaai/matrix`.',
+    'matrix CLI: tsx loader not found. Reinstall or retry with `npx @finnaai/matrix ...` or `pnpm dlx @finnaai/matrix ...`.',
   );
   process.exit(1);
 }
 
 const cliEntry = resolve(pkgRoot, 'src', 'cli', 'index.ts');
 if (!existsSync(cliEntry)) {
-  console.error('matrix CLI: entry not found. Reinstall with `npm i -g @finnaai/matrix`.');
+  console.error('matrix CLI: entry not found. Reinstall or retry with `npx @finnaai/matrix ...` or `pnpm dlx @finnaai/matrix ...`.');
   process.exit(1);
 }
 

@@ -6,6 +6,7 @@ import {
   ShellPreferencesSchema,
   type ShellPreferencesStore,
 } from "./preferences.js";
+import type { ShellCommandRunner } from "./command-runner.js";
 
 interface SessionRegistryRoutes {
   list(): Promise<unknown[]>;
@@ -36,11 +37,17 @@ interface ShellLayoutRoutes {
   delete(name: string): Promise<void>;
 }
 
+interface ShellBackendHealthRoutes {
+  health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
+}
+
 export interface ShellRouteDeps {
   registry: SessionRegistryRoutes;
   preferences?: ShellPreferencesStore;
   workspace?: ShellWorkspaceRoutes;
   layouts?: ShellLayoutRoutes;
+  shellBackend?: ShellBackendHealthRoutes;
+  commandRunner?: ShellCommandRunner;
 }
 
 const CreateSessionBodySchema = z.object({
@@ -66,6 +73,11 @@ const PaneBodySchema = z.object({
 const LayoutBodySchema = z.object({
   kdl: z.string().min(1).max(100_000),
 });
+const RunBodySchema = z.object({
+  command: z.array(z.string().min(1).max(4096)).min(1).max(64),
+  cwd: SafeCwdSchema.optional(),
+  timeoutMs: z.number().int().positive().max(30 * 60 * 1000).optional(),
+});
 
 function safeCwdSchema() {
   return z.string().min(1).max(1024)
@@ -80,6 +92,21 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const workspaceBodyLimit = bodyLimit({ maxSize: 8192 });
   const layoutBodyLimit = bodyLimit({ maxSize: 128_000 });
   const deleteBodyLimit = bodyLimit({ maxSize: 512 });
+  const runBodyLimit = bodyLimit({ maxSize: 16_384 });
+
+  app.get("/health", async (c) => {
+    if (!deps.shellBackend) {
+      console.warn("[shell] shell health route missing backend dependency");
+      return c.json({ shell: { ok: false, code: "shell_backend_unavailable" } }, 503);
+    }
+    try {
+      const health = await deps.shellBackend.health();
+      return c.json({ shell: health }, health.ok ? 200 : 503);
+    } catch (err: unknown) {
+      console.warn("[shell] shell health check failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ shell: { ok: false, code: "zellij_failed" } }, 503);
+    }
+  });
 
   app.get("/sessions", async (c) => {
     try {
@@ -109,6 +136,16 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         force: new URL(c.req.url).searchParams.get("force") === "1",
       });
       return c.json({ ok: true });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.post("/run", runBodyLimit, async (c) => {
+    try {
+      if (!deps.commandRunner) return unavailable(c, "run_unavailable");
+      const body = RunBodySchema.parse(await c.req.json());
+      return c.json(await deps.commandRunner.run(body));
     } catch (err) {
       return safeError(c, err);
     }

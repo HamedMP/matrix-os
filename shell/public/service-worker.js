@@ -7,7 +7,7 @@
 //     WebSocket upgrades, anything cross-origin we don't serve.
 // On version bump, old caches are pruned during activate.
 
-const VERSION = "v1";
+const VERSION = "v2";
 const CACHE_STATIC = `matrix-os-static-${VERSION}`;
 const CACHE_HTML = `matrix-os-html-${VERSION}`;
 const PRECACHE = [
@@ -122,13 +122,24 @@ async function cacheFirst(req) {
   const cache = await caches.open(CACHE_STATIC);
   const cached = await cache.match(req);
   if (cached) return cached;
-  const res = await fetch(req, { signal: AbortSignal.timeout(30_000) });
-  if (res.ok && res.type === "basic") {
-    cache.put(req, res.clone()).catch((err) => {
-      console.warn("[sw] static cache put failed:", err?.message ?? err);
+  try {
+    const res = await fetch(req, { signal: AbortSignal.timeout(30_000) });
+    if (res.ok && res.type === "basic") {
+      cache.put(req, res.clone()).catch((err) => {
+        console.warn("[sw] static cache put failed:", err?.message ?? err);
+      });
+    }
+    return res;
+  } catch (err) {
+    console.warn("[sw] static fetch failed:", err?.message ?? err);
+    return new Response("offline", {
+      status: 504,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      },
     });
   }
-  return res;
 }
 
 self.addEventListener("message", (event) => {

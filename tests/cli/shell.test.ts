@@ -129,7 +129,7 @@ describe("shell CLI command", () => {
 
     await shellCommand.run?.({ args: {} } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
   });
 
   it("prints usage for the bare shell command with valued root flags", async () => {
@@ -143,7 +143,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
   });
 
   it("prints usage when a root flag value matches a shell subcommand", async () => {
@@ -157,7 +157,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: matrix shell list|new|connect|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
   });
 
   it("does not print usage after subcommands run", async () => {
@@ -216,7 +216,7 @@ describe("shell CLI command", () => {
         v: 1,
         error: {
           code: "not_authenticated",
-          message: 'Not logged in for profile "local". Run `matrix login` first.',
+          message: 'Not logged in for profile "local". Run `mos login` first.',
         },
       },
     ]);
@@ -246,7 +246,7 @@ describe("shell CLI command", () => {
       v: 1,
       error: {
         code: "auth_expired",
-        message: 'Auth for profile "local" expired on 2026-05-29T23:24:06.000Z. Run `matrix login --profile local` to refresh.',
+        message: 'Auth for profile "local" expired on 2026-05-29T23:24:06.000Z. Run `mos login --profile local` to refresh.',
       },
     });
   });
@@ -276,7 +276,7 @@ describe("shell CLI command", () => {
       v: 1,
       error: {
         code: "auth_expired",
-        message: "Matrix CLI auth expired. Run `matrix login` to refresh your session.",
+        message: "Matrix CLI auth expired. Run `mos login` to refresh your session.",
       },
     });
   });
@@ -297,7 +297,7 @@ describe("shell CLI command", () => {
         v: 1,
         error: {
           code: "not_authenticated",
-          message: 'Not logged in for profile "local". Run `matrix login` first.',
+          message: 'Not logged in for profile "local". Run `mos login` first.',
         },
       }),
     );
@@ -406,8 +406,12 @@ describe("shell CLI command", () => {
       send() {}
       close() {}
       on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void) {
-        if (event === "open" || event === "close") {
+        if (event === "open") {
           queueMicrotask(() => listener());
+        }
+        if (event === "message") {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+          queueMicrotask(() => listener(JSON.stringify({ type: "exit", code: 0 })));
         }
         return this;
       }
@@ -427,7 +431,7 @@ describe("shell CLI command", () => {
     expect(ClosingWebSocket.instances).toBe(1);
     expect(logs).toEqual([
       "Created shell session main. Attaching...",
-      "Detached. Reattach: matrix shell connect main",
+      "Shell attach ended. Reattach: mos shell attach main",
     ]);
   });
 
@@ -451,6 +455,7 @@ describe("shell CLI command", () => {
           queueMicrotask(() => listener());
         }
         if (event === "message") {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
           queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "REMOTE_BYTES" })));
         }
         if (event === "close") {
@@ -502,6 +507,7 @@ describe("shell CLI command", () => {
           queueMicrotask(() => listener());
         }
         if (event === "message") {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
           queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "CONNECT_BYTES" })));
         }
         if (event === "close") {
@@ -565,6 +571,7 @@ describe("shell CLI command", () => {
           queueMicrotask(() => listener(JSON.stringify({ type: "error", code: "session_not_found" })));
         }
         if (event === "message" && this.instance === 2) {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
           queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "CREATED_CONNECT_BYTES" })));
         }
         if (event === "close" && this.instance === 2) {
@@ -628,7 +635,11 @@ describe("shell CLI command", () => {
         if (event === "message" && this.instance === 1) {
           queueMicrotask(() => listener(JSON.stringify({ type: "error", code: "session_not_found" })));
         }
-        if (event === "open" || (event === "close" && this.instance === 2)) {
+        if (event === "message" && this.instance === 2) {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+          queueMicrotask(() => listener(JSON.stringify({ type: "exit", code: 0 })));
+        }
+        if (event === "open") {
           queueMicrotask(() => listener());
         }
         return this;
@@ -651,6 +662,6 @@ describe("shell CLI command", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(logs).toContain("Created shell session 1. Connecting...");
-    expect(logs).toContain("Detached. Reattach: matrix shell connect 1");
+    expect(logs).toContain("Shell attach ended. Reattach: mos shell attach 1");
   });
 });

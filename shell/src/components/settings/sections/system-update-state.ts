@@ -86,6 +86,43 @@ export function severityBadgeStyle(severity?: string): string {
   }
 }
 
+export function formatReleaseBuildId(gitCommit?: string): string | null {
+  const shortId = formatReleaseBuildShortId(gitCommit);
+  if (!shortId) return null;
+  return `Build ID ${shortId}`;
+}
+
+export function formatReleaseBuildShortId(gitCommit?: string): string | null {
+  if (!gitCommit) return null;
+  return gitCommit.slice(0, 12);
+}
+
+export const UPGRADE_INSTALL_STATUS_LINES = [
+  "Putting the new version in place. Your files stay where they are.",
+  "Almost there. We are making sure everything opens cleanly.",
+  "Your workspace is getting the new version ready.",
+  "Finishing the install and checking everything responds.",
+  "Your workspace is staying put while the update lands.",
+  "One last check before the screen refreshes.",
+] as const;
+
+export function upgradeInstallStatusLine(index: number): string {
+  if (!Number.isInteger(index) || index < 0) return UPGRADE_INSTALL_STATUS_LINES[0];
+  return UPGRADE_INSTALL_STATUS_LINES[index % UPGRADE_INSTALL_STATUS_LINES.length];
+}
+
+export function resolveUpgradeInstallCopy(input: {
+  target?: string | null;
+  message?: string | null;
+  statusIndex: number;
+}) {
+  return {
+    title: `Installing ${input.target ?? "update"}`,
+    detail: input.message ?? "Downloading the update and waiting for your workspace to return.",
+    statusLine: upgradeInstallStatusLine(input.statusIndex),
+  };
+}
+
 export function resolveSystemUpdateState(input: {
   installedVersion?: string;
   latestVersion?: string | null;

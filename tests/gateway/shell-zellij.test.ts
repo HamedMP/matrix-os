@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyZellijFailure,
@@ -54,6 +55,23 @@ describe("zellij adapter", () => {
     expect(execFile).toHaveBeenCalledWith(
       "zellij",
       ["list-sessions", "--no-formatting"],
+      expect.objectContaining({ timeout: 25, signal: expect.any(AbortSignal) }),
+      expect.any(Function),
+    );
+  });
+
+  it("checks backend health with bounded zellij --version", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "zellij 0.44.1\n", "");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawn: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.health()).resolves.toEqual({ ok: true, code: "ok" });
+    expect(execFile).toHaveBeenCalledWith(
+      "zellij",
+      ["--version"],
       expect.objectContaining({ timeout: 25, signal: expect.any(AbortSignal) }),
       expect.any(Function),
     );
@@ -260,7 +278,13 @@ describe("zellij adapter", () => {
 
   it("creates command sessions with the command as the initial focused pane", async () => {
     const pty = ptyProcess();
-    const spawnPty = vi.fn(() => pty);
+    let layoutPath: string | undefined;
+    let layoutText = "";
+    const spawnPty = vi.fn((_command, args) => {
+      layoutPath = String(args[3]);
+      layoutText = readFileSync(layoutPath, "utf8");
+      return pty;
+    });
     const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 1 });
 
     await adapter.createSession({
@@ -274,12 +298,20 @@ describe("zellij adapter", () => {
     expect(args).toEqual([
       "--session",
       "bench",
-      "--layout-string",
-      expect.stringContaining('command="node"'),
+      "--new-session-with-layout",
+      expect.stringMatching(/matrix-zellij-layout-/),
     ]);
-    expect(String(args?.[3])).toContain('cwd="/home/alice/work"');
-    expect(String(args?.[3])).toContain('args "-e"');
-    expect(String(args?.[3])).toContain("MATRIX_BENCH_READY");
+    expect(layoutText).toContain('cwd="/home/alice/work"');
+    expect(layoutText).toContain('command="node"');
+    expect(layoutText).toContain('args "-e"');
+    expect(layoutText).toContain("MATRIX_BENCH_READY");
+    expect(layoutPath).toEqual(expect.any(String));
+    expect(existsSync(layoutPath!)).toBe(true);
+
+    pty.emitExit(0);
+    await vi.waitFor(() => {
+      expect(existsSync(layoutPath!)).toBe(false);
+    });
   });
 
   it("rejects session creation when the retained PTY exits during startup", async () => {

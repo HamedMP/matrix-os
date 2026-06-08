@@ -1,6 +1,7 @@
 export * from "./names.js";
 export * from "./osc133.js";
 export * from "./atomic-write.js";
+export * from "./command-runner.js";
 export * from "./errors.js";
 export * from "./layouts.js";
 export * from "./pending-input.js";

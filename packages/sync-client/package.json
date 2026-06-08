@@ -1,6 +1,6 @@
 {
   "name": "@finnaai/matrix",
-  "version": "0.3.2",
+  "version": "0.3.5",
   "description": "Matrix OS command-line client — login, sync, and peer management for matrix-os.com",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -51,7 +51,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "node ./scripts/check-publish.mjs"
+    "prepublishOnly": "node ./scripts/check-publish.mjs",
+    "validate:package-runners": "node ./scripts/validate-package-runners.mjs"
   },
   "dependencies": {
     "chokidar": "^4.0.0",

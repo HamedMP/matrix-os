@@ -5,7 +5,7 @@ import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../outp
 import { createShellClient, type ShellAttachOptions, type ShellClient } from "../shell-client.js";
 import { requireCliAuthToken } from "../auth-state.js";
 
-const RUN_USAGE = "Usage: matrix run -it [--session <name>] [-C <dir>] -- <command>";
+const RUN_USAGE = "Usage: matrix run [-it] [--session <name>] [-C <dir>] -- <command>";
 const RUN_VALUE_OPTIONS = new Set(["--gateway", "--profile", "--token", "--session", "-C", "--cwd"]);
 
 async function clientFromArgs(args: Record<string, unknown>) {
@@ -117,6 +117,16 @@ function writeError(err: unknown, json: boolean): void {
   );
 }
 
+export function exitCodeFromRunResult(result: { exitCode: number | null; timedOut: boolean }): number {
+  if (result.timedOut) {
+    return 124;
+  }
+  if (result.exitCode !== null && Number.isInteger(result.exitCode)) {
+    return Math.min(Math.max(result.exitCode, 0), 255);
+  }
+  return 1;
+}
+
 export const runCommand = defineCommand({
   meta: {
     name: "run",
@@ -166,16 +176,31 @@ export const runCommand = defineCommand({
       if (command.length === 0) {
         throw Object.assign(new Error(RUN_USAGE), { code: "invalid_request" });
       }
-      if (!isInteractive(args, rawArgs)) {
-        throw Object.assign(
-          new Error("Non-interactive matrix run will use the same zellij session primitive, but this gateway does not expose remote exit status yet. Use `matrix run -it -- <command>` for now."),
-          { code: "not_implemented" },
-        );
-      }
-
       const sessionProvided = typeof args.session === "string";
       const name = sessionProvided ? args.session as string : createEphemeralSessionName();
       const client = await clientFromArgs(args);
+
+      if (!isInteractive(args, rawArgs)) {
+        if (sessionProvided) {
+          throw Object.assign(new Error("--session is only supported with -it"), { code: "invalid_request" });
+        }
+        const result = await client.runCommand({
+          command,
+          cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+        });
+        if (json) {
+          console.log(formatCliSuccess({ ...result }));
+        } else {
+          process.stdout.write(result.stdout);
+          process.stderr.write(result.stderr);
+          if (result.truncated) {
+            process.stderr.write("matrix: output truncated (limit reached)\n");
+          }
+        }
+        process.exitCode = exitCodeFromRunResult(result);
+        return;
+      }
+
       const result = await createOrAttachRunSession(client, {
         name,
         cwd: typeof args.cwd === "string" ? args.cwd : undefined,
@@ -187,7 +212,7 @@ export const runCommand = defineCommand({
       console.log(
         json
           ? formatCliSuccess({ detached: result.detached, session: name })
-          : `Detached. Reattach: matrix shell connect ${name}`,
+          : `Detached. Reattach: mos shell attach ${name}`,
       );
     } catch (err) {
       writeError(err, json);

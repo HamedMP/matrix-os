@@ -1,0 +1,214 @@
+name: Platform DB Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub environment with GCP OIDC access
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+      mode:
+        description: Verify counts or restore Docker platform DB into the managed target
+        required: true
+        default: verify
+        type: choice
+        options:
+          - verify
+          - migrate
+      confirmation:
+        description: Type MIGRATE PLATFORM DB TO MANAGED POSTGRES when mode=migrate
+        required: false
+        default: ""
+        type: string
+      source_container:
+        description: Docker Postgres container on the current platform VPS
+        required: true
+        default: distro-postgres-1
+        type: string
+      source_database:
+        description: Source platform database name
+        required: true
+        default: matrixos_platform
+        type: string
+      source_user:
+        description: Source Postgres user inside the Docker Postgres container
+        required: true
+        default: matrixos
+        type: string
+      target_secret:
+        description: GCP Secret Manager secret containing the managed Postgres URL
+        required: true
+        default: platform-database-url
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: platform-db-migration-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    name: Migrate platform Postgres
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 30
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      SOURCE_CONTAINER: ${{ inputs.source_container }}
+      SOURCE_DATABASE: ${{ inputs.source_database }}
+      SOURCE_USER: ${{ inputs.source_user }}
+      TARGET_SECRET: ${{ inputs.target_secret }}
+      MODE: ${{ inputs.mode }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Validate migration inputs
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in GCP_PROJECT_ID VPS_HOST SOURCE_CONTAINER SOURCE_DATABASE SOURCE_USER TARGET_SECRET MODE; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required value(s): %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          safe_identifier_re='^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$'
+          safe_secret_re='^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$'
+          for name in SOURCE_CONTAINER SOURCE_DATABASE SOURCE_USER; do
+            if ! printf '%s\n' "${!name}" | grep -Eq "$safe_identifier_re"; then
+              printf 'Invalid %s: only letters, numbers, underscore, and hyphen are allowed.\n' "$name" >&2
+              exit 1
+            fi
+          done
+          if ! printf '%s\n' "$TARGET_SECRET" | grep -Eq "$safe_secret_re"; then
+            echo "Invalid TARGET_SECRET: only letters, numbers, underscore, and hyphen are allowed." >&2
+            exit 1
+          fi
+          if [ "$MODE" = "migrate" ] && [ "$CONFIRMATION" != "MIGRATE PLATFORM DB TO MANAGED POSTGRES" ]; then
+            echo "Refusing destructive migration without the exact confirmation phrase." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Install Postgres client
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          install -m 0700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/matrix-platform-migration
+          chmod 0600 ~/.ssh/matrix-platform-migration
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Read managed database URL
+        run: |
+          set -euo pipefail
+          target_url="$(gcloud secrets versions access latest \
+            --project "$GCP_PROJECT_ID" \
+            --secret "$TARGET_SECRET")"
+          if [ -z "$target_url" ]; then
+            echo "Managed database URL secret is empty." >&2
+            exit 1
+          fi
+          echo "::add-mask::$target_url"
+          case "$target_url" in
+            postgresql://*|postgres://*) ;;
+            *)
+              echo "Managed database URL secret is not a Postgres URL." >&2
+              exit 1
+              ;;
+          esac
+          echo "TARGET_DATABASE_URL=$target_url" >> "$GITHUB_ENV"
+
+      - name: Snapshot source database on VPS
+        run: |
+          set -euo pipefail
+          remote_backup="/home/deploy/backups/platform-migration/platform-${GITHUB_RUN_ID}.dump"
+          echo "REMOTE_BACKUP=$remote_backup" >> "$GITHUB_ENV"
+          ssh -i ~/.ssh/matrix-platform-migration "root@$VPS_HOST" \
+            "set -euo pipefail; install -d -m 0700 /home/deploy/backups/platform-migration; docker exec '$SOURCE_CONTAINER' pg_dump --format=custom --no-owner --no-acl -U '$SOURCE_USER' -d '$SOURCE_DATABASE' > '$remote_backup'; chmod 0600 '$remote_backup'; stat -c '%s bytes' '$remote_backup'"
+
+      - name: Prune old VPS migration snapshots
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/matrix-platform-migration "root@$VPS_HOST" \
+            "set -euo pipefail; find /home/deploy/backups/platform-migration -maxdepth 1 -type f -name 'platform-*.dump' -mtime +7 -delete"
+
+      - name: Download source snapshot to runner
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/matrix-platform-migration "root@$VPS_HOST" \
+            "cat '$REMOTE_BACKUP'" > platform-source.dump
+          test -s platform-source.dump
+          pg_restore --list platform-source.dump | grep -q 'TABLE public users '
+          pg_restore --list platform-source.dump | grep -q 'TABLE public user_machines '
+          pg_restore --list platform-source.dump | grep -q 'TABLE public host_bundle_releases '
+          pg_restore --list platform-source.dump | grep -q 'TABLE DATA public user_machines '
+          pg_restore --list platform-source.dump | grep -q 'TABLE DATA public host_bundle_releases '
+
+      - name: Compare source and target counts
+        run: |
+          set -euo pipefail
+          source_counts="$(ssh -i ~/.ssh/matrix-platform-migration "root@$VPS_HOST" \
+            "docker exec '$SOURCE_CONTAINER' psql -U '$SOURCE_USER' -d '$SOURCE_DATABASE' -At -c \"select 'users=' || count(*) from public.users union all select 'user_machines=' || count(*) from public.user_machines union all select 'host_bundle_releases=' || count(*) from public.host_bundle_releases;\"")"
+          echo "Source counts:"
+          printf '%s\n' "$source_counts"
+          echo "Managed database visible platform tables:"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select table_schema || '.' || table_name from information_schema.tables where table_schema not in ('pg_catalog', 'information_schema') and table_name in ('users', 'user_machines', 'host_bundle_releases') order by table_schema, table_name;" || true
+          echo "Target counts before migration:"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "SELECT 1" > /dev/null
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select 'users=' || count(*) from public.users union all select 'user_machines=' || count(*) from public.user_machines union all select 'host_bundle_releases=' || count(*) from public.host_bundle_releases;" || true
+
+      - name: Restore into managed database
+        if: ${{ inputs.mode == 'migrate' }}
+        run: |
+          set -euo pipefail
+          pg_restore \
+            --exit-on-error \
+            --verbose \
+            --clean \
+            --if-exists \
+            --no-owner \
+            --no-privileges \
+            --single-transaction \
+            --dbname "$TARGET_DATABASE_URL" \
+            platform-source.dump
+
+      - name: Verify managed database after migration
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "verify" ]; then
+            echo "Verify mode completed without restoring into the managed database."
+            exit 0
+          fi
+          echo "Managed database tables after restore:"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select table_schema || '.' || table_name from information_schema.tables where table_schema not in ('pg_catalog', 'information_schema') and table_name in ('users', 'user_machines', 'host_bundle_releases') order by table_schema, table_name;"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select to_regclass('public.users'), to_regclass('public.user_machines'), to_regclass('public.host_bundle_releases');"
+          psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select 'users=' || count(*) from public.users union all select 'user_machines=' || count(*) from public.user_machines union all select 'host_bundle_releases=' || count(*) from public.host_bundle_releases;"
+          machine_count="$(psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select count(*) from public.user_machines;")"
+          release_count="$(psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "select count(*) from public.host_bundle_releases;")"
+          if [ "$machine_count" -lt 1 ] || [ "$release_count" -lt 1 ]; then
+            echo "Managed database validation failed: expected machine and release rows after restore." >&2
+            exit 1
+          fi

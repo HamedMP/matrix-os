@@ -2168,7 +2168,7 @@ function ShellCard({
   const [copied, setCopied] = useState(false);
   const copyAttachCommand = async () => {
     try {
-      await copyTextToClipboard(`matrix shell connect ${shell.name}`);
+      await copyTextToClipboard(`mos shell attach ${shell.name}`);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch (err: unknown) {
@@ -2202,7 +2202,7 @@ function ShellCard({
           aria-label={`Copy attach command for ${shell.name}`}
           className="min-w-0 flex-1 truncate"
           style={SHELL_CARD_NAME_BUTTON_STYLE}
-          title={copied ? "Copied" : `Copy: matrix shell connect ${shell.name}`}
+          title={copied ? "Copied" : `Copy: mos shell attach ${shell.name}`}
           onClick={() => void copyAttachCommand()}
         >
           {shell.name}
