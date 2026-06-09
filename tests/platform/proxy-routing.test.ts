@@ -146,6 +146,10 @@ describe("platform proxy routing", () => {
       "/?runtime=staging",
     );
     expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-up/?session=secret")).toBe("/");
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-up/verify-email-address?session=secret")).toBe("/");
+    expect(buildPostAuthRedirectPath("https://app.matrix-os.com/sign-in/sso-callback?runtime=staging&session=secret")).toBe(
+      "/?runtime=staging",
+    );
   });
 
   it("adds a timeout and a derived platform verification token on app-domain proxy fetches", async () => {
