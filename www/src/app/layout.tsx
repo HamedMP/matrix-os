@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import { Inter, JetBrains_Mono, Caveat, Cormorant_Garamond, Orbitron } from "next/font/google";
+import {
+  Inter,
+  Instrument_Sans,
+  JetBrains_Mono,
+  Caveat,
+  Cormorant_Garamond,
+  Orbitron,
+} from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/react";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
@@ -9,6 +16,11 @@ import "./globals.css";
 
 const inter = Inter({
   variable: "--font-inter",
+  subsets: ["latin"],
+});
+
+const instrumentSans = Instrument_Sans({
+  variable: "--font-instrument",
   subsets: ["latin"],
 });
 
@@ -87,7 +99,7 @@ export default async function RootLayout({
         <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
       </head>
-      <body className={`${inter.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
+      <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
         <ClerkProvider>
           {children}
           <PostHogCookieBanner visitorCountry={visitorCountry} />

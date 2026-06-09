@@ -79,6 +79,7 @@ write_files:
       User=matrix
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
+      Environment=SYMPHONY_PORT=4766
       WorkingDirectory=/opt/matrix
       ExecStart=/opt/matrix/bin/matrix-gateway
       Restart=on-failure
@@ -747,6 +748,13 @@ write_files:
       NEXT_PUBLIC_POSTHOG_HOST={{posthogHost}}
       NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}
       DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
+  - path: /opt/matrix/env/symphony.env
+    owner: root:root
+    permissions: "0640"
+    content: |
+      MATRIX_HANDLE={{handle}}
+      PLATFORM_INTERNAL_URL={{platformInternalUrl}}
+      UPGRADE_TOKEN={{platformVerificationToken}}
   - path: /opt/matrix/env/r2.env
     owner: root:root
     permissions: "0640"
@@ -840,7 +848,7 @@ runcmd:
     fi
     install -d -o root -g root -m 0755 /home/matrixos
     ln -sfn /home/matrix/home /home/matrixos/home
-    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/env/host.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
+    chown root:matrix /opt/matrix/postgres-compose.yml /opt/matrix/bin/matrixctl /opt/matrix/bin/matrix-db-backup.sh /opt/matrix/bin/matrix-restore.sh /opt/matrix/env/host.env /opt/matrix/env/symphony.env /opt/matrix/env/postgres.env /opt/matrix/env/registration.env
 
     . /opt/matrix/env/host.env
     [ -n "${MATRIX_HOST_BUNDLE_URL:-}" ] || { echo "matrix-host: MATRIX_HOST_BUNDLE_URL is required" >&2; exit 1; }
@@ -873,7 +881,7 @@ runcmd:
       chown root:matrix /opt/matrix/release.json
       chmod 0644 /opt/matrix/release.json
     fi
-    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-install-hermes; do
+    for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
     for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do

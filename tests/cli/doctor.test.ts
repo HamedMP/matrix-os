@@ -32,11 +32,46 @@ describe("doctor CLI command", () => {
       "auth",
       "daemon",
       "gateway",
+      "shell-backend",
       "protocol",
     ]);
     expect(fetchImpl).toHaveBeenCalledWith("http://localhost:4000/api/system/info", {
       headers: { Authorization: "Bearer tok" },
       signal: expect.any(AbortSignal),
+    });
+    expect(fetchImpl).toHaveBeenCalledWith("http://localhost:4000/api/terminal/health", {
+      headers: { Authorization: "Bearer tok" },
+      signal: expect.any(AbortSignal),
+    });
+    expect(parsed.data.checks.find((check: { name: string }) => check.name === "daemon")).toEqual({
+      name: "daemon",
+      ok: false,
+      code: "daemon_unavailable",
+      hint: "Start sync with `mos sync`.",
+    });
+  });
+
+  it("reports shell backend failures with a safe doctor hint", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/terminal/health")) {
+        return new Response(JSON.stringify({ shell: { ok: false, code: "zellij_failed" } }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ status: "ok" }));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await doctorCommand.run!({ args: { dev: true, token: "tok", json: true } } as never);
+
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.data.checks.find((check: { name: string }) => check.name === "shell-backend")).toEqual({
+      name: "shell-backend",
+      ok: false,
+      code: "zellij_failed",
+      hint: "Run `mos doctor --profile local`; managed VPSes may need the latest host bundle deployed.",
     });
   });
 
@@ -90,11 +125,59 @@ describe("doctor CLI command", () => {
       name: "auth",
       ok: false,
       code: "auth_expired",
-      hint: "Run `matrix login --profile cloud` to refresh.",
+      hint: "Run `mos login --profile cloud` to refresh.",
     });
     expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/system/info", {
       signal: expect.any(AbortSignal),
     });
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("maps terminal health auth failures to auth_expired instead of shell backend failure", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/terminal/health")) {
+        return new Response(JSON.stringify({ error: { code: "auth_expired" } }), { status: 401 });
+      }
+      return new Response(JSON.stringify({ status: "ok" }));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await doctorCommand.run!({ args: { dev: true, json: true } } as never);
+
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.data.checks.find((check: { name: string }) => check.name === "shell-backend")).toEqual({
+      name: "shell-backend",
+      ok: false,
+      code: "auth_expired",
+      hint: "Run `mos login --profile local` to refresh.",
+    });
+  });
+
+  it("does not reflect unknown terminal health codes", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/terminal/health")) {
+        return new Response(JSON.stringify({ shell: { ok: false, code: "internal_path_leak" } }), { status: 503 });
+      }
+      return new Response(JSON.stringify({ status: "ok" }));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => {
+      logs.push(String(line));
+    });
+
+    await doctorCommand.run!({ args: { dev: true, token: "tok", json: true } } as never);
+
+    const parsed = JSON.parse(logs[0]);
+    expect(parsed.data.checks.find((check: { name: string }) => check.name === "shell-backend")).toEqual({
+      name: "shell-backend",
+      ok: false,
+      code: "zellij_failed",
+      hint: "Run `mos doctor --profile local`; managed VPSes may need the latest host bundle deployed.",
+    });
   });
 });

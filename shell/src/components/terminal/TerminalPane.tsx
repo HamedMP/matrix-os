@@ -991,7 +991,9 @@ export function TerminalPane({
       if (cached && canReuseCachedSocket) {
         bindWs(cached.ws, cached.ws.readyState === WebSocket.CONNECTING);
       } else {
-        discardStaleCachedTerminal(cached);
+        if (cached && !canReuseCachedTerminal) {
+          discardStaleCachedTerminal(cached);
+        }
         connectWs();
       }
 
@@ -1165,6 +1167,8 @@ export function TerminalPane({
             termElement.parentNode.removeChild(termElement);
           }
 
+          const cachedSessionId = sessionIdRef.current ?? "";
+          const retainSocket = !isCanonicalShellSessionId(cachedSessionId);
           cacheTerminal(paneId, {
             terminal: term,
             fitAddon,
@@ -1172,8 +1176,8 @@ export function TerminalPane({
             searchAddon,
             ws: wsRef.current,
             lastSeq: lastSeqRef.current,
-            sessionId: sessionIdRef.current ?? "",
-          });
+            sessionId: cachedSessionId,
+          }, { retainSocket });
         } else {
           // WS never established — dispose, don't cache
           log("cleanup-dispose-no-ws");

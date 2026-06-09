@@ -1,0 +1,58 @@
+---
+title: Hermes
+description: Set up Hermes for Matrix OS.
+---
+
+Hermes can run in Matrix OS with the same canonical Matrix skill pack used by Claude Code, Codex, and the Matrix kernel.
+
+## Install the Matrix skills
+
+From a Matrix checkout:
+
+```bash
+./scripts/install-hermes-matrix-skills.sh
+```
+
+Install from a local checkout or alternate source:
+
+```bash
+./scripts/install-hermes-matrix-skills.sh /home/matrix/projects/matrix-os
+MATRIX_SKILLS_SOURCE=HamedMP/matrix-os ./scripts/install-hermes-matrix-skills.sh
+HERMES_BIN=/opt/matrix/runtime/node/bin/hermes ./scripts/install-hermes-matrix-skills.sh
+```
+
+Manual install:
+
+```bash
+for skill in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
+  hermes skills install "HamedMP/matrix-os/skills/matrix/$skill"
+done
+```
+
+If Hermes supports taps in your environment:
+
+```bash
+hermes skills tap add HamedMP/matrix-os
+hermes skills browse matrix
+```
+
+## Configure the Matrix gateway
+
+```bash
+hermes config set skills.config.matrix.gateway_url http://localhost:4000
+```
+
+Inside a Matrix VPS, Hermes should call Matrix gateway/platform APIs for authenticated Matrix actions.
+
+## Security boundary
+
+Do not write Pipedream, Clerk, Gmail, GitHub, Slack, or provider secrets into Hermes config or customer VPS environment files. Matrix owns integration credentials at the platform layer and exposes approved actions through Matrix APIs.
+
+## Recommended workflow
+
+```bash
+matrix shell connect -c hermes
+matrix run -it --session hermes -- hermes
+```
+
+Use the Matrix skills when building apps, debugging manifests, working with integrations, or applying the Matrix design system.

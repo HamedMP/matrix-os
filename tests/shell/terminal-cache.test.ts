@@ -13,7 +13,7 @@ function createMockCachedTerminal(overrides: Partial<CachedTerminal> = {}): Cach
     fitAddon: {} as CachedTerminal["fitAddon"],
     webglAddon: null,
     searchAddon: null,
-    ws: { send: vi.fn(), close: vi.fn() } as unknown as WebSocket,
+    ws: { readyState: WebSocket.OPEN, send: vi.fn(), close: vi.fn() } as unknown as WebSocket,
     lastSeq: 0,
     sessionId: "test-session-id",
     ...overrides,
@@ -34,6 +34,35 @@ describe("Terminal Cache", () => {
     const cached = getCached("pane-1");
     expect(cached).not.toBeNull();
     expect(cached!.sessionId).toBe("session-abc");
+  });
+
+  it("detaches and closes the socket before caching when socket retention is disabled", () => {
+    const entry = createMockCachedTerminal({ sessionId: "main", lastSeq: 42 });
+
+    cacheTerminal("pane-1", entry, { retainSocket: false });
+
+    expect((entry.ws as unknown as { send: ReturnType<typeof vi.fn> }).send).toHaveBeenCalledWith(JSON.stringify({ type: "detach" }));
+    expect((entry.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledOnce();
+    expect(getCached("pane-1")).toMatchObject({
+      sessionId: "main",
+      lastSeq: 42,
+    });
+  });
+
+  it("closes but does not detach a connecting socket when socket retention is disabled", () => {
+    const entry = createMockCachedTerminal({
+      sessionId: "main",
+      ws: {
+        readyState: WebSocket.CONNECTING,
+        send: vi.fn(),
+        close: vi.fn(),
+      } as unknown as WebSocket,
+    });
+
+    cacheTerminal("pane-1", entry, { retainSocket: false });
+
+    expect((entry.ws as unknown as { send: ReturnType<typeof vi.fn> }).send).not.toHaveBeenCalled();
+    expect((entry.ws as unknown as { close: ReturnType<typeof vi.fn> }).close).toHaveBeenCalledOnce();
   });
 
   it("getCached returns null for cache miss", () => {

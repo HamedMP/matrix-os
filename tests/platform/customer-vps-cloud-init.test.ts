@@ -150,6 +150,9 @@ exit 99
     expect(rendered).toContain('MATRIX_AUTH_TOKEN=platform-verification-secret');
     expect(rendered).toContain('MATRIX_CODE_PROXY_TOKEN=platform-verification-secret');
     expect(rendered).toContain('PLATFORM_INTERNAL_URL=https://platform.example');
+    expect(rendered).toContain('path: /opt/matrix/env/symphony.env');
+    expect(rendered).toContain('MATRIX_HANDLE=alice');
+    expect(rendered).toContain('UPGRADE_TOKEN=platform-verification-secret');
     expect(rendered).not.toContain('UPGRADE_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_AUTH_TOKEN=\n');
     expect(rendered).not.toContain('MATRIX_CODE_PROXY_TOKEN=\n');

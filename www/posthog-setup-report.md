@@ -1,6 +1,6 @@
 # PostHog post-wizard report
 
-The wizard has completed a deep integration of your Matrix OS website project. PostHog analytics have been added with both client-side and server-side tracking, covering the full user journey from landing page to instance provisioning.
+The wizard has completed a deep integration of your Matrix OS website project. PostHog analytics have been added with both client-side and server-side tracking, covering the full user journey from landing page to signup, billing, and instance provisioning.
 
 ## Integration Summary
 
@@ -8,7 +8,7 @@ The wizard has completed a deep integration of your Matrix OS website project. P
 - **Server-side tracking**: Created `posthog-server.ts` for server actions and Inngest functions
 - **Reverse proxy**: Configured in `next.config.ts` to route through `/ingest` for better tracking reliability
 - **Environment variables**: Set up `NEXT_PUBLIC_POSTHOG_KEY` and `NEXT_PUBLIC_POSTHOG_HOST` in `.env.local`
-- **User identification**: Users are identified on successful provisioning with their Clerk ID and handle
+- **User identification**: Users are identified after signup sync with their Clerk ID and handle; runtime provisioning remains billing-gated.
 
 ## Events Tracked
 
@@ -18,9 +18,8 @@ The wizard has completed a deep integration of your Matrix OS website project. P
 | `provision_completed` | Server successfully provisioned a new Matrix OS instance | `src/app/dashboard/actions.ts` |
 | `provision_failed` | Provisioning failed (tracked on both client and server) | `src/app/dashboard/provision-button.tsx`, `src/app/dashboard/actions.ts` |
 | `admin_container_action` | Admin performed an action (start/stop/destroy) on a container | `src/app/admin/admin-dashboard.tsx` |
-| `inngest_provision_started` | Inngest started processing user provisioning event | `src/inngest/provision-user.ts` |
-| `inngest_provision_completed` | Inngest completed processing user provisioning event | `src/inngest/provision-user.ts` |
-| `inngest_provision_failed` | Inngest provisioning step failed | `src/inngest/provision-user.ts` |
+| `inngest_user_synced` | Inngest synced a signup user into the platform projection without provisioning a runtime | `src/inngest/provision-user.ts` |
+| `inngest_user_sync_failed` | Inngest failed to sync a signup user into the platform projection | `src/inngest/provision-user.ts` |
 
 ## Files Created/Modified
 

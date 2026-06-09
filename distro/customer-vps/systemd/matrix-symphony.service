@@ -5,11 +5,12 @@ Wants=network-online.target
 Requires=matrix-restore.service
 ConditionPathExists=/opt/matrix/restore-complete
 ConditionPathExists=/opt/matrix/bin/matrix-symphony
-ConditionPathExists=/opt/matrix/app/packages/symphony-elixir/bin/symphony
+ConditionPathExists=/opt/matrix/app/packages/symphony-elixir/release/bin/symphony
 
 [Service]
 User=matrix
 Group=matrix
+EnvironmentFile=/opt/matrix/env/symphony.env
 Environment=MATRIX_HOME=/home/matrix/home
 Environment=SYMPHONY_HOST=127.0.0.1
 Environment=SYMPHONY_PORT=4766

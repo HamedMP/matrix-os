@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createHmac } from 'node:crypto';
-import { type PlatformDB, insertContainer, insertUserMachine, updateUserMachine } from '../../packages/platform/src/db.js';
+import {
+  type PlatformDB,
+  getContainerByClerkId,
+  getPlatformUserByClerkId,
+  insertContainer,
+  insertUserMachine,
+  updateUserMachine,
+} from '../../packages/platform/src/db.js';
 import { createDisabledOrchestrator, createOrchestrator } from '../../packages/platform/src/orchestrator.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import { metricsRegistry } from '../../packages/platform/src/metrics.js';
@@ -100,12 +107,50 @@ describe('platform/api', () => {
     const res = await app.request('/containers/provision', {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...adminHeaders },
-      body: JSON.stringify({ handle: 'alice', clerkUserId: 'clerk_1' }),
+      body: JSON.stringify({ handle: 'alice', clerkUserId: 'clerk_1', displayName: 'Alice A', email: 'alice@example.com' }),
     });
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.handle).toBe('alice');
     expect(body.status).toBe('running');
+
+    const user = await getPlatformUserByClerkId(db, 'clerk_1');
+    expect(user).toMatchObject({
+      clerkId: 'clerk_1',
+      handle: 'alice',
+      displayName: 'Alice A',
+      email: 'alice@example.com',
+      status: 'active',
+    });
+    expect(user?.containerId).toBe('legacy:alice');
+  });
+
+  it('POST /users/sync creates a platform user without provisioning a runtime', async () => {
+    const res = await app.request('/users/sync', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...adminHeaders },
+      body: JSON.stringify({
+        handle: 'trinity',
+        clerkUserId: 'clerk_trinity',
+        displayName: 'Trinity',
+        email: 'trinity@example.com',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      clerkUserId: 'clerk_trinity',
+      handle: 'trinity',
+      status: 'active',
+    });
+    await expect(getPlatformUserByClerkId(db, 'clerk_trinity')).resolves.toMatchObject({
+      clerkId: 'clerk_trinity',
+      handle: 'trinity',
+      displayName: 'Trinity',
+      email: 'trinity@example.com',
+      containerId: 'clerk:clerk_trinity',
+    });
+    await expect(getContainerByClerkId(db, 'clerk_trinity')).resolves.toBeUndefined();
   });
 
   it('POST /containers/provision delegates onboarding to one customer VPS when configured', async () => {
@@ -144,6 +189,14 @@ describe('platform/api', () => {
     });
     expect(customerVpsService.provision).toHaveBeenCalledWith({ handle: 'alice', clerkUserId: 'clerk_1', runtimeSlot: 'primary' });
     expect(provisionSpy).not.toHaveBeenCalled();
+    await expect(getPlatformUserByClerkId(db, 'clerk_1')).resolves.toMatchObject({
+      clerkId: 'clerk_1',
+      handle: 'alice',
+      displayName: 'Alice',
+      email: 'alice@matrix-os.local',
+      containerId: 'vps:9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      status: 'active',
+    });
   });
 
   it('POST /containers/provision allows operator provisioning when user entitlement denies access', async () => {

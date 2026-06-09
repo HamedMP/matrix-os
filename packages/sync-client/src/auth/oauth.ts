@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { platform } from "node:os";
 import { AuthDataSchema, saveAuth, type AuthData } from "./token-store.js";
+import { cliError, cliFetchError } from "../cli/output.js";
 
 export interface DeviceCodeResponse {
   deviceCode: string;
@@ -19,21 +20,26 @@ export async function requestDeviceCode(
   config: OAuthConfig,
 ): Promise<DeviceCodeResponse> {
   const url = `${config.platformUrl}/api/auth/device/code`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clientId: config.clientId }),
-    signal: AbortSignal.timeout(10_000),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId: config.clientId }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err: unknown) {
+    throw cliFetchError(err, { timeout: "request_timeout", network: "platform_unreachable" });
+  }
 
   if (!res.ok) {
-    throw new Error(`Device code request failed: ${res.status}`);
+    throw Object.assign(new Error("Request failed"), { code: "login_failed" });
   }
 
   return (await res.json()) as DeviceCodeResponse;
 }
 
-export function openBrowser(url: string): void {
+export function openBrowser(url: string, userCode?: string): void {
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`Refusing to open non-http(s) verification URL: ${parsed.protocol}`);
@@ -46,7 +52,7 @@ export function openBrowser(url: string): void {
 
   execFile(cmd, args, (err) => {
     if (err) {
-      console.error(`Could not open browser. Visit: ${url}`);
+      console.error(`Could not open browser. Visit: ${url}${userCode ? `\nEnter code: ${userCode}` : ""}`);
     }
   });
 }
@@ -72,12 +78,17 @@ export async function pollForToken(
   while (Date.now() < deadline) {
     await sleep(interval * 1000);
 
-    const res = await fetch(pollUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deviceCode, clientId: config.clientId }),
-      signal: AbortSignal.timeout(10_000),
-    });
+    let res: Response;
+    try {
+      res = await fetch(pollUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceCode, clientId: config.clientId }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err: unknown) {
+      throw cliFetchError(err, { timeout: "request_timeout", network: "platform_unreachable" });
+    }
 
     if (res.ok) {
       const data = AuthDataSchema.parse(await res.json());
@@ -97,13 +108,13 @@ export async function pollForToken(
     }
 
     if (res.status === 410) {
-      throw new Error("Device code expired before authorization completed");
+      throw Object.assign(new Error("Device code expired before authorization completed"), { code: "login_failed" });
     }
 
-    throw new Error(`Token polling failed with status ${res.status}`);
+    throw Object.assign(new Error(`Token polling failed with status ${res.status}`), { code: "login_failed" });
   }
 
-  throw new Error("Device authorization timed out");
+  throw cliError("login_failed", "Device authorization timed out");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -112,15 +123,18 @@ function sleep(ms: number): Promise<void> {
 
 export interface LoginOptions extends OAuthConfig {
   tokenStorePath?: string;
+  quiet?: boolean;
 }
 
 export async function login(options: LoginOptions): Promise<AuthData> {
   const deviceCode = await requestDeviceCode(options);
 
-  console.log(`\nVisit: ${deviceCode.verificationUri}`);
-  console.log(`Enter code: ${deviceCode.userCode}\n`);
+  if (!options.quiet) {
+    console.log(`\nVisit: ${deviceCode.verificationUri}`);
+    console.log(`Enter code: ${deviceCode.userCode}\n`);
+  }
 
-  openBrowser(deviceCode.verificationUri);
+  openBrowser(deviceCode.verificationUri, deviceCode.userCode);
 
   return pollForToken(
     options,

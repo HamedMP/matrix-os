@@ -28,6 +28,19 @@ readonly STAGING_CLEANUP_INTERVAL_SECONDS="${MATRIX_STAGING_CLEANUP_INTERVAL_SEC
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
+write_symphony_env() {
+  local status=0
+  local temp_file
+  temp_file="$(mktemp)"
+  {
+    printf 'MATRIX_HANDLE=%s\n' "${MATRIX_HANDLE:?MATRIX_HANDLE is required}"
+    printf 'PLATFORM_INTERNAL_URL=%s\n' "${PLATFORM_INTERNAL_URL:?PLATFORM_INTERNAL_URL is required}"
+    printf 'UPGRADE_TOKEN=%s\n' "${UPGRADE_TOKEN:?UPGRADE_TOKEN is required}"
+  } >"$temp_file"
+  sudo install -o root -g matrix -m 0640 "$temp_file" /opt/matrix/env/symphony.env || status=$?
+  rm -f "$temp_file"
+  return "$status"
+}
 default_update_channel() {
   local channel="${MATRIX_UPDATE_CHANNEL:-}"
   case "$channel" in
@@ -188,7 +201,7 @@ apply_update() {
 
   # Stop services, backup, install
   log "Stopping services..."
-  sudo systemctl stop matrix-gateway matrix-shell || true
+  sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   sudo rm -rf "$APP_DIR.rollback"
   if [ -d "$APP_DIR" ]; then
     sudo mv "$APP_DIR" "$APP_DIR.rollback"
@@ -207,12 +220,19 @@ apply_update() {
     sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec chmod 0755 {} +
     log "Updated bin scripts"
   fi
+  write_symphony_env
+  log "Updated Symphony env"
 
   if [ -d "$extract_dir/systemd" ]; then
     sudo install -d -o root -g root -m 0755 /etc/systemd/system
     sudo find "$extract_dir/systemd" -maxdepth 1 -name 'matrix-*.service' -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
     sudo systemctl daemon-reload
     log "Installed systemd units"
+    if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
+      sudo systemctl enable matrix-symphony.service
+      sudo systemctl start --no-block matrix-symphony.service || true
+      log "Symphony service enabled"
+    fi
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
       sudo systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || true
@@ -252,7 +272,7 @@ do_rollback() {
     log "ERROR: no rollback available at $APP_DIR.rollback"; return 1
   fi
   log "Rolling back..."
-  sudo systemctl stop matrix-gateway matrix-shell || true
+  sudo systemctl stop matrix-symphony matrix-gateway matrix-shell || true
   if [ -d "$APP_DIR" ]; then
     sudo mkdir -p "$STAGING_DIR"
     sudo chown matrix:matrix "$STAGING_DIR"
@@ -261,6 +281,7 @@ do_rollback() {
   sudo mv "$APP_DIR.rollback" "$APP_DIR"
   sudo chown -R matrix:matrix "$APP_DIR"
   sudo systemctl start matrix-gateway matrix-shell
+  sudo systemctl start --no-block matrix-symphony || true
   local healthy=false
   for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then

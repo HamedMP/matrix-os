@@ -142,17 +142,17 @@ function TopBar({
 }) {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 print:hidden">
-      <div className="mx-auto max-w-5xl px-4 pt-4">
-        <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-card/60 px-5 py-2.5 shadow-sm backdrop-blur-xl">
+      <div className="mx-auto max-w-6xl px-4 pt-4">
+        <div className="flex items-center justify-between rounded-xl border border-[var(--forest)]/10 bg-white/[0.82] px-4 py-2.5 shadow-[0_18px_50px_rgba(50,53,46,0.10)] backdrop-blur-xl">
           <Link href="/" className="flex items-center gap-2.5 group">
             <Image
               src="/rabbit.svg"
               alt="Matrix OS"
               width={28}
               height={28}
-              className="size-7 rounded-lg shadow-sm"
+              className="size-7 rounded-md shadow-sm"
             />
-            <span className="text-sm font-semibold tracking-tight text-foreground">
+            <span className="text-sm font-semibold text-[var(--deep)]">
               Matrix OS
             </span>
           </Link>
@@ -230,10 +230,10 @@ function TocSidebar({
   return (
     <aside className={`${tocOpen ? "block" : "hidden"} lg:block print:hidden`}>
       <nav className="sticky top-24">
-        <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
+        <p className="mb-4 text-[11px] font-semibold uppercase text-[var(--ember)]">
           Contents
         </p>
-        <ul className="relative space-y-0.5 border-l border-border">
+        <ul className="relative space-y-0.5 border-l border-[var(--forest)]/15">
           {sections.map((s) => {
             const isActive = activeSection === s.id;
             return (
@@ -243,8 +243,8 @@ function TocSidebar({
                   onClick={() => setTocOpen(false)}
                   className={`-ml-px block border-l-2 py-1 pl-4 text-[13px] leading-snug transition-all duration-200 ${
                     isActive
-                      ? "border-primary font-medium text-foreground"
-                      : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
+                      ? "border-[var(--ember)] font-medium text-[var(--deep)]"
+                      : "border-transparent text-muted-foreground hover:border-[var(--forest)]/20 hover:text-[var(--deep)]"
                   }`}
                 >
                   {s.label}
@@ -260,21 +260,23 @@ function TocSidebar({
 
 function TitleBlock() {
   return (
-            <div className="mb-14 pb-10" style={{ borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
-              <p className="mb-3 font-sans text-xs uppercase tracking-[0.12em]" style={{ color: "#999" }}>
+            <div className="paper-title mb-14 rounded-2xl border border-[var(--forest)]/10 bg-[linear-gradient(135deg,#ffffff_0%,#f8f5ea_100%)] p-6 shadow-sm sm:p-8">
+              <p className="mb-3 font-sans text-xs font-semibold uppercase text-[var(--ember)]">
                 Whitepaper
               </p>
-              <h1 className="mb-5 font-sans text-3xl font-bold tracking-tight sm:text-4xl lg:text-[2.5rem] lg:leading-[1.15]">
+              <h1 className="mb-5 font-sans text-3xl font-bold text-[var(--deep)] sm:text-4xl lg:text-[2.5rem] lg:leading-[1.15]">
                 Matrix OS: A Unified AI Operating System
               </h1>
-              <p className="mb-5 text-lg leading-relaxed sm:text-xl sm:leading-relaxed" style={{ color: "#555", maxWidth: 600 }}>
+              <p className="mb-5 max-w-2xl text-lg leading-relaxed text-muted-foreground sm:text-xl sm:leading-relaxed">
                 From conversation to software in seconds. An architecture where
                 the AI is the kernel, files are the truth, and every device is a
                 peer.
               </p>
-              <div className="flex flex-wrap gap-4 text-xs" style={{ color: "#999" }}>
+              <div className="flex flex-wrap gap-2 text-xs font-medium text-[var(--forest)]/70">
                 <span>{READING_TIME}</span>
+                <span aria-hidden="true">/</span>
                 <span>{WORD_COUNT} words</span>
+                <span aria-hidden="true">/</span>
                 <span>February 2026</span>
               </div>
             </div>
@@ -946,8 +948,8 @@ function ReferencesSection() {
 
 function BackToTop() {
   return (
-            <div className="mt-16 pt-8 print:hidden" style={{ borderTop: "1px solid rgba(0,0,0,0.08)" }}>
-              <div className="flex items-center justify-between font-sans text-sm" style={{ color: "#999" }}>
+            <div className="mt-16 border-t border-[var(--forest)]/10 pt-8 print:hidden">
+              <div className="flex items-center justify-between font-sans text-sm text-muted-foreground">
                 <Link href="/" className="hover:text-foreground transition-colors">
                   matrix-os.com
                 </Link>
@@ -988,7 +990,7 @@ export function WhitepaperContent() {
   const activeSection = useActiveSection(sectionIds);
 
   return (
-    <>
+    <div className="whitepaper-page min-h-screen">
       <TopBar tocOpen={tocOpen} setTocOpen={setTocOpen} />
 
       <div className="mx-auto max-w-7xl px-4 pt-24 pb-20">
@@ -1005,6 +1007,6 @@ export function WhitepaperContent() {
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

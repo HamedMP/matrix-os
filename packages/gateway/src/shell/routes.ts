@@ -38,11 +38,16 @@ interface ShellLayoutRoutes {
   delete(name: string): Promise<void>;
 }
 
+interface ShellBackendHealthRoutes {
+  health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
+}
+
 export interface ShellRouteDeps {
   registry: SessionRegistryRoutes;
   preferences?: ShellPreferencesStore;
   workspace?: ShellWorkspaceRoutes;
   layouts?: ShellLayoutRoutes;
+  shellBackend?: ShellBackendHealthRoutes;
   commandRunner?: ShellCommandRunner;
 }
 
@@ -92,6 +97,20 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const layoutBodyLimit = bodyLimit({ maxSize: 128_000 });
   const deleteBodyLimit = bodyLimit({ maxSize: 512 });
   const runBodyLimit = bodyLimit({ maxSize: 16_384 });
+
+  app.get("/health", async (c) => {
+    if (!deps.shellBackend) {
+      console.warn("[shell] shell health route missing backend dependency");
+      return c.json({ shell: { ok: false, code: "shell_backend_unavailable" } }, 503);
+    }
+    try {
+      const health = await deps.shellBackend.health();
+      return c.json({ shell: health }, health.ok ? 200 : 503);
+    } catch (err: unknown) {
+      console.warn("[shell] shell health check failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ shell: { ok: false, code: "zellij_failed" } }, 503);
+    }
+  });
 
   app.get("/sessions", async (c) => {
     try {

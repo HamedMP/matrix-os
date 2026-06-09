@@ -1,4 +1,9 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import {
+  getClerkDisplayName,
+  getPrimaryClerkEmail,
+  normalizeMatrixOsHandleCandidate,
+} from '@matrix-os/clerk-sync';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
@@ -25,6 +30,9 @@ import {
   updateLastActive,
   updateContainerStatus,
   listContainers,
+  ensurePlatformUser,
+  getPlatformUserByClerkId,
+  isPlatformHandleAvailableForClerkUser,
   getHostBundleRelease,
   getHostBundleReleaseByChannel,
   HostBundleReleaseConflictError,
@@ -114,6 +122,7 @@ const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const CODE_SESSION_COOKIE = 'matrix_code_session';
 const APP_SESSION_COOKIE = 'matrix_app_session';
+const NATIVE_APP_SESSION_COOKIE = 'matrix_native_app_session';
 const CLERK_SESSION_COOKIE = '__session';
 const CLERK_CLIENT_UAT_COOKIE = '__client_uat';
 const APP_ROUTE_COOKIE = 'matrix_app_route';
@@ -122,6 +131,7 @@ const CODE_SESSION_EXPIRES_IN_SEC = 12 * 60 * 60;
 const APP_ASSET_ROUTE_TOKEN_PARAM = 'matrix_asset_token';
 const APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS = [APP_ASSET_ROUTE_TOKEN_PARAM] as const;
 const SAFE_CLERK_CLEAR_COOKIE_NAME = /^(?:__session|__client_uat)_[A-Za-z0-9_-]{1,128}$/;
+const NATIVE_APP_SESSION_PROOF_PATTERN = /^[a-f0-9]{64}$/i;
 const BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS = 10_000;
 const HOST_BUNDLE_READ_TIMEOUT_MS = 30_000;
 const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
@@ -163,10 +173,14 @@ const customerVpsProxyDispatcher = new Agent({
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
+const NATIVE_APP_SESSION_PROXY_HEADER = 'x-matrix-native-app-session';
+const PLATFORM_SESSION_PROXY_HEADER = 'x-matrix-platform-session';
 const SENSITIVE_PROXY_HEADERS = new Set([
   'authorization',
   'cookie',
   EDGE_SECRET_HEADER,
+  NATIVE_APP_SESSION_PROXY_HEADER,
+  PLATFORM_SESSION_PROXY_HEADER,
   'x-matrix-code-proxy-token',
 ]);
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
@@ -215,6 +229,8 @@ const AppSessionProvisionBodySchema = z.object({
 
 const ClerkUserProfileSchema = z.object({
   username: z.string().nullable().optional(),
+  first_name: z.string().nullable().optional(),
+  last_name: z.string().nullable().optional(),
   primary_email_address_id: z.string().nullable().optional(),
   email_addresses: z.array(z.object({
     id: z.string().optional(),
@@ -252,8 +268,16 @@ const ProvisionBodySchema = z.object({
   handle: z.string().regex(HANDLE_PATTERN),
   clerkUserId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100).optional(),
+  email: z.string().email().max(320).optional(),
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   serverType: HetznerServerTypeSchema.optional(),
+});
+
+const ClerkUserSyncBodySchema = z.object({
+  handle: z.string().regex(HANDLE_PATTERN),
+  clerkUserId: z.string().min(1).max(256),
+  displayName: z.string().min(1).max(100).optional(),
+  email: z.string().email().max(320).optional(),
 });
 
 const SocialSendBodySchema = z.object({
@@ -537,7 +561,7 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
     const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
-    const path = /^\/sign-(?:in|up)\/?$/.test(normalizedPath) ? '/' : normalizedPath;
+    const path = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath) ? '/' : normalizedPath;
     const runtime = url.searchParams.get('runtime');
     if (runtime && RuntimeSlotSchema.safeParse(runtime).success) {
       return `${path}?runtime=${encodeURIComponent(runtime)}`;
@@ -676,7 +700,11 @@ function getRuntimeEntitlementDecision(env: NodeJS.ProcessEnv = process.env): En
 }
 
 function stripeBillingEntitlementsEnabled(env: NodeJS.ProcessEnv): boolean {
-  return env.MATRIX_STRIPE_BILLING_ENABLED === 'true' || env.MATRIX_BILLING_PROVIDER === 'stripe';
+  return (
+    env.MATRIX_STRIPE_BILLING_ENABLED === 'true' ||
+    env.MATRIX_BILLING_PROVIDER === 'stripe' ||
+    Boolean(env.STRIPE_SECRET_KEY?.trim())
+  );
 }
 
 async function resolveEffectiveBillingEntitlement(
@@ -747,9 +775,49 @@ function buildAppSessionCookie(token: string): string {
   ].join('; ');
 }
 
+function buildNativeAppSessionProof(token: string, platformJwtSecret: string): string {
+  return createHmac('sha256', platformJwtSecret)
+    .update(`native-app-session:${token}`)
+    .digest('hex');
+}
+
+function isValidNativeAppSessionProof(
+  token: string | null | undefined,
+  proof: string | null | undefined,
+  platformJwtSecret: string,
+): boolean {
+  if (!token || !proof || !platformJwtSecret || !NATIVE_APP_SESSION_PROOF_PATTERN.test(proof)) {
+    return false;
+  }
+  const expected = buildNativeAppSessionProof(token, platformJwtSecret);
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(proof, 'hex'));
+}
+
+function buildNativeAppSessionCookie(token: string, platformJwtSecret: string): string {
+  return [
+    `${NATIVE_APP_SESSION_COOKIE}=${buildNativeAppSessionProof(token, platformJwtSecret)}`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    `Max-Age=${CODE_SESSION_EXPIRES_IN_SEC}`,
+  ].join('; ');
+}
+
 function buildClearAppSessionCookie(): string {
   return [
     `${APP_SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ].join('; ');
+}
+
+function buildClearNativeAppSessionCookie(): string {
+  return [
+    `${NATIVE_APP_SESSION_COOKIE}=`,
     'Path=/',
     'HttpOnly',
     'Secure',
@@ -795,6 +863,7 @@ function appendSignOutClearCookies(c: import('hono').Context): void {
   const cookieHeader = c.req.header('cookie');
   const domain = matrixCookieDomainForHost(c.req.header('host'));
   c.header('Set-Cookie', buildClearAppSessionCookie(), { append: true });
+  c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
   for (const name of clerkCookieClearNames(cookieHeader)) {
     c.header('Set-Cookie', buildClearBrowserCookie(name), { append: true });
     if (domain) {
@@ -828,7 +897,16 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  event.respondWith(fetch(event.request));
+  event.respondWith(fetch(event.request).catch((err) => {
+    console.warn("[app cleanup sw] fetch failed:", err?.message ?? err);
+    return new Response("offline", {
+      status: 504,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }));
 });
 `.trim();
 
@@ -868,18 +946,6 @@ function jsonCustomerVpsError(c: import('hono').Context, err: unknown, context: 
   return c.json({ error: 'Provisioning failed', code: 'provisioning_failed' }, 503);
 }
 
-function normalizeProvisionHandleCandidate(value: string | undefined | null): string | null {
-  if (!value) return null;
-  const candidate = value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 31)
-    .replace(/-+$/g, '');
-  return HANDLE_PATTERN.test(candidate) ? candidate : null;
-}
-
 function fallbackProvisionHandleForClerkUser(userId: string, secretKey: string): string {
   const suffix = createHmac('sha256', secretKey)
     .update(userId)
@@ -888,10 +954,39 @@ function fallbackProvisionHandleForClerkUser(userId: string, secretKey: string):
   return `u${suffix}`;
 }
 
-async function resolveProvisionHandleCandidatesFromClerkProfile(
+async function ensureProvisionedPlatformUser(
+  db: PlatformDB,
+  input: {
+    clerkUserId: string;
+    handle: string;
+    displayName?: string;
+    email?: string;
+    runtimeId: string;
+  },
+): Promise<void> {
+  await ensurePlatformUser(db, {
+    clerkId: input.clerkUserId,
+    handle: input.handle,
+    displayName: input.displayName ?? input.handle,
+    email: input.email ?? `${input.handle}@matrix-os.local`,
+    containerId: input.runtimeId,
+    plan: 'free',
+    status: 'active',
+  });
+}
+
+type ClerkProvisionProfile = z.infer<typeof ClerkUserProfileSchema>;
+
+interface ProvisionIdentity {
+  handle: string;
+  displayName: string;
+  email?: string;
+}
+
+async function fetchClerkProvisionProfile(
   userId: string,
   env: NodeJS.ProcessEnv,
-): Promise<string[]> {
+): Promise<{ secretKey: string; profile: ClerkProvisionProfile }> {
   const secretKey = env.CLERK_SECRET_KEY;
   if (!secretKey) {
     throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
@@ -923,21 +1018,27 @@ async function resolveProvisionHandleCandidatesFromClerkProfile(
   if (!profile.success) {
     throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
   }
+  return { secretKey, profile: profile.data };
+}
+
+function resolveProvisionHandleCandidatesFromClerkProfile(
+  userId: string,
+  profile: ClerkProvisionProfile,
+  secretKey: string,
+): string[] {
   const candidates: string[] = [];
   const addCandidate = (candidate: string | null) => {
     if (candidate && !candidates.includes(candidate)) candidates.push(candidate);
   };
-  const usernameHandle = normalizeProvisionHandleCandidate(profile.data.username);
+  const usernameHandle = normalizeMatrixOsHandleCandidate(profile.username);
   addCandidate(usernameHandle);
 
-  const primaryEmail = profile.data.email_addresses?.find(
-    (email) => email.id && email.id === profile.data.primary_email_address_id,
-  )?.email_address;
-  const primaryEmailHandle = normalizeProvisionHandleCandidate(primaryEmail?.split('@')[0]);
+  const primaryEmail = getPrimaryClerkEmail(profile);
+  const primaryEmailHandle = normalizeMatrixOsHandleCandidate(primaryEmail?.split('@')[0]);
   addCandidate(primaryEmailHandle);
 
-  const firstEmailHandle = normalizeProvisionHandleCandidate(
-    profile.data.email_addresses?.[0]?.email_address?.split('@')[0],
+  const firstEmailHandle = normalizeMatrixOsHandleCandidate(
+    profile.email_addresses?.[0]?.email_address?.split('@')[0],
   );
   addCandidate(firstEmailHandle);
   addCandidate(fallbackProvisionHandleForClerkUser(userId, secretKey));
@@ -949,40 +1050,33 @@ async function isProvisionHandleAvailableForClerkUser(
   handle: string,
   clerkUserId: string,
 ): Promise<boolean> {
-  const conflictingActiveHandleMachine = await db.executor
-    .selectFrom('user_machines')
-    .select('clerk_user_id')
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .where('clerk_user_id', '!=', clerkUserId)
-    .executeTakeFirst();
-  if (conflictingActiveHandleMachine) {
-    return false;
-  }
-  // Same-user VPS machines supersede stale docker-era container rows for the same handle.
-  const ownedActiveHandleMachine = await db.executor
-    .selectFrom('user_machines')
-    .select('machine_id')
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null)
-    .where('clerk_user_id', '=', clerkUserId)
-    .executeTakeFirst();
-  if (ownedActiveHandleMachine) {
-    return true;
-  }
-  const legacyHandleContainer = await getContainer(db, handle);
-  return !legacyHandleContainer || legacyHandleContainer.clerkUserId === clerkUserId;
+  return isPlatformHandleAvailableForClerkUser(db, handle, clerkUserId);
 }
 
-async function selectProvisionHandleForClerkUser(
+async function selectProvisionIdentityForClerkUser(
   db: PlatformDB,
   userId: string,
   env: NodeJS.ProcessEnv,
-): Promise<string | null> {
-  const candidates = await resolveProvisionHandleCandidatesFromClerkProfile(userId, env);
+): Promise<ProvisionIdentity | null> {
+  const existing = await getPlatformUserByClerkId(db, userId);
+  if (existing && await isProvisionHandleAvailableForClerkUser(db, existing.handle, userId)) {
+    return {
+      handle: existing.handle,
+      displayName: existing.displayName,
+      email: existing.email,
+    };
+  }
+  const { secretKey, profile } = await fetchClerkProvisionProfile(userId, env);
+  const candidates = existing
+    ? [existing.handle, ...resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey)]
+    : resolveProvisionHandleCandidatesFromClerkProfile(userId, profile, secretKey);
   for (const handle of candidates) {
     if (await isProvisionHandleAvailableForClerkUser(db, handle, userId)) {
-      return handle;
+      return {
+        handle,
+        displayName: getClerkDisplayName(profile, handle),
+        email: getPrimaryClerkEmail(profile),
+      };
     }
   }
   return null;
@@ -1301,6 +1395,21 @@ function buildPlatformUserProof(handle: string, userId: string, platformSecret: 
   return createHmac('sha256', handleToken).update(userId).digest('hex');
 }
 
+function shouldMarkNativeAppSession(
+  identity: AppDomainIdentity,
+  authHeader: string | undefined,
+  cookieHeader: string | undefined,
+  platformJwtSecret: string,
+): boolean {
+  if (identity.source !== 'auth') return false;
+  if (authHeader?.startsWith('Bearer ')) return true;
+  return isValidNativeAppSessionProof(
+    readCookie(cookieHeader, APP_SESSION_COOKIE),
+    readCookie(cookieHeader, NATIVE_APP_SESSION_COOKIE),
+    platformJwtSecret,
+  );
+}
+
 export function classifyWebSocketPath(path: string): string {
   try {
     const parsed = new URL(path, 'https://app.matrix-os.com');
@@ -1603,6 +1712,7 @@ async function resolveAppDomainIdentity(opts: {
         return {
           handle: record.handle,
           userId: record.clerkUserId,
+          source: 'auth',
         };
       }
       const runtimeSlot = RuntimeSlotSchema.safeParse(claims.runtime_slot).success
@@ -1614,6 +1724,7 @@ async function resolveAppDomainIdentity(opts: {
           handle: machine.handle,
           userId: machine.clerkUserId,
           runtimeSlot: machine.runtimeSlot,
+          source: 'auth',
         };
       }
       const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
@@ -1624,6 +1735,7 @@ async function resolveAppDomainIdentity(opts: {
         handle: activeMachine.handle,
         userId: activeMachine.clerkUserId,
         runtimeSlot: activeMachine.runtimeSlot,
+        source: 'auth',
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -2403,6 +2515,10 @@ function getAuthPage(
             showNoRuntimeState();
             return null;
           }
+          if (res.status === 402) {
+            showBillingRequiredState();
+            return null;
+          }
           showSignedInRecoveryState();
           return null;
         })
@@ -3123,7 +3239,9 @@ export function createApp(deps: {
     }
     headers.set('host', new URL(getAuthShellOrigin(appEnv)).host);
     headers.set('x-forwarded-host', host);
-    headers.set('x-forwarded-proto', 'https');
+    // The auth shell is a local plain-HTTP Next server. Forwarding "https" here
+    // makes Next 16 attempt internal self-proxy requests to https://localhost:3200.
+    headers.set('x-forwarded-proto', 'http');
     headers.set('accept-encoding', 'identity');
     headers.set('connection', 'close');
 
@@ -3520,15 +3638,17 @@ export function createApp(deps: {
   // the platform. Public endpoints; admin Bearer middleware below skips them.
   const platformJwtSecret = process.env.PLATFORM_JWT_SECRET ?? '';
   if (platformJwtSecret) {
-    const platformPublicUrl =
-      process.env.PLATFORM_PUBLIC_URL ?? `http://localhost:${process.env.PLATFORM_PORT ?? 9000}`;
+    const deviceAuthPublicUrl =
+      appEnv.NEXT_PUBLIC_MATRIX_APP_URL ??
+      appEnv.PLATFORM_PUBLIC_URL ??
+      `http://localhost:${appEnv.PLATFORM_PORT ?? 9000}`;
     app.route(
       '/',
       createAuthRoutes({
         db,
         clerkAuth,
         jwtSecret: platformJwtSecret,
-        platformUrl: platformPublicUrl,
+        platformUrl: deviceAuthPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
         captureEvent: (event, properties) => {
           capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN, {
@@ -3600,22 +3720,43 @@ export function createApp(deps: {
     }
 
     try {
-      const handle = await selectProvisionHandleForClerkUser(db, result.userId, appEnv);
-      if (!handle) {
+      if (stripeBillingEntitlementsEnabled(appEnv)) {
+        const now = new Date();
+        const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
+        const access = getRuntimeAccessDecision(entitlement, now);
+        if (!access.runtimeProxyAllowed) {
+          applyNoStoreHeaders(c);
+          return jsonCustomerVpsError(
+            c,
+            new CustomerVpsError(402, 'billing_required', 'Billing upgrade required'),
+            '/api/auth/provision-runtime',
+          );
+        }
+      }
+
+      const identity = await selectProvisionIdentityForClerkUser(db, result.userId, appEnv);
+      if (!identity) {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
       }
       const provisioned = await deps.customerVpsService.provision({
-        handle,
+        handle: identity.handle,
         clerkUserId: result.userId,
         runtimeSlot: parsed.data.runtime,
       });
+      await ensureProvisionedPlatformUser(db, {
+        clerkUserId: result.userId,
+        handle: identity.handle,
+        displayName: identity.displayName,
+        email: identity.email,
+        runtimeId: `vps:${provisioned.machineId}`,
+      });
       if (matrixProvisioner) {
         try {
-          await matrixProvisioner.provisionUser(handle);
+          await matrixProvisioner.provisionUser(identity.handle);
         } catch (matrixErr: unknown) {
           console.error(
-            `[matrix] Failed to provision Matrix accounts for ${handle}:`,
+            `[matrix] Failed to provision Matrix accounts for ${identity.handle}:`,
             matrixErr instanceof Error ? matrixErr.message : String(matrixErr),
           );
         }
@@ -3623,7 +3764,7 @@ export function createApp(deps: {
       applyNoStoreHeaders(c);
       return c.json({
         runtime: 'customer_vps',
-        handle,
+        handle: identity.handle,
         clerkUserId: result.userId,
         ...provisioned,
         runtimeSlot: parsed.data.runtime,
@@ -3670,8 +3811,10 @@ export function createApp(deps: {
           runtimeSlot: requestedRuntimeSlot,
         });
         if (nativeIdentity) {
+          const nativeToken = authHeader.slice(7);
           applyNoStoreHeaders(c);
-          c.header('Set-Cookie', buildAppSessionCookie(authHeader.slice(7)));
+          c.header('Set-Cookie', buildAppSessionCookie(nativeToken), { append: true });
+          c.header('Set-Cookie', buildNativeAppSessionCookie(nativeToken, platformJwtSecret), { append: true });
           return c.json({ redirectTo });
         }
       } catch (err: unknown) {
@@ -3703,7 +3846,20 @@ export function createApp(deps: {
     const handle = record?.handle ?? machine?.handle;
     if (!handle) {
       applyNoStoreHeaders(c);
-      c.header('Set-Cookie', buildClearAppSessionCookie());
+      c.header('Set-Cookie', buildClearAppSessionCookie(), { append: true });
+      c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
+      if (stripeBillingEntitlementsEnabled(appEnv)) {
+        const now = new Date();
+        const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
+        const access = getRuntimeAccessDecision(entitlement, now);
+        if (!access.runtimeProxyAllowed) {
+          return jsonCustomerVpsError(
+            c,
+            new CustomerVpsError(402, 'billing_required', 'Billing upgrade required'),
+            '/api/auth/app-session',
+          );
+        }
+      }
       return c.json({ error: 'Matrix computer unavailable', code: 'no_runtime' }, 404);
     }
 
@@ -3716,7 +3872,8 @@ export function createApp(deps: {
       expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
     });
     applyNoStoreHeaders(c);
-    c.header('Set-Cookie', buildAppSessionCookie(issued.token));
+    c.header('Set-Cookie', buildAppSessionCookie(issued.token), { append: true });
+    c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
     return c.json({ redirectTo });
   });
 
@@ -4009,6 +4166,9 @@ export function createApp(deps: {
           headers.set('x-platform-verified', buildPlatformUserProof(machine.handle, identity.userId, platformSecret));
         }
       }
+      if (shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
+        headers.set(NATIVE_APP_SESSION_PROXY_HEADER, '1');
+      }
 
       try {
         const upstream = await fetch(targetUrl, {
@@ -4162,6 +4322,9 @@ export function createApp(deps: {
             headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, platformUserId, platformSecret));
           }
         }
+      }
+      if (isAppDomain && shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
+        headers.set(NATIVE_APP_SESSION_PROXY_HEADER, '1');
       }
 
       try {
@@ -4327,6 +4490,9 @@ export function createApp(deps: {
           headers.set('x-platform-verified', buildPlatformUserProof(record.handle, platformUserId, platformSecret));
         }
       }
+    }
+    if (isAppDomain && shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
+      headers.set(NATIVE_APP_SESSION_PROXY_HEADER, '1');
     }
 
     let lastErr: unknown = null;
@@ -4544,13 +4710,20 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
 
-    const { handle, clerkUserId, displayName, runtimeSlot, serverType } = parsed.data;
+    const { handle, clerkUserId, displayName, email, runtimeSlot, serverType } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
       if (deps.customerVpsService) {
         const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot, serverType });
+        await ensureProvisionedPlatformUser(db, {
+          clerkUserId,
+          handle,
+          displayName,
+          email,
+          runtimeId: `vps:${machine.machineId}`,
+        });
 
         // Provision Matrix accounts (non-blocking: log error but don't fail VPS provision)
         if (matrixProvisioner) {
@@ -4571,6 +4744,13 @@ export function createApp(deps: {
       }
 
       const record = await orchestrator.provision(handle, clerkUserId, displayName);
+      await ensureProvisionedPlatformUser(db, {
+        clerkUserId,
+        handle,
+        displayName,
+        email,
+        runtimeId: `legacy:${handle}`,
+      });
 
       // Provision Matrix accounts (non-blocking: log error but don't fail container provision)
       if (matrixProvisioner) {
@@ -4594,6 +4774,45 @@ export function createApp(deps: {
       }
       logPlatformRouteError('/containers/provision', e);
       return c.json({ error: 'Provision failed' }, 500);
+    }
+  });
+
+  app.post('/users/sync', bodyLimit({ maxSize: ADMIN_BODY_LIMIT }), async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch (e: unknown) {
+      logPlatformRouteError('/users/sync parse', e);
+      return c.json({ error: 'Invalid JSON' }, 400);
+    }
+    const parsed = ClerkUserSyncBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'Validation error' }, 400);
+    }
+
+    const { handle, clerkUserId, displayName, email } = parsed.data;
+    try {
+      const user = await ensurePlatformUser(db, {
+        clerkId: clerkUserId,
+        handle,
+        displayName: displayName ?? handle,
+        email: email ?? `${handle}@matrix-os.local`,
+        containerId: `clerk:${clerkUserId}`,
+        plan: 'free',
+        status: 'active',
+      });
+      return c.json({
+        id: user.id,
+        clerkUserId: user.clerkId,
+        handle: user.handle,
+        status: user.status,
+      });
+    } catch (e: unknown) {
+      if (isPostgresUniqueViolation(e)) {
+        return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
+      }
+      logPlatformRouteError('/users/sync', e);
+      return c.json({ error: 'User sync failed' }, 500);
     }
   });
 

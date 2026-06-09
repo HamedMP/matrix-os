@@ -82,6 +82,8 @@ interface SystemReleaseList {
 }
 
 import {
+  formatReleaseBuildId,
+  formatReleaseBuildShortId,
   releaseActionLabel,
   resolveUpgradeInstallCopy,
   severityBadgeStyle,
@@ -125,10 +127,10 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
 
   useEffect(() => {
     if (!upgrading) return;
-    const jokeTimer = setInterval(() => {
+    const progressMessageTimer = setInterval(() => {
       setUpgradeWaitingIndex((index) => index + 1);
     }, 7_000);
-    return () => clearInterval(jokeTimer);
+    return () => clearInterval(progressMessageTimer);
   }, [upgrading]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the mount-bootstrap useEffect dependency array below; removing useCallback would re-run that effect on every render and refetch system info/health in a loop.
@@ -551,8 +553,13 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
                         )}
                       </div>
                       <p className="truncate text-xs text-muted-foreground">
-                        {[release.gitCommit?.slice(0, 12), release.buildTime].filter(Boolean).join(" · ")}
+                        {[formatReleaseBuildId(release.gitCommit), release.buildTime].filter(Boolean).join(" · ")}
                       </p>
+                      {selectedChannel === "stable" && release.changelog && (
+                        <p className="whitespace-pre-line text-xs leading-5 text-muted-foreground">
+                          {release.changelog}
+                        </p>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -582,7 +589,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             ["Version", info.version ?? "0.1.0"],
             ["Host Bundle", info.release?.version],
             ["Channel", info.release?.channel],
-            ["Git Commit", info.release?.gitCommit],
+            ["Build ID", formatReleaseBuildShortId(info.release?.gitCommit)],
             ["Git Ref", info.release?.gitRef],
             ["Bundle Build Time", info.release?.buildTime],
             ["Installed At", info.release?.installedAt],

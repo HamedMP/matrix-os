@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Suspense } from "react";
 import { BillingGate } from "@/components/BillingGate";
 import { ShellHome } from "@/components/ShellHome";
+import { hasServerVerifiedMatrixSession } from "@/lib/platform-session";
 
 export const metadata: Metadata = {
   title: "Matrix OS",
@@ -16,10 +18,12 @@ function BillingGateFallback() {
   );
 }
 
-export default function Home() {
+export default async function Home() {
+  const platformSessionActive = hasServerVerifiedMatrixSession(await headers());
+
   return (
     <Suspense fallback={<BillingGateFallback />}>
-      <BillingGate>
+      <BillingGate platformSessionActive={platformSessionActive}>
         <ShellHome />
       </BillingGate>
     </Suspense>

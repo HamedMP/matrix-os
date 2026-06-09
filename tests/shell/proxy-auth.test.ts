@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
@@ -174,6 +174,137 @@ describe("proxy auth: platform mobile app sessions", () => {
       "?session=mobile.session-token_1",
       null,
     )).toBe(false);
+  });
+});
+
+describe("proxy auth: trusted platform native app sessions", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.doUnmock("@clerk/nextjs/server");
+    vi.doUnmock("next/server");
+  });
+
+  it("converts the platform native marker into the shell's internal session marker", async () => {
+    vi.resetModules();
+    vi.stubEnv("UPGRADE_TOKEN", "platform-upgrade-token");
+    vi.stubEnv("MATRIX_CLERK_USER_ID", "user_alice");
+
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn((handler) => async (request: unknown, event: unknown) =>
+        handler(async () => ({ userId: null }), request, event)
+      ),
+    }));
+
+    const nextResponseNext = vi.fn((init?: { request?: { headers?: Headers } }) => ({
+      kind: "next",
+      init,
+    }));
+    class MockNextResponse extends Response {
+      static next = nextResponseNext;
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    proxy({
+      headers: new Headers({
+        authorization: "Bearer platform-upgrade-token",
+        "x-platform-user-id": "user_alice",
+        "x-matrix-native-app-session": "1",
+      }),
+      nextUrl: {
+        host: "app.matrix-os.com",
+        pathname: "/",
+        protocol: "https:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(nextResponseNext).toHaveBeenCalledTimes(1);
+    const headers = nextResponseNext.mock.calls[0]?.[0]?.request?.headers;
+    expect(headers?.get("x-matrix-platform-session")).toBe("native");
+    expect(headers?.get("x-matrix-native-app-session")).toBeNull();
+  });
+
+  it("marks trusted platform page requests as server-verified sessions", async () => {
+    vi.resetModules();
+    vi.stubEnv("UPGRADE_TOKEN", "platform-upgrade-token");
+    vi.stubEnv("MATRIX_CLERK_USER_ID", "user_alice");
+
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn((handler) => async (request: unknown, event: unknown) =>
+        handler(async () => ({ userId: null }), request, event)
+      ),
+    }));
+
+    const nextResponseNext = vi.fn((init?: { request?: { headers?: Headers } }) => ({
+      kind: "next",
+      init,
+    }));
+    class MockNextResponse extends Response {
+      static next = nextResponseNext;
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    proxy({
+      headers: new Headers({
+        authorization: "Bearer platform-upgrade-token",
+        "x-platform-user-id": "user_alice",
+      }),
+      nextUrl: {
+        host: "app.matrix-os.com",
+        pathname: "/",
+        protocol: "https:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(nextResponseNext).toHaveBeenCalledTimes(1);
+    const headers = nextResponseNext.mock.calls[0]?.[0]?.request?.headers;
+    expect(headers?.get("x-matrix-platform-session")).toBe("platform");
+    expect(headers?.get("x-matrix-native-app-session")).toBeNull();
+  });
+
+  it("rejects untrusted native session markers from browser requests", async () => {
+    vi.resetModules();
+    vi.stubEnv("UPGRADE_TOKEN", "platform-upgrade-token");
+
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn((handler) => async (request: unknown, event: unknown) =>
+        handler(async () => ({ userId: null }), request, event)
+      ),
+    }));
+
+    class MockNextResponse extends Response {
+      static next = vi.fn((init?: unknown) => ({ kind: "next", init }));
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    const response = proxy({
+      headers: new Headers({
+        "x-matrix-native-app-session": "1",
+      }),
+      nextUrl: {
+        host: "app.matrix-os.com",
+        pathname: "/",
+        protocol: "https:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(response).toBeInstanceOf(Response);
+    expect(response.status).toBe(403);
   });
 });
 

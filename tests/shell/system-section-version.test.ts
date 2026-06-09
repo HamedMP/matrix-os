@@ -7,6 +7,8 @@ import {
   resolveUpgradeInstallCopy,
   resolveSystemUpdateState,
   severityBadgeStyle,
+  formatReleaseBuildId,
+  formatReleaseBuildShortId,
   upgradeInstallStatusLine,
 } from "../../shell/src/components/settings/sections/system-update-state.js";
 
@@ -132,10 +134,20 @@ describe("SystemSection version helpers", () => {
     expect(severityBadgeStyle(undefined)).toContain("blue");
   });
 
+  it("formats release build IDs without exposing full commit hashes by default", () => {
+    expect(formatReleaseBuildId("0f7e2f12554e1941d10c29b2209e0a6c2d7e2438")).toBe("Build ID 0f7e2f12554e");
+    expect(formatReleaseBuildId(undefined)).toBeNull();
+  });
+
+  it("formats short build ID values for labeled fields", () => {
+    expect(formatReleaseBuildShortId("0f7e2f12554e1941d10c29b2209e0a6c2d7e2438")).toBe("0f7e2f12554e");
+    expect(formatReleaseBuildShortId(undefined)).toBeNull();
+  });
+
   it("normalizes rotating upgrade install status lines", () => {
-    expect(upgradeInstallStatusLine(0)).toBe("Reading the Matrix release notes between packets.");
-    expect(upgradeInstallStatusLine(6)).toBe("Reading the Matrix release notes between packets.");
-    expect(upgradeInstallStatusLine(-1)).toBe("Reading the Matrix release notes between packets.");
+    expect(upgradeInstallStatusLine(0)).toBe("Putting the new version in place. Your files stay where they are.");
+    expect(upgradeInstallStatusLine(6)).toBe("Putting the new version in place. Your files stay where they are.");
+    expect(upgradeInstallStatusLine(-1)).toBe("Putting the new version in place. Your files stay where they are.");
   });
 
   it("builds accessible upgrade install copy", () => {
@@ -145,8 +157,8 @@ describe("SystemSection version helpers", () => {
       statusIndex: 1,
     })).toEqual({
       title: "Installing dev",
-      detail: "Downloading the host bundle and waiting for the shell to return.",
-      statusLine: "Cloud status: one host bundle, lightly compressed, coming right up.",
+      detail: "Downloading the update and waiting for your workspace to return.",
+      statusLine: "Almost there. We are making sure everything opens cleanly.",
     });
 
     expect(resolveUpgradeInstallCopy({
@@ -156,7 +168,7 @@ describe("SystemSection version helpers", () => {
     })).toEqual({
       title: "Installing update",
       detail: "Upgrade started. Waiting for services to come back...",
-      statusLine: "A coding agent is watching the logs and resisting the urge to refactor them.",
+      statusLine: "Your workspace is getting the new version ready.",
     });
   });
 });

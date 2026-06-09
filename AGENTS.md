@@ -184,6 +184,7 @@ bun run docker:build      # full rebuild (no cache)
 Production customer runtime ships as VPS-native host bundles. R2 stores immutable tarball bytes, platform Postgres stores release metadata and channel pointers, and each VPS keeps the installed release at `/opt/matrix/release.json`.
 
 - **Package safety**: pnpm is pinned to 10.33.4 and `pnpm-workspace.yaml` sets `minimumReleaseAge: 10080` (7 days). Keep `pnpm install --frozen-lockfile` in CI/release paths; do not bypass the lockfile or downgrade pnpm below 10.16.
+- **Bundle object store split**: host-bundle publish/download flows now prefer dedicated `R2_BUNDLES_*` / `S3_BUNDLES_*` settings when present and fall back to the existing `R2_*` / `S3_*` sync store otherwise. Keep sync/user objects on the primary store; use `R2_BUNDLES_ENDPOINT` or `R2_ENDPOINT` for jurisdictional bundle buckets instead of repointing the sync bucket.
 - **Main channel**: pushes to `main` run `.github/workflows/host-bundle-release.yml`, build a host bundle, register it in platform DB, and promote `dev` by default.
 - **Tags**: `v*` tags build immutable release versions and promote `canary` by default. Promote `stable` only after live verification.
 - **Manual release**: workflow dispatch can choose `dev`, `canary`, `beta`, or `stable`, plus severity/changelog. Security severity may auto-deploy.
@@ -361,6 +362,36 @@ Read these on demand, not every session:
 
 ## Agent skills
 
+### Canonical Matrix skill pack
+
+- `skills/matrix/` is the source of truth for Matrix-hosted coding-agent skills. Do not hand-maintain duplicate Matrix skill copies under `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, or `$HERMES_HOME/skills`.
+- Sync the canonical pack into Matrix, Claude Code, Codex, and Hermes discovery paths with `MATRIX_SKILL_TARGETS=matrix,claude,codex,hermes ./scripts/sync-matrix-agent-skills.sh skills/matrix`.
+- Installers for the shipped pack are `./scripts/install-agent-matrix-skills.sh` and `./scripts/install-hermes-matrix-skills.sh`. `tests/platform/matrix-agent-skills-sync.test.ts` keeps the shipped `skills/matrix/*` directories aligned with those installers.
+- Codex should read Matrix-managed skills from `~/.agents/skills`; `scripts/sync-matrix-agent-skills.sh` cleans stale Matrix-managed entries from the legacy `~/.codex/skills` path so they do not shadow the canonical location.
+
+### Matrix CLI agent bootstrap
+
+- Preferred developer bootstrap commands are:
+
+```bash
+matrix login
+matrix run -it -- claude
+matrix run -it -- codex
+matrix run -it --session setup -- gh auth login
+matrix shell connect -c setup
+```
+
+- `matrix run -it` starts a zellij-backed Matrix shell session and attaches the local terminal over `/ws/terminal`; use named sessions such as `setup` when multiple humans/agents may need to reattach the same VPS context.
+- `matrix login` may stay open while the browser completes signup, trial checkout, and provisioning; approve the CLI in that same browser tab once the instance is ready. For local dev, `matrix login --profile local` or `matrix login --dev` skips the device flow and writes the local dev stub token.
+- Prefer `matrix shell connect` over `matrix shell attach`. `matrix shell connect -c <session>` is the create-if-missing path.
+- If `matrix run -it`, `matrix shell new`, or `matrix shell attach` fails with `zellij_failed`, run `matrix shell ls` and connect to an existing session instead of retrying the same create path.
+
+### Stack review monitor
+
+- For existing Graphite stacks, prefer the repo command in `.claude/commands/monitor-stack-reviews.md`: `/monitor-stack-reviews <pr-or-range-or-branch>`.
+- That command owns the review gate for stack fixes: current-head Greptile `5/5`, no unresolved human/Codex review blockers, `ready-for-ci` applied only after that review state, then CI monitoring.
+- Treat missing `gt`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that do not match the current head SHA, or missing `ready-for-ci` repository label as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
+
 ### Backlog
 
 GitHub Issues at `HamedMP/matrix-os`. See `docs/agents/backlog.md`.
@@ -374,5 +405,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/082-paid-beta-readiness/plan.md`.
+Current Spec Kit plan: `specs/088-macos-dev-experience/plan.md`.
 <!-- SPECKIT END -->

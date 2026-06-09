@@ -220,6 +220,12 @@ importers:
         specifier: ~5.9.3
         version: 5.9.3
 
+  packages/clerk-sync:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/edge-router:
     devDependencies:
       '@cloudflare/workers-types':
@@ -461,6 +467,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.11(hono@4.12.8)
+      '@matrix-os/clerk-sync':
+        specifier: workspace:*
+        version: link:../clerk-sync
       '@matrix-os/observability':
         specifier: workspace:*
         version: link:../observability
@@ -832,6 +841,9 @@ importers:
       '@clerk/ui':
         specifier: 1.12.1
         version: 1.12.1(@solana/web3.js@1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6))(@types/react@19.2.14)(bs58@6.0.0)(fastestsmallesttextencoderdecoder@1.0.22)(react-dom@19.2.6(react@19.2.6))(react-native@0.83.2(@babel/core@7.29.0)(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.6)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@5.9.3)
+      '@matrix-os/clerk-sync':
+        specifier: workspace:*
+        version: link:../packages/clerk-sync
       '@matrix-os/observability':
         specifier: workspace:*
         version: link:../packages/observability

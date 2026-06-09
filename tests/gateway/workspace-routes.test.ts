@@ -231,6 +231,40 @@ describe("workspace API routes", () => {
     expect(projectManager.createProject).toHaveBeenCalledWith({
       url: "github.com/owner/repo",
       slug: undefined,
+      name: undefined,
+      mode: "github",
+      ownerScope: { type: "user", id: "user_workspace" },
+    });
+  });
+
+  it("routes scratch project creation with explicit mode and name", async () => {
+    const projectManager = {
+      getGithubStatus: vi.fn(),
+      createProject: vi.fn(async () => ({ ok: true, status: 201, project: { slug: "empty-workspace" } })),
+      listManagedProjects: vi.fn(),
+      getProject: vi.fn(),
+      deleteProject: vi.fn(),
+      listPullRequests: vi.fn(),
+      listBranches: vi.fn(),
+    };
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager,
+      getOwnerScope: () => ({ type: "user", id: "user_workspace" }),
+    });
+
+    const res = await app.request(jsonRequest("/api/projects", {
+      mode: "scratch",
+      name: "Empty Workspace",
+      slug: "empty-workspace",
+    }));
+
+    expect(res.status).toBe(201);
+    expect(projectManager.createProject).toHaveBeenCalledWith({
+      url: undefined,
+      slug: "empty-workspace",
+      name: "Empty Workspace",
+      mode: "scratch",
       ownerScope: { type: "user", id: "user_workspace" },
     });
   });

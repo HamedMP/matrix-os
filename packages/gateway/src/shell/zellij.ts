@@ -70,6 +70,7 @@ export interface AttachOptions {
 }
 
 export interface ZellijAdapter {
+  health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
   listSessions(): Promise<string[]>;
   createSession(options: CreateSessionOptions): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
@@ -285,6 +286,18 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   }
 
   return {
+    async health() {
+      try {
+        await run(["--version"]);
+        return { ok: true, code: "ok" };
+      } catch (err: unknown) {
+        const diagnostic = err instanceof Error && "diagnostic" in err
+          ? (err as { diagnostic?: unknown }).diagnostic
+          : classifyZellijFailure(err, "");
+        console.warn("[shell] backend health failed:", { code: "zellij_failed", diagnostic });
+        return { ok: false, code: "zellij_failed" };
+      }
+    },
     async listSessions() {
       let stdout: string;
       try {

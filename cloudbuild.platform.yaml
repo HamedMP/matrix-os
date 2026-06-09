@@ -1,5 +1,11 @@
 substitutions:
   _IMAGE: europe-west3-docker.pkg.dev/matrix-os-1144/matrix-os/matrix-platform:manual
+  _NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ''
+  _NEXT_PUBLIC_POSTHOG_KEY: ''
+  _NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ''
+  _NEXT_PUBLIC_POSTHOG_HOST: ''
+  _NEXT_PUBLIC_POSTHOG_API_HOST: ''
+  _NEXT_PUBLIC_MATRIX_APP_URL: 'https://app.matrix-os.com'
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -7,6 +13,18 @@ steps:
       - build
       - -f
       - Dockerfile.platform
+      - --build-arg
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      - --build-arg
+      - NEXT_PUBLIC_POSTHOG_KEY=${_NEXT_PUBLIC_POSTHOG_KEY}
+      - --build-arg
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN}
+      - --build-arg
+      - NEXT_PUBLIC_POSTHOG_HOST=${_NEXT_PUBLIC_POSTHOG_HOST}
+      - --build-arg
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${_NEXT_PUBLIC_POSTHOG_API_HOST}
+      - --build-arg
+      - NEXT_PUBLIC_MATRIX_APP_URL=${_NEXT_PUBLIC_MATRIX_APP_URL}
       - -t
       - ${_IMAGE}
       - .

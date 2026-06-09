@@ -25,6 +25,26 @@ describe("getCachedTerminalRestorePlan", () => {
     expect(plan.lastSeq).toBe(0);
   });
 
+  it("reuses terminal DOM and replay position when a cached canonical shell socket was detached", () => {
+    const cached = {
+      terminal: { element: {} as HTMLElement } as CachedTerminal["terminal"],
+      fitAddon: {} as CachedTerminal["fitAddon"],
+      webglAddon: null,
+      searchAddon: null,
+      ws: { readyState: WebSocket.CLOSED } as WebSocket,
+      lastSeq: 42,
+      sessionId: "main",
+      socketRetained: false,
+    } satisfies CachedTerminal;
+
+    const plan = getCachedTerminalRestorePlan(cached);
+
+    expect(plan.reuseTerminal).toBe(true);
+    expect(plan.reuseSocket).toBe(false);
+    expect(plan.sessionId).toBe("main");
+    expect(plan.lastSeq).toBe(42);
+  });
+
   it("closes and disposes a stale cached terminal before reconnecting", () => {
     const close = vi.fn();
     const dispose = vi.fn();

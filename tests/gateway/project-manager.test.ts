@@ -68,6 +68,32 @@ describe("project-manager", () => {
     expect(config.localPath).toBe(join(homePath, "projects", "repo", "repo"));
   });
 
+  it("creates a scratch project without GitHub auth or clone commands", async () => {
+    const runCommand = vi.fn();
+    const manager = createProjectManager({ homePath, runCommand, now: () => "2026-04-26T00:00:00.000Z" });
+
+    const result = await manager.createProject({
+      mode: "scratch",
+      name: "Empty Workspace",
+      slug: "empty-workspace",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(result.project).toMatchObject({
+      name: "Empty Workspace",
+      slug: "empty-workspace",
+      ownerScope: { type: "user", id: "user_123" },
+    });
+    expect(result.project.remote).toBeUndefined();
+    expect(result.project.github).toBeUndefined();
+    await expect(stat(join(homePath, "projects", "empty-workspace", "repo"))).resolves.toBeTruthy();
+    const config = JSON.parse(await readFile(join(homePath, "projects", "empty-workspace", "config.json"), "utf-8"));
+    expect(config.localPath).toBe(join(homePath, "projects", "empty-workspace", "repo"));
+  });
+
   it("rejects slug conflicts before cloning", async () => {
     await mkdir(join(homePath, "projects", "repo"), { recursive: true });
     const runCommand = vi.fn();
