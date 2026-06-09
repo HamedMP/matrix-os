@@ -37,7 +37,7 @@ struct CommandPalette: View {
                 model.createTask(status: .todo)
             },
             PaletteAction(id: "new-session", title: "New session", symbol: "terminal") {
-                model.createSession()
+                model.beginTerminalSessionCreation()
             },
             PaletteAction(id: "go-home", title: "Switch to Home", symbol: "house") {
                 model.openHome()

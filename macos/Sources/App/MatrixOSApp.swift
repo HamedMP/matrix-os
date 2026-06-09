@@ -76,12 +76,23 @@ private final class MatrixOSAppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private static func bringAppForward() {
         NSApp.setActivationPolicy(.regular)
+        NSApp.windows.forEach(configureNativeChrome)
 
         if let window = NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first {
+            configureNativeChrome(window)
             recoverIfOffscreen(window)
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.activate()
+    }
+
+    @MainActor
+    private static func configureNativeChrome(_ window: NSWindow) {
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.toolbarStyle = .unifiedCompact
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = .windowBackgroundColor
     }
 
     @MainActor
@@ -127,7 +138,7 @@ private struct OperatorCommands: Commands {
             Divider()
             Button("New Task") { model.newCardPlaceholder() }
                 .keyboardShortcut("n", modifiers: .command)
-            Button("New Session") { model.createSession() }
+            Button("New Session") { model.beginTerminalSessionCreation() }
                 .keyboardShortcut("t", modifiers: .command)
             Divider()
             Button("Home") { model.openHome() }

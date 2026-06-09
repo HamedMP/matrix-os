@@ -1281,17 +1281,52 @@ public final class AppModel: ObservableObject {
     /// Moves a card to a new column/order (drag-to-move). Persists via PATCH and
     /// refreshes on completion to reconcile.
     public func updateTaskStatus(cardId: String, to status: TaskStatus, order: Double?) {
+        updateTask(cardId: cardId, status: status, order: order)
+    }
+
+    public func updateTask(
+        cardId: String,
+        title: String? = nil,
+        description: String? = nil,
+        status: TaskStatus? = nil,
+        priority: TaskPriority? = nil,
+        order: Double? = nil
+    ) {
         guard let client = gatewayClient() else { return }
         openError = nil
         let slug = projectSlug
         Task { [weak self] in
-            struct UpdateTaskRequest: Encodable { let status: String; let order: Double? }
-            struct UpdateTaskResponse: Decodable {}
+            struct UpdateTaskRequest: Encodable {
+                let title: String?
+                let description: String?
+                let status: String?
+                let priority: String?
+                let order: Double?
+            }
+            struct UpdateTaskResponse: Decodable {
+                let task: GatewayTaskDTO?
+            }
+            let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
             do {
-                let _: UpdateTaskResponse = try await client.patch(
+                let response: UpdateTaskResponse = try await client.patch(
                     "/api/projects/\(slug)/tasks/\(cardId)",
-                    body: UpdateTaskRequest(status: status.rawValue, order: order)
+                    body: UpdateTaskRequest(
+                        title: trimmedTitle?.isEmpty == false ? trimmedTitle : nil,
+                        description: description?.trimmingCharacters(in: .whitespacesAndNewlines),
+                        status: status?.rawValue,
+                        priority: priority?.rawValue,
+                        order: order
+                    )
                 )
+                if let task = response.task {
+                    await MainActor.run {
+                        let card = task.toCard()
+                        if self?.selectedCard?.id == card.id {
+                            self?.selectedCard = card
+                            _ = self?.upsertTab(for: card)
+                        }
+                    }
+                }
                 await self?.refresh()
             } catch {
                 appModelLogger.error("Task status update failed: \(String(describing: error), privacy: .private)")
@@ -1321,7 +1356,12 @@ public final class AppModel: ObservableObject {
     }
 
     /// Creates a new task in the given column and refreshes the board (TE01/US7).
-    public func createTask(status: TaskStatus = .todo) {
+    public func createTask(
+        title rawTitle: String = "New task",
+        description rawDescription: String? = nil,
+        status: TaskStatus = .todo,
+        priority: TaskPriority = .normal
+    ) {
         guard !isCreatingWorkItem else { return }
         openError = nil
         isCreatingWorkItem = true
@@ -1332,13 +1372,17 @@ public final class AppModel: ObservableObject {
             let slug = self.projectSlug
             struct CreateTaskRequest: Encodable {
                 let title: String
+                let description: String?
                 let status: String
+                let priority: String
                 let linkedSessionId: String?
             }
             struct CreateTaskResponse: Decodable {
                 let task: GatewayTaskDTO?
             }
             do {
+                let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                let description = rawDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let sessionName = self.generatedShellSessionName()
                 let linkedSessionId = try await self.createTerminalSession(
                     client: client,
@@ -1347,7 +1391,13 @@ public final class AppModel: ObservableObject {
                 )
                 let response: CreateTaskResponse = try await client.post(
                     "/api/projects/\(slug)/tasks",
-                    body: CreateTaskRequest(title: "New task", status: status.rawValue, linkedSessionId: linkedSessionId)
+                    body: CreateTaskRequest(
+                        title: title.isEmpty ? "New task" : title,
+                        description: description?.isEmpty == false ? description : nil,
+                        status: status.rawValue,
+                        priority: priority.rawValue,
+                        linkedSessionId: linkedSessionId
+                    )
                 )
                 if let task = response.task {
                     let card = task.toCard()
@@ -1361,6 +1411,35 @@ public final class AppModel: ObservableObject {
                 await self.refresh()
             } catch {
                 await MainActor.run { self.openError = .taskMutationFailed }
+            }
+        }
+    }
+
+    public func archiveTask(cardId: String) {
+        updateTask(cardId: cardId, status: .archived)
+    }
+
+    public func deleteTask(cardId: String) {
+        guard let client = gatewayClient() else { return }
+        openError = nil
+        let slug = projectSlug
+        Task { [weak self] in
+            do {
+                try await client.delete("/api/projects/\(slug)/tasks/\(cardId)")
+                await MainActor.run {
+                    if self?.selectedCard?.id == cardId {
+                        self?.selectedCard = nil
+                        self?.terminal = nil
+                    }
+                    if let tab = self?.openTabs.first(where: { $0.card?.id == cardId }) {
+                        self?.closeTab(id: tab.id)
+                    }
+                }
+                await self?.refresh()
+            } catch {
+                appModelLogger.error("Task delete failed: \(String(describing: error), privacy: .private)")
+                await MainActor.run { self?.openError = .taskMutationFailed }
+                await self?.refresh()
             }
         }
     }
@@ -1551,6 +1630,9 @@ public final class AppModel: ObservableObject {
         let closedTab = openTabs[index]
         let wasActive = activeTabID == id
         openTabs.remove(at: index)
+        if pendingTerminalSessionTabID == id {
+            pendingTerminalSessionTabID = nil
+        }
         removeCachedTerminalSession(for: id)
         reconcileProjectSelectionAfterClosing(closedTab)
         if !wasActive { return }
@@ -2127,14 +2209,70 @@ public final class AppModel: ObservableObject {
 
     /// Whether a task or terminal-session create request is in flight.
     @Published public private(set) var isCreatingWorkItem = false
+    @Published public private(set) var pendingTerminalSessionTabID: String?
+
+    public func createWorkspaceTabFromCurrentContext() {
+        if section == .terminal || activeTabKind == .session {
+            beginTerminalSessionCreation()
+        } else {
+            createTask(status: .todo)
+        }
+    }
+
+    private var activeTabKind: WorkspaceTab.Kind? {
+        guard let activeTabID else { return nil }
+        return openTabs.first(where: { $0.id == activeTabID })?.kind
+    }
+
+    public func beginTerminalSessionCreation() {
+        guard !isCreatingWorkItem else { return }
+        let tabID = "session:\(projectSlug):__new_session__"
+        let tab = WorkspaceTab(
+            id: tabID,
+            title: "New terminal",
+            projectSlug: projectSlug,
+            projectName: activeProjectName,
+            kind: .session,
+            panel: .terminal
+        )
+        if let index = openTabs.firstIndex(where: { $0.id == tabID }) {
+            openTabs[index] = tab
+        } else {
+            openTabs.append(tab)
+            trimOpenTabsToLimit(protecting: tabID)
+        }
+        section = .terminal
+        activeTabID = tabID
+        pendingTerminalSessionTabID = tabID
+        terminal = nil
+        selectedCard = nil
+    }
+
+    public func cancelPendingTerminalSessionCreation() {
+        guard let tabID = pendingTerminalSessionTabID else { return }
+        pendingTerminalSessionTabID = nil
+        closeTab(id: tabID)
+    }
+
+    public func commitPendingTerminalSessionName(_ rawName: String) {
+        guard let tabID = pendingTerminalSessionTabID else { return }
+        pendingTerminalSessionTabID = nil
+        closeTab(id: tabID)
+        createSession(named: rawName)
+    }
 
     /// Creates a new zellij session (Terminals section "+") and reloads the list.
-    public func createSession() {
+    public func createSession(named rawName: String? = nil) {
         guard !isCreatingWorkItem, let client = gatewayClient() else { return }
         openError = nil
         isCreatingWorkItem = true
         let existingSessionNames = Set(sessions.map(\.name))
-        let name = generatedShellSessionName()
+        let name = sanitizedShellSessionName(rawName) ?? generatedShellSessionName()
+        if existingSessionNames.contains(name) {
+            isCreatingWorkItem = false
+            openSession(named: name)
+            return
+        }
         Task { [weak self] in
             defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
             do {
@@ -2149,6 +2287,28 @@ public final class AppModel: ObservableObject {
                 await MainActor.run { self?.openError = .createSessionFailed }
             }
         }
+    }
+
+    private func sanitizedShellSessionName(_ rawName: String?) -> String? {
+        guard let rawName else { return nil }
+        let lowercased = rawName.lowercased()
+        var output = ""
+        var previousWasDash = false
+        for character in lowercased {
+            if character.isASCII && (character.isLetter || character.isNumber) {
+                output.append(character)
+                previousWasDash = false
+            } else if !previousWasDash {
+                output.append("-")
+                previousWasDash = true
+            }
+            if output.count >= 31 { break }
+        }
+        let normalized = output.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        guard normalized.range(of: #"^[a-z0-9][a-z0-9-]{0,30}$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return normalized
     }
 
     private struct CreateTerminalSessionRequest: Encodable {

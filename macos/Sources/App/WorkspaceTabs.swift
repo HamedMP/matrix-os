@@ -8,21 +8,32 @@ struct WorkspaceTabStrip: View {
     let tabs: [WorkspaceTab]
     let activeID: String?
     let isCreating: Bool
+    let pendingTerminalTabID: String?
     let onSelect: (String) -> Void
     let onClose: (String) -> Void
     let onCreate: () -> Void
+    let onCommitPendingTerminalName: (String) -> Void
+    let onCancelPendingTerminalName: () -> Void
 
     var body: some View {
         HStack(spacing: Spacing.x1) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Spacing.x1) {
                     ForEach(tabs) { tab in
-                        WorkspaceTabPill(
-                            tab: tab,
-                            isActive: tab.id == activeID,
-                            onSelect: { onSelect(tab.id) },
-                            onClose: { onClose(tab.id) }
-                        )
+                        if tab.id == pendingTerminalTabID {
+                            PendingTerminalTabPill(
+                                projectName: tab.projectName,
+                                onCommit: onCommitPendingTerminalName,
+                                onCancel: onCancelPendingTerminalName
+                            )
+                        } else {
+                            WorkspaceTabPill(
+                                tab: tab,
+                                isActive: tab.id == activeID,
+                                onSelect: { onSelect(tab.id) },
+                                onClose: { onClose(tab.id) }
+                            )
+                        }
                     }
                 }
                 .padding(.leading, Spacing.x2)
@@ -47,6 +58,74 @@ struct WorkspaceTabStrip: View {
             RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
                 .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
         )
+    }
+}
+
+private struct PendingTerminalTabPill: View {
+    let projectName: String
+    let onCommit: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var name = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: Spacing.x1) {
+            HStack(spacing: Spacing.x2) {
+                AppGlyphTile(symbol: "terminal", palette: .terminal, size: 26, isActive: true)
+                VStack(alignment: .leading, spacing: 1) {
+                    TextField("session-name", text: $name)
+                        .textFieldStyle(.plain)
+                        .font(.plexSans(12, weight: .semibold))
+                        .foregroundStyle(Color.inkPrimary)
+                        .focused($focused)
+                        .frame(width: 118)
+                        .onSubmit(commit)
+                    Text(projectName)
+                        .font(.plexMono(9, weight: .medium))
+                        .foregroundStyle(Color.inkTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.leading, Spacing.x2)
+            .padding(.vertical, 5)
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.inkTertiary)
+                    .iconHitTarget(24)
+            }
+            .buttonStyle(.plain)
+            .help("Cancel")
+        }
+        .padding(.trailing, Spacing.x1)
+        .background(
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                .fill(Color.surfaceCard)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                .strokeBorder(Color.signalLive.opacity(0.7), lineWidth: 1)
+        )
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.signalLive)
+                .frame(height: 2)
+                .padding(.horizontal, Spacing.x2)
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                focused = true
+            }
+        }
+        .onExitCommand(perform: onCancel)
+        .help("Name terminal session")
+        .accessibilityLabel("Name terminal session")
+    }
+
+    private func commit() {
+        onCommit(name)
     }
 }
 
@@ -179,19 +258,18 @@ struct TerminalSessionTabStrip: View {
                     }
                 }
                 .padding(.horizontal, Spacing.x2)
-                .padding(.vertical, Spacing.x1)
             }
             Button(action: onCreate) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.inkSecondary)
-                    .iconHitTarget(30)
+                    .iconHitTarget(28)
             }
             .buttonStyle(.plain)
             .disabled(isCreating)
             .help("New terminal tab")
         }
-        .frame(height: 36)
+        .frame(height: 30)
         .background(Color.surfaceRail)
     }
 
@@ -212,7 +290,7 @@ struct TerminalSessionTabStrip: View {
                 .foregroundStyle(active ? Color.inkPrimary : Color.inkSecondary)
                 .frame(minWidth: 118, maxWidth: 230, alignment: .leading)
                 .padding(.leading, Spacing.x2)
-                .frame(height: 28)
+                .frame(height: 24)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -222,7 +300,7 @@ struct TerminalSessionTabStrip: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Color.inkTertiary)
-                        .iconHitTarget(24)
+                        .iconHitTarget(22)
                 }
                 .buttonStyle(.plain)
                 .help("Close terminal tab")
