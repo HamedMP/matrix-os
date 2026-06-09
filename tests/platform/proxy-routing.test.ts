@@ -4061,7 +4061,10 @@ describe("platform proxy routing", () => {
       expect(res.headers.get("cache-control")).toBe("no-store, private");
       expect(res.headers.get("cdn-cache-control")).toBe("no-store");
       expect(res.headers.get("service-worker-allowed")).toBe("/");
-      expect(await res.text()).toContain("registration.unregister()");
+      const body = await res.text();
+      expect(body).toContain("registration.unregister()");
+      expect(body).toContain(".catch((err) =>");
+      expect(body).toContain('new Response("offline",');
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
