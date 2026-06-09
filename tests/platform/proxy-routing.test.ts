@@ -2576,6 +2576,10 @@ describe("platform proxy routing", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+    const proxiedHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers | undefined;
+    expect(proxiedHeaders?.get("host")).toBe("auth-shell.test:3200");
+    expect(proxiedHeaders?.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(proxiedHeaders?.get("x-forwarded-proto")).toBe("http");
     delete process.env.AUTH_SHELL_HOST;
     delete process.env.AUTH_SHELL_PORT;
   });
