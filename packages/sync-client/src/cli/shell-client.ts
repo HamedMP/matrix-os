@@ -488,8 +488,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           fn();
         };
         const currentFromSeq = () => {
-          if (lastSeq !== undefined && lastSeq < Number.MAX_SAFE_INTEGER) {
-            return lastSeq + 1;
+          if (lastSeq !== undefined) {
+            return Math.min(lastSeq + 1, Number.MAX_SAFE_INTEGER);
           }
           return attachOptions.fromSeq ?? SHELL_ATTACH_LIVE_TAIL_FROM_SEQ;
         };
@@ -557,7 +557,15 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             fromSeq: currentFromSeq(),
           }), { headers });
           attachTimeout = setTimeout(() => {
-            currentWs?.close();
+            const timedOutWs = currentWs;
+            timedOutWs?.close();
+            if (everAttached) {
+              if (currentWs === timedOutWs) {
+                cleanupSocket();
+              }
+              scheduleReconnect();
+              return;
+            }
             settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
           }, timeoutMs);
           attachTimeout.unref?.();
@@ -577,7 +585,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             errorOutput.write("\r\nConnection lost. Reconnecting...\r\n");
           }
           reconnecting = true;
-          const delay = Math.min(reconnectBaseDelayMs * (2 ** reconnectAttempt), reconnectMaxDelayMs);
+          const backoffExponent = Math.min(reconnectAttempt, 31);
+          const delay = Math.min(reconnectBaseDelayMs * (2 ** backoffExponent), reconnectMaxDelayMs);
           reconnectAttempt += 1;
           reconnectTimer = setTimeout(() => {
             reconnectTimer = undefined;
