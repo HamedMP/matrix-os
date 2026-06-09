@@ -2,7 +2,7 @@
 set -eu
 
 auth_shell_port="${AUTH_SHELL_PORT:-3200}"
-auth_shell_ready_path="${AUTH_SHELL_READY_PATH:-/}"
+auth_shell_ready_path="${AUTH_SHELL_READY_PATH:-/icon.png}"
 auth_shell_ready_timeout_sec="${AUTH_SHELL_READY_TIMEOUT_SEC:-60}"
 auth_shell_pid=""
 platform_pid=""
