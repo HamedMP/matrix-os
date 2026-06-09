@@ -9,6 +9,19 @@ import MatrixTerminal
 
 @MainActor
 final class AppModelAuthTests: XCTestCase {
+    private func eventuallyAsync(
+        _ predicate: @escaping () async -> Bool,
+        timeout: TimeInterval = 2.0,
+        _ message: String = "condition not met"
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await predicate() { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail(message)
+    }
+
     func testWebShellAuthStateClearsPromptOnAutomaticValidTokenReload() {
         var state = WebShellAuthState()
 
@@ -781,6 +794,103 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(model.selectedCard?.id, "matrix_session_alpha")
     }
 
+    func testCardsWithSameLinkedSessionShareOneTerminalClient() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        var terminalBuilds = 0
+        var sources: [RecordingShellEventSource] = []
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            makeTerminal: { _, _, _, name in
+                terminalBuilds += 1
+                let source = RecordingShellEventSource()
+                sources.append(source)
+                return TerminalSession(displayName: name, client: source)
+            },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let firstCard = Card(id: "matrix_session_alpha", projectSlug: "main", title: "Alpha", status: .running, priority: .normal, order: 1, linkedSessionId: "shared-zellij", updatedAt: "now")
+        let secondCard = Card(id: "matrix_session_beta", projectSlug: "main", title: "Beta", status: .running, priority: .normal, order: 2, linkedSessionId: "shared-zellij", updatedAt: "now")
+
+        _ = try await model.openCard(firstCard)
+        _ = try await model.openCard(secondCard)
+
+        XCTAssertEqual(terminalBuilds, 1)
+        let firstSession = try XCTUnwrap(model.terminalSessions["session:main:matrix_session_alpha"])
+        let secondSession = try XCTUnwrap(model.terminalSessions["session:main:matrix_session_beta"])
+        XCTAssertTrue(firstSession === secondSession)
+
+        model.closeTab(id: "session:main:matrix_session_alpha")
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let shutdownCountAfterFirstClose = await sources[0].shutdownCount
+        XCTAssertEqual(shutdownCountAfterFirstClose, 0)
+
+        model.closeTab(id: "session:main:matrix_session_beta")
+        await eventuallyAsync {
+            await sources[0].shutdownCount == 1
+        }
+    }
+
+    func testTaskTerminalAutoCreateUsesProjectCwd() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        var openedURL: URL?
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "matrix-os",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            makeTerminal: { url, _, _, name in
+                openedURL = url
+                return TerminalSession(displayName: name, client: IdleShellEventSource())
+            },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let card = Card(id: "task_terminal", projectSlug: "matrix-os", title: "Terminal task", status: .todo, priority: .normal, order: 1, linkedSessionId: nil, updatedAt: "now")
+
+        _ = try await model.openCard(card)
+
+        let url = try XCTUnwrap(openedURL)
+        XCTAssertEqual(url.path, "/ws/terminal")
+        XCTAssertEqual(url.queryValue("cwd"), "projects/matrix-os")
+    }
+
+    func testFocusTabByIndexUsesGlobalTabOrder() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "main",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+        let first = Card(id: "task_one", projectSlug: "main", title: "One", status: .todo, priority: .normal, order: 1, linkedSessionId: nil, updatedAt: "now")
+        let second = Card(id: "task_two", projectSlug: "main", title: "Two", status: .todo, priority: .normal, order: 2, linkedSessionId: nil, updatedAt: "now")
+
+        model.openProject(slug: "main")
+        _ = try? await model.openCard(first)
+        _ = try? await model.openCard(second)
+
+        model.focusTab(at: 0)
+        XCTAssertEqual(model.activeTabID, "board:main")
+
+        model.focusTab(at: 1)
+        XCTAssertEqual(model.activeTabID, "task:main:task_one")
+
+        model.focusTab(at: 99)
+        XCTAssertEqual(model.activeTabID, "task:main:task_one")
+    }
+
     func testApprovedSignInOpensHomeWhenNoProjectIsSelected() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let openedURL = OpenedURLRecorder()
@@ -1129,6 +1239,27 @@ private struct IdleShellEventSource: ShellEventSource {
     func resize(cols: Int, rows: Int) async {}
     func detach() async {}
     func shutdown() async {}
+}
+
+private actor RecordingShellEventSource: ShellEventSource {
+    private let stream: AsyncStream<ServerEvent>
+    private(set) var shutdownCount = 0
+
+    init() {
+        self.stream = AsyncStream { _ in }
+    }
+
+    var events: AsyncStream<ServerEvent> {
+        get async { stream }
+    }
+
+    func connect() async {}
+    func sendInput(_ data: String) async {}
+    func resize(cols: Int, rows: Int) async {}
+    func detach() async {}
+    func shutdown() async {
+        shutdownCount += 1
+    }
 }
 
 private final class MockDeviceAuthorizer: DeviceAuthorizing, @unchecked Sendable {

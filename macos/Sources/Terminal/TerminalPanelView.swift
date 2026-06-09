@@ -128,9 +128,88 @@ public struct TerminalPanelView: View {
     // MARK: - Terminal surface
 
     private var terminalSurface: some View {
-        SwiftTermView(session: session)
-            .id(session.id)
-            .background(Color.surfaceTerminal)
+        let showOverlay = TerminalConnectionOverlayPolicy.shouldShowOverlay(
+            for: session.connectionState,
+            isStartupSettling: session.isStartupSettling
+        )
+        return ZStack {
+            SwiftTermView(session: session)
+                .id(session.id)
+                .background(Color.surfaceTerminal)
+                .allowsHitTesting(!showOverlay)
+
+            if showOverlay {
+                TerminalConnectionOverlay(
+                    state: session.connectionState,
+                    isStartupSettling: session.isStartupSettling,
+                    reduceMotion: reduceMotion
+                )
+                    .transition(.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: showOverlay)
+    }
+}
+
+enum TerminalConnectionOverlayPolicy {
+    static func shouldShowOverlay(for state: TerminalConnectionState) -> Bool {
+        shouldShowOverlay(for: state, isStartupSettling: false)
+    }
+
+    static func shouldShowOverlay(
+        for state: TerminalConnectionState,
+        isStartupSettling: Bool
+    ) -> Bool {
+        switch state {
+        case .connecting, .reconnecting:
+            return true
+        case .attached:
+            return isStartupSettling
+        case .exited, .error:
+            return false
+        }
+    }
+}
+
+private struct TerminalConnectionOverlay: View {
+    let state: TerminalConnectionState
+    let isStartupSettling: Bool
+    let reduceMotion: Bool
+
+    private var title: String {
+        switch state {
+        case .attached where isStartupSettling:
+            return "Settling terminal"
+        case .reconnecting:
+            return "Reconnecting"
+        default:
+            return "Connecting"
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Color.surfaceTerminal.opacity(0.92)
+            HStack(spacing: Spacing.x2) {
+                ProgressView()
+                    .controlSize(.small)
+                    .progressViewStyle(.circular)
+                Text(title)
+                    .font(.plexMono(12, weight: .medium))
+                    .foregroundStyle(Color.terminalInk)
+                AnimatedEllipsis(color: .terminalMutedInk, reduceMotion: reduceMotion)
+            }
+            .padding(.horizontal, Spacing.x4)
+            .padding(.vertical, Spacing.x3)
+            .background(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .fill(Color.black.opacity(0.28))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+            )
+        }
     }
 }
 
@@ -223,6 +302,9 @@ private struct SwiftTermView: NSViewRepresentable {
         // sequences (including zellij's box-drawing borders) correctly.
         session.setOutputSink { [weak view] text in
             view?.feed(text: text)
+        }
+        session.onNextAttach { [weak view] in
+            TerminalFocusPolicy.scheduleAttachedFocus(for: view)
         }
 
         // Do NOT report size on a zero-frame view; the real resize fires via
@@ -346,6 +428,7 @@ enum TerminalFocusPolicy {
     }
 
     static let initialFocusRetryDelays: [TimeInterval] = [0, 0.05, 0.15, 0.35]
+    static let attachedFocusRetryDelays: [TimeInterval] = [0, 0.05, 0.15]
 
     static func shouldRequestInitialFocus(
         hasFirstResponder: Bool,
@@ -362,6 +445,17 @@ enum TerminalFocusPolicy {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak view] in
                 Task { @MainActor in
                     _ = requestFocus(view)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    static func scheduleAttachedFocus(for view: TerminalView?) {
+        for delay in attachedFocusRetryDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak view] in
+                Task { @MainActor in
+                    _ = requestFocus(view, mode: .userInitiated)
                 }
             }
         }

@@ -422,6 +422,7 @@ public final class AppModel: ObservableObject {
     /// Terminal sessions are retained per terminal tab so tab switching does not
     /// tear down sockets or drop zellij output.
     @Published public private(set) var terminalSessions: [String: TerminalSession] = [:]
+    private var terminalSessionTabIDsByAttachName: [String: String] = [:]
     /// The user's projects (for the project picker / Projects UI).
     @Published public private(set) var projects: [ProjectSummary] = []
     /// Files for the active project/editor panel.
@@ -436,6 +437,11 @@ public final class AppModel: ObservableObject {
     @Published public var selectedFileContent: String = ""
     @Published public private(set) var fileSaveState: String?
     @Published public private(set) var isLoadingSelectedFile = false
+    /// Task/project-scoped quick-open file index for Cmd+O.
+    @Published public var showFileOpenPalette = false
+    @Published public var fileOpenQuery = ""
+    @Published public private(set) var indexedFilePaths: [String] = []
+    @Published public private(set) var isIndexingFiles = false
     /// Git branches for the active project.
     @Published public private(set) var gitBranches: [GitBranchSummary] = []
     /// Pull requests for the active project, when GitHub is linked.
@@ -514,6 +520,10 @@ public final class AppModel: ObservableObject {
     private var sessionAttachNames: [String: String] = [:]
     private let maxCachedTerminalSessions = 8
     private var terminalSessionAccessOrder: [String] = []
+    private var fileIndexTask: Task<Void, Never>?
+    private let maxIndexedFiles = 1_500
+    private let maxIndexedDirectories = 300
+    private let maxFileIndexDepth = 9
 
     /// Factory for the gateway client given a resolved base URL + token provider.
     /// Injected so tests can stub it without real networking.
@@ -784,6 +794,7 @@ public final class AppModel: ObservableObject {
         selectedCard = nil
         terminal = nil
         terminalSessions = [:]
+        terminalSessionTabIDsByAttachName = [:]
         terminalSessionAccessOrder = []
         sessions = []
         projects = []
@@ -797,6 +808,9 @@ public final class AppModel: ObservableObject {
         selectedFilePath = nil
         selectedFileData = nil
         selectedFileContent = ""
+        fileOpenQuery = ""
+        indexedFilePaths = []
+        showFileOpenPalette = false
         isLoadingSelectedFile = false
         fileSaveState = nil
         gitBranches = []
@@ -1402,6 +1416,14 @@ public final class AppModel: ObservableObject {
         let requestedSession = card.linkedSessionId ?? ""
         let attachSession = sessionAttachName(for: requestedSession)
         let hasSession = !attachSession.isEmpty
+        if hasSession,
+           let existingTabID = terminalSessionTabIDsByAttachName[attachSession],
+           let existing = terminalSessions[existingTabID] {
+            terminalSessions[tabID] = existing
+            markTerminalSessionUsed(tabID)
+            terminal = existing
+            return existing
+        }
         let wsURL: URL
         do {
             if hasSession {
@@ -1411,7 +1433,7 @@ public final class AppModel: ObservableObject {
                     fromSeq: Int?.none
                 )
             } else {
-                wsURL = try profile.autoCreateTerminalURL(cwd: nil)
+                wsURL = try profile.autoCreateTerminalURL(cwd: terminalCwd(forProjectSlug: card.projectSlug))
             }
         } catch {
             let err = OperatorError.misconfigured
@@ -1421,7 +1443,7 @@ public final class AppModel: ObservableObject {
 
         let label = hasSession ? attachSession : card.title
         let session = makeTerminal(wsURL, principal, attachSession, label)
-        cacheTerminalSession(session, for: tabID)
+        cacheTerminalSession(session, for: tabID, attachName: hasSession ? attachSession : nil)
         terminal = session
         if !hasSession {
             session.onNextAttach { [weak self] in
@@ -1575,6 +1597,11 @@ public final class AppModel: ObservableObject {
 
     public func focusPreviousTab() {
         focusTab(offset: -1)
+    }
+
+    public func focusTab(at index: Int) {
+        guard openTabs.indices.contains(index) else { return }
+        focusTab(id: openTabs[index].id)
     }
 
     private func focusTab(offset: Int) {
@@ -1736,6 +1763,112 @@ public final class AppModel: ObservableObject {
                 )
             }
         }
+    }
+
+    public var fileOpenSearchResults: [WorkspaceFileSearchItem] {
+        WorkspaceFileSearchItem.filtered(paths: indexedFilePaths, query: fileOpenQuery)
+    }
+
+    public func showFileOpenSearch() {
+        showFileOpenPalette = true
+        if indexedFilePaths.isEmpty {
+            refreshFileOpenIndex()
+        }
+    }
+
+    public func hideFileOpenSearch() {
+        showFileOpenPalette = false
+        fileOpenQuery = ""
+    }
+
+    public func refreshFileOpenIndex() {
+        guard let client = gatewayClient() else { return }
+        let rootPath = "projects/\(projectSlug)"
+        fileIndexTask?.cancel()
+        fileIndexTask = Task { [weak self] in
+            await self?.rebuildFileSearchIndex(rootPath: rootPath, client: client)
+        }
+    }
+
+    public func openFileFromSearch(_ item: WorkspaceFileSearchItem) {
+        guard let client = gatewayClient() else { return }
+        hideFileOpenSearch()
+        switchPanel(.app(slug: "editor"))
+        openFile(path: item.path, client: client)
+    }
+
+    private func rebuildFileSearchIndex(rootPath: String, client: GatewayHTTPClient) async {
+        isIndexingFiles = true
+        var indexedFiles: [String] = []
+        var visitedDirectories = 0
+        await collectIndexedFiles(
+            path: rootPath,
+            depth: 0,
+            client: client,
+            indexedFiles: &indexedFiles,
+            visitedDirectories: &visitedDirectories
+        )
+        if Task.isCancelled { return }
+        indexedFilePaths = indexedFiles.sorted { lhs, rhs in
+            lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
+        isIndexingFiles = false
+    }
+
+    private func collectIndexedFiles(
+        path: String,
+        depth: Int,
+        client: GatewayHTTPClient,
+        indexedFiles: inout [String],
+        visitedDirectories: inout Int
+    ) async {
+        guard !Task.isCancelled,
+              depth <= maxFileIndexDepth,
+              indexedFiles.count < maxIndexedFiles,
+              visitedDirectories < maxIndexedDirectories else {
+            return
+        }
+        visitedDirectories += 1
+        let entries: [FileTreeDTO]
+        do {
+            entries = try await client.get("/api/files/tree?path=\(queryValue(path))")
+        } catch let error as URLError {
+            appModelLogger.error("File index load failed with URL error code \(error.code.rawValue, privacy: .public)")
+            return
+        } catch {
+            appModelLogger.error("File index load failed with error type \(String(describing: type(of: error)), privacy: .public)")
+            return
+        }
+
+        for entry in entries.sorted(by: { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) {
+            guard indexedFiles.count < maxIndexedFiles else { return }
+            let childPath = path.isEmpty ? entry.name : "\(path)/\(entry.name)"
+            if entry.type == "directory" {
+                guard !shouldSkipIndexedDirectory(entry.name) else { continue }
+                await collectIndexedFiles(
+                    path: childPath,
+                    depth: depth + 1,
+                    client: client,
+                    indexedFiles: &indexedFiles,
+                    visitedDirectories: &visitedDirectories
+                )
+            } else {
+                indexedFiles.append(childPath)
+            }
+        }
+    }
+
+    private func shouldSkipIndexedDirectory(_ name: String) -> Bool {
+        [
+            ".build",
+            ".git",
+            ".next",
+            ".turbo",
+            "DerivedData",
+            "dist",
+            "node_modules",
+            "target",
+        ].contains(name)
     }
 
     private struct FileTreeDTO: Decodable {
@@ -2024,6 +2157,15 @@ public final class AppModel: ObservableObject {
         return "shell-\(suffix)"
     }
 
+    private func terminalCwd(forProjectSlug slug: String) -> String {
+        let trimmed = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "projects" }
+        guard trimmed.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil else {
+            return "projects"
+        }
+        return "projects/\(trimmed)"
+    }
+
     private func displayName(for card: Card) -> String {
         if let session = card.linkedSessionId, !session.isEmpty {
             return sessionAttachName(for: session)
@@ -2035,8 +2177,11 @@ public final class AppModel: ObservableObject {
         sessionAttachNames[session] ?? session
     }
 
-    private func cacheTerminalSession(_ session: TerminalSession, for tabID: String) {
+    private func cacheTerminalSession(_ session: TerminalSession, for tabID: String, attachName: String? = nil) {
         terminalSessions[tabID] = session
+        if let attachName, !attachName.isEmpty {
+            terminalSessionTabIDsByAttachName[attachName] = tabID
+        }
         markTerminalSessionUsed(tabID)
         evictCachedTerminalSessionsIfNeeded()
     }
@@ -2058,7 +2203,16 @@ public final class AppModel: ObservableObject {
 
     private func removeCachedTerminalSession(for tabID: String) {
         terminalSessionAccessOrder.removeAll { $0 == tabID }
-        terminalSessions.removeValue(forKey: tabID)?.shutdown()
+        guard let removed = terminalSessions.removeValue(forKey: tabID) else { return }
+        for (attachName, existingTabID) in terminalSessionTabIDsByAttachName where existingTabID == tabID {
+            if let replacement = terminalSessions.first(where: { $0.value === removed })?.key {
+                terminalSessionTabIDsByAttachName[attachName] = replacement
+            } else {
+                terminalSessionTabIDsByAttachName.removeValue(forKey: attachName)
+            }
+        }
+        guard !terminalSessions.values.contains(where: { $0 === removed }) else { return }
+        removed.shutdown()
     }
 
     private func queryValue(_ value: String) -> String {

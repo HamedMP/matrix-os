@@ -64,8 +64,13 @@ struct RootShellView: View {
                 CommandPalette(model: model)
                     .transition(.opacity)
             }
+            if model.showFileOpenPalette {
+                FileOpenPalette(model: model)
+                    .transition(.opacity)
+            }
         }
         .animation(Motion.hover, value: model.showCommandPalette)
+        .animation(Motion.hover, value: model.showFileOpenPalette)
     }
 
     @ViewBuilder
@@ -962,14 +967,12 @@ struct EditorPanel: View {
                 .background(Color.surfaceRail)
                 .overlay(alignment: .bottom) { Rectangle().fill(Color.hairlineDark).frame(height: 1) }
 
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(model.fileTree) { node in
-                            FileTreeNodeRow(model: model, node: node, depth: 0)
-                        }
-                    }
-                    .padding(.vertical, Spacing.x1)
-                }
+                FileNavigatorOutlineView(
+                    nodes: model.fileTree,
+                    selectedPath: model.selectedFilePath,
+                    onOpen: { model.openFileTreeNode($0) },
+                    onToggle: { model.toggleFileTreeNode($0) }
+                )
             }
             .frame(minWidth: 220, idealWidth: 280, maxWidth: 380)
 

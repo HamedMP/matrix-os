@@ -155,6 +155,7 @@ struct BoardView: View {
             TaskPaneStrip(
                 activePanel: model.activePanel,
                 enabledPanels: model.enabledPanels,
+                onToggle: model.togglePanel,
                 onFocus: model.switchPanel
             )
             Divider().overlay(Color.hairlineDark)
@@ -191,11 +192,71 @@ struct BoardView: View {
     @ViewBuilder
     private var enabledPanelBody: some View {
         let panes = taskPaneSpecs.filter { model.enabledPanels.contains($0.panel) }
-        let active = model.enabledPanels.contains(model.activePanel) ? model.activePanel : panes.first?.panel
-        if let active {
-            panelBody(for: active)
-        } else {
+        if panes.isEmpty {
             placeholderPane("Choose a task pane to continue.")
+        } else if panes.count == 1, let pane = panes.first {
+            panelBody(for: pane.panel)
+        } else {
+            HSplitView {
+                ForEach(panes) { pane in
+                    taskPaneContainer(pane)
+                        .frame(minWidth: paneMinimumWidth(pane.panel), maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+    }
+
+    private func taskPaneContainer(_ pane: TaskPaneSpec) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: Spacing.x2) {
+                Label(pane.title, systemImage: pane.icon)
+                    .font(.plexSans(12, weight: .semibold))
+                    .foregroundStyle(pane.panel == model.activePanel ? Color.inkPrimary : Color.inkSecondary)
+                Spacer()
+                Text(pane.shortcut)
+                    .font(.plexMono(10))
+                    .foregroundStyle(Color.inkTertiary)
+                Button {
+                    model.togglePanel(pane.panel)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.inkTertiary)
+                        .iconHitTarget(24)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.enabledPanels.count <= 1)
+                .help("Close pane")
+            }
+            .padding(.horizontal, Spacing.x3)
+            .frame(height: 34)
+            .background(pane.panel == model.activePanel ? Color.surfaceCardRaised : Color.surfaceRail)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(pane.panel == model.activePanel ? Color.signalLive.opacity(0.65) : Color.hairlineDark)
+                    .frame(height: 1)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { model.switchPanel(pane.panel) }
+            panelBody(for: pane.panel)
+        }
+    }
+
+    private func paneMinimumWidth(_ panel: Panel) -> CGFloat {
+        switch panel {
+        case .terminal:
+            return 360
+        case .shell:
+            return 420
+        case .app(let slug):
+            switch slug {
+            case "settings", "processes":
+                return 380
+            case "editor", "git":
+                return 460
+            default:
+                return 340
+            }
         }
     }
 

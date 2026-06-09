@@ -59,18 +59,19 @@ struct TaskPaneSpec: Identifiable, Equatable {
 }
 
 let taskPaneSpecs: [TaskPaneSpec] = [
-    TaskPaneSpec(id: "terminal", title: "Terminal", icon: "terminal", shortcut: "⌘T", panel: .terminal),
-    TaskPaneSpec(id: "editor", title: "Editor", icon: "doc.text", shortcut: "⌘E", panel: .app(slug: "editor")),
-    TaskPaneSpec(id: "artifacts", title: "Artifacts", icon: "paperclip", shortcut: "⌘⇧A", panel: .app(slug: "artifacts")),
-    TaskPaneSpec(id: "git", title: "Git", icon: "arrow.triangle.branch", shortcut: "⌘G", panel: .app(slug: "git")),
-    TaskPaneSpec(id: "settings", title: "Settings", icon: "slider.horizontal.3", shortcut: "⌘J", panel: .app(slug: "settings")),
-    TaskPaneSpec(id: "processes", title: "Processes", icon: "cpu", shortcut: "⌘⇧P", panel: .app(slug: "processes")),
-    TaskPaneSpec(id: "whiteboard", title: "Excalidraw", icon: "scribble.variable", shortcut: "⌘X", panel: .app(slug: "whiteboard")),
+    TaskPaneSpec(id: "terminal", title: "Terminal", icon: "terminal", shortcut: "⌥⌘1", panel: .terminal),
+    TaskPaneSpec(id: "editor", title: "Editor", icon: "doc.text", shortcut: "⌥⌘2", panel: .app(slug: "editor")),
+    TaskPaneSpec(id: "artifacts", title: "Artifacts", icon: "paperclip", shortcut: "⌥⌘3", panel: .app(slug: "artifacts")),
+    TaskPaneSpec(id: "git", title: "Git", icon: "arrow.triangle.branch", shortcut: "⌥⌘4", panel: .app(slug: "git")),
+    TaskPaneSpec(id: "settings", title: "Settings", icon: "slider.horizontal.3", shortcut: "⌥⌘5", panel: .app(slug: "settings")),
+    TaskPaneSpec(id: "processes", title: "Processes", icon: "cpu", shortcut: "⌥⌘6", panel: .app(slug: "processes")),
+    TaskPaneSpec(id: "whiteboard", title: "Excalidraw", icon: "scribble.variable", shortcut: "⌥⌘7", panel: .app(slug: "whiteboard")),
 ]
 
 struct TaskPaneStrip: View {
     let activePanel: Panel
     let enabledPanels: [Panel]
+    let onToggle: (Panel) -> Void
     let onFocus: (Panel) -> Void
 
     var body: some View {
@@ -79,9 +80,9 @@ struct TaskPaneStrip: View {
                 ForEach(taskPaneSpecs) { pane in
                     TaskPaneButton(
                         pane: pane,
-                        isAvailable: enabledPanels.contains(pane.panel),
+                        isEnabled: enabledPanels.contains(pane.panel),
                         isFocused: pane.panel == activePanel,
-                        action: { onFocus(pane.panel) }
+                        action: { onToggle(pane.panel) }
                     )
                     .keyboardShortcut(shortcutKey(for: pane.id), modifiers: shortcutModifiers(for: pane.id))
                     .contextMenu {
@@ -99,25 +100,25 @@ struct TaskPaneStrip: View {
 
     private func shortcutKey(for id: String) -> KeyEquivalent {
         switch id {
-        case "terminal": return "t"
-        case "editor": return "e"
-        case "artifacts": return "a"
-        case "git": return "g"
-        case "settings": return "j"
-        case "processes": return "p"
-        case "whiteboard": return "x"
+        case "terminal": return "1"
+        case "editor": return "2"
+        case "artifacts": return "3"
+        case "git": return "4"
+        case "settings": return "5"
+        case "processes": return "6"
+        case "whiteboard": return "7"
         default: return "0"
         }
     }
 
     private func shortcutModifiers(for id: String) -> EventModifiers {
-        ["artifacts", "processes"].contains(id) ? [.command, .shift] : [.command]
+        [.command, .option]
     }
 }
 
 private struct TaskPaneButton: View {
     let pane: TaskPaneSpec
-    let isAvailable: Bool
+    let isEnabled: Bool
     let isFocused: Bool
     let action: () -> Void
 
@@ -128,6 +129,11 @@ private struct TaskPaneButton: View {
                 Text(pane.title)
                     .font(.plexSans(12, weight: isFocused ? .semibold : .medium))
                     .lineLimit(1)
+                if isEnabled {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(isFocused ? Color.signalLive : Color.inkTertiary)
+                }
                 Text(pane.shortcut)
                     .font(.plexMono(9, weight: .semibold))
                     .foregroundStyle(isFocused ? Color.inkSecondary : Color.inkTertiary)
@@ -137,18 +143,21 @@ private struct TaskPaneButton: View {
             .frame(height: 30)
             .background(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .fill(isFocused ? Color.surfaceCard : Color.clear)
+                    .fill(isFocused ? Color.surfaceCard : (isEnabled ? Color.surfaceCardRaised.opacity(0.7) : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .strokeBorder(isFocused ? Color.signalLive.opacity(0.7) : Color.clear, lineWidth: 1)
+                    .strokeBorder(
+                        isFocused ? Color.signalLive.opacity(0.7) : (isEnabled ? Color.hairlineDark : Color.clear),
+                        lineWidth: 1
+                    )
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("\(pane.title) \(pane.shortcut)")
+        .help("\(isEnabled ? "Hide" : "Show") \(pane.title) \(pane.shortcut)")
         .accessibilityLabel(pane.title)
-        .accessibilityHint(isAvailable ? "Available" : "Opens this pane")
+        .accessibilityHint(isEnabled ? "Enabled pane" : "Disabled pane")
         .accessibilityAddTraits(isFocused ? [.isSelected] : [])
     }
 }
