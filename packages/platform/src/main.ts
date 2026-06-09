@@ -897,7 +897,16 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  event.respondWith(fetch(event.request));
+  event.respondWith(fetch(event.request).catch((err) => {
+    console.warn("[app cleanup sw] fetch failed:", err?.message ?? err);
+    return new Response("offline", {
+      status: 504,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }));
 });
 `.trim();
 
@@ -3230,7 +3239,9 @@ export function createApp(deps: {
     }
     headers.set('host', new URL(getAuthShellOrigin(appEnv)).host);
     headers.set('x-forwarded-host', host);
-    headers.set('x-forwarded-proto', 'https');
+    // The auth shell is a local plain-HTTP Next server. Forwarding "https" here
+    // makes Next 16 attempt internal self-proxy requests to https://localhost:3200.
+    headers.set('x-forwarded-proto', 'http');
     headers.set('accept-encoding', 'identity');
     headers.set('connection', 'close');
 

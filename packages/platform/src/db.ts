@@ -598,7 +598,6 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   // routing selects the requested runtime; unqualified handle routing resolves
   // deterministically to primary first in the read helpers below.
   await sql`DROP INDEX IF EXISTS idx_user_machines_handle_active`.execute(db);
-  await sql`DROP INDEX IF EXISTS idx_user_machines_handle_slot_active`.execute(db);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_handle_slot_active
     ON user_machines(handle, runtime_slot)

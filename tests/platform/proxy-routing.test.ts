@@ -2576,6 +2576,10 @@ describe("platform proxy routing", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+    const proxiedHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers | undefined;
+    expect(proxiedHeaders?.get("host")).toBe("auth-shell.test:3200");
+    expect(proxiedHeaders?.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(proxiedHeaders?.get("x-forwarded-proto")).toBe("http");
     delete process.env.AUTH_SHELL_HOST;
     delete process.env.AUTH_SHELL_PORT;
   });
@@ -4061,7 +4065,10 @@ describe("platform proxy routing", () => {
       expect(res.headers.get("cache-control")).toBe("no-store, private");
       expect(res.headers.get("cdn-cache-control")).toBe("no-store");
       expect(res.headers.get("service-worker-allowed")).toBe("/");
-      expect(await res.text()).toContain("registration.unregister()");
+      const body = await res.text();
+      expect(body).toContain("registration.unregister()");
+      expect(body).toContain(".catch((err) =>");
+      expect(body).toContain('new Response("offline",');
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
