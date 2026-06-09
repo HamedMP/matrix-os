@@ -41,7 +41,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter '@matrix-os/
 
 FROM node:24-alpine AS runtime
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates curl
 
 WORKDIR /app
 
