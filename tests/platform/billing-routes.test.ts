@@ -383,6 +383,19 @@ describe('platform billing routes', () => {
     });
   });
 
+  it('returns the generic unavailable code when billing status lookup fails', async () => {
+    const app = createApp();
+    await destroyTestPlatformDb(db);
+
+    const res = await app.request('/billing/status', { method: 'GET' });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: 'Billing unavailable',
+      code: 'billing_unavailable',
+    });
+  });
+
   it('rejects portal creation when the Stripe client timeout exceeds the API budget', async () => {
     await upsertBillingCustomer(db, {
       clerkUserId: 'user_123',

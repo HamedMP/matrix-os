@@ -175,7 +175,7 @@ export function createBillingRoutes(options: {
       return c.json({ entitlement, access }, 200);
     } catch (err: unknown) {
       console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'Billing unavailable' }, 503);
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
 
