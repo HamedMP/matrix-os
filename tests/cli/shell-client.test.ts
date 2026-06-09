@@ -12,6 +12,7 @@ class ControlledWebSocket {
   static last: ControlledWebSocket | null = null;
   static lastUrl: string | null = null;
   static lastOptions: unknown = null;
+  static instances: ControlledWebSocket[] = [];
   closed = false;
   listeners = new Map<string, (...args: unknown[]) => void>();
   sent: string[] = [];
@@ -20,6 +21,7 @@ class ControlledWebSocket {
     ControlledWebSocket.last = this;
     ControlledWebSocket.lastUrl = url;
     ControlledWebSocket.lastOptions = options;
+    ControlledWebSocket.instances.push(this);
   }
 
   send(data: string) {
@@ -65,6 +67,17 @@ class FakeTtyInput extends EventEmitter {
 }
 
 describe("shell REST client", () => {
+  beforeEach(() => {
+    ControlledWebSocket.last = null;
+    ControlledWebSocket.lastUrl = null;
+    ControlledWebSocket.lastOptions = null;
+    ControlledWebSocket.instances = [];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("lists sessions with bearer auth, JSON parsing, and fetch timeout", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ sessions: [] })));
     const client = createShellClient({
@@ -241,9 +254,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("open");
     await new Promise((resolve) => setTimeout(resolve, 10));
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(ControlledWebSocket.lastUrl).toBe(
       `ws://gateway/ws/terminal/session?session=main&fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`,
     );
@@ -267,9 +280,9 @@ describe("shell REST client", () => {
     });
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=0");
   });
 
@@ -289,6 +302,152 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("close");
 
     await expect(attached).rejects.toMatchObject({ code: "attach_failed" });
+  });
+
+  it("sends heartbeat pings and accepts pong frames while attached", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      heartbeatIntervalMs: 20,
+      heartbeatTimeoutMs: 60,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+
+    await vi.advanceTimersByTimeAsync(20);
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "ping" });
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "pong" }));
+    await vi.advanceTimersByTimeAsync(19);
+    expect(ControlledWebSocket.instances).toHaveLength(1);
+
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
+  });
+
+  it("closes and reconnects when heartbeat pong or output is missing", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      heartbeatIntervalMs: 20,
+      heartbeatTimeoutMs: 60,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    const first = ControlledWebSocket.last!;
+
+    await vi.advanceTimersByTimeAsync(80);
+    expect(first.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(ControlledWebSocket.instances).toHaveLength(2);
+    expect(errorOutput.write).toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    expect(errorOutput.write).toHaveBeenCalledWith("\r\nConnection restored.\r\n");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
+  });
+
+  it("reconnects instead of resolving detached after an unexpected close once attached", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(ControlledWebSocket.instances).toHaveLength(2);
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
+  });
+
+  it("reconnects with fromSeq set after the last output sequence", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready", seq: 41 }));
+    ControlledWebSocket.last?.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(ControlledWebSocket.lastUrl).toBe("ws://gateway/ws/terminal/session?session=main&fromSeq=42");
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
+  });
+
+  it("resends terminal resize after reconnect", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 120, rows: 40 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("setup", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    const first = ControlledWebSocket.last!;
+    ControlledWebSocket.last?.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+
+    expect(first.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "resize", cols: 120, rows: 40 });
+    expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "resize", cols: 120, rows: 40 });
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
   });
 
   it("allowlists terminal websocket error frame codes", async () => {
@@ -348,8 +507,8 @@ describe("shell REST client", () => {
       JSON.stringify({ type: "input", data: "pwd\r" }),
     ]);
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    ControlledWebSocket.last?.emit("close");
-    await expect(attached).resolves.toEqual({ detached: true });
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
   });
 
   it("rejects when pre-open stdin exceeds the queued frame cap", async () => {
@@ -389,9 +548,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     process.emit("SIGWINCH", "SIGWINCH");
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect((input as unknown as FakeTtyInput).rawModes).toEqual([true, false]);
     expect((input as unknown as FakeTtyInput).resumed).toBe(true);
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
@@ -422,6 +581,7 @@ describe("shell REST client", () => {
 
     await expect(attached).resolves.toEqual({ detached: true });
     expect(ControlledWebSocket.last?.closed).toBe(true);
+    expect(errorOutput.write).not.toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
@@ -466,9 +626,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "a\u001b[<0;10;20M\u001b[Mabc\u001b[I\u001b[O");
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
@@ -490,9 +650,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "\u001b[Ia\u001b[O\u001b[<0;10;20M");
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
@@ -517,9 +677,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
     nowSpy.mockReturnValue(6_000);
     input.emit("data", "\u001b[I\u001b[<0;10;20M\u001b[Mabcx");
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
@@ -546,9 +706,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "output", data: "ready" }));
     nowSpy.mockReturnValue(6_000);
     input.emit("data", "\u001b[I\u001b[99;5u\u001b[100;5uok");
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(output.write).toHaveBeenCalledWith(LOCAL_TERMINAL_INPUT_RESET);
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
@@ -572,9 +732,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "\u001b[99;5u");
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "\u001b[99;5u" },
@@ -597,9 +757,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "a\u001b[99");
     input.emit("data", ";5ub");
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
@@ -624,9 +784,9 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     input.emit("data", "a\u001b[<0;10;");
     input.emit("data", "20Mbc");
-    ControlledWebSocket.last?.emit("close");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
 
-    await expect(attached).resolves.toEqual({ detached: true });
+    await expect(attached).resolves.toEqual({ detached: false });
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "resize", cols: 80, rows: 24 },
       { type: "input", data: "a" },
