@@ -155,7 +155,11 @@ export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
     const session: MobileTerminalSession = {
       sessionId,
       cwd: typeof candidate.cwd === "string" ? candidate.cwd : "~",
-      state: typeof candidate.state === "string" ? candidate.state : "running",
+      state: typeof candidate.state === "string"
+        ? candidate.state
+        : typeof candidate.status === "string"
+          ? candidate.status
+          : "running",
     };
     if (typeof candidate.createdAt === "string") session.createdAt = candidate.createdAt;
     if (typeof candidate.lastAttachedAt === "string") session.lastAttachedAt = candidate.lastAttachedAt;

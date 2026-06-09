@@ -542,10 +542,10 @@ function mobileSessionLayout(cwd?: string, command?: string): string {
   }
   return `layout {
   default_tab_template {
+    children
     pane size=1 borderless=true {
       plugin location="zellij:compact-bar"
     }
-    children
   }
   tab name="main" {
     pane ${paneAttrs.filter(Boolean).join(" ")} {

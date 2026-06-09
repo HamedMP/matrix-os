@@ -45,7 +45,7 @@ describe("mobile terminal client", () => {
       { cwd: "/tmp" },
     ])).toEqual([
       { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running", attachedClients: 1 },
-      { sessionId: "mobile-main", cwd: "~", state: "running" },
+      { sessionId: "mobile-main", cwd: "~", state: "active" },
     ]);
   });
 
