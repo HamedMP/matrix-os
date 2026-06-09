@@ -85,6 +85,39 @@ describe('platform billing routes', () => {
     );
   });
 
+  it('creates the default pre-VPS checkout session from the Builder monthly price', async () => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly', regionSlug: 'region_fsn1' }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      priceId: 'price_builder_monthly',
+      regionSlug: 'region_fsn1',
+    }));
+  });
+
+  it('returns a generic allowlisted code when checkout price config is missing', async () => {
+    const app = createApp('user_123', { STRIPE_WEBHOOK_SECRET: 'whsec_test' } as NodeJS.ProcessEnv);
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly' }),
+    });
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error: 'Billing unavailable',
+      code: 'billing_unavailable',
+    });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
   it('uses a validated same-origin returnPath for checkout return URLs', async () => {
     const app = createApp();
 
@@ -287,7 +320,10 @@ describe('platform billing routes', () => {
     });
 
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'Billing unavailable' });
+    expect(await res.json()).toEqual({
+      error: 'Billing unavailable',
+      code: 'billing_unavailable',
+    });
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 

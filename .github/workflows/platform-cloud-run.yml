@@ -54,6 +54,7 @@ jobs:
       CUSTOMER_VPS_IMAGE_VERSION: ${{ vars.CUSTOMER_VPS_IMAGE_VERSION }}
       POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || 'https://neo.matrix-os.com' }}
+      DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -111,6 +112,49 @@ jobs:
             echo "edge-router-secret must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
             exit 1
           fi
+
+      - name: Verify Stripe billing price secrets
+        run: |
+          set -euo pipefail
+          required_price_secrets=(
+            STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly
+            STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual
+            STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly
+            STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual
+            STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly
+            STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual
+            STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=stripe-price-extra-runtime-monthly
+            STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=stripe-price-extra-runtime-annual
+          )
+
+          for entry in "${required_price_secrets[@]}"; do
+            env_name="${entry%%=*}"
+            secret_name="${entry#*=}"
+            gcloud secrets describe "$secret_name" \
+              --project "$GCP_PROJECT_ID" >/dev/null
+            if ! gcloud secrets versions access latest --secret "$secret_name" \
+              --project "$GCP_PROJECT_ID" >/tmp/matrix-price-secret-value; then
+              echo "$secret_name must have an accessible latest version for $env_name." >&2
+              exit 1
+            fi
+            if [ ! -s /tmp/matrix-price-secret-value ]; then
+              echo "$secret_name must not be empty for $env_name." >&2
+              exit 1
+            fi
+            rm -f /tmp/matrix-price-secret-value
+            accessor_member="$(
+              gcloud secrets get-iam-policy "$secret_name" \
+                --project "$GCP_PROJECT_ID" \
+                --flatten='bindings[].members' \
+                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+                --format='value(bindings.members)' \
+                | head -1
+            )"
+            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
+              exit 1
+            fi
+          done
 
       - name: Build platform image
         run: |
@@ -185,6 +229,11 @@ jobs:
             traffic_flags+=(--no-traffic)
           fi
 
+          min_instances=0
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+            min_instances=1
+          fi
+
           # TODO(#410): flip CUSTOMER_VPS_TLS_VERIFY back to true once customer VPS origins present trusted certs.
           if ! deploy_json=$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
@@ -197,13 +246,13 @@ jobs:
             --memory 1Gi \
             --concurrency 30 \
             --timeout 300 \
-            --min-instances 0 \
+            --min-instances "$min_instances" \
             --max-instances 10 \
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
             --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL},CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_TLS_VERIFY=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS},MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS},NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL},MATRIX_BILLING_PROVIDER=stripe,POSTHOG_HOST=https://eu.i.posthog.com,POSTHOG_API_HOST=https://eu.i.posthog.com,NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST},NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST},R2_PREFIX_ROOT=matrixos-sync" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=stripe-price-extra-runtime-monthly:latest,STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=stripe-price-extra-runtime-annual:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest" \
             --format=json); then
             exit 1
           fi
@@ -237,6 +286,15 @@ jobs:
             exit 1
           fi
           curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health" >/dev/null
+          auth_shell_html="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/sign-in")"
+          if ! printf '%s\n' "$auth_shell_html" | grep -Fq "fetch('/billing/checkout'"; then
+            echo "Candidate pre-VPS auth shell does not expose the billing checkout handoff." >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$auth_shell_html" | grep -Fq "billing_unavailable"; then
+            echo "Candidate pre-VPS auth shell does not expose the controlled billing_unavailable failure path." >&2
+            exit 1
+          fi
           manifest="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/system-bundles/channels/dev.json")"
           bundle_url="$(printf '%s\n' "$manifest" | jq -r '.url // empty')"
           if [ -z "$bundle_url" ]; then
@@ -275,3 +333,22 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --to-revisions "$CANDIDATE_REVISION=100"
+
+      - name: Verify promoted revision traffic
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        run: |
+          set -euo pipefail
+          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json)"
+          candidate_percent="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName == env.CANDIDATE_REVISION) | .percent) // empty' | head -1)"
+          if [ "$candidate_percent" != "100" ]; then
+            echo "Candidate revision ${CANDIDATE_REVISION} does not have 100% traffic." >&2
+            exit 1
+          fi
+          stale_revision="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName != env.CANDIDATE_REVISION and (.percent // 0) > 0) | "\(.revisionName)=\(.percent)") // empty' | head -1)"
+          if [ -n "$stale_revision" ]; then
+            echo "Stale Cloud Run revision is still receiving traffic: $stale_revision" >&2
+            exit 1
+          fi

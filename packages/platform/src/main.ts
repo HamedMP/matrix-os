@@ -113,6 +113,7 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
+const AUTH_SHELL_PROXY_TIMEOUT_MS = 20_000;
 const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const CLERK_USER_LOOKUP_TIMEOUT_MS = 10_000;
@@ -2318,6 +2319,14 @@ function getAuthPage(
         startBillingCheckoutFromClerkSession
       );
     }
+    function showCheckoutUnavailableState() {
+      renderSessionState(
+        'Checkout unavailable',
+        'Billing checkout is temporarily unavailable. Try again shortly.',
+        'Try again',
+        startBillingCheckoutFromClerkSession
+      );
+    }
     function rememberBillingCheckoutAttempt() {
       try {
         window.sessionStorage.setItem(checkoutAttemptStorageKey, String(Date.now()));
@@ -2364,7 +2373,11 @@ function getAuthPage(
             return null;
           }).then(function(body) {
             if (!res.ok || !body || typeof body.url !== 'string') {
-              showBillingRequiredState();
+              if (body && body.code === 'billing_unavailable') {
+                showCheckoutUnavailableState();
+                return;
+              }
+              showCheckoutUnavailableState();
               return;
             }
             rememberBillingCheckoutAttempt();
@@ -2373,7 +2386,7 @@ function getAuthPage(
         })
         .catch(function(err) {
           console.error('[matrix] Billing checkout failed', err instanceof Error ? err.message : String(err));
-          showBillingRequiredState();
+          showCheckoutUnavailableState();
         });
     }
     function pollProvisioningSession() {
@@ -3250,7 +3263,7 @@ export function createApp(deps: {
         method: c.req.method,
         headers,
         redirect: 'manual',
-        signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+        signal: AbortSignal.timeout(AUTH_SHELL_PROXY_TIMEOUT_MS),
       });
       return new Response(response.body, {
         status: response.status,

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildEdgeResponseInit,
   classifyEdgeRoute,
@@ -23,8 +25,14 @@ describe("edge router worker", () => {
     expect(classifyEdgeRoute("alice.matrix-os.com")).toBe("unknown");
   });
 
-  it("matches the platform proxy timeout budget", () => {
-    expect(UPSTREAM_TIMEOUT_MS).toBe(30_000);
+  it("keeps the edge timeout budget above the platform auth-shell proxy budget", () => {
+    const root = process.cwd();
+    const platformMain = readFileSync(join(root, "packages/platform/src/main.ts"), "utf8");
+    const match = platformMain.match(/AUTH_SHELL_PROXY_TIMEOUT_MS\s*=\s*([\d_]+)/);
+    expect(match?.[1]).toBeDefined();
+    const authShellProxyTimeoutMs = Number(match![1].replace(/_/g, ""));
+
+    expect(UPSTREAM_TIMEOUT_MS).toBeGreaterThan(authShellProxyTimeoutMs);
   });
 
   it("forwards app-domain requests to Cloud Run with external host preserved", async () => {
