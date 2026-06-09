@@ -61,6 +61,7 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('Verify Stripe billing price secrets');
     expect(workflow).toContain('gcloud secrets describe "$secret_name"');
+    expect(workflow).toContain('price_secret_tmpfile="$(mktemp)"');
     expect(workflow).toContain('gcloud secrets versions access latest --secret "$secret_name"');
     expect(workflow).toContain('roles/secretmanager.secretAccessor');
     expect(workflow).toContain('CLOUD_RUN_SERVICE_ACCOUNT');
@@ -85,7 +86,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('$CANDIDATE_URL/sign-in');
     expect(workflow).toContain('pre-VPS auth shell');
     expect(workflow).toContain("fetch('/billing/checkout'");
-    expect(workflow).toContain('billing_unavailable');
+    expect(workflow).toContain('Checkout unavailable');
   });
 
   it('verifies platform Cloud Run promotion sends all traffic to the candidate revision', () => {

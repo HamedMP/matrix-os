@@ -396,7 +396,10 @@ describe('platform billing routes', () => {
     const res = await app.request('/billing/portal', { method: 'POST' });
 
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'Billing unavailable' });
+    expect(await res.json()).toEqual({
+      error: 'Billing unavailable',
+      code: 'billing_unavailable',
+    });
     expect(stripe.createPortalSession).not.toHaveBeenCalled();
   });
 

@@ -156,7 +156,7 @@ export function createBillingRoutes(options: {
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] portal creation failed:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'Billing unavailable' }, 503);
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
 

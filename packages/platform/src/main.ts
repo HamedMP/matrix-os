@@ -2373,10 +2373,6 @@ function getAuthPage(
             return null;
           }).then(function(body) {
             if (!res.ok || !body || typeof body.url !== 'string') {
-              if (body && body.code === 'billing_unavailable') {
-                showCheckoutUnavailableState();
-                return;
-              }
               showCheckoutUnavailableState();
               return;
             }

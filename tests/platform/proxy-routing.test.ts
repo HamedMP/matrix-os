@@ -2474,7 +2474,6 @@ describe("platform proxy routing", () => {
     expect(html).toContain("fetch('/billing/checkout'");
     expect(html).toContain("planSlug: 'matrix_builder'");
     expect(html).toContain("Checkout unavailable");
-    expect(html).toContain("billing_unavailable");
     expect(html).toContain("showCheckoutUnavailableState();");
     expect(html).toContain("Opening secure checkout");
     expect(html).toContain("retryProvisioningAfterBillingDelay()");

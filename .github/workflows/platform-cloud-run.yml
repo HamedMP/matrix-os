@@ -132,16 +132,19 @@ jobs:
             secret_name="${entry#*=}"
             gcloud secrets describe "$secret_name" \
               --project "$GCP_PROJECT_ID" >/dev/null
+            price_secret_tmpfile="$(mktemp)"
             if ! gcloud secrets versions access latest --secret "$secret_name" \
-              --project "$GCP_PROJECT_ID" >/tmp/matrix-price-secret-value; then
+              --project "$GCP_PROJECT_ID" >"$price_secret_tmpfile"; then
+              rm -f "$price_secret_tmpfile"
               echo "$secret_name must have an accessible latest version for $env_name." >&2
               exit 1
             fi
-            if [ ! -s /tmp/matrix-price-secret-value ]; then
+            if [ ! -s "$price_secret_tmpfile" ]; then
+              rm -f "$price_secret_tmpfile"
               echo "$secret_name must not be empty for $env_name." >&2
               exit 1
             fi
-            rm -f /tmp/matrix-price-secret-value
+            rm -f "$price_secret_tmpfile"
             accessor_member="$(
               gcloud secrets get-iam-policy "$secret_name" \
                 --project "$GCP_PROJECT_ID" \
@@ -291,8 +294,8 @@ jobs:
             echo "Candidate pre-VPS auth shell does not expose the billing checkout handoff." >&2
             exit 1
           fi
-          if ! printf '%s\n' "$auth_shell_html" | grep -Fq "billing_unavailable"; then
-            echo "Candidate pre-VPS auth shell does not expose the controlled billing_unavailable failure path." >&2
+          if ! printf '%s\n' "$auth_shell_html" | grep -Fq "Checkout unavailable"; then
+            echo "Candidate pre-VPS auth shell does not expose the controlled checkout failure state." >&2
             exit 1
           fi
           manifest="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/system-bundles/channels/dev.json")"
