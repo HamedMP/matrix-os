@@ -75,6 +75,27 @@ PIPEDREAM_WEBHOOK_SECRET=...
 
 Do not copy `PIPEDREAM_*`, Clerk server secrets, platform DB credentials, or `PLATFORM_SECRET` into customer VPS env files. Customer VPS gateways call the platform through `PLATFORM_INTERNAL_URL` with a per-host `UPGRADE_TOKEN`.
 
+Hosted billing must be configured before promoting production Cloud Run
+revisions. Missing Stripe price IDs break the signed-in no-VPS path because the
+pre-VPS billing gate uses `matrix_builder` monthly checkout by default. Store
+the Price IDs in Secret Manager with these names and grant the Cloud Run service
+account `roles/secretmanager.secretAccessor`:
+
+```bash
+STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly
+STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual
+STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly
+STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual
+STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly
+STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual
+STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY=stripe-price-extra-runtime-monthly
+STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL=stripe-price-extra-runtime-annual
+```
+
+The `Platform Cloud Run` workflow preflights these secrets, mounts them into
+the deployed revision, smokes `/sign-in` for the pre-VPS billing shell, and
+keeps production at `min-instances=1`. Staging may still scale to zero.
+
 ## Updating Platform Auth and Device-Login Pages
 
 `app.matrix-os.com` sign-in, sign-up, billing handoff, provisioning handoff, and

@@ -31,6 +31,10 @@ const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
 const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
 const CLERK_USER_ID_PATTERN = /^user_[A-Za-z0-9]{1,128}$/;
+const BILLING_UNAVAILABLE_RESPONSE = {
+  error: 'Billing unavailable',
+  code: 'billing_unavailable',
+} as const;
 
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
@@ -110,7 +114,7 @@ export function createBillingRoutes(options: {
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
 
     const priceId = resolvePriceId(env, parsed.data.planSlug, parsed.data.interval);
-    if (!priceId) return c.json({ error: 'Billing unavailable' }, 503);
+    if (!priceId) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
 
     try {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
@@ -131,7 +135,7 @@ export function createBillingRoutes(options: {
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] checkout creation failed:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'Billing unavailable' }, 503);
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
 
@@ -152,7 +156,7 @@ export function createBillingRoutes(options: {
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] portal creation failed:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'Billing unavailable' }, 503);
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
 
@@ -171,7 +175,7 @@ export function createBillingRoutes(options: {
       return c.json({ entitlement, access }, 200);
     } catch (err: unknown) {
       console.error('[billing] status lookup failed:', err instanceof Error ? err.message : String(err));
-      return c.json({ error: 'Billing unavailable' }, 503);
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
 

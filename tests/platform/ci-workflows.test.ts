@@ -3,6 +3,17 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('CI workflows', () => {
+  const stripePriceSecrets = [
+    ['STRIPE_PRICE_MATRIX_STARTER_MONTHLY', 'stripe-price-matrix-starter-monthly'],
+    ['STRIPE_PRICE_MATRIX_STARTER_ANNUAL', 'stripe-price-matrix-starter-annual'],
+    ['STRIPE_PRICE_MATRIX_BUILDER_MONTHLY', 'stripe-price-matrix-builder-monthly'],
+    ['STRIPE_PRICE_MATRIX_BUILDER_ANNUAL', 'stripe-price-matrix-builder-annual'],
+    ['STRIPE_PRICE_MATRIX_MAX_MONTHLY', 'stripe-price-matrix-max-monthly'],
+    ['STRIPE_PRICE_MATRIX_MAX_ANNUAL', 'stripe-price-matrix-max-annual'],
+    ['STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY', 'stripe-price-extra-runtime-monthly'],
+    ['STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL', 'stripe-price-extra-runtime-annual'],
+  ] as const;
+
   it('exposes a stable aggregate CI result job for branch protection', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
@@ -32,5 +43,58 @@ describe('CI workflows', () => {
     expect(readme).toContain('host bundle release tests are blocking');
     expect(readme).toContain('React Doctor');
     expect(readme).toContain('Screenshot workflow removed');
+  });
+
+  it('wires every required Stripe price secret into platform Cloud Run', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    for (const [envName, secretName] of stripePriceSecrets) {
+      expect(workflow).toContain(`${envName}=${secretName}:latest`);
+      expect(workflow).toContain(`${envName}=${secretName}`);
+    }
+  });
+
+  it('preflights billing price secrets before deploying platform Cloud Run', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Verify Stripe billing price secrets');
+    expect(workflow).toContain('gcloud secrets describe "$secret_name"');
+    expect(workflow).toContain('price_secret_tmpfile="$(mktemp)"');
+    expect(workflow).toContain('gcloud secrets versions access latest --secret "$secret_name"');
+    expect(workflow).toContain('roles/secretmanager.secretAccessor');
+    expect(workflow).toContain('CLOUD_RUN_SERVICE_ACCOUNT');
+  });
+
+  it('keeps production platform Cloud Run warm while allowing staging to scale to zero', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('DEPLOY_ENVIRONMENT: ${{ github.event_name == \'workflow_dispatch\' && inputs.environment || \'production\' }}');
+    expect(workflow).toContain('min_instances=0');
+    expect(workflow).toContain('if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then');
+    expect(workflow).toContain('min_instances=1');
+    expect(workflow).toContain('--min-instances "$min_instances"');
+  });
+
+  it('smokes the pre-VPS auth and billing shell surface before promotion', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Smoke candidate revision');
+    expect(workflow).toContain('$CANDIDATE_URL/sign-in');
+    expect(workflow).toContain('pre-VPS auth shell');
+    expect(workflow).toContain("fetch('/billing/checkout'");
+    expect(workflow).toContain('Checkout unavailable');
+  });
+
+  it('verifies platform Cloud Run promotion sends all traffic to the candidate revision', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Verify promoted revision traffic');
+    expect(workflow).toContain('select(.revisionName == env.CANDIDATE_REVISION) | .percent');
+    expect(workflow).toContain('select(.revisionName != env.CANDIDATE_REVISION and (.percent // 0) > 0)');
   });
 });

@@ -406,7 +406,10 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: "Billing unavailable" });
+    expect(await res.json()).toEqual({
+      error: "Billing unavailable",
+      code: "billing_unavailable",
+    });
   });
 
   it("builds customer VPS websocket upgrade headers without leaking browser credentials or query JWTs", async () => {
@@ -2470,6 +2473,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain("Billing required");
     expect(html).toContain("fetch('/billing/checkout'");
     expect(html).toContain("planSlug: 'matrix_builder'");
+    expect(html).toContain("Checkout unavailable");
+    expect(html).toContain("showCheckoutUnavailableState();");
     expect(html).toContain("Opening secure checkout");
     expect(html).toContain("retryProvisioningAfterBillingDelay()");
     expect(html).toContain("Confirming billing");

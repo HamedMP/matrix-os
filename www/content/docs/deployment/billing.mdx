@@ -44,6 +44,24 @@ Required platform environment:
 | `STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY` / `STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL` | Optional extra-machine add-on Price IDs. |
 | `PLATFORM_PUBLIC_URL` | Used to build checkout and portal return URLs. |
 
+Production Cloud Run deployments read the Price IDs from Secret Manager. The
+required secret names are:
+
+| Environment variable | Secret Manager name |
+| --- | --- |
+| `STRIPE_PRICE_MATRIX_STARTER_MONTHLY` | `stripe-price-matrix-starter-monthly` |
+| `STRIPE_PRICE_MATRIX_STARTER_ANNUAL` | `stripe-price-matrix-starter-annual` |
+| `STRIPE_PRICE_MATRIX_BUILDER_MONTHLY` | `stripe-price-matrix-builder-monthly` |
+| `STRIPE_PRICE_MATRIX_BUILDER_ANNUAL` | `stripe-price-matrix-builder-annual` |
+| `STRIPE_PRICE_MATRIX_MAX_MONTHLY` | `stripe-price-matrix-max-monthly` |
+| `STRIPE_PRICE_MATRIX_MAX_ANNUAL` | `stripe-price-matrix-max-annual` |
+| `STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY` | `stripe-price-extra-runtime-monthly` |
+| `STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL` | `stripe-price-extra-runtime-annual` |
+
+The signed-in pre-VPS path defaults to Builder monthly checkout. Missing price
+secret access should block deployment rather than letting new users reach a
+broken billing gate.
+
 Webhook events to subscribe:
 
 - `customer.subscription.created`
