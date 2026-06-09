@@ -12,6 +12,7 @@ describe('start-platform-cloud-run.sh', () => {
     expect(script).toContain('curl --fail --silent --show-error --max-time 2');
     expect(script).toContain('http://127.0.0.1:$auth_shell_port$auth_shell_ready_path');
     expect(script).not.toContain('http://127.0.0.1:$auth_shell_port/sign-in');
+    expect(script).toContain('*) auth_shell_ready_path="/$auth_shell_ready_path" ;;');
 
     const authStartIndex = script.indexOf('node node_modules/next/dist/bin/next start shell');
     const readinessIndex = script.indexOf('if ! wait_for_auth_shell; then');
@@ -28,7 +29,6 @@ describe('start-platform-cloud-run.sh', () => {
     expect(script).toContain('Auth shell did not become ready');
     expect(script).toContain('exit 1');
     expect(script).toContain('kill -0 "$auth_shell_pid"');
-    expect(script).toContain('*) auth_shell_ready_path="/$auth_shell_ready_path" ;;');
   });
 
   it('stops the sibling process when either child exits unexpectedly', () => {
