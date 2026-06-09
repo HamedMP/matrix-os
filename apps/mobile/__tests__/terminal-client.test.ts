@@ -40,10 +40,12 @@ describe("mobile terminal client", () => {
   it("parses only safe terminal session summaries", () => {
     expect(parseTerminalSessions([
       { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running", attachedClients: 1 },
+      { name: "mobile-main", status: "active" },
       { sessionId: "../../../secret", cwd: "/tmp", state: "running" },
       { cwd: "/tmp" },
     ])).toEqual([
       { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running", attachedClients: 1 },
+      { sessionId: "mobile-main", cwd: "~", state: "running" },
     ]);
   });
 
@@ -154,6 +156,40 @@ describe("mobile terminal client", () => {
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
       "wss://app.matrix-os.test/ws/terminal",
+      [],
+      { headers: { Authorization: "Bearer clerk-token" } },
+    );
+  });
+
+  it("creates mobile Zellij sessions and attaches to the named shell websocket", async () => {
+    const webSocketMock = jest.fn().mockImplementation(() => new MockWebSocket());
+    global.WebSocket = webSocketMock as unknown as typeof WebSocket;
+    const fetchMock = jest
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ name: "mobile-main", created: true }))
+      .mockResolvedValueOnce(jsonResponse({ token: "ws-token" }));
+
+    const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
+    const terminalClient = new MobileTerminalClient(gateway);
+    const connection = await terminalClient.createMobileZellijSession({
+      name: "mobile-main",
+      cwd: "projects",
+      cols: 80,
+      rows: 24,
+      onMessage: jest.fn(),
+    });
+
+    expect(connection).toBeTruthy();
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://app.matrix-os.test/api/terminal/sessions",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "mobile-main", cwd: "projects", profile: "mobile" }),
+      }),
+    );
+    expect(webSocketMock).toHaveBeenCalledWith(
+      "wss://app.matrix-os.test/ws/terminal/session?session=mobile-main&token=ws-token",
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );

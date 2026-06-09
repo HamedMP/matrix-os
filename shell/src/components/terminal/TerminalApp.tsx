@@ -11,7 +11,6 @@ import {
   PanelLeftOpenIcon,
   PlusIcon,
   RefreshCwIcon,
-  Rows2Icon,
   SearchIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -521,15 +520,16 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return id;
   };
 
-  const createShellSessionTab = async (label: string, cwd = DEFAULT_CWD) => {
+  const createShellSessionTab = async (label: string, cwd = DEFAULT_CWD, profile?: "desktop" | "mobile") => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const name = `zellij-${genId()}`;
+      const sessionProfile = profile ?? (mobile ? "mobile" : undefined);
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
         const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, cwd }),
+          body: JSON.stringify({ name, cwd, ...(sessionProfile ? { profile: sessionProfile } : {}) }),
           signal: AbortSignal.timeout(10_000),
         });
         if (res.status === 409) {
@@ -937,7 +937,7 @@ interface TerminalAppContextType {
   mobile: boolean;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
-  createShellSessionTab: (label: string, cwd?: string) => Promise<string | null>;
+  createShellSessionTab: (label: string, cwd?: string, profile?: "desktop" | "mobile") => Promise<string | null>;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   renameTab: (tabId: string, label: string) => void;
@@ -1302,25 +1302,16 @@ function MobileTerminalActions({
         label="Zellij"
         title="Open mobile Zellij"
         icon={<TerminalIcon size={14} strokeWidth={1.8} />}
-        onClick={() => { void ctx.createShellSessionTab("Mobile Zellij", getCwd()); }}
+        onClick={() => { void ctx.createShellSessionTab("Mobile Zellij", getCwd(), "mobile"); }}
         background={accent}
         foreground="var(--primary-foreground)"
         border="transparent"
       />
       <MobileActionButton
-        label="Pane"
-        title="Split pane below"
-        icon={<Rows2Icon size={14} strokeWidth={1.8} />}
-        onClick={() => { if (focusedPaneId) ctx.splitPane(focusedPaneId, "vertical"); }}
-        background={actionBackground}
-        foreground={foreground}
-        border={actionBorder}
-      />
-      <MobileActionButton
         label="Tab"
         title="Open terminal tab"
         icon={<PlusIcon size={14} strokeWidth={1.8} />}
-        onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
+        onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd(), "mobile"); }}
         background={actionBackground}
         foreground={foreground}
         border={actionBorder}

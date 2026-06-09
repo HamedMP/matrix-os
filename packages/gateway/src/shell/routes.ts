@@ -14,6 +14,7 @@ interface SessionRegistryRoutes {
     name: string;
     cwd?: string;
     layout?: string;
+    profile?: "desktop" | "mobile";
     cmd?: string;
   }): Promise<unknown>;
   delete(name: string, options?: { force?: boolean }): Promise<void>;
@@ -49,7 +50,10 @@ const CreateSessionBodySchema = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/),
   cwd: safeCwdSchema().optional(),
   layout: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
+  profile: z.enum(["desktop", "mobile"]).optional(),
   cmd: z.string().min(1).max(4096).optional(),
+}).refine((value) => !(value.layout && value.profile), {
+  message: "layout and profile are mutually exclusive",
 });
 const SafeNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
 const SafeSessionNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/);

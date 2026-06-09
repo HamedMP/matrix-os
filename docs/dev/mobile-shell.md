@@ -33,11 +33,12 @@ bun run test tests/shell/terminal-app-component.test.tsx
 Manual terminal checks on a phone:
 
 1. Open Terminal from Apps.
-2. Create a new session and confirm the current folder is visible.
-3. Run `pwd`.
-4. Use Tab, Escape, arrows, Control, paste, and font size controls.
-5. Leave and reopen Terminal, then continue the running session.
-6. End the session and confirm the resume card disappears or shows the safe recovery message.
+2. Create a new mobile Zellij session and confirm it opens with one borderless primary pane plus the compact Zellij bar.
+3. Confirm the mobile action strip does not show pane splitting as a primary action.
+4. Run `pwd`.
+5. Use Tab, Escape, arrows, Control, paste, and font size controls.
+6. Leave and reopen Terminal, then continue the running session.
+7. End the session and confirm the resume card disappears or shows the safe recovery message.
 
 ## Full Mobile Readiness Gates
 

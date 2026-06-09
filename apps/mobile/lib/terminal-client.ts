@@ -22,6 +22,7 @@ export type TerminalServerFrame =
 
 export interface MobileTerminalConnectOptions {
   sessionId?: string;
+  namedShellSession?: string;
   cwd?: string;
   cols?: number;
   rows?: number;
@@ -44,10 +45,26 @@ export class MobileTerminalClient {
   async connect(options: MobileTerminalConnectOptions): Promise<MobileTerminalConnection | null> {
     const token = await this.gateway.getWsToken();
     this.gateway.setWebSocketToken(token);
-    const ws = this.gateway.openTerminalWebSocket(token);
+    const ws = options.namedShellSession
+      ? this.gateway.openTerminalSessionWebSocket(options.namedShellSession, token)
+      : this.gateway.openTerminalWebSocket(token);
     const connection = new MobileTerminalConnection(ws, options);
     connection.attach();
     return connection;
+  }
+
+  async createMobileZellijSession(options: MobileTerminalConnectOptions & { name: string }): Promise<MobileTerminalConnection | null> {
+    const session = await this.gateway.createMobileTerminalSession({
+      name: options.name,
+      cwd: options.cwd,
+    });
+    if (!session) return null;
+    return this.connect({
+      ...options,
+      sessionId: session,
+      namedShellSession: session,
+      cwd: undefined,
+    });
   }
 }
 
@@ -73,7 +90,9 @@ export class MobileTerminalConnection {
     this.ws.onopen = () => {
       this.attached = true;
       this.options.onStatus?.("open");
-      this.sendFrame(this.attachFrame);
+      if (!this.options.namedShellSession) {
+        this.sendFrame(this.attachFrame);
+      }
       if (this.options.cols && this.options.rows) {
         this.resize(this.options.cols, this.options.rows);
       }
@@ -142,8 +161,19 @@ function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
     const frame = JSON.parse(data) as TerminalServerFrame;
     if (!frame || typeof frame !== "object" || typeof frame.type !== "string") return null;
     if (frame.type === "attached" && typeof frame.sessionId === "string") return frame;
+    if (frame.type === "attached" && typeof (frame as { session?: unknown }).session === "string") {
+      return { type: "attached", sessionId: (frame as { session: string }).session };
+    }
     if (frame.type === "output" && typeof frame.data === "string") return frame;
-    if (frame.type === "replay-start" || frame.type === "replay-end" || frame.type === "exit") return frame;
+    if (frame.type === "replay-start" || frame.type === "replay-end") return frame;
+    if (frame.type === "exit") {
+      const exitCode = typeof (frame as { exitCode?: unknown }).exitCode === "number"
+        ? (frame as { exitCode: number }).exitCode
+        : typeof (frame as { code?: unknown }).code === "number"
+          ? (frame as { code: number }).code
+          : null;
+      return { type: "exit", exitCode };
+    }
     if (frame.type === "error") return { type: "error", message: typeof frame.message === "string" ? frame.message : undefined };
     return null;
   } catch {

@@ -297,6 +297,39 @@ describe("zellij adapter", () => {
     });
   });
 
+  it("creates mobile profile sessions with a borderless compact layout", async () => {
+    const pty = ptyProcess();
+    let layoutPath: string | undefined;
+    let layoutText = "";
+    const spawnPty = vi.fn((_command, args) => {
+      layoutPath = String(args[3]);
+      layoutText = readFileSync(layoutPath, "utf8");
+      return pty;
+    });
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 1 });
+
+    await adapter.createSession({
+      name: "mobile-main",
+      cwd: "/home/alice/projects",
+      profile: "mobile",
+    });
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      "zellij",
+      [
+        "--session",
+        "mobile-main",
+        "--new-session-with-layout",
+        expect.stringMatching(/matrix-zellij-layout-/),
+      ],
+      expect.objectContaining({ cwd: "/home/alice/projects" }),
+    );
+    expect(layoutText).toContain('plugin location="zellij:compact-bar"');
+    expect(layoutText).toContain('pane cwd="/home/alice/projects" borderless=true');
+    expect(layoutText).not.toContain("pane_frames");
+    expect(layoutPath).toEqual(expect.any(String));
+  });
+
   it("rejects session creation when the retained PTY exits during startup", async () => {
     const pty = ptyProcess();
     const spawnPty = vi.fn(() => {
