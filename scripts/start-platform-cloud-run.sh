@@ -2,6 +2,7 @@
 set -eu
 
 auth_shell_port="${AUTH_SHELL_PORT:-3200}"
+auth_shell_ready_path="${AUTH_SHELL_READY_PATH:-/}"
 auth_shell_ready_timeout_sec="${AUTH_SHELL_READY_TIMEOUT_SEC:-60}"
 auth_shell_pid=""
 platform_pid=""
@@ -25,8 +26,12 @@ trap 'shutdown; exit 143' INT TERM
 
 wait_for_auth_shell() {
   deadline="$(( $(date +%s) + auth_shell_ready_timeout_sec ))"
+  case "$auth_shell_ready_path" in
+    /*) ;;
+    *) auth_shell_ready_path="/$auth_shell_ready_path" ;;
+  esac
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:$auth_shell_port/sign-in" >/dev/null 2>&1; then
+    if curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:$auth_shell_port$auth_shell_ready_path" >/dev/null 2>&1; then
       echo "Auth shell is ready"
       return 0
     fi

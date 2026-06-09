@@ -8,8 +8,11 @@ describe('start-platform-cloud-run.sh', () => {
     const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
 
     expect(script).toContain('AUTH_SHELL_READY_TIMEOUT_SEC');
+    expect(script).toContain('AUTH_SHELL_READY_PATH:-/');
     expect(script).toContain('curl --fail --silent --show-error --max-time 2');
-    expect(script).toContain('http://127.0.0.1:$auth_shell_port/sign-in');
+    expect(script).toContain('http://127.0.0.1:$auth_shell_port$auth_shell_ready_path');
+    expect(script).not.toContain('http://127.0.0.1:$auth_shell_port/sign-in');
+    expect(script).toContain('*) auth_shell_ready_path="/$auth_shell_ready_path" ;;');
 
     const authStartIndex = script.indexOf('node node_modules/next/dist/bin/next start shell');
     const readinessIndex = script.indexOf('if ! wait_for_auth_shell; then');
