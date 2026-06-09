@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/platform-cloud-run.yml"
       - "packages/platform/**"
       - "packages/observability/**"
       - "packages/clerk-sync/**"
@@ -289,7 +290,27 @@ jobs:
             exit 1
           fi
           curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health" >/dev/null
-          auth_shell_html="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/sign-in")"
+          # /sign-in is only served as the pre-VPS auth shell on app-domain hosts.
+          # The raw candidate tag URL is not an app-domain host, so simulate the
+          # edge router with x-forwarded-host + x-matrix-edge-secret instead of
+          # broadening MATRIX_APP_DOMAIN_HOSTS to Cloud Run tag URLs.
+          edge_router_secret="$(gcloud secrets versions access latest \
+            --secret edge-router-secret \
+            --project "$GCP_PROJECT_ID" | tr -d '\r\n')"
+          if [ -z "$edge_router_secret" ]; then
+            echo "Could not read edge-router-secret for the app-domain smoke request." >&2
+            exit 1
+          fi
+          echo "::add-mask::$edge_router_secret"
+          app_domain_host="$(printf '%s' "${MATRIX_APP_DOMAIN_HOSTS%%,*}" | tr -d '[:space:]')"
+          if [ -z "$app_domain_host" ]; then
+            echo "MATRIX_APP_DOMAIN_HOSTS did not yield an app-domain host for the smoke request." >&2
+            exit 1
+          fi
+          auth_shell_html="$(curl --fail --silent --show-error --max-time 10 \
+            --header "x-forwarded-host: ${app_domain_host}" \
+            --header "x-matrix-edge-secret: ${edge_router_secret}" \
+            "$CANDIDATE_URL/sign-in")"
           if ! printf '%s\n' "$auth_shell_html" | grep -Fq "fetch('/billing/checkout'"; then
             echo "Candidate pre-VPS auth shell does not expose the billing checkout handoff." >&2
             exit 1
