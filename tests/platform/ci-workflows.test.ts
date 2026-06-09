@@ -89,6 +89,24 @@ describe('CI workflows', () => {
     expect(workflow).toContain('Checkout unavailable');
   });
 
+  it('smokes /sign-in through trusted edge-router headers instead of the raw candidate host', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('--secret edge-router-secret');
+    expect(workflow).toContain('echo "::add-mask::$edge_router_secret"');
+    expect(workflow).toContain('--header "x-forwarded-host: ${app_domain_host}"');
+    expect(workflow).toContain('--header "x-matrix-edge-secret: ${edge_router_secret}"');
+    expect(workflow).not.toContain('--max-time 10 "$CANDIDATE_URL/sign-in"');
+  });
+
+  it('redeploys the platform when the Cloud Run workflow itself changes', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('- ".github/workflows/platform-cloud-run.yml"');
+  });
+
   it('verifies platform Cloud Run promotion sends all traffic to the candidate revision', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
