@@ -862,6 +862,64 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(url.queryValue("cwd"), "projects/matrix-os")
     }
 
+    func testCreateTaskProvisionsLinkedTerminalSessionBeforeTask() async throws {
+        let principal = PrincipalProvider(store: MemoryTokenStore())
+        try await principal.setToken("token")
+        AppTestURLProtocol.setHandler { req in
+            switch (req.httpMethod, req.url?.path) {
+            case ("POST", "/api/terminal/sessions"):
+                let body = try XCTUnwrap(req.jsonBodyDictionary())
+                XCTAssertEqual(body["cwd"] as? String, "projects/matrix-os")
+                XCTAssertTrue((body["name"] as? String)?.hasPrefix("shell-") ?? false)
+                let json = #"{"name":"task-linked-session"}"#
+                return (appTestHTTPResponse(req.url!, 200), Data(json.utf8))
+            case ("POST", "/api/projects/matrix-os/tasks"):
+                let body = try XCTUnwrap(req.jsonBodyDictionary())
+                XCTAssertEqual(body["title"] as? String, "New task")
+                XCTAssertEqual(body["status"] as? String, "todo")
+                XCTAssertEqual(body["linkedSessionId"] as? String, "task-linked-session")
+                let json = """
+                {
+                  "task": {
+                    "id": "task_1",
+                    "projectSlug": "matrix-os",
+                    "title": "New task",
+                    "status": "todo",
+                    "priority": "normal",
+                    "order": 1,
+                    "linkedSessionId": "task-linked-session",
+                    "updatedAt": "2026-06-09T10:00:00.000Z"
+                  }
+                }
+                """
+                return (appTestHTTPResponse(req.url!, 200), Data(json.utf8))
+            default:
+                return (appTestHTTPResponse(req.url!, 200), Data(#"{"tasks":[]}"#.utf8))
+            }
+        }
+        let model = AppModel(
+            principal: principal,
+            projectSlug: "matrix-os",
+            profile: ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com"),
+            makeClient: { url, provider in
+                GatewayHTTPClient(baseURL: url, tokenProvider: provider, sessionConfiguration: .appTestMocked())
+            },
+            makeLoader: { _ in EmptyBoardLoader() },
+            makeTerminal: { _, _, _, name in TerminalSession(displayName: name, client: IdleShellEventSource()) },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.createTask()
+        await eventuallyAsync {
+            model.selectedCard?.linkedSessionId == "task-linked-session"
+        }
+
+        XCTAssertEqual(model.selectedCard?.id, "task_1")
+        XCTAssertEqual(model.activePanel, .terminal)
+        XCTAssertTrue(model.openTabs.contains(where: { $0.card?.linkedSessionId == "task-linked-session" }))
+    }
+
     func testFocusTabByIndexUsesGlobalTabOrder() async throws {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         try await principal.setToken("token")
@@ -1347,5 +1405,32 @@ private extension URLSessionConfiguration {
 
 private func appTestHTTPResponse(_ url: URL, _ status: Int) -> HTTPURLResponse {
     HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+}
+
+private extension URLRequest {
+    func jsonBodyDictionary() throws -> [String: Any] {
+        let data: Data?
+        if let httpBody {
+            data = httpBody
+        } else if let httpBodyStream {
+            httpBodyStream.open()
+            defer { httpBodyStream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            var chunks = Data()
+            while httpBodyStream.hasBytesAvailable {
+                let count = httpBodyStream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                chunks.append(buffer, count: count)
+            }
+            data = chunks
+        } else {
+            data = nil
+        }
+        guard let data, !data.isEmpty else {
+            return [:]
+        }
+        let value = try JSONSerialization.jsonObject(with: data, options: [])
+        return value as? [String: Any] ?? [:]
+    }
 }
 #endif

@@ -1330,14 +1330,24 @@ public final class AppModel: ObservableObject {
             guard let self, let client = self.gatewayClient() else { return }
             guard await self.resolveProjectIfNeeded() else { return }
             let slug = self.projectSlug
-            struct CreateTaskRequest: Encodable { let title: String; let status: String }
+            struct CreateTaskRequest: Encodable {
+                let title: String
+                let status: String
+                let linkedSessionId: String?
+            }
             struct CreateTaskResponse: Decodable {
                 let task: GatewayTaskDTO?
             }
             do {
+                let sessionName = self.generatedShellSessionName()
+                let linkedSessionId = try await self.createTerminalSession(
+                    client: client,
+                    name: sessionName,
+                    cwd: self.terminalCwd(forProjectSlug: slug)
+                )
                 let response: CreateTaskResponse = try await client.post(
                     "/api/projects/\(slug)/tasks",
-                    body: CreateTaskRequest(title: "New task", status: status.rawValue)
+                    body: CreateTaskRequest(title: "New task", status: status.rawValue, linkedSessionId: linkedSessionId)
                 )
                 if let task = response.task {
                     let card = task.toCard()
@@ -2127,20 +2137,9 @@ public final class AppModel: ObservableObject {
         let name = generatedShellSessionName()
         Task { [weak self] in
             defer { Task { @MainActor in self?.isCreatingWorkItem = false } }
-            struct CreateSessionRequest: Encodable {
-                let name: String
-                let cwd: String?
-            }
-            struct CreateSessionResponse: Decodable {
-                let name: String?
-            }
             do {
-                let response: CreateSessionResponse = try await client.post(
-                    "/api/terminal/sessions",
-                    body: CreateSessionRequest(name: name, cwd: nil)
-                )
+                let requestedName = try await self?.createTerminalSession(client: client, name: name, cwd: nil) ?? name
                 await self?.loadSessions()
-                let requestedName = response.name ?? name
                 if self?.sessions.contains(where: { $0.name == requestedName }) == true {
                     await MainActor.run { self?.openSession(named: requestedName) }
                 } else if let created = self?.sessions.first(where: { !existingSessionNames.contains($0.name) }) {
@@ -2150,6 +2149,27 @@ public final class AppModel: ObservableObject {
                 await MainActor.run { self?.openError = .createSessionFailed }
             }
         }
+    }
+
+    private struct CreateTerminalSessionRequest: Encodable {
+        let name: String
+        let cwd: String?
+    }
+
+    private struct CreateTerminalSessionResponse: Decodable {
+        let name: String?
+    }
+
+    private func createTerminalSession(
+        client: GatewayHTTPClient,
+        name: String,
+        cwd: String?
+    ) async throws -> String {
+        let response: CreateTerminalSessionResponse = try await client.post(
+            "/api/terminal/sessions",
+            body: CreateTerminalSessionRequest(name: name, cwd: cwd)
+        )
+        return response.name ?? name
     }
 
     private func generatedShellSessionName() -> String {

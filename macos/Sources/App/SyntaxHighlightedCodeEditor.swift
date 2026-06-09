@@ -189,6 +189,7 @@ struct SyntaxHighlightedCodeEditor: View {
             isEditable: isEditable,
             isSelectable: true,
             letterSpacing: 1.0,
+            coordinators: [InitialHighlightRefreshCoordinator()],
             showMinimap: false
         )
         .id(Self.editorIdentity(for: filePath, text: text))
@@ -219,6 +220,19 @@ struct SyntaxHighlightedCodeEditor: View {
     private static func editorIdentity(for filePath: String?, text: String) -> String {
         let language = codeLanguage(for: filePath, text: text)
         return "\(filePath ?? "untitled"):\(language.id.rawValue)"
+    }
+}
+
+private final class InitialHighlightRefreshCoordinator: TextViewCoordinator {
+    func prepareCoordinator(controller: TextViewController) {
+        Task { @MainActor [weak controller] in
+            guard let controller else { return }
+            let language = controller.language
+            controller.language = language
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            controller.language = language
+        }
     }
 }
 #endif

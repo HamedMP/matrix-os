@@ -56,6 +56,8 @@ final class EditorEngineTests: XCTestCase {
         XCTAssertEqual(SyntaxHighlightedCodeEditor.languageName(for: "package.json"), "json")
         XCTAssertEqual(SyntaxHighlightedCodeEditor.languageName(for: "Sources/App.swift"), "swift")
         XCTAssertEqual(SyntaxHighlightedCodeEditor.languageName(for: "home/templates/sqlite-client.js"), "javascript")
+        XCTAssertEqual(SyntaxHighlightedCodeEditor.languageName(for: "shell/eslint.config.mjs"), "javascript")
+        XCTAssertEqual(SyntaxHighlightedCodeEditor.languageName(for: "scripts/build.cjs"), "javascript")
         XCTAssertEqual(SyntaxHighlightedCodeEditor.languageName(for: "shell/src/app/page.tsx"), "typescript")
         XCTAssertEqual(SyntaxHighlightedCodeEditor.languageName(for: "README.md"), "markdown")
         XCTAssertEqual(SyntaxHighlightedCodeEditor.languageName(for: "docker-compose.yml"), "yaml")
