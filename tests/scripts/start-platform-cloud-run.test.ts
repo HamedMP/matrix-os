@@ -8,7 +8,7 @@ describe('start-platform-cloud-run.sh', () => {
     const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
 
     expect(script).toContain('AUTH_SHELL_READY_TIMEOUT_SEC');
-    expect(script).toContain('AUTH_SHELL_READY_PATH:-/icon.png');
+    expect(script).toContain('AUTH_SHELL_READY_PATH:-/icon-192.png');
     expect(script).toContain('curl --fail --silent --show-error --max-time 2');
     expect(script).toContain('http://127.0.0.1:$auth_shell_port$auth_shell_ready_path');
     expect(script).not.toContain('http://127.0.0.1:$auth_shell_port/sign-in');
