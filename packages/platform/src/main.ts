@@ -561,7 +561,7 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
   try {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
     const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
-    const path = /^\/sign-(?:in|up)\/?$/.test(normalizedPath) ? '/' : normalizedPath;
+    const path = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath) ? '/' : normalizedPath;
     const runtime = url.searchParams.get('runtime');
     if (runtime && RuntimeSlotSchema.safeParse(runtime).success) {
       return `${path}?runtime=${encodeURIComponent(runtime)}`;
