@@ -26,4 +26,17 @@ describe('platform integration config', () => {
       PIPEDREAM_PROJECT_ID: 'project-id',
     }, 'postgres://db.example.com/matrixos_platform')).toBeNull();
   });
+
+  it('defaults optional Pipedream settings when Cloud Run does not provide them', () => {
+    const config = resolvePlatformIntegrationConfig({
+      PIPEDREAM_CLIENT_ID: 'client-id',
+      PIPEDREAM_CLIENT_SECRET: 'client-secret',
+      PIPEDREAM_PROJECT_ID: 'project-id',
+    }, 'postgres://db.example.com/matrixos_platform');
+
+    expect(config).toMatchObject({
+      pipedreamEnvironment: 'production',
+      pipedreamWebhookSecret: '',
+    });
+  });
 });
