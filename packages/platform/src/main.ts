@@ -2636,7 +2636,7 @@ function getAuthPage(
             return null;
           }
           if (res.status === 402) {
-            showBillingRequiredState();
+            openBillingSettingsFromClerkSession();
             return null;
           }
           showSignedInRecoveryState();
@@ -2660,9 +2660,23 @@ function getAuthPage(
         var el = document.getElementById('auth');
         el.innerHTML = '';
         if ('${mode}' === 'sign-up') {
-          window.Clerk.mountSignUp(el, { signInUrl: '/sign-in', fallbackRedirectUrl: redirectTarget, appearance: appearance });
+          window.Clerk.mountSignUp(el, {
+            signInUrl: '/sign-in',
+            forceRedirectUrl: redirectTarget,
+            fallbackRedirectUrl: redirectTarget,
+            signUpForceRedirectUrl: redirectTarget,
+            signUpFallbackRedirectUrl: redirectTarget,
+            appearance: appearance
+          });
         } else {
-          window.Clerk.mountSignIn(el, { signUpUrl: '/sign-up', fallbackRedirectUrl: redirectTarget, appearance: appearance });
+          window.Clerk.mountSignIn(el, {
+            signUpUrl: '/sign-up',
+            forceRedirectUrl: redirectTarget,
+            fallbackRedirectUrl: redirectTarget,
+            signInForceRedirectUrl: redirectTarget,
+            signInFallbackRedirectUrl: redirectTarget,
+            appearance: appearance
+          });
         }
       });
     }

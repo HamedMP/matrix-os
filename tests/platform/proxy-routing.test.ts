@@ -1219,11 +1219,16 @@ describe("platform proxy routing", () => {
     expect(res.headers.get("set-cookie") ?? "").not.toContain("matrix_runtime_slot=");
     const html = await res.text();
     expect(html).toContain('fallbackRedirectUrl: redirectTarget');
+    expect(html).toContain('forceRedirectUrl: redirectTarget');
+    expect(html).toContain('signInForceRedirectUrl: redirectTarget');
+    expect(html).toContain('signUpForceRedirectUrl: redirectTarget');
     expect(html).not.toContain('afterSignInUrl');
     expect(html).toContain('var redirectTarget = "/?runtime=staging";');
     expect(html).toContain('var signOutTarget = "/sign-in";');
     expect(html).toContain("continueWithClerkSession");
     expect(html).toContain("fetch('/api/auth/app-session'");
+    expect(html).toContain("if (res.status === 402) {");
+    expect(html).toContain("openBillingSettingsFromClerkSession();");
     expect(html).toContain("function clerkSignOutWithTimeout()");
     expect(html).toContain("var SIGN_OUT_TIMEOUT_MS = 10000;");
     expect(html).toContain("window.setTimeout(function() {");
@@ -2514,7 +2519,7 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("if (res.status === 402) {\n            showBillingRequiredState();");
+    expect(html).toContain("if (res.status === 402) {\n            openBillingSettingsFromClerkSession();");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
