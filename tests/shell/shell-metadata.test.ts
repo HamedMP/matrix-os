@@ -40,4 +40,31 @@ describe("shell metadata", () => {
     expect(metadata.title).toBe("Matrix OS — @alice");
     expect(metadata.description).toBe("Alice's AI operating system");
   });
+
+  it("falls back to generic metadata when the configured gateway returns a non-ok response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: vi.fn(),
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    const metadata = await buildShellMetadata("http://gateway.test");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(metadata.title).toBe("Matrix OS");
+    expect(metadata.description).toBe("Your AI operating system");
+  });
+
+  it("falls back to generic metadata when the configured gateway fetch fails", async () => {
+    const warnMock = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockRejectedValue(new Error("gateway timeout"));
+    global.fetch = fetchMock as typeof fetch;
+
+    const metadata = await buildShellMetadata("http://gateway.test");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(warnMock).toHaveBeenCalledWith("[shell] identity metadata unavailable:", "gateway timeout");
+    expect(metadata.title).toBe("Matrix OS");
+    expect(metadata.description).toBe("Your AI operating system");
+  });
 });

@@ -12,7 +12,7 @@ interface ShellAuthLayoutProps {
 
 export function ShellAuthLayout({ eyebrow, title, body, children }: ShellAuthLayoutProps) {
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#E0E1CA] text-[#323D2E]">
+    <main data-matrix-auth-shell="true" className="relative min-h-screen overflow-hidden bg-[#E0E1CA] text-[#323D2E]">
       <div
         className="pointer-events-none absolute inset-0"
         style={{

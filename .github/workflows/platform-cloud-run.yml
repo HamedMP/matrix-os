@@ -353,7 +353,7 @@ jobs:
             --header "x-forwarded-host: ${app_domain_host}" \
             --header "x-matrix-edge-secret: ${edge_router_secret}" \
             "$CANDIDATE_URL/sign-in")"
-          if ! printf '%s\n' "$auth_shell_html" | grep -Fq "Come back to your computer."; then
+          if ! printf '%s\n' "$auth_shell_html" | grep -Fq 'data-matrix-auth-shell="true"'; then
             echo "Candidate pre-VPS auth shell did not serve the Next sign-in surface." >&2
             exit 1
           fi

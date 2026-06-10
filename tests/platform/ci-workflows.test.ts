@@ -100,7 +100,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('$CANDIDATE_URL/sign-in');
     expect(workflow).toContain('$CANDIDATE_URL/?billing=setup');
     expect(workflow).toContain('pre-VPS auth shell');
-    expect(workflow).toContain('Come back to your computer.');
+    expect(workflow).toContain('data-matrix-auth-shell="true"');
     expect(workflow).toContain('Loading billing status');
     expect(workflow).toContain('Welcome back to Matrix');
     expect(workflow).toContain('served the platform fallback auth page');
