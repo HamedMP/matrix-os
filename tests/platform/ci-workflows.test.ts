@@ -55,6 +55,20 @@ describe('CI workflows', () => {
     }
   });
 
+  it('wires Pipedream integration secrets into platform Cloud Run', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('Verify Pipedream integration secrets');
+    expect(workflow).toContain('PIPEDREAM_CLIENT_ID=pipedream-client-id:latest');
+    expect(workflow).toContain('PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest');
+    expect(workflow).toContain('PIPEDREAM_PROJECT_ID=pipedream-project-id:latest');
+    expect(workflow).toContain('PIPEDREAM_ENVIRONMENT=pipedream-environment:latest');
+    expect(workflow).not.toContain('PIPEDREAM_WEBHOOK_SECRET=pipedream-webhook-secret:latest');
+    expect(workflow).toContain('required_pipedream_secrets=(');
+    expect(workflow).toContain('pipedream_secret_tmpfile="$(mktemp)"');
+  });
+
   it('preflights billing price secrets before deploying platform Cloud Run', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
