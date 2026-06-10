@@ -28,7 +28,10 @@ async function createFakeAttachGateway() {
   wss.on("connection", (ws) => {
     wsConnections += 1;
     ws.send(JSON.stringify({ type: "attached" }));
-    setTimeout(() => ws.close(), 10).unref?.();
+    setTimeout(() => {
+      ws.send(JSON.stringify({ type: "exit", code: 0 }));
+      ws.close();
+    }, 10).unref?.();
   });
 
   await new Promise<void>((resolve) => {
@@ -356,7 +359,7 @@ describe("shell CLI command", () => {
       expect(JSON.parse(result.stdout)).toEqual({
         v: 1,
         ok: true,
-        data: { detached: true },
+        data: { detached: false },
       });
       expect(result.stderr).toContain("\u001b[?1000l");
       expect(gateway.wsConnections).toBe(1);
@@ -457,9 +460,7 @@ describe("shell CLI command", () => {
         if (event === "message") {
           queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
           queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "REMOTE_BYTES" })));
-        }
-        if (event === "close") {
-          queueMicrotask(() => listener());
+          queueMicrotask(() => listener(JSON.stringify({ type: "exit", code: 0 })));
         }
         return this;
       }
@@ -488,7 +489,7 @@ describe("shell CLI command", () => {
 
     expect(OutputWebSocket.instances).toBe(1);
     expect(logs.map((line) => JSON.parse(line))).toEqual([
-      { v: 1, ok: true, data: { created: { name: "main", created: true }, detached: true } },
+      { v: 1, ok: true, data: { created: { name: "main", created: true }, detached: false } },
     ]);
     expect(stdoutWrites.join("")).not.toContain("REMOTE_BYTES");
     expect(stderrWrites.join("")).toContain("REMOTE_BYTES");
@@ -509,9 +510,7 @@ describe("shell CLI command", () => {
         if (event === "message") {
           queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
           queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "CONNECT_BYTES" })));
-        }
-        if (event === "close") {
-          queueMicrotask(() => listener());
+          queueMicrotask(() => listener(JSON.stringify({ type: "exit", code: 0 })));
         }
         return this;
       }
@@ -540,7 +539,7 @@ describe("shell CLI command", () => {
 
     expect(OutputWebSocket.instances).toBe(1);
     expect(logs.map((line) => JSON.parse(line))).toEqual([
-      { v: 1, ok: true, data: { detached: true } },
+      { v: 1, ok: true, data: { detached: false } },
     ]);
     expect(stdoutWrites.join("")).not.toContain("CONNECT_BYTES");
     expect(stderrWrites.join("")).toContain("CONNECT_BYTES");
@@ -573,9 +572,7 @@ describe("shell CLI command", () => {
         if (event === "message" && this.instance === 2) {
           queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
           queueMicrotask(() => listener(JSON.stringify({ type: "output", data: "CREATED_CONNECT_BYTES" })));
-        }
-        if (event === "close" && this.instance === 2) {
-          queueMicrotask(() => listener());
+          queueMicrotask(() => listener(JSON.stringify({ type: "exit", code: 0 })));
         }
         return this;
       }
@@ -608,7 +605,7 @@ describe("shell CLI command", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(logs.map((line) => JSON.parse(line))).toEqual([
-      { v: 1, ok: true, data: { created: { name: "main", created: true }, detached: true } },
+      { v: 1, ok: true, data: { created: { name: "main", created: true }, detached: false } },
     ]);
     expect(stdoutWrites.join("")).not.toContain("CREATED_CONNECT_BYTES");
     expect(stderrWrites.join("")).toContain("CREATED_CONNECT_BYTES");
