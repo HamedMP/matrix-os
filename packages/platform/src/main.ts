@@ -114,7 +114,7 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const PROXY_TIMEOUT_MS = 30_000;
-const AUTH_SHELL_PROXY_TIMEOUT_MS = 20_000;
+const AUTH_SHELL_PROXY_TIMEOUT_MS = 5_000;
 const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const CLERK_USER_LOOKUP_TIMEOUT_MS = 10_000;
@@ -660,6 +660,30 @@ function shouldProxyAuthShellForUnroutedUser(input: {
     !input.path.startsWith('/ws') &&
     input.path !== '/metrics'
   );
+}
+
+function buildBillingSetupPath(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl, 'https://app.matrix-os.com');
+    const deviceReturn = url.searchParams.get('device_return');
+    const target = new URL('/', url.origin);
+    target.searchParams.set('billing', 'setup');
+    if (deviceReturn) target.searchParams.set('device_return', deviceReturn);
+    return `${target.pathname}${target.search}`;
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to build billing setup URL:', err instanceof Error ? err.message : String(err));
+    return '/?billing=setup';
+  }
+}
+
+function isBillingSetupPath(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl, 'https://app.matrix-os.com');
+    return url.pathname === '/' && url.searchParams.get('billing') === 'setup';
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to parse billing setup URL:', err instanceof Error ? err.message : String(err));
+    return false;
+  }
 }
 
 function getAuthShellOrigin(env: NodeJS.ProcessEnv): string {
@@ -2343,24 +2367,66 @@ function getAuthPage(
       );
     }
     function showBillingRequiredState() {
-      if (deviceReturnTarget) {
-        renderSessionState(
-          'Billing setup required',
-          'Open Billing settings to choose a hosted runtime plan, then return here to approve this terminal.',
-          'Open Billing settings',
-          openBillingSettingsFromClerkSession
-        );
-        return;
+      showLoadingState('Opening Billing settings...');
+      openBillingSettingsFromClerkSession();
+    }
+    var billingSetupRetryStorageKey = 'matrix.billing.setupRetryCount';
+    var maxBillingSetupReloads = 3;
+    function readBillingSetupRetryCount() {
+      try {
+        var raw = window.sessionStorage.getItem(billingSetupRetryStorageKey);
+        var count = raw ? Number(raw) : 0;
+        return Number.isFinite(count) && count > 0 ? count : 0;
+      } catch (err) {
+        console.warn('[matrix] Unable to read billing setup retry state', err instanceof Error ? err.message : String(err));
+        return 0;
       }
+    }
+    function writeBillingSetupRetryCount(count) {
+      try {
+        window.sessionStorage.setItem(billingSetupRetryStorageKey, String(count));
+      } catch (err) {
+        console.warn('[matrix] Unable to write billing setup retry state', err instanceof Error ? err.message : String(err));
+      }
+    }
+    function clearBillingSetupRetryCount() {
+      try {
+        window.sessionStorage.removeItem(billingSetupRetryStorageKey);
+      } catch (err) {
+        console.warn('[matrix] Unable to clear billing setup retry state', err instanceof Error ? err.message : String(err));
+      }
+    }
+    function showBillingSetupRetryLimitState() {
       renderSessionState(
-        'Billing setup required',
-        'Open Billing settings to choose a hosted runtime plan. Stripe opens only after you continue from Billing.',
-        'Open Billing settings',
-        openBillingSettingsFromClerkSession
+        'Billing settings are still loading',
+        'Matrix is reconnecting the billing settings panel. Try again after a moment.',
+        'Try again',
+        function() {
+          clearBillingSetupRetryCount();
+          window.location.reload();
+        }
       );
     }
+    function billingSetupPath() {
+      var url = new URL('/', window.location.origin);
+      url.searchParams.set('billing', 'setup');
+      if (deviceReturnTarget) url.searchParams.set('device_return', deviceReturnTarget);
+      return url.pathname + url.search;
+    }
     function openBillingSettingsFromClerkSession() {
-      window.location.assign(redirectTarget);
+      var target = billingSetupPath();
+      if (window.location.pathname + window.location.search === target) {
+        var retryCount = readBillingSetupRetryCount();
+        if (retryCount >= maxBillingSetupReloads) {
+          showBillingSetupRetryLimitState();
+          return;
+        }
+        writeBillingSetupRetryCount(retryCount + 1);
+        window.setTimeout(function() { window.location.reload(); }, 2000 + retryCount * 1000);
+        return;
+      }
+      clearBillingSetupRetryCount();
+      window.location.replace(target);
     }
     function showCheckoutUnavailableState() {
       renderSessionState(
@@ -3312,7 +3378,18 @@ export function createApp(deps: {
       });
     } catch (err: unknown) {
       logPlatformRouteError('app-domain auth-shell proxy', err);
-      return c.text('Matrix OS shell unavailable', 502);
+      if (!isBillingSetupPath(c.req.url)) {
+        return c.redirect(buildBillingSetupPath(c.req.url), 302);
+      }
+      const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+      if (!publishableKey) {
+        return c.text('Matrix OS shell unavailable', 503);
+      }
+      applyNoStoreHeaders(c);
+      const scriptNonce = randomBytes(16).toString('base64');
+      applyAuthPageHeaders(c, scriptNonce);
+      const authMode = c.req.path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url)), 200);
     }
   }
 
