@@ -27,6 +27,60 @@ retry() {
   done
 }
 
+homebrew_shell_config() {
+  cat <<EOF
+# Homebrew on Linux
+if [ -n "\${PWD:-}" ] && [ ! -r "\${PWD}" ]; then
+  cd "\${HOME:-/home/matrix/home}" || true
+fi
+export HOMEBREW_PREFIX="$BREW_PREFIX"
+export HOMEBREW_CELLAR="$BREW_PREFIX/Cellar"
+export HOMEBREW_REPOSITORY="$BREW_PREFIX/Homebrew"
+case ":\${PATH:-}:" in
+  *:"$BREW_PREFIX/bin":*) ;;
+  *) export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin\${PATH:+:\$PATH}" ;;
+esac
+export INFOPATH="$BREW_PREFIX/share/info:\${INFOPATH:-}"
+EOF
+}
+
+install_user_shell_config() {
+  local path="$1"
+  local tmp
+  tmp="$(mktemp)"
+  if [ -f "$path" ]; then
+    awk '
+      /^# >>> matrix homebrew >>>$/ { skip = 1; next }
+      /^# <<< matrix homebrew <<<$/ { skip = 0; next }
+      skip { next }
+      { print }
+    ' "$path" > "$tmp"
+  fi
+  {
+    cat "$tmp"
+    printf '\n# >>> matrix homebrew >>>\n'
+    homebrew_shell_config
+    printf '# <<< matrix homebrew <<<\n'
+  } | sudo tee "$path" >/dev/null
+  rm -f "$tmp"
+  sudo chown matrix:matrix "$path"
+  sudo chmod 0644 "$path"
+}
+
+write_homebrew_shell_config() {
+  sudo install -d -o root -g root -m 0755 /etc/profile.d
+  homebrew_shell_config | sudo tee /etc/profile.d/homebrew.sh >/dev/null
+  sudo chmod 0644 /etc/profile.d/homebrew.sh
+
+  sudo install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/home
+  for shell_config in /home/matrix/.profile /home/matrix/.bashrc /home/matrix/home/.profile /home/matrix/home/.bashrc; do
+    if [ ! -e "$shell_config" ]; then
+      sudo install -o matrix -g matrix -m 0644 /dev/null "$shell_config"
+    fi
+    install_user_shell_config "$shell_config"
+  done
+}
+
 if [ "$(id -u)" = "0" ]; then
   echo "matrix-install-linux-tools: run as the matrix user, not root" >&2
   exit 1
@@ -47,38 +101,24 @@ if [ ! -x "$BREW_BIN" ]; then
   trap - EXIT
 fi
 
-eval "$("$BREW_BIN" shellenv bash)"
-
-if ! "$BREW_BIN" list --versions graphite >/dev/null 2>&1; then
-  retry 3 30 timeout 600 "$BREW_BIN" install withgraphite/tap/graphite
-fi
+export HOMEBREW_PREFIX="$BREW_PREFIX"
+export HOMEBREW_CELLAR="$BREW_PREFIX/Cellar"
+export HOMEBREW_REPOSITORY="$BREW_PREFIX/Homebrew"
+export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
+export INFOPATH="$BREW_PREFIX/share/info:${INFOPATH:-}"
 
 if ! "$BREW_BIN" list --versions gh >/dev/null 2>&1; then
   retry 3 30 timeout 600 "$BREW_BIN" install gh
 fi
 
-sudo install -d -o root -g root -m 0755 /etc/profile.d
-printf '%s\n' \
-  '# Homebrew on Linux' \
-  'if [ -n "${PWD:-}" ] && [ ! -r "${PWD}" ]; then' \
-  '  cd "${HOME:-/home/matrix/home}" || true' \
-  'fi' \
-  "eval \"\$(${BREW_BIN} shellenv bash)\"" \
-  | sudo tee /etc/profile.d/homebrew.sh >/dev/null
-sudo chmod 0644 /etc/profile.d/homebrew.sh
+write_homebrew_shell_config
 
 sudo ln -sf "$BREW_BIN" /usr/local/bin/brew
-if [ -x "$BREW_PREFIX/bin/gt" ]; then
-  sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt
-fi
 if [ -x "$BREW_PREFIX/bin/gh" ]; then
   sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh
 fi
 
 "$BREW_BIN" --version
-if [ -x "$BREW_PREFIX/bin/gt" ]; then
-  "$BREW_PREFIX/bin/gt" --version
-fi
 if [ -x "$BREW_PREFIX/bin/gh" ]; then
   "$BREW_PREFIX/bin/gh" --version
 fi
