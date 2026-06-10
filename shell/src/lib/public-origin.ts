@@ -43,8 +43,7 @@ export function getPublicOrigin(
     request.nextUrl.host;
   const proto =
     request.headers.get("x-forwarded-proto") ??
-    request.nextUrl.protocol.replace(":", "") ??
-    "https";
+    request.nextUrl.protocol.replace(":", "");
 
   return `${proto}://${host}`;
 }
