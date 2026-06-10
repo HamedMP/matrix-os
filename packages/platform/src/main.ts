@@ -5342,9 +5342,9 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       { createPipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
     ] = await Promise.all([
-      importRuntimeModule<GatewayIntegrationRoutesModule>('../../gateway/src/integrations/routes.js'),
-      importRuntimeModule<GatewayPipedreamModule>('../../gateway/src/integrations/pipedream.js'),
-      importRuntimeModule<GatewayPlatformDbModule>('../../gateway/src/platform-db.js'),
+      importRuntimeModule<GatewayIntegrationRoutesModule>('../../gateway/dist/integrations/routes.js'),
+      importRuntimeModule<GatewayPipedreamModule>('../../gateway/dist/integrations/pipedream.js'),
+      importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
     ]);
 
     const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
