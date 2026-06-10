@@ -20,7 +20,7 @@ jobs:
   changes:
     name: Detect Docker-relevant changes
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     outputs:
       should_run: ${{ steps.changed.outputs.should_run }}
     steps:

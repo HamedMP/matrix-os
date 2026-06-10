@@ -2610,6 +2610,111 @@ describe("platform proxy routing", () => {
     delete process.env.AUTH_SHELL_PORT;
   });
 
+  it("serves anonymous app-domain sign-in from auth-shell before a VPS exists", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response('<main data-matrix-auth-shell="true">sign in</main>', {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/sign-in", {
+      headers: {
+        host: "app.matrix-os.com",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('data-matrix-auth-shell="true"');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://auth-shell.test:3200/sign-in");
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        method: "GET",
+        redirect: "manual",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    const proxiedHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers | undefined;
+    expect(proxiedHeaders?.get("host")).toBe("auth-shell.test:3200");
+    expect(proxiedHeaders?.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(proxiedHeaders?.get("x-forwarded-proto")).toBe("http");
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
+    delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  });
+
+  it("falls back to the inline auth page when anonymous auth-shell sign-in fails", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/sign-in", {
+      headers: {
+        host: "app.matrix-os.com",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+    const html = await res.text();
+    expect(fetchMock).toHaveBeenCalled();
+    expect(html).toContain('data-matrix-platform-fallback-auth="true"');
+    expect(html).toContain("Welcome back to Matrix");
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
+    delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  });
+
+  it("keeps anonymous app-domain file requests on the gateway 401 path", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("auth shell", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth(),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/files/system/config.json", {
+      headers: {
+        host: "app.matrix-os.com",
+      },
+    });
+
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
+  });
+
   it("redirects to automatic billing setup when the no-VPS auth-shell proxy times out", async () => {
     process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
     process.env.AUTH_SHELL_HOST = "auth-shell.test";

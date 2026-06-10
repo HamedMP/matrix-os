@@ -1919,7 +1919,11 @@ export function createApp(deps: {
   }
   app.capturePlatformEvent = capturePlatformEvent;
 
-  async function proxyAuthShell(c: Context, host: string): Promise<Response> {
+  async function proxyAuthShell(
+    c: Context,
+    host: string,
+    opts: { redirectToBillingOnFailure?: boolean } = {},
+  ): Promise<Response> {
     const upstream = new URL(c.req.url);
     const targetUrl = `${getAuthShellOrigin(appEnv)}${upstream.pathname}${upstream.search}`;
     const headers = new Headers();
@@ -1950,7 +1954,7 @@ export function createApp(deps: {
       });
     } catch (err: unknown) {
       logPlatformRouteError('app-domain auth-shell proxy', err);
-      if (!isBillingSetupPath(c.req.url)) {
+      if (opts.redirectToBillingOnFailure !== false && !isBillingSetupPath(c.req.url)) {
         return c.redirect(buildBillingSetupPath(c.req.url), 302);
       }
       const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -2770,6 +2774,9 @@ export function createApp(deps: {
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
+      if (isAppDomain && allowAuthShellUnroutedIdentity) {
+        return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+      }
       if (isCodeDomain && isCodeDomainStaticAssetPath(path)) {
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
