@@ -840,7 +840,7 @@ export function BillingPanel({
       <section className="grid gap-4 rounded-[22px] border border-forest/15 bg-[#fbf7ed] p-3 sm:p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
-            {mode === "settings" ? "Billing" : "Provisioning"}
+            {mode === "provisioning" ? "Provisioning" : "Billing"}
           </p>
           <h3 className="mt-2 max-w-3xl text-xl font-semibold tracking-tight text-deep sm:text-2xl lg:text-3xl">
             {mode === "device-setup"
