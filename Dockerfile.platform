@@ -7,14 +7,18 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY packages/clerk-sync/package.json packages/clerk-sync/package.json
+COPY packages/gateway/package.json packages/gateway/package.json
+COPY packages/kernel/package.json packages/kernel/package.json
+COPY packages/mcp-browser/package.json packages/mcp-browser/package.json
 COPY packages/observability/package.json packages/observability/package.json
 COPY packages/platform/package.json packages/platform/package.json
+COPY packages/sync-client/package.json packages/sync-client/package.json
 COPY shell/package.json shell/package.json
 COPY scripts/fix-node-pty-perms.mjs scripts/fix-node-pty-perms.mjs
 
 FROM base AS deps
 
-RUN pnpm install --frozen-lockfile --ignore-scripts --filter '@matrix-os/platform...' --filter './shell...'
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter '@matrix-os/platform...' --filter '@matrix-os/gateway...' --filter './shell...'
 
 FROM deps AS builder
 
@@ -32,12 +36,13 @@ ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 ENV NEXT_PUBLIC_POSTHOG_API_HOST=$NEXT_PUBLIC_POSTHOG_API_HOST
 ENV NEXT_PUBLIC_MATRIX_APP_URL=$NEXT_PUBLIC_MATRIX_APP_URL
 RUN pnpm --filter '@matrix-os/observability' build
+RUN pnpm --filter '@matrix-os/gateway' build
 RUN pnpm --filter '@matrix-os/platform' build
 RUN pnpm --dir shell exec next build --webpack
 
 FROM base AS prod-deps
 
-RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter '@matrix-os/platform...' --filter './shell...'
+RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter '@matrix-os/platform...' --filter '@matrix-os/gateway...' --filter './shell...'
 
 FROM node:24-alpine AS runtime
 
@@ -50,10 +55,12 @@ RUN adduser -D -u 1001 -h /home/matrix-platform -s /sbin/nologin matrix-platform
 
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/package.json ./packages/clerk-sync/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/gateway/package.json ./packages/gateway/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/observability/package.json ./packages/observability/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/platform/package.json ./packages/platform/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/src ./packages/clerk-sync/src
+COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/gateway/dist ./packages/gateway/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/observability/dist ./packages/observability/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/platform/dist ./packages/platform/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/shell ./shell
