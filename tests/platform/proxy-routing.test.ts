@@ -2470,7 +2470,9 @@ describe("platform proxy routing", () => {
     expect(html).toContain("if (provisionStarted)");
     expect(html).toContain("maxBillingConfirmationPolls");
     expect(html).toContain("provisioningPolls = 0;");
-    expect(html).toContain("Billing required");
+    expect(html).toContain("Billing setup required");
+    expect(html).toContain("Open Billing settings");
+    expect(html).toContain("Stripe opens only after you continue from Billing.");
     expect(html).toContain("fetch('/billing/checkout'");
     expect(html).toContain("planSlug: 'matrix_builder'");
     expect(html).toContain("Checkout unavailable");
@@ -2489,7 +2491,7 @@ describe("platform proxy routing", () => {
     expect(html).not.toContain("You are already signed in");
   });
 
-  it("shows checkout instead of the no-runtime provision CTA when app-session billing is required", async () => {
+  it("opens billing settings instead of direct checkout when app-session billing is required", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
     const app = createApp({
       db,
@@ -2507,6 +2509,10 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("if (res.status === 402) {\n            showBillingRequiredState();");
+    expect(html).toContain("Billing setup required");
+    expect(html).toContain("Open Billing settings");
+    expect(html).toContain("openBillingSettingsFromClerkSession");
+    expect(html).not.toContain("'Start checkout',\n        startBillingCheckoutFromClerkSession");
   });
 
   it("returns billing_required for signed-in app-session exchange before a Stripe entitlement exists", async () => {
@@ -2621,10 +2627,52 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain('var redirectTarget = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";');
     expect(html).toContain('var deviceReturnTarget = "/auth/device?user_code=BCDF-GHJK";');
-    expect(html).toContain("if (deviceReturnTarget) checkoutBody.returnPath = redirectTarget;");
+    expect(html).toContain("function openBillingSettingsFromClerkSession()");
+    expect(html).toContain("Billing setup required");
+    expect(html).toContain("Open Billing settings");
     expect(html).toContain("window.location.replace(deviceReturnTarget || payload.redirectTo || redirectTarget);");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
-    expect(html).toContain("Billing required");
+    expect(html).not.toBe("auth shell");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy no-container app-domain billing users on the settings handoff", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "true";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    await deleteContainer(db, "alice");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("auth shell", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "__session=clerk-new",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('var redirectTarget = "/";');
+    expect(html).toContain('var deviceReturnTarget = "";');
+    expect(html).toContain("function openBillingSettingsFromClerkSession()");
+    expect(html).toContain("Billing setup required");
+    expect(html).toContain("Open Billing settings");
+    expect(html).toContain("Stripe opens only after you continue from Billing.");
+    expect(html).not.toContain("'Start checkout',\n        startBillingCheckoutFromClerkSession");
     expect(html).not.toBe("auth shell");
     expect(fetchMock).not.toHaveBeenCalled();
   });

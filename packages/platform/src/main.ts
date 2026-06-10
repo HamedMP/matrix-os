@@ -2343,12 +2343,24 @@ function getAuthPage(
       );
     }
     function showBillingRequiredState() {
+      if (deviceReturnTarget) {
+        renderSessionState(
+          'Billing setup required',
+          'Open Billing settings to choose a hosted runtime plan, then return here to approve this terminal.',
+          'Open Billing settings',
+          openBillingSettingsFromClerkSession
+        );
+        return;
+      }
       renderSessionState(
-        'Billing required',
-        'Start hosted billing before Matrix provisions your cloud computer.',
-        'Start checkout',
-        startBillingCheckoutFromClerkSession
+        'Billing setup required',
+        'Open Billing settings to choose a hosted runtime plan. Stripe opens only after you continue from Billing.',
+        'Open Billing settings',
+        openBillingSettingsFromClerkSession
       );
+    }
+    function openBillingSettingsFromClerkSession() {
+      window.location.assign(redirectTarget);
     }
     function showCheckoutUnavailableState() {
       renderSessionState(

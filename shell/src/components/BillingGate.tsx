@@ -90,7 +90,7 @@ function BillingRequired({ checkoutReturnPath }: { checkoutReturnPath?: string }
       lockedSection="billing"
       billingActiveOverride={false}
       closeDisabled
-      billingMode="provisioning"
+      billingMode={checkoutReturnPath ? "device-setup" : "provisioning"}
       onBillingCheckoutIntent={rememberBillingCheckoutAttempt}
       billingCheckoutReturnPath={checkoutReturnPath}
     />
