@@ -101,6 +101,7 @@ import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
 } from './runtime-mode.js';
+import { resolvePlatformIntegrationConfig } from './integration-config.js';
 
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
@@ -5302,12 +5303,8 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
 
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
-  if (
-    process.env.POSTGRES_URL &&
-    process.env.PIPEDREAM_CLIENT_ID &&
-    process.env.PIPEDREAM_CLIENT_SECRET &&
-    process.env.PIPEDREAM_PROJECT_ID
-  ) {
+  const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
+  if (integrationConfig) {
     const [
       { createIntegrationRoutes },
       { createPipedreamClient },
@@ -5318,15 +5315,15 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/src/platform-db.js'),
     ]);
 
-    const trustedPlatformDb = createGatewayPlatformDb(`${process.env.POSTGRES_URL}/matrixos_platform`);
+    const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
     await trustedPlatformDb.migrate();
     const pipedream = await createPipedreamClient({
-      clientId: process.env.PIPEDREAM_CLIENT_ID,
-      clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
-      projectId: process.env.PIPEDREAM_PROJECT_ID,
-      environment: process.env.PIPEDREAM_ENVIRONMENT ?? 'production',
+      clientId: integrationConfig.pipedreamClientId,
+      clientSecret: integrationConfig.pipedreamClientSecret,
+      projectId: integrationConfig.pipedreamProjectId,
+      environment: integrationConfig.pipedreamEnvironment,
     });
-    const webhookSecret = process.env.PIPEDREAM_WEBHOOK_SECRET ?? '';
+    const webhookSecret = integrationConfig.pipedreamWebhookSecret;
     const resolveIntegrationUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
       if (!clerkUserId) return null;
       const existing = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
