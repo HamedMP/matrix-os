@@ -234,7 +234,7 @@ export function getAuthPage(
   </style>
 </head>
 <body>
-  <main class="page">
+  <main class="page" data-matrix-platform-fallback-auth="true">
     <section class="story">
       <div class="story-inner">
         <div class="brand"><span class="logo">M</span><span>Matrix OS</span></div>

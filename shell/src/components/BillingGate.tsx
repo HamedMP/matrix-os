@@ -205,7 +205,7 @@ function SubscriptionConfirmationPending({
 
 function BillingStatusLoading() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
+    <main data-matrix-billing-gate="true" className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
       <output className="flex items-center gap-2 text-sm">
         <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
         Loading billing status
@@ -420,7 +420,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
 
   if (!hasBillingAccess && checkoutReturnRequested && !checkoutAttemptChecked) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
+      <main data-matrix-billing-gate="true" className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
         <output className="flex items-center gap-2 text-sm">
           <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
           Checking billing status...

@@ -361,11 +361,11 @@ jobs:
             --header "x-forwarded-host: ${app_domain_host}" \
             --header "x-matrix-edge-secret: ${edge_router_secret}" \
             "$CANDIDATE_URL/?billing=setup")"
-          if ! printf '%s\n' "$billing_shell_html" | grep -Fq "Loading billing status"; then
+          if ! printf '%s\n' "$billing_shell_html" | grep -Fq 'data-matrix-billing-gate="true"'; then
             echo "Candidate pre-VPS billing shell did not serve the settings billing gate." >&2
             exit 1
           fi
-          if printf '%s\n' "$billing_shell_html" | grep -Fq "Welcome back to Matrix"; then
+          if printf '%s\n' "$billing_shell_html" | grep -Fq 'data-matrix-platform-fallback-auth="true"'; then
             echo "Candidate pre-VPS billing shell served the platform fallback auth page." >&2
             exit 1
           fi
