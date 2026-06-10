@@ -65,6 +65,13 @@ describe("proxy auth: route classification", () => {
     expect(isPublicShellPath("/sign-up/verify-email-address")).toBe(true);
   });
 
+  it("classifies the billing setup shell entry as public without exposing the normal shell", () => {
+    expect(isPublicShellPath("/", "?billing=setup")).toBe(true);
+    expect(isPublicShellPath("/", "billing=setup")).toBe(true);
+    expect(isPublicShellPath("/", "?billing=other")).toBe(false);
+    expect(isPublicShellPath("/")).toBe(false);
+  });
+
   it("non-public paths require auth", () => {
     expect(isPublicPath("/")).toBe(false);
     expect(isPublicPath("/api/message")).toBe(false);
@@ -305,6 +312,53 @@ describe("proxy auth: trusted platform native app sessions", () => {
 
     expect(response).toBeInstanceOf(Response);
     expect(response.status).toBe(403);
+  });
+});
+
+describe("proxy auth: billing setup entry", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.doUnmock("@clerk/nextjs/server");
+    vi.doUnmock("next/server");
+  });
+
+  it("lets the anonymous billing setup URL render the shell gate instead of Clerk-redirecting", async () => {
+    vi.resetModules();
+
+    const clerkMiddleware = vi.fn((handler) => async (request: unknown, event: unknown) =>
+      handler(async () => ({ userId: null }), request, event)
+    );
+    vi.doMock("@clerk/nextjs/server", () => ({ clerkMiddleware }));
+
+    const nextResponseNext = vi.fn((init?: unknown) => ({ kind: "next", init }));
+    const nextResponseRedirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    class MockNextResponse extends Response {
+      static next = nextResponseNext;
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = nextResponseRedirect;
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    const response = proxy({
+      headers: new Headers({
+        host: "app.matrix-os.com",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-forwarded-proto": "https",
+      }),
+      nextUrl: {
+        host: "app.matrix-os.com",
+        pathname: "/",
+        protocol: "https:",
+        search: "?billing=setup",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(response).toEqual({ kind: "next", init: undefined });
+    expect(clerkMiddleware).toHaveBeenCalledTimes(1);
+    expect(nextResponseRedirect).not.toHaveBeenCalled();
   });
 });
 

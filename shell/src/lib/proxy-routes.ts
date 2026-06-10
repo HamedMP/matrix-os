@@ -1,9 +1,11 @@
-export function isPublicShellPath(pathname: string): boolean {
+export function isPublicShellPath(pathname: string, search = ""): boolean {
+  const searchParams = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   return (
     pathname === "/health" ||
     pathname === "/manifest.json" ||
     pathname === "/og.png" ||
     pathname === "/favicon.ico" ||
+    (pathname === "/" && searchParams.get("billing") === "setup") ||
     pathname === "/sign-in" ||
     pathname.startsWith("/sign-in/") ||
     pathname === "/sign-up" ||
