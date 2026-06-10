@@ -2470,9 +2470,15 @@ describe("platform proxy routing", () => {
     expect(html).toContain("if (provisionStarted)");
     expect(html).toContain("maxBillingConfirmationPolls");
     expect(html).toContain("provisioningPolls = 0;");
-    expect(html).toContain("Billing setup required");
-    expect(html).toContain("Open Billing settings");
-    expect(html).toContain("Stripe opens only after you continue from Billing.");
+    expect(html).toContain("Opening Billing settings");
+    expect(html).toContain("matrix.billing.setupRetryCount");
+    expect(html).toContain("var maxBillingSetupReloads = 3;");
+    expect(html).toContain("Billing settings are still loading");
+    expect(html).toContain("2000 + retryCount * 1000");
+    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("window.location.replace(target);");
+    expect(html).not.toContain("Open Billing settings");
+    expect(html).not.toContain("Stripe opens only after you continue from Billing.");
     expect(html).toContain("fetch('/billing/checkout'");
     expect(html).toContain("planSlug: 'matrix_builder'");
     expect(html).toContain("Checkout unavailable");
@@ -2509,9 +2515,13 @@ describe("platform proxy routing", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("if (res.status === 402) {\n            showBillingRequiredState();");
-    expect(html).toContain("Billing setup required");
-    expect(html).toContain("Open Billing settings");
-    expect(html).toContain("openBillingSettingsFromClerkSession");
+    expect(html).toContain("Opening Billing settings");
+    expect(html).toContain("matrix.billing.setupRetryCount");
+    expect(html).toContain("var maxBillingSetupReloads = 3;");
+    expect(html).toContain("Billing settings are still loading");
+    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("window.location.replace(target);");
+    expect(html).not.toContain("Open Billing settings");
     expect(html).not.toContain("'Start checkout',\n        startBillingCheckoutFromClerkSession");
   });
 
@@ -2595,6 +2605,76 @@ describe("platform proxy routing", () => {
     delete process.env.AUTH_SHELL_PORT;
   });
 
+  it("redirects to automatic billing setup when the no-VPS auth-shell proxy times out", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    await deleteContainer(db, "alice");
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "__session=clerk-new",
+      },
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/?billing=setup");
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("shows a controlled auto-retry page when billing setup cannot reach auth-shell", async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
+    process.env.AUTH_SHELL_HOST = "auth-shell.test";
+    process.env.AUTH_SHELL_PORT = "3200";
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    await deleteContainer(db, "alice");
+    const timeout = new Error("The operation was aborted due to timeout");
+    timeout.name = "TimeoutError";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(timeout);
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?billing=setup", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "__session=clerk-new",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(fetchMock).toHaveBeenCalled();
+    expect(html).toContain("Loading your Matrix computer");
+    expect(html).toContain("Opening Billing settings");
+    expect(html).toContain("matrix.billing.setupRetryCount");
+    expect(html).toContain("var maxBillingSetupReloads = 3;");
+    expect(html).toContain("Billing settings are still loading");
+    expect(html).toContain("2000 + retryCount * 1000");
+    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("window.location.replace(target);");
+    expect(html).not.toContain("Matrix OS shell unavailable");
+    expect(html).not.toContain("Open Billing settings");
+  });
+
   it("keeps legacy no-container app-domain users on the platform auth page", async () => {
     process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "true";
     process.env.AUTH_SHELL_HOST = "auth-shell.test";
@@ -2627,11 +2707,12 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain('var redirectTarget = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";');
     expect(html).toContain('var deviceReturnTarget = "/auth/device?user_code=BCDF-GHJK";');
-    expect(html).toContain("function openBillingSettingsFromClerkSession()");
-    expect(html).toContain("Billing setup required");
-    expect(html).toContain("Open Billing settings");
+    expect(html).toContain("Opening Billing settings");
+    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("window.location.replace(target);");
     expect(html).toContain("window.location.replace(deviceReturnTarget || payload.redirectTo || redirectTarget);");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
+    expect(html).not.toContain("Open Billing settings");
     expect(html).not.toBe("auth shell");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -2668,10 +2749,11 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain('var redirectTarget = "/";');
     expect(html).toContain('var deviceReturnTarget = "";');
-    expect(html).toContain("function openBillingSettingsFromClerkSession()");
-    expect(html).toContain("Billing setup required");
-    expect(html).toContain("Open Billing settings");
-    expect(html).toContain("Stripe opens only after you continue from Billing.");
+    expect(html).toContain("Opening Billing settings");
+    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("window.location.replace(target);");
+    expect(html).not.toContain("Open Billing settings");
+    expect(html).not.toContain("Stripe opens only after you continue from Billing.");
     expect(html).not.toContain("'Start checkout',\n        startBillingCheckoutFromClerkSession");
     expect(html).not.toBe("auth shell");
     expect(fetchMock).not.toHaveBeenCalled();
