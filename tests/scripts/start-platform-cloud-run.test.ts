@@ -45,6 +45,9 @@ describe('start-platform-cloud-run.sh', () => {
     expect(dockerfile).toContain("RUN pnpm --filter '@matrix-os/gateway' build");
     expect(dockerfile).toContain("/app/packages/gateway/dist ./packages/gateway/dist");
     expect(dockerfile).toContain("/app/packages/gateway/package.json ./packages/gateway/package.json");
+    expect(dockerfile).toContain("/app/packages/kernel/package.json ./packages/kernel/package.json");
+    expect(dockerfile).toContain("/app/packages/mcp-browser/package.json ./packages/mcp-browser/package.json");
+    expect(dockerfile).toContain("/app/packages/sync-client/package.json ./packages/sync-client/package.json");
   });
 
   it('exits nonzero when the auth shell never becomes ready', () => {
