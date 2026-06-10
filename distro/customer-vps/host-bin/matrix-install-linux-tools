@@ -40,6 +40,7 @@ case ":\${PATH:-}:" in
   *:"$BREW_PREFIX/bin":*) ;;
   *) export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin\${PATH:+:\$PATH}" ;;
 esac
+export MANPATH="$BREW_PREFIX/share/man:\${MANPATH:-}:"
 export INFOPATH="$BREW_PREFIX/share/info:\${INFOPATH:-}"
 EOF
 }
@@ -48,6 +49,7 @@ install_user_shell_config() {
   local path="$1"
   local tmp
   tmp="$(mktemp)"
+  trap 'rm -f "${tmp:-}"' RETURN
   if [ -f "$path" ]; then
     awk '
       /^# >>> matrix homebrew >>>$/ { skip = 1; next }
@@ -63,6 +65,7 @@ install_user_shell_config() {
     printf '# <<< matrix homebrew <<<\n'
   } | sudo tee "$path" >/dev/null
   rm -f "$tmp"
+  trap - RETURN
   sudo chown matrix:matrix "$path"
   sudo chmod 0644 "$path"
 }
@@ -105,6 +108,7 @@ export HOMEBREW_PREFIX="$BREW_PREFIX"
 export HOMEBREW_CELLAR="$BREW_PREFIX/Cellar"
 export HOMEBREW_REPOSITORY="$BREW_PREFIX/Homebrew"
 export PATH="$BREW_PREFIX/bin:$BREW_PREFIX/sbin:$PATH"
+export MANPATH="$BREW_PREFIX/share/man:${MANPATH:-}:"
 export INFOPATH="$BREW_PREFIX/share/info:${INFOPATH:-}"
 
 if ! "$BREW_BIN" list --versions gh >/dev/null 2>&1; then

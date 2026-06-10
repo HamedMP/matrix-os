@@ -351,6 +351,7 @@ exit 99
     expect(cloudInit).not.toContain('sudo -H -u matrix /opt/matrix/bin/matrix-install-linux-tools');
     expect(cloudInit).toContain('export HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"');
     expect(cloudInit).toContain('export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"');
+    expect(cloudInit).toContain('export MANPATH="/home/linuxbrew/.linuxbrew/share/man:${MANPATH:-}:"');
     expect(cloudInit).not.toContain('brew shellenv');
     expect(gateway).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
@@ -391,7 +392,10 @@ exit 99
     expect(installer).not.toContain('brew install cos');
     expect(installer).toContain('/etc/profile.d/homebrew.sh');
     expect(installer).toContain('if [ -n "\\${PWD:-}" ] && [ ! -r "\\${PWD}" ]; then');
+    expect(installer).toContain('trap \'rm -f "${tmp:-}"\' RETURN');
     expect(installer).toContain('write_homebrew_shell_config');
+    expect(installer).toContain('export MANPATH="$BREW_PREFIX/share/man:${MANPATH:-}:"');
+    expect(installer).toContain('export MANPATH="$BREW_PREFIX/share/man:\\${MANPATH:-}:"');
     expect(installer).not.toContain('brew shellenv');
     expect(installer).toContain('sudo ln -sf "$BREW_BIN" /usr/local/bin/brew');
     expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh');
