@@ -9,6 +9,7 @@ import {
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
 } from "./lib/proxy-routes";
+import { getPublicOrigin } from "./lib/public-origin";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const authToken = process.env.MATRIX_AUTH_TOKEN;
@@ -33,19 +34,6 @@ interface ProxyRequestLike {
 // gateway.
 function isGatewayProxy(request: ProxyRequestLike): boolean {
   return isGatewayProxyPath(request.nextUrl.pathname);
-}
-
-function getPublicOrigin(request: ProxyRequestLike) {
-  const host =
-    request.headers.get("x-forwarded-host") ??
-    request.headers.get("host") ??
-    request.nextUrl.host;
-  const proto =
-    request.headers.get("x-forwarded-proto") ??
-    request.nextUrl.protocol.replace(":", "") ??
-    "https";
-
-  return `${proto}://${host}`;
 }
 
 function rewriteGatewayRequest(request: ProxyRequestLike) {
