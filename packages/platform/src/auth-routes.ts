@@ -375,8 +375,9 @@ function approvalPage(
           showConfirm();
           return;
         }
-        if (res.status === 404) {
-          if (nativeApp) {
+        if (res.status === 402 || res.status === 404) {
+          // Billing-required clients enter browser billing; only native no-runtime 404s keep dedicated setup copy.
+          if (nativeApp && res.status === 404) {
             showRuntimeSetupState();
             return;
           }
