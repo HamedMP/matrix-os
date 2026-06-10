@@ -668,6 +668,7 @@ describe("device routes", () => {
       expect(html).toContain("signUpUrl: deviceAuthUrl('sign-up')");
       expect(html).toContain("fallbackRedirectUrl: approvalUrl");
       expect(html).toContain("fetchWithTimeout('/api/auth/app-session'");
+      expect(html).toContain("if (res.status === 402 || res.status === 404) {");
       expect(html).toContain("redirectToBillingSetup()");
       expect(html).toContain("device_return");
       expect(html).not.toContain("fetchWithTimeout('/api/auth/provision-runtime'");
@@ -683,6 +684,24 @@ describe("device routes", () => {
       );
       expect(html).toContain(
         '<form id="confirm-area" method="POST" action="/auth/device/approve" style="display:none">',
+      );
+    });
+
+    it("routes non-native missing-runtime responses through billing setup before recovery", async () => {
+      const res = await app.request("/auth/device?user_code=BCDF-GHJK");
+      const html = await res.text();
+
+      const branchStart = html.indexOf("if (res.status === 402 || res.status === 404) {");
+      const nativeRuntimeSetup = html.indexOf("if (nativeApp && res.status === 404)", branchStart);
+      const billingRedirect = html.indexOf("redirectToBillingSetup();", branchStart);
+      const fallbackRecovery = html.indexOf("showSignedInRecoveryState();", branchStart);
+
+      expect(branchStart).toBeGreaterThanOrEqual(0);
+      expect(nativeRuntimeSetup).toBeGreaterThan(branchStart);
+      expect(billingRedirect).toBeGreaterThan(nativeRuntimeSetup);
+      expect(fallbackRecovery).toBeGreaterThan(billingRedirect);
+      expect(html).toContain(
+        "Billing-required clients enter browser billing; only native no-runtime 404s keep dedicated setup copy.",
       );
     });
 
