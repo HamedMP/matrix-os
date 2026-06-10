@@ -349,7 +349,10 @@ exit 99
     expect(cloudInit).toContain('Restart=on-failure');
     expect(cloudInit).toContain('systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2');
     expect(cloudInit).not.toContain('sudo -H -u matrix /opt/matrix/bin/matrix-install-linux-tools');
-    expect(cloudInit).toContain('test -x /home/linuxbrew/.linuxbrew/bin/brew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv bash)"');
+    expect(cloudInit).toContain('export HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"');
+    expect(cloudInit).toContain('export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"');
+    expect(cloudInit).toContain('export MANPATH="/home/linuxbrew/.linuxbrew/share/man:${MANPATH:-}:"');
+    expect(cloudInit).not.toContain('brew shellenv');
     expect(gateway).toContain('matrix_prepend_path_once "/opt/matrix/app/node_modules/.bin"');
     expect(gateway).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(cloudInit).toContain('DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix');
@@ -375,7 +378,7 @@ exit 99
     expect(cloudInit).toContain('ensure_owner_link .config 0755');
   });
 
-  it('installs Homebrew, Graphite CLI, and GitHub CLI on customer Linux hosts', () => {
+  it('installs Homebrew and GitHub CLI on customer Linux hosts', () => {
     const root = process.cwd();
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
     const bundleScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
@@ -383,14 +386,20 @@ exit 99
     expect(installer).toContain('https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh');
     expect(installer).toContain('retry 2 30 env NONINTERACTIVE=1 timeout 600 /bin/bash "$tmp_installer"');
     expect(installer).toContain('cd "${HOME:-/home/matrix/home}"');
-    expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install withgraphite/tap/graphite');
     expect(installer).toContain('retry 3 30 timeout 600 "$BREW_BIN" install gh');
+    expect(installer).not.toContain('withgraphite/tap/graphite');
+    expect(installer).not.toContain('cosineai/tap');
+    expect(installer).not.toContain('brew install cos');
     expect(installer).toContain('/etc/profile.d/homebrew.sh');
-    expect(installer).toContain('if [ -n "${PWD:-}" ] && [ ! -r "${PWD}" ]; then');
-    expect(installer).toContain('"eval \\"\\$(${BREW_BIN} shellenv bash)\\""');
+    expect(installer).toContain('if [ -n "\\${PWD:-}" ] && [ ! -r "\\${PWD}" ]; then');
+    expect(installer).toContain('trap \'rm -f "${tmp:-}"\' RETURN');
+    expect(installer).toContain('write_homebrew_shell_config');
+    expect(installer).toContain('export MANPATH="$BREW_PREFIX/share/man:${MANPATH:-}:"');
+    expect(installer).toContain('export MANPATH="$BREW_PREFIX/share/man:\\${MANPATH:-}:"');
+    expect(installer).not.toContain('brew shellenv');
     expect(installer).toContain('sudo ln -sf "$BREW_BIN" /usr/local/bin/brew');
-    expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt');
     expect(installer).toContain('sudo ln -sf "$BREW_PREFIX/bin/gh" /usr/local/bin/gh');
+    expect(installer).not.toContain('sudo ln -sf "$BREW_PREFIX/bin/gt" /usr/local/bin/gt');
     expect(bundleScript).toContain('matrix-install-linux-tools');
   });
 
