@@ -203,6 +203,34 @@ describe("BillingSection", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
+  it("uses device setup copy when billing is opened from CLI login", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+
+    const { BillingSection } = await import(
+      "../../shell/src/components/settings/sections/BillingSection.js"
+    );
+
+    render(
+      <BillingSection
+        mode="device-setup"
+        checkoutReturnPath="/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK"
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    expect(
+      screen.getByText("Choose billing in Settings, then Matrix returns to CLI device approval."),
+    ).toBeTruthy();
+    expect(screen.getByText("Finish billing to approve CLI login")).toBeTruthy();
+    expect(screen.getByText("Billing settings")).toBeTruthy();
+    expect(
+      screen.getByText("Review your plan and region here. Stripe opens only after you choose Continue to pay."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+  });
+
   it.each(["matrix_starter", "matrix_builder", "matrix_max"])(
     "marks billing as active when Clerk grants the %s plan",
     async (plan) => {

@@ -197,6 +197,33 @@ describe("BillingGate", () => {
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
+  it("opens device login billing in Settings without starting Stripe checkout", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.activePlan = null;
+    vi.resetModules();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Billing" })).toBeTruthy();
+    expect(await screen.findByText("Finish billing to approve CLI login")).toBeTruthy();
+    expect(screen.getByText("Billing settings")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes("/billing/checkout")),
+    ).toBe(false);
+  });
+
   it("shows confirmation feedback after a completed checkout redirect", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState({}, "", "/?checkout=success");

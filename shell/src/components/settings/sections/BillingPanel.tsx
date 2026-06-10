@@ -29,7 +29,7 @@ import {
 import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 
-export type BillingPanelMode = "settings" | "provisioning";
+export type BillingPanelMode = "settings" | "provisioning" | "device-setup";
 type BillingInterval = "monthly" | "annual";
 
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
@@ -160,11 +160,15 @@ function CheckoutPanel({
 
   return (
     <div className="rounded-2xl border border-forest/15 bg-card p-3 sm:p-4">
-      {mode === "provisioning" && (
+      {mode !== "settings" && (
         <div className="mb-2">
-          <p className="text-sm font-semibold text-deep">Start checkout &amp; provision</p>
+          <p className="text-sm font-semibold text-deep">
+            {mode === "device-setup" ? "Billing settings" : "Start checkout & provision"}
+          </p>
           <p className="mt-0.5 text-xs leading-5 text-forest/60">
-            Secure checkout opens before Matrix provisions this computer.
+            {mode === "device-setup"
+              ? "Review your plan and region here. Stripe opens only after you choose Continue to pay."
+              : "Secure checkout opens before Matrix provisions this computer."}
           </p>
         </div>
       )}
@@ -836,10 +840,12 @@ export function BillingPanel({
       <section className="grid gap-4 rounded-[22px] border border-forest/15 bg-[#fbf7ed] p-3 sm:p-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
-            {mode === "provisioning" ? "Provisioning" : "Billing"}
+            {mode === "settings" ? "Billing" : "Provisioning"}
           </p>
           <h3 className="mt-2 max-w-3xl text-xl font-semibold tracking-tight text-deep sm:text-2xl lg:text-3xl">
-            {mode === "provisioning"
+            {mode === "device-setup"
+              ? "Finish billing to approve CLI login"
+              : mode === "provisioning"
               ? "Pick the cloud computer Matrix boots on"
               : "Manage your hosted Matrix computer"}
           </h3>

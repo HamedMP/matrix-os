@@ -100,7 +100,7 @@ interface SettingsProps {
   lockedSection?: SectionId;
   billingActiveOverride?: boolean | null;
   closeDisabled?: boolean;
-  billingMode?: "settings" | "provisioning";
+  billingMode?: "settings" | "provisioning" | "device-setup";
   onBillingCheckoutIntent?: () => void;
   billingCheckoutReturnPath?: string;
 }

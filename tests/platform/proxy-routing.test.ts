@@ -2621,10 +2621,11 @@ describe("platform proxy routing", () => {
     const html = await res.text();
     expect(html).toContain('var redirectTarget = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";');
     expect(html).toContain('var deviceReturnTarget = "/auth/device?user_code=BCDF-GHJK";');
-    expect(html).toContain("if (deviceReturnTarget) checkoutBody.returnPath = redirectTarget;");
+    expect(html).toContain("function openBillingSettingsFromClerkSession()");
+    expect(html).toContain("Billing setup required");
+    expect(html).toContain("Open Billing settings");
     expect(html).toContain("window.location.replace(deviceReturnTarget || payload.redirectTo || redirectTarget);");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
-    expect(html).toContain("Billing required");
     expect(html).not.toBe("auth shell");
     expect(fetchMock).not.toHaveBeenCalled();
   });

@@ -21,7 +21,9 @@ export function BillingSection({
         <div className="min-w-0">
           <h2 className="text-lg font-semibold">Billing</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {mode === "provisioning"
+            {mode === "device-setup"
+              ? "Choose billing in Settings, then Matrix returns to CLI device approval."
+              : mode === "provisioning"
               ? "Choose a hosted runtime plan and launch through secure checkout."
               : "Manage Matrix OS hosted runtime billing and payment details."}
           </p>
