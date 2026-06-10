@@ -2353,10 +2353,10 @@ function getAuthPage(
         return;
       }
       renderSessionState(
-        'Billing required',
-        'Start hosted billing before Matrix provisions your cloud computer.',
-        'Start checkout',
-        startBillingCheckoutFromClerkSession
+        'Billing setup required',
+        'Open Billing settings to choose a hosted runtime plan. Stripe opens only after you continue from Billing.',
+        'Open Billing settings',
+        openBillingSettingsFromClerkSession
       );
     }
     function openBillingSettingsFromClerkSession() {
