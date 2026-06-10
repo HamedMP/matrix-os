@@ -97,7 +97,7 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
 // Clerk handler for authenticated routes
 const withClerk = clerkMiddleware(async (auth, request) => {
   // Layer 1: Clerk authentication (skip public routes)
-  if (!isPublicShellPath(request.nextUrl.pathname)) {
+  if (!isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search)) {
     const { userId } = await auth();
     if (!userId) {
       const publicOrigin = getPublicOrigin(request);
@@ -112,7 +112,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   }
 
   // Layer 2: Owner verification -- fail closed when configured (skip public routes)
-  if (expectedClerkUserId && !isPublicShellPath(request.nextUrl.pathname)) {
+  if (expectedClerkUserId && !isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search)) {
     const { userId } = await auth();
     if (userId !== expectedClerkUserId) {
       return new NextResponse("Forbidden: you do not own this instance", {
@@ -151,7 +151,7 @@ export function proxy(
   ) {
     return new NextResponse("Forbidden", { status: 403 });
   }
-  if (isPublicShellPath(request.nextUrl.pathname)) {
+  if (isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search)) {
     return NextResponse.next();
   }
   // All requests -- including gateway-proxy paths -- flow through Clerk so the
