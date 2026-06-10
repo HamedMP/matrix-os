@@ -129,11 +129,10 @@ export function shouldProxyAuthShellForUnroutedUser(input: {
   return (
     input.isAppDomain &&
     (input.method === 'GET' || input.method === 'HEAD') &&
-    !input.path.startsWith('/api/') &&
+    !isRuntimeDataPath(input.path) &&
     !input.path.startsWith('/vps') &&
     !input.path.startsWith('/internal/') &&
     !input.path.startsWith('/billing/') &&
-    !input.path.startsWith('/ws') &&
     input.path !== '/metrics'
   );
 }
