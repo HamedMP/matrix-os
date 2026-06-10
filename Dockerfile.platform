@@ -65,6 +65,7 @@ COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/sync
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/src ./packages/clerk-sync/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/gateway/dist ./packages/gateway/dist
+COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/kernel/dist ./packages/kernel/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/observability/dist ./packages/observability/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/platform/dist ./packages/platform/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/shell ./shell
