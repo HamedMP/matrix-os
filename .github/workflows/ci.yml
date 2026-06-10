@@ -120,7 +120,7 @@ jobs:
     name: Pattern Scan
     needs: changes
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - name: Skip expensive CI for docs-only changes
         if: needs.changes.outputs.should_run != 'true'
