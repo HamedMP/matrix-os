@@ -98,9 +98,12 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('Smoke candidate revision');
     expect(workflow).toContain('$CANDIDATE_URL/sign-in');
+    expect(workflow).toContain('$CANDIDATE_URL/?billing=setup');
     expect(workflow).toContain('pre-VPS auth shell');
-    expect(workflow).toContain("fetch('/billing/checkout'");
-    expect(workflow).toContain('Checkout unavailable');
+    expect(workflow).toContain('data-matrix-auth-shell="true"');
+    expect(workflow).toContain('data-matrix-billing-gate="true"');
+    expect(workflow).toContain('data-matrix-platform-fallback-auth="true"');
+    expect(workflow).toContain('served the platform fallback auth page');
   });
 
   it('smokes /sign-in through trusted edge-router headers instead of the raw candidate host', () => {

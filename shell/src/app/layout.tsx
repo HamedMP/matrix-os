@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { Inter, JetBrains_Mono, Cormorant_Garamond, Orbitron } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
+import { buildShellMetadata } from "@/lib/shell-metadata";
 import "@xterm/xterm/css/xterm.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
@@ -34,58 +35,8 @@ const orbitron = Orbitron({
   weight: ["400", "500", "600", "700"],
 });
 
-const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
-
 export async function generateMetadata(): Promise<Metadata> {
-  let handle = "";
-  let displayName = "";
-  try {
-    const res = await fetch(`${gatewayUrl}/api/identity`, {
-      next: { revalidate: 60 },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      handle = data.handle ?? "";
-      displayName = data.displayName ?? "";
-    }
-  } catch (err) {
-    console.warn("[shell] identity metadata unavailable:", err instanceof Error ? err.message : String(err));
-    // Gateway not available (build time or offline)
-  }
-
-  const title = handle ? `Matrix OS — @${handle}` : "Matrix OS";
-  const description = displayName
-    ? `${displayName}'s AI operating system`
-    : "Your AI operating system";
-
-  return {
-    title,
-    description,
-    manifest: "/manifest.json",
-    appleWebApp: {
-      capable: true,
-      statusBarStyle: "black-translucent",
-      title: "Matrix OS",
-      // `startupImage` requires per-device {url, media} entries matching real
-      // iPhone/iPad pixel dimensions; iOS ignores a single PNG. Omit until
-      // proper per-device splash images are generated.
-    },
-    formatDetection: { telephone: false, email: false, address: false },
-    openGraph: {
-      title,
-      description,
-      siteName: "Matrix OS",
-      type: "website",
-      images: [{ url: "/og.png", width: 1469, height: 1526, alt: "Matrix OS" }],
-    },
-    twitter: {
-      card: "summary",
-      title,
-      description,
-      images: ["/og.png"],
-    },
-  };
+  return buildShellMetadata(process.env.GATEWAY_URL);
 }
 
 export const viewport: Viewport = {

@@ -353,12 +353,20 @@ jobs:
             --header "x-forwarded-host: ${app_domain_host}" \
             --header "x-matrix-edge-secret: ${edge_router_secret}" \
             "$CANDIDATE_URL/sign-in")"
-          if ! printf '%s\n' "$auth_shell_html" | grep -Fq "fetch('/billing/checkout'"; then
-            echo "Candidate pre-VPS auth shell does not expose the billing checkout handoff." >&2
+          if ! printf '%s\n' "$auth_shell_html" | grep -Fq 'data-matrix-auth-shell="true"'; then
+            echo "Candidate pre-VPS auth shell did not serve the Next sign-in surface." >&2
             exit 1
           fi
-          if ! printf '%s\n' "$auth_shell_html" | grep -Fq "Checkout unavailable"; then
-            echo "Candidate pre-VPS auth shell does not expose the controlled checkout failure state." >&2
+          billing_shell_html="$(curl --fail --silent --show-error --max-time 10 \
+            --header "x-forwarded-host: ${app_domain_host}" \
+            --header "x-matrix-edge-secret: ${edge_router_secret}" \
+            "$CANDIDATE_URL/?billing=setup")"
+          if ! printf '%s\n' "$billing_shell_html" | grep -Fq 'data-matrix-billing-gate="true"'; then
+            echo "Candidate pre-VPS billing shell did not serve the settings billing gate." >&2
+            exit 1
+          fi
+          if printf '%s\n' "$billing_shell_html" | grep -Fq 'data-matrix-platform-fallback-auth="true"'; then
+            echo "Candidate pre-VPS billing shell served the platform fallback auth page." >&2
             exit 1
           fi
           manifest="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/system-bundles/channels/dev.json")"
