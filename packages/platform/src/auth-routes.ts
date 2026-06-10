@@ -375,8 +375,8 @@ function approvalPage(
           showConfirm();
           return;
         }
-        if (res.status === 404) {
-          if (nativeApp) {
+        if (res.status === 402 || res.status === 404) {
+          if (nativeApp && res.status === 404) {
             showRuntimeSetupState();
             return;
           }

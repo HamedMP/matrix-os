@@ -668,6 +668,7 @@ describe("device routes", () => {
       expect(html).toContain("signUpUrl: deviceAuthUrl('sign-up')");
       expect(html).toContain("fallbackRedirectUrl: approvalUrl");
       expect(html).toContain("fetchWithTimeout('/api/auth/app-session'");
+      expect(html).toContain("if (res.status === 402 || res.status === 404) {");
       expect(html).toContain("redirectToBillingSetup()");
       expect(html).toContain("device_return");
       expect(html).not.toContain("fetchWithTimeout('/api/auth/provision-runtime'");

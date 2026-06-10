@@ -563,14 +563,42 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
     const url = new URL(rawUrl, 'https://app.matrix-os.com');
     const normalizedPath = url.pathname.replace(/^\/{2,}/, '/');
     const path = /^\/sign-(?:in|up)(?:\/.*)?$/.test(normalizedPath) ? '/' : normalizedPath;
+    const params = new URLSearchParams();
     const runtime = url.searchParams.get('runtime');
     if (runtime && RuntimeSlotSchema.safeParse(runtime).success) {
-      return `${path}?runtime=${encodeURIComponent(runtime)}`;
+      params.set('runtime', runtime);
     }
-    return path;
+    const deviceReturn = normalizeDeviceReturnPath(url.searchParams.get('device_return'));
+    if (deviceReturn) params.set('device_return', deviceReturn);
+    const query = params.toString();
+    return query ? `${path}?${query}` : path;
   } catch (err: unknown) {
     console.warn('[platform] Failed to build post-auth redirect:', err instanceof Error ? err.message : String(err));
     return '/';
+  }
+}
+
+function normalizeDeviceReturnPath(value: string | null): string | null {
+  if (!value || value.length > 2048 || !value.startsWith('/') || value.startsWith('//')) {
+    return null;
+  }
+  try {
+    const url = new URL(value, 'https://app.matrix-os.com');
+    if (url.origin !== 'https://app.matrix-os.com' || url.pathname !== '/auth/device') return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to normalize device return path:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+function deviceReturnTargetFromRedirectPath(redirectTarget: string): string {
+  try {
+    const url = new URL(redirectTarget, 'https://app.matrix-os.com');
+    return normalizeDeviceReturnPath(url.searchParams.get('device_return')) ?? '';
+  } catch (err: unknown) {
+    console.warn('[platform] Failed to extract device return target:', err instanceof Error ? err.message : String(err));
+    return '';
   }
 }
 
@@ -1938,6 +1966,7 @@ function getAuthPage(
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
+  const deviceReturnTargetJson = escapeInlineScriptJson(deviceReturnTargetFromRedirectPath(redirectTarget));
   const signOutTargetJson = escapeInlineScriptJson(mode === 'sign-up' ? '/sign-up' : '/sign-in');
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
   const modeDetail = mode === 'sign-up'
@@ -2160,6 +2189,7 @@ function getAuthPage(
   ></script>
   <script nonce="${scriptNonce}">
     var redirectTarget = ${redirectTargetJson};
+    var deviceReturnTarget = ${deviceReturnTargetJson};
     var signOutTarget = ${signOutTargetJson};
     var SIGN_OUT_TIMEOUT_MS = ${BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS};
     var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
@@ -2348,6 +2378,12 @@ function getAuthPage(
           }
           var controller = new AbortController();
           var timeoutId = window.setTimeout(function() { controller.abort(); }, 10000);
+          var checkoutBody = {
+            planSlug: 'matrix_builder',
+            interval: 'monthly',
+            regionSlug: 'region_fsn1'
+          };
+          if (deviceReturnTarget) checkoutBody.returnPath = redirectTarget;
           return fetch('/billing/checkout', {
             method: 'POST',
             headers: {
@@ -2355,11 +2391,7 @@ function getAuthPage(
               'Content-Type': 'application/json',
               Accept: 'application/json'
             },
-            body: JSON.stringify({
-              planSlug: 'matrix_builder',
-              interval: 'monthly',
-              regionSlug: 'region_fsn1'
-            }),
+            body: JSON.stringify(checkoutBody),
             credentials: 'same-origin',
             signal: controller.signal
           }).finally(function() {
@@ -2533,7 +2565,7 @@ function getAuthPage(
         })
         .then(function(payload) {
           if (!payload) return;
-          window.location.replace(payload.redirectTo ?? redirectTarget);
+          window.location.replace(deviceReturnTarget || payload.redirectTo || redirectTarget);
         })
         .catch(function(err) {
           console.error('[matrix] Clerk session exchange failed', err instanceof Error ? err.message : String(err));
