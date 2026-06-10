@@ -57,8 +57,11 @@ RUN adduser -D -u 1001 -h /home/matrix-platform -s /sbin/nologin matrix-platform
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/node_modules ./node_modules
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/package.json ./packages/clerk-sync/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/gateway/package.json ./packages/gateway/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/kernel/package.json ./packages/kernel/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/mcp-browser/package.json ./packages/mcp-browser/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/observability/package.json ./packages/observability/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/platform/package.json ./packages/platform/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/sync-client/package.json ./packages/sync-client/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/src ./packages/clerk-sync/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/gateway/dist ./packages/gateway/dist
