@@ -365,6 +365,57 @@ describe("proxy auth: billing setup entry", () => {
   });
 });
 
+describe("proxy auth: sign-in redirects", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.doUnmock("@clerk/nextjs/server");
+    vi.doUnmock("next/server");
+  });
+
+  it("uses the configured public HTTPS app origin for anonymous redirects", async () => {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_MATRIX_APP_URL", "https://app.matrix-os.com");
+
+    const clerkMiddleware = vi.fn((handler) => async (request: unknown, event: unknown) =>
+      handler(async () => ({ userId: null }), request, event)
+    );
+    vi.doMock("@clerk/nextjs/server", () => ({ clerkMiddleware }));
+
+    const nextResponseRedirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    class MockNextResponse extends Response {
+      static next = vi.fn((init?: unknown) => ({ kind: "next", init }));
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = nextResponseRedirect;
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    const response = await proxy({
+      headers: new Headers({
+        host: "127.0.0.1:3200",
+        "x-forwarded-host": "app.matrix-os.com",
+        "x-forwarded-proto": "http",
+      }),
+      nextUrl: {
+        host: "127.0.0.1:3200",
+        pathname: "/",
+        protocol: "http:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(response).toEqual({
+      kind: "redirect",
+      url: new URL(
+        "https://app.matrix-os.com/sign-in?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2F",
+      ),
+    });
+    expect(nextResponseRedirect).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("proxy auth: Layer 3 bearer token injection", () => {
   it("injects token on gateway proxy paths when token is set", () => {
     expect(shouldInjectAuthToken("/api/message", "secret-token")).toBe(true);
