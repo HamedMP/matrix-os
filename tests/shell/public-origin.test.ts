@@ -34,6 +34,12 @@ describe("getConfiguredAppOrigin", () => {
     expect(getConfiguredAppOrigin("")).toBeNull();
     expect(getConfiguredAppOrigin("not a url")).toBeNull();
   });
+
+  it("returns null for non-http app URL schemes", () => {
+    expect(getConfiguredAppOrigin("data:text/plain,matrix")).toBeNull();
+    expect(getConfiguredAppOrigin("file:///tmp/matrix")).toBeNull();
+    expect(getConfiguredAppOrigin("blob:https://app.matrix-os.com/id")).toBeNull();
+  });
 });
 
 describe("getPublicOrigin", () => {

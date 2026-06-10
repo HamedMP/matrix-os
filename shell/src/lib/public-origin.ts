@@ -10,7 +10,9 @@ export function getConfiguredAppOrigin(
   configuredAppUrl: string | undefined = process.env.NEXT_PUBLIC_MATRIX_APP_URL,
 ): string | null {
   if (!configuredAppUrl || !URL.canParse(configuredAppUrl)) return null;
-  return new URL(configuredAppUrl).origin;
+  const url = new URL(configuredAppUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  return url.origin;
 }
 
 export function getPublicOrigin(
