@@ -15,6 +15,7 @@ import {
   listRunningUserMachines,
   listStaleUserMachines,
   lockUserMachineProvisioning,
+  retireUserMachine,
   markProviderDeletionCompleted,
   markProviderDeletionFailed,
   runInPlatformTransaction,
@@ -468,12 +469,15 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const postgresPassword = postgresPasswordFactory();
       const billingContext = await resolveBillingProvisionContext(deps, request, currentTime);
 
+      // A non-failed active machine (provisioning/running converge; recovering
+      // is rejected by activeProvisionResponse). A `failed` row is retryable, so
+      // it must NOT short-circuit here — it is retired inside the transaction.
       const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(
         deps.db,
         request.clerkUserId,
         request.runtimeSlot,
       );
-      if (existingBeforeBundleResolve) {
+      if (existingBeforeBundleResolve && existingBeforeBundleResolve.status !== 'failed') {
         return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
       }
 
@@ -492,8 +496,23 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           await lockUserMachineProvisioning(trx, request.clerkUserId);
         }
         const existing = await getActiveUserMachineByClerkId(trx, request.clerkUserId, request.runtimeSlot);
+        let attempt = 1;
+        let retiredServerId: number | null = null;
+        let retiredMachineId: string | null = null;
         if (existing) {
-          return { existing };
+          if (existing.status !== 'failed') {
+            return { existing, retiredServerId: null, retiredMachineId: null };
+          }
+          // The active slot is held by a failed attempt. Retire it and provision
+          // a fresh one in the same transaction so the unique (clerk, slot) slot
+          // is satisfied at every instant and the user is never blocked.
+          attempt = existing.attempt + 1;
+          if (attempt > deps.config.maxProvisionAttempts) {
+            throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
+          }
+          await retireUserMachine(trx, existing.machineId, currentTime.toISOString());
+          retiredServerId = existing.hetznerServerId;
+          retiredMachineId = existing.machineId;
         }
         if (billingContext) {
           const activeMachines = await listActiveUserMachinesByClerkId(trx, request.clerkUserId);
@@ -512,11 +531,23 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           registrationTokenHash: registration.hash,
           registrationTokenExpiresAt: registration.expiresAt,
           provisionedAt: currentTime.toISOString(),
+          attempt,
         });
-        return { existing: null };
+        return { existing: null, retiredServerId, retiredMachineId };
       });
       if (provisionRow.existing) {
         return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
+      }
+      // Reap the retired failed attempt's server outside the transaction so the
+      // abandoned VPS does not accrue cost (network call never inside the txn).
+      if (provisionRow.retiredServerId !== null) {
+        await queueProviderDeletion({
+          providerServerId: provisionRow.retiredServerId,
+          reason: 'failed_retry_retire',
+          machineId: provisionRow.retiredMachineId,
+          handle: request.handle,
+          err: new Error('retiring failed machine before retry'),
+        });
       }
 
       const userData = renderCloudInitTemplate(
@@ -882,6 +913,28 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             status: 'failed',
             failureCode: 'not_found',
             failureAt: now().toISOString(),
+          });
+          failed += 1;
+          continue;
+        }
+        // The server booted but the host never called register() before its
+        // registration token expired. It can never become routable, so fail it
+        // (freeing the slot for retry) and reap the abandoned server.
+        if (
+          row.registrationTokenExpiresAt &&
+          new Date(row.registrationTokenExpiresAt).getTime() < now().getTime()
+        ) {
+          await updateUserMachine(deps.db, row.machineId, {
+            status: 'failed',
+            failureCode: 'registration_timeout',
+            failureAt: now().toISOString(),
+          });
+          await queueProviderDeletion({
+            providerServerId: row.hetznerServerId,
+            reason: 'registration_timeout',
+            machineId: row.machineId,
+            handle: row.handle,
+            err: new Error('registration token expired before register()'),
           });
           failed += 1;
           continue;
