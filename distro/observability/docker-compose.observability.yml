@@ -36,6 +36,30 @@ services:
       - observability
       - matrixos-net
 
+  logs-edge:
+    image: caddy:2-alpine
+    # Authenticated push-only front for Loki, reachable only via the
+    # cloudflared tunnel (logs.matrix-os.com). No host port on purpose.
+    # Credentials come via env_file with format: raw -- the bcrypt hash
+    # contains `$` sequences that compose interpolation would mangle.
+    # Copy logs-edge.env.example to logs-edge.env.
+    env_file:
+      - path: ./observability/logs-edge/logs-edge.env
+        format: raw
+    volumes:
+      - ./observability/logs-edge/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - loki
+    healthcheck:
+      test: wget -qO- http://localhost:8080/healthz || exit 1
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - observability
+      - matrixos-net
+
   grafana:
     image: grafana/grafana:latest
     # Loopback only: public access goes through the cloudflared tunnel

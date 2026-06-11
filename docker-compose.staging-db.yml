@@ -1,0 +1,39 @@
+# Shared dev Postgres for staging slots on the ops VPS.
+#
+# The legacy platform postgres was retired in the Cloud Run cutover, so
+# staging slots get their own dev database server. It joins matrixos-net
+# with the network alias "postgres" (what the slot containers' DATABASE_URL
+# expects). Each slot uses its own database: matrixos_staging_<n>, created
+# by scripts/staging-slot.sh on claim. No host port -- docker-network only.
+#
+# Managed by scripts/staging-slot.sh; manual usage:
+#   docker compose -f docker-compose.staging-db.yml --env-file .env up -d
+
+services:
+  staging-postgres:
+    image: postgres:16-alpine
+    container_name: matrixos-staging-postgres
+    environment:
+      - POSTGRES_USER=${STAGING_DB_USER:-matrixos}
+      - POSTGRES_PASSWORD=${STAGING_DB_PASSWORD:?set STAGING_DB_PASSWORD in .env}
+      - POSTGRES_DB=matrixos_staging
+    volumes:
+      - staging-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U ${STAGING_DB_USER:-matrixos}
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      matrixos-net:
+        aliases:
+          - postgres
+
+volumes:
+  staging-pgdata:
+
+networks:
+  matrixos-net:
+    external: true
+    name: matrixos-net

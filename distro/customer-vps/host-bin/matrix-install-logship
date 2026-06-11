@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# Install and enable the Grafana Alloy log shipper on a Matrix OS VPS.
+#
+# Usage:
+#   LOGS_INGEST_USER=... LOGS_INGEST_PASSWORD=... \
+#     matrix-install-logship <ingest-url> <handle> <env>
+#
+#   ingest-url  https URL of the Loki push edge (e.g. https://logs.matrix-os.com)
+#   handle      this VPS's matrix handle (labels every stream)
+#   env         one of: preview | prod | staging
+#
+# Credentials come via environment variables, never argv: /proc/<pid>/cmdline
+# is world-readable, /proc/<pid>/environ is owner/root-only.
+#
+# Self-contained: downloads a pinned, checksum-verified Alloy binary, writes
+# /etc/alloy/matrix-logship.alloy, /opt/matrix/env/logship.env (0600), and the
+# matrix-logship systemd unit, then enables the service. Idempotent: re-running
+# updates config/credentials in place. Log shipping never blocks Matrix
+# services; the unit is independent and restarts on failure.
+set -euo pipefail
+
+ALLOY_VERSION="v1.16.3"
+ALLOY_SHA256_AMD64="65f408f830e46d6a13c348f07b24f1763b083e711ea38384dc2938f792a93045"
+ALLOY_SHA256_ARM64="37063858b2707c865081e8f8abce44cbadc7368e3aea71382b50c7dddc6a3051"
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "matrix-install-logship: must run as root" >&2
+  exit 1
+fi
+
+if [ "$#" -ne 3 ]; then
+  echo "usage: LOGS_INGEST_USER=... LOGS_INGEST_PASSWORD=... matrix-install-logship <ingest-url> <handle> <env>" >&2
+  exit 64
+fi
+
+INGEST_URL="$1"
+HANDLE="$2"
+MATRIX_ENV="$3"
+INGEST_USER="${LOGS_INGEST_USER:?LOGS_INGEST_USER must be set in the environment}"
+INGEST_PASSWORD="${LOGS_INGEST_PASSWORD:?LOGS_INGEST_PASSWORD must be set in the environment}"
+
+case "$INGEST_URL" in
+  https://*) ;;
+  *)
+    echo "matrix-install-logship: ingest-url must be https://" >&2
+    exit 64
+    ;;
+esac
+if ! printf '%s' "$HANDLE" | grep -Eq '^[a-z0-9][a-z0-9-]{1,62}$'; then
+  echo "matrix-install-logship: invalid handle" >&2
+  exit 64
+fi
+case "$MATRIX_ENV" in
+  preview | prod | staging) ;;
+  *)
+    echo "matrix-install-logship: env must be preview|prod|staging" >&2
+    exit 64
+    ;;
+esac
+
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64)
+    ALLOY_ARCH="amd64"
+    ALLOY_SHA256="$ALLOY_SHA256_AMD64"
+    ;;
+  aarch64)
+    ALLOY_ARCH="arm64"
+    ALLOY_SHA256="$ALLOY_SHA256_ARM64"
+    ;;
+  *)
+    echo "matrix-install-logship: unsupported arch $ARCH" >&2
+    exit 1
+    ;;
+esac
+
+install_alloy() {
+  # Exact token match so v1.16.3 does not false-hit v1.16.30.
+  if [ -x /usr/local/bin/alloy ] && /usr/local/bin/alloy --version 2>/dev/null | tr ' ' '\n' | grep -qx "$ALLOY_VERSION"; then
+    return 0
+  fi
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' RETURN
+  url="https://github.com/grafana/alloy/releases/download/${ALLOY_VERSION}/alloy-linux-${ALLOY_ARCH}.zip"
+  echo "matrix-install-logship: downloading alloy ${ALLOY_VERSION} (${ALLOY_ARCH})"
+  curl -fsSL --max-time 300 --retry 3 -o "$tmpdir/alloy.zip" "$url"
+  echo "${ALLOY_SHA256}  $tmpdir/alloy.zip" | sha256sum -c - >/dev/null
+  unzip -oq "$tmpdir/alloy.zip" -d "$tmpdir"
+  install -m 0755 "$tmpdir/alloy-linux-${ALLOY_ARCH}" /usr/local/bin/alloy
+}
+
+install_alloy
+
+install -d -m 0750 /etc/alloy /var/lib/alloy
+
+MATRIX_HOME_LOGS="/home/matrix/home/system/logs"
+
+cat > /etc/alloy/matrix-logship.alloy << EOF
+// Matrix OS log shipper. Managed by matrix-install-logship; do not hand-edit.
+
+loki.write "central" {
+  endpoint {
+    url = sys.env("LOGS_INGEST_URL") + "/loki/api/v1/push"
+    basic_auth {
+      username = sys.env("LOGS_INGEST_USER")
+      password = sys.env("LOGS_INGEST_PASSWORD")
+    }
+  }
+  external_labels = {
+    handle = "${HANDLE}",
+    env    = "${MATRIX_ENV}",
+  }
+}
+
+loki.relabel "journal" {
+  forward_to = []
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+}
+
+loki.source.journal "matrix_units" {
+  matches       = "_SYSTEMD_UNIT=matrix-gateway.service"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { source = "journal" }
+  forward_to    = [loki.write.central.receiver]
+}
+
+loki.source.journal "matrix_shell" {
+  matches       = "_SYSTEMD_UNIT=matrix-shell.service"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { source = "journal" }
+  forward_to    = [loki.write.central.receiver]
+}
+
+loki.source.journal "matrix_sync" {
+  matches       = "_SYSTEMD_UNIT=matrix-sync-agent.service"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { source = "journal" }
+  forward_to    = [loki.write.central.receiver]
+}
+
+loki.source.journal "matrix_code" {
+  matches       = "_SYSTEMD_UNIT=matrix-code.service"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { source = "journal" }
+  forward_to    = [loki.write.central.receiver]
+}
+
+loki.source.journal "matrix_symphony" {
+  matches       = "_SYSTEMD_UNIT=matrix-symphony.service"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { source = "journal" }
+  forward_to    = [loki.write.central.receiver]
+}
+
+local.file_match "kernel_jsonl" {
+  path_targets = [{ __path__ = "${MATRIX_HOME_LOGS}/*.jsonl" }]
+}
+
+loki.source.file "kernel_logs" {
+  targets    = local.file_match.kernel_jsonl.targets
+  forward_to = [loki.write.central.receiver]
+}
+EOF
+chmod 0640 /etc/alloy/matrix-logship.alloy
+
+umask 077
+# printf %s writes values byte-for-byte; no heredoc/expansion semantics to
+# reason about for credentials containing shell-special characters.
+printf 'LOGS_INGEST_URL=%s\nLOGS_INGEST_USER=%s\nLOGS_INGEST_PASSWORD=%s\n' \
+  "$INGEST_URL" "$INGEST_USER" "$INGEST_PASSWORD" > /opt/matrix/env/logship.env
+chmod 0600 /opt/matrix/env/logship.env
+
+cat > /etc/systemd/system/matrix-logship.service << 'EOF'
+[Unit]
+Description=Matrix OS log shipper (Grafana Alloy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/matrix/env/logship.env
+ExecStart=/usr/local/bin/alloy run --storage.path=/var/lib/alloy /etc/alloy/matrix-logship.alloy
+Restart=on-failure
+RestartSec=10
+# Read-only view of the system; writable state only under /var/lib/alloy.
+ProtectSystem=full
+ReadWritePaths=/var/lib/alloy
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now matrix-logship.service
+echo "matrix-install-logship: enabled matrix-logship.service (handle=${HANDLE} env=${MATRIX_ENV})"
