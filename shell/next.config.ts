@@ -26,6 +26,22 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     return [
+      // Same-origin PostHog proxy. Ad blockers blocklist *.posthog.com and
+      // known proxy paths (/ingest, /ingress, /hog ship in uBlock's default
+      // privacy list), so analytics must ride an unremarkable first-party
+      // path on every shell origin. Asset rules must precede the catch-all.
+      {
+        source: "/relay/static/:path*",
+        destination: "https://eu-assets.i.posthog.com/static/:path*",
+      },
+      {
+        source: "/relay/array/:path*",
+        destination: "https://eu-assets.i.posthog.com/array/:path*",
+      },
+      {
+        source: "/relay/:path*",
+        destination: "https://eu.i.posthog.com/:path*",
+      },
       {
         source: "/gateway/:path*",
         destination: `${gatewayUrl}/:path*`,

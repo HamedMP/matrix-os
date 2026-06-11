@@ -14,7 +14,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
+import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
@@ -522,11 +522,13 @@ export async function createGateway(config: GatewayConfig) {
     scrollbackStore: shellScrollbackStore,
   });
   const forwardTunnelHub = createForwardTunnelHub();
+  const ownerTelemetryDistinctId = resolveOwnerTelemetryDistinctId();
   const captureTerminalEvent = (
     event: string,
     properties: Record<string, string | number | boolean | undefined> = {},
   ) => {
     void posthogErrorTracker.captureEvent("gateway_terminal_ws", {
+      distinctId: ownerTelemetryDistinctId,
       properties: {
         source: "gateway-terminal-ws",
         event,
@@ -539,6 +541,7 @@ export async function createGateway(config: GatewayConfig) {
     properties: Record<string, string | number | boolean | undefined> = {},
   ) => {
     void posthogErrorTracker.captureEvent("gateway_product", {
+      distinctId: ownerTelemetryDistinctId,
       properties: {
         source: "gateway",
         event,
@@ -4057,7 +4060,7 @@ export async function createGateway(config: GatewayConfig) {
         ? { channel: parsedTarget.target.value }
         : { version: parsedTarget.target.value };
     void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
-      distinctId: process.env.MATRIX_HANDLE ?? "matrix-gateway",
+      distinctId: resolveOwnerTelemetryDistinctId() ?? "matrix-gateway",
       properties: {
         ...targetProperty,
         targetType: parsedTarget.target.type,

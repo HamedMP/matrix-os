@@ -82,6 +82,7 @@ const TOKEN_ENV_KEYS = [
   "NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN",
   "NEXT_PUBLIC_POSTHOG_KEY",
 ];
+const OWNER_DISTINCT_ID_ENV_KEYS = ["MATRIX_USER_ID", "MATRIX_HANDLE"];
 const HOST_ENV_KEYS = ["POSTHOG_HOST", "NEXT_PUBLIC_POSTHOG_HOST"];
 const DEFAULT_CLIENT_ERROR_MESSAGE = "Internal Server Error";
 const MAX_PROPERTY_LENGTH = 512;
@@ -92,6 +93,13 @@ export function getPostHogConfig(env: EnvSource = process.env): PostHogConfig | 
   if (!token) return null;
   const host = firstEnv(env, HOST_ENV_KEYS);
   return host ? { token, host } : { token };
+}
+
+// Single-owner runtimes (customer VPS gateway) attribute telemetry to their
+// owner. MATRIX_USER_ID is the Clerk user id; MATRIX_HANDLE is aliased to the
+// same person during signup, so either resolves to one PostHog person.
+export function resolveOwnerTelemetryDistinctId(env: EnvSource = process.env): string | undefined {
+  return firstEnv(env, OWNER_DISTINCT_ID_ENV_KEYS);
 }
 
 export function createPostHogErrorTracker(

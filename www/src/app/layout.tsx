@@ -12,6 +12,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/react";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
 import { PostHogCookieBanner } from "@/components/PostHogCookieBanner";
+import { PostHogIdentify } from "@/components/PostHogIdentify";
 import "./globals.css";
 
 const inter = Inter({
@@ -102,6 +103,7 @@ export default async function RootLayout({
       <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
         <ClerkProvider>
           {children}
+          <PostHogIdentify />
           <PostHogCookieBanner visitorCountry={visitorCountry} />
           <Analytics />
         </ClerkProvider>

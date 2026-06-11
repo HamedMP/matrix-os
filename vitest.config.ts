@@ -25,6 +25,14 @@ export default defineConfig({
     conditions: ["node"],
     alias: {
       "@": path.resolve(__dirname, "shell/src"),
+      "@matrix-os/observability/client": path.resolve(
+        __dirname,
+        "packages/observability/src/client.ts",
+      ),
+      "@matrix-os/observability/events": path.resolve(
+        __dirname,
+        "packages/observability/src/events.ts",
+      ),
       "@matrix-os/kernel/security/external-content": path.resolve(
         __dirname,
         "packages/kernel/src/security/external-content.ts",

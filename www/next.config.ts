@@ -10,6 +10,21 @@ const nextConfig: NextConfig = {
         source: '/docs/:path*.mdx',
         destination: '/llms.mdx/docs/:path*',
       },
+      // Same-origin PostHog proxy. uBlock's default privacy list blocks
+      // "/ingest/*^ip=" (a known PostHog proxy signature), so new bundles use
+      // /relay; the /ingest rules stay for cached bundles that still point at it.
+      {
+        source: '/relay/static/:path*',
+        destination: 'https://eu-assets.i.posthog.com/static/:path*',
+      },
+      {
+        source: '/relay/array/:path*',
+        destination: 'https://eu-assets.i.posthog.com/array/:path*',
+      },
+      {
+        source: '/relay/:path*',
+        destination: 'https://eu.i.posthog.com/:path*',
+      },
       {
         source: '/ingest/static/:path*',
         destination: 'https://eu-assets.i.posthog.com/static/:path*',

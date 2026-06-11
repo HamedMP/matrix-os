@@ -18,7 +18,7 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
   NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
   NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
-  NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST,
+  NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay",
 });
 const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
 let initialized = false;
@@ -99,6 +99,33 @@ export function capturePostHogLog(
   }
 }
 
+export function identifyPostHogUser(
+  distinctId: string,
+  properties: ClientProperties = {},
+  currentConfig: typeof config = config,
+) {
+  if (!currentConfig || !distinctId) return;
+  try {
+    ensurePostHogInitialized(currentConfig);
+    posthog.identify(distinctId, sanitizeProperties(properties));
+  } catch (err: unknown) {
+    console.warn("[posthog] Failed to identify user:", err instanceof Error ? err.name : typeof err);
+  }
+}
+
+export function resetPostHogIdentity(currentConfig: typeof config = config) {
+  if (!currentConfig || !initialized) return;
+  try {
+    // Only reset identified sessions; resetting an anonymous session would
+    // rotate its distinct id on every signed-out page load.
+    const withIdentity = posthog as typeof posthog & { _isIdentified?: () => boolean };
+    if (typeof withIdentity._isIdentified === "function" && !withIdentity._isIdentified()) return;
+    posthog.reset();
+  } catch (err: unknown) {
+    console.warn("[posthog] Failed to reset identity:", err instanceof Error ? err.name : typeof err);
+  }
+}
+
 function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
   initializeShellPostHog(getPostHogVisitorCountry(), currentConfig);
 }
@@ -108,10 +135,10 @@ export function initializeShellPostHog(
   currentConfig: typeof config = config,
 ) {
   if (!currentConfig || initialized) return;
-  const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: false });
+  // The shell serves a same-origin PostHog proxy at /relay (see next.config
+  // rewrites), so relative api hosts are first-party on every user subdomain.
+  const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: true });
   posthog.init(currentConfig.token, {
-    // Shell has no local PostHog /ingest proxy, so an unset api_host lets
-    // posthog-js use its default endpoint.
     ...(apiHost ? { api_host: apiHost } : {}),
     ui_host: currentConfig.uiHost,
     defaults: "2026-01-30",

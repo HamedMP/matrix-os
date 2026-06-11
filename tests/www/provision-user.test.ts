@@ -56,6 +56,20 @@ describe("provisionUser", () => {
     expect(signupEvent).toBeLessThan(syncStep);
   });
 
+  it("aliases the Matrix handle to the Clerk user id during signup", () => {
+    // Gateway telemetry on the customer VPS may only know the handle; the
+    // alias merges handle-keyed events into the Clerk person.
+    const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
+    const recordSignup = findStepRunRange(source, "record-signup");
+    const alias = source.indexOf("posthog.alias(");
+
+    expect(alias).toBeGreaterThan(recordSignup.start);
+    expect(alias).toBeLessThan(recordSignup.end);
+    const aliasBlock = source.slice(alias, source.indexOf(")", alias) + 1);
+    expect(aliasBlock).toContain("distinctId: user.id");
+    expect(aliasBlock).toContain("alias: handle");
+  });
+
   it("keeps PostHog operations scoped to deterministic Inngest steps", () => {
     const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
     const stepRanges = [
@@ -64,7 +78,7 @@ describe("provisionUser", () => {
     ].map((stepName) => findStepRunRange(source, stepName));
 
     const posthogOperations = [
-      ...source.matchAll(/getPostHogClient\(\)|posthog\.(?:capture|identify)\(/g),
+      ...source.matchAll(/getPostHogClient\(\)|posthog\.(?:capture|identify|alias)\(/g),
     ];
     expect(posthogOperations.length).toBeGreaterThan(0);
 

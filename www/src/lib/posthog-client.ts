@@ -14,7 +14,7 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
   NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
   NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
-  NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/ingest",
+  NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay",
 });
 let initialized = false;
 
@@ -35,6 +35,33 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
     posthog.capture(event, sanitizeProperties(properties));
   } catch (err: unknown) {
     console.warn("[posthog] Failed to capture client event:", err instanceof Error ? err.name : typeof err);
+  }
+}
+
+export function identifyPostHogUser(
+  distinctId: string,
+  properties: ClientProperties = {},
+  currentConfig: typeof config = config,
+) {
+  if (!currentConfig || !distinctId) return;
+  try {
+    ensurePostHogInitialized(currentConfig);
+    posthog.identify(distinctId, sanitizeProperties(properties));
+  } catch (err: unknown) {
+    console.warn("[posthog] Failed to identify user:", err instanceof Error ? err.name : typeof err);
+  }
+}
+
+export function resetPostHogIdentity(currentConfig: typeof config = config) {
+  if (!currentConfig || !initialized) return;
+  try {
+    // Only reset identified sessions; resetting an anonymous session would
+    // rotate its distinct id on every signed-out page load.
+    const withIdentity = posthog as typeof posthog & { _isIdentified?: () => boolean };
+    if (typeof withIdentity._isIdentified === "function" && !withIdentity._isIdentified()) return;
+    posthog.reset();
+  } catch (err: unknown) {
+    console.warn("[posthog] Failed to reset identity:", err instanceof Error ? err.name : typeof err);
   }
 }
 
