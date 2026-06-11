@@ -28,6 +28,8 @@ describe('platform/journey-routes', () => {
       // Per-handle verifier: accept the fixed token only for handle "alice".
       verifyInternalToken: (handle: string, token: string | undefined) =>
         handle === 'alice' && token === 'token-for-alice',
+      // Handle "alice" is owned by user_123.
+      resolveHandleOwner: async (handle: string) => (handle === 'alice' ? 'user_123' : null),
       appOrigin: APP_ORIGIN,
       maxProvisionAttempts: 3,
       now: () => new Date('2026-06-11T12:00:00.000Z'),
@@ -201,6 +203,17 @@ describe('platform/journey-routes', () => {
         body: JSON.stringify({ ...validBody, handle: 'someone-else' }),
       });
       expect(res.status).toBe(422);
+    });
+
+    it('403 when the submitted clerkUserId is not the handle owner (no journey hijack)', async () => {
+      const app = routes();
+      const res = await app.request('/internal/first-run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer token-for-alice', 'x-matrix-handle': 'alice' },
+        body: JSON.stringify({ ...validBody, clerkUserId: 'user_victim' }),
+      });
+      expect(res.status).toBe(403);
+      expect(await getOnboardingFirstRun(db, 'user_victim')).toBeUndefined();
     });
   });
 });

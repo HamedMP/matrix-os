@@ -93,6 +93,12 @@ export interface JourneyRoutesOptions {
    * Absent when internal auth is not configured.
    */
   verifyInternalToken?: (handle: string, token: string | undefined) => boolean;
+  /**
+   * Resolves the clerkUserId that actually owns a handle, so a first-run report
+   * cannot advance an arbitrary user's journey: the authenticated gateway may
+   * only write for its own owner. Returns null if the handle owner is unknown.
+   */
+  resolveHandleOwner?: (handle: string) => Promise<string | null>;
   appOrigin: string;
   maxProvisionAttempts: number;
   settlingWindowMs?: number;
@@ -202,6 +208,16 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     // The authenticated handle must own the reported completion.
     if (parsed.data.handle !== handle) {
       return c.json({ error: 'Invalid request' }, 422);
+    }
+
+    // Bind the submitted clerkUserId to the authenticated handle: a gateway may
+    // only report first-run for its own owner, never advance another user's
+    // journey. Missing/mismatched ownership is rejected (generic to the caller).
+    if (options.resolveHandleOwner) {
+      const owner = await options.resolveHandleOwner(handle);
+      if (!owner || owner !== parsed.data.clerkUserId) {
+        return c.json({ error: 'Invalid request' }, 403);
+      }
     }
 
     try {
