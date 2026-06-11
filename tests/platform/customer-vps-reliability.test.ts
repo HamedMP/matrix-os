@@ -4,6 +4,7 @@ import {
   getUserMachine,
   listUserMachines,
   listPendingProviderDeletions,
+  retireUserMachine,
   updateUserMachine,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
@@ -210,6 +211,18 @@ describe('platform/customer-vps reliability', () => {
       (m) => m.clerkUserId === 'user_123' && m.deletedAt === null,
     );
     expect(live).toHaveLength(1);
+  });
+
+  it('never retires a live (non-failed) machine', async () => {
+    const { service } = createHarness();
+    const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+
+    // The machine is still 'provisioning'; retiring it must be a no-op.
+    await retireUserMachine(db, first.machineId, '2026-04-26T12:30:00.000Z');
+
+    const row = await getUserMachine(db, first.machineId);
+    expect(row?.deletedAt).toBeNull();
+    expect(row?.status).toBe('provisioning');
   });
 
   it('stops retrying after the attempt cap is reached', async () => {

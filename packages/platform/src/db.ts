@@ -1853,6 +1853,9 @@ export async function claimUserMachineRecovery(
  * Soft-deletes a failed machine row so it stops occupying the active
  * (clerk_user_id, runtime_slot) unique slot, letting a retry provision a fresh
  * machine. The failure status is preserved for audit; only `deleted_at` is set.
+ * The `status = 'failed'` guard encodes the invariant at the DB layer: this
+ * helper must never silently retire a live (provisioning/recovering/running)
+ * machine, even if a future caller forgets the status check.
  */
 export async function retireUserMachine(
   db: PlatformDB,
@@ -1865,6 +1868,7 @@ export async function retireUserMachine(
     .set({ deleted_at: retiredAt })
     .where('machine_id', '=', machineId)
     .where('deleted_at', 'is', null)
+    .where('status', '=', 'failed')
     .execute();
 }
 
