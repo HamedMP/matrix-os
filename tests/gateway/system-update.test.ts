@@ -10,6 +10,7 @@ import {
   parseUpdateChannel,
   parseInternalUpgradeTarget,
   parseUpdateVersion,
+  resolveInternalUpgradeStartTarget,
   resolveSystemUpdateChannel,
   startSystemUpdate,
   writeInternalUpgradeTrigger,
@@ -74,6 +75,31 @@ describe("system update checks", () => {
     expect(parseInternalUpgradeTarget({ channel: "nightly" })).toEqual({
       ok: false,
       error: "Invalid update channel",
+    });
+  });
+
+  it("resolves internal update starts without losing explicit versions", () => {
+    expect(resolveInternalUpgradeStartTarget(
+      { version: "v2026.06.11-359" },
+      { envChannel: "dev", installedChannel: "stable" },
+    )).toEqual({
+      ok: true,
+      target: { type: "version", value: "v2026.06.11-359" },
+    });
+    expect(resolveInternalUpgradeStartTarget(
+      { channel: "beta" },
+      { envChannel: "dev", installedChannel: "stable" },
+    )).toEqual({
+      ok: true,
+      target: { type: "channel", value: "beta" },
+    });
+    expect(resolveInternalUpgradeStartTarget({}, { envChannel: "dev", installedChannel: "stable" })).toEqual({
+      ok: true,
+      target: { type: "channel", value: "dev" },
+    });
+    expect(resolveInternalUpgradeStartTarget({ version: "v2026.06.11-359", channel: "dev" })).toEqual({
+      ok: false,
+      error: "Specify either version or channel",
     });
   });
 
