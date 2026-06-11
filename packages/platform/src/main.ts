@@ -7,7 +7,7 @@ import {
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
-import { installPostHogHonoErrorTracking, MATRIX_TELEMETRY_EVENTS, type MatrixTelemetryEvent } from '@matrix-os/observability';
+import { installPostHogHonoErrorTracking, isMatrixTelemetryEvent, MATRIX_TELEMETRY_EVENTS, type MatrixTelemetryEvent } from '@matrix-os/observability';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -1750,6 +1750,7 @@ export type PlatformApp = Hono<{
   capturePlatformEvent(
     event: MatrixTelemetryEvent,
     properties: Record<string, string | number | boolean | null | undefined>,
+    options?: { distinctId?: string },
   ): void;
   shutdownPostHog(): Promise<void>;
 };
@@ -1895,9 +1896,10 @@ export function createApp(deps: {
   function capturePlatformEvent(
     event: MatrixTelemetryEvent,
     properties: Record<string, string | number | boolean | null | undefined>,
+    options?: { distinctId?: string },
   ): void {
     void posthogErrorTracker.captureEvent(event, {
-      distinctId: 'matrix-platform',
+      distinctId: options?.distinctId ?? 'matrix-platform',
       properties,
     }).catch((err: unknown) => {
       const kind = err instanceof Error ? err.name : typeof err;
@@ -1905,6 +1907,16 @@ export function createApp(deps: {
     });
   }
   app.capturePlatformEvent = capturePlatformEvent;
+  function captureFunnelEvent(
+    event: string,
+    options?: { distinctId?: string; properties?: Record<string, string | number | boolean | undefined> },
+  ): void {
+    if (!isMatrixTelemetryEvent(event)) {
+      console.warn(`[posthog] Dropping unknown platform funnel event: ${event}`);
+      return;
+    }
+    capturePlatformEvent(event, options?.properties ?? {}, { distinctId: options?.distinctId });
+  }
 
   async function proxyAuthShell(
     c: Context,
@@ -2578,6 +2590,7 @@ export function createApp(deps: {
       : createUnavailableStripeBillingClient(),
     env: appEnv,
     resolveClerkUserId: resolveBillingClerkUserId,
+    captureEvent: captureFunnelEvent,
   }));
 
   // Session-based routing:
@@ -3360,6 +3373,7 @@ export function createApp(deps: {
       probeMachineHealth,
       probeMachineRuntime,
       recordRuntimeMetrics: (machines) => updateCachedVpsRuntimeMetrics(machines, machines),
+      captureEvent: captureFunnelEvent,
     }));
   }
 

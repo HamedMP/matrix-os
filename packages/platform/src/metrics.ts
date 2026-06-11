@@ -112,6 +112,13 @@ export const vpsHealthy = new Gauge({
   registers: [metricsRegistry],
 });
 
+export const vpsProvisionFailuresTotal = new Counter({
+  name: 'matrix_vps_provision_failures_total',
+  help: 'Total customer VPS provision failures by failure code',
+  labelNames: ['failure_code'] as const,
+  registers: [metricsRegistry],
+});
+
 export const vpsRuntimeInfo = new Gauge({
   name: 'matrix_vps_runtime_info',
   help: 'Runtime release info reported by a reachable customer VPS (value is always 1, labels carry metadata)',

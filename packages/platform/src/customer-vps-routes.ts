@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { CustomerVpsError, logCustomerVpsError } from './customer-vps-errors.js';
+import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
+import { CustomerVpsError, logCustomerVpsError, type CustomerVpsFailureCode } from './customer-vps-errors.js';
 import { bearerTokenMatches } from './customer-vps-auth.js';
 import {
   MachineIdParamSchema,
@@ -11,7 +12,7 @@ import {
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import { buildFleetSummary, type FleetMachineView } from './customer-vps-fleet.js';
-import { refreshVpsMetrics, refreshVpsRuntimeMetrics } from './metrics.js';
+import { refreshVpsMetrics, refreshVpsRuntimeMetrics, vpsProvisionFailuresTotal } from './metrics.js';
 import type { VpsRuntimeMetricInput } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
@@ -56,6 +57,23 @@ export interface CustomerVpsRoutesDeps {
     publicIPv4: string | null;
     imageVersion: string | null;
   }>) => void;
+  /**
+   * Optional product telemetry sink. Fire-and-forget: implementations must
+   * never throw into the request path, and callers only pass low-cardinality,
+   * PII-free properties (failure codes, handles, machine ids).
+   */
+  captureEvent?: (
+    event: string,
+    options?: { distinctId?: string; properties?: Record<string, string | number | boolean | undefined> },
+  ) => void;
+}
+
+function customerVpsFailureCode(err: unknown): CustomerVpsFailureCode {
+  return err instanceof CustomerVpsError ? err.code : 'unknown';
+}
+
+function customerVpsFailureStatus(err: unknown): number {
+  return err instanceof CustomerVpsError ? err.status : 500;
 }
 
 function jsonError(c: import('hono').Context, err: unknown, fallback: string) {
@@ -83,6 +101,19 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
   }
   const app = new Hono();
 
+  function emitTelemetry(
+    event: string,
+    options?: { distinctId?: string; properties?: Record<string, string | number | boolean | undefined> },
+  ): void {
+    if (!deps.captureEvent) return;
+    try {
+      deps.captureEvent(event, options);
+    } catch (err: unknown) {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[customer-vps] telemetry capture failed for ${event}: ${kind}`);
+    }
+  }
+
   function requirePlatformAuth(c: import('hono').Context): Response | null {
     if (!deps.platformSecret) {
       return c.json({ error: 'VPS provisioning not configured' }, 503);
@@ -96,27 +127,58 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
   app.post('/provision', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
     const authError = requirePlatformAuth(c);
     if (authError) return authError;
+    let clerkUserId: string | undefined;
+    let handle: string | undefined;
     try {
       const parsed = ProvisionRequestSchema.safeParse(await readJson(c));
       if (!parsed.success) {
         return c.json({ error: 'Invalid request' }, 400);
       }
+      clerkUserId = parsed.data.clerkUserId;
+      handle = parsed.data.handle;
+      emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_REQUESTED, {
+        distinctId: clerkUserId ?? handle,
+        properties: { handle },
+      });
       return c.json(await deps.service.provision(parsed.data), 202);
     } catch (err: unknown) {
+      const failureCode = customerVpsFailureCode(err);
+      vpsProvisionFailuresTotal.inc({ failure_code: failureCode });
+      emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_FAILED, {
+        distinctId: clerkUserId ?? handle,
+        properties: {
+          failure_code: failureCode,
+          http_status: customerVpsFailureStatus(err),
+          handle,
+        },
+      });
       return jsonError(c, err, '/vps/provision');
     }
   });
 
   app.post('/register', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    let machineId: string | undefined;
     try {
       const parsed = RegisterRequestSchema.safeParse(await readJson(c));
       if (!parsed.success) {
         return c.json({ error: 'Invalid request' }, 400);
       }
+      machineId = parsed.data.machineId;
       const auth = c.req.header('authorization');
       const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
-      return c.json(await deps.service.register(token, parsed.data), 200);
+      const result = await deps.service.register(token, parsed.data);
+      emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_REGISTERED, {
+        properties: { machine_id: machineId },
+      });
+      return c.json(result, 200);
     } catch (err: unknown) {
+      emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_REGISTRATION_FAILED, {
+        properties: {
+          failure_code: customerVpsFailureCode(err),
+          http_status: customerVpsFailureStatus(err),
+          machine_id: machineId,
+        },
+      });
       return jsonError(c, err, '/vps/register');
     }
   });

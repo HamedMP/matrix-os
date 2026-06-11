@@ -7,6 +7,12 @@ describe("Matrix telemetry events", () => {
     expect(MATRIX_TELEMETRY_EVENTS).toMatchObject({
       USER_SIGNED_UP: "matrix_user_signed_up",
       BILLING_EVENT_RECEIVED: "matrix_billing_event_received",
+      VPS_PROVISION_REQUESTED: "matrix_vps_provision_requested",
+      VPS_PROVISION_FAILED: "matrix_vps_provision_failed",
+      VPS_REGISTERED: "matrix_vps_registered",
+      VPS_REGISTRATION_FAILED: "matrix_vps_registration_failed",
+      BILLING_WEBHOOK_FAILED: "matrix_billing_webhook_failed",
+      ONBOARDING_FAILED: "matrix_onboarding_failed",
       RUNTIME_UPGRADE_REQUESTED: "matrix_runtime_upgrade_requested",
       RUNTIME_UPGRADE_STARTED: "matrix_runtime_upgrade_started",
       RUNTIME_UPGRADE_COMPLETED: "matrix_runtime_upgrade_completed",

@@ -1,6 +1,12 @@
 export const MATRIX_TELEMETRY_EVENTS = {
   USER_SIGNED_UP: "matrix_user_signed_up",
   BILLING_EVENT_RECEIVED: "matrix_billing_event_received",
+  VPS_PROVISION_REQUESTED: "matrix_vps_provision_requested",
+  VPS_PROVISION_FAILED: "matrix_vps_provision_failed",
+  VPS_REGISTERED: "matrix_vps_registered",
+  VPS_REGISTRATION_FAILED: "matrix_vps_registration_failed",
+  BILLING_WEBHOOK_FAILED: "matrix_billing_webhook_failed",
+  ONBOARDING_FAILED: "matrix_onboarding_failed",
   HOST_BUNDLE_RELEASE_REGISTERED: "host_bundle_release_registered",
   HOST_BUNDLE_CHANNEL_PROMOTED: "host_bundle_channel_promoted",
   RUNTIME_UPGRADE_REQUESTED: "matrix_runtime_upgrade_requested",

@@ -8,6 +8,7 @@ import {
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createOnboardingHandler } from "../../../packages/gateway/src/onboarding/ws-handler.js";
+import { createGeminiLiveClient } from "../../../packages/gateway/src/onboarding/gemini-live.js";
 import type { GatewayToShell } from "../../../packages/gateway/src/onboarding/types.js";
 
 const geminiMock = vi.hoisted(() => ({
@@ -222,6 +223,105 @@ describe("onboarding websocket handler", () => {
     expect(readinessService.selectGoals).toHaveBeenNthCalledWith(1, "owner_1", ["assistant"]);
     expect(readinessService.selectGoals).toHaveBeenNthCalledWith(2, "owner_1", ["assistant", "coding"]);
     expect(sent.filter((msg) => msg.type === "goal_selected")).toHaveLength(2);
+  });
+
+  it("reports onboarding failure telemetry when goal persistence fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const readinessService = {
+        getReadiness: vi.fn(async () => {
+          throw new Error("postgres connection refused");
+        }),
+        selectGoals: vi.fn(),
+      };
+      const onFailure = vi.fn();
+      const h = createOnboardingHandler({
+        homePath,
+        geminiApiKey: "",
+        geminiModel: "test-model",
+        readinessService,
+        ownerId: "owner_1",
+        onFailure,
+      });
+      await h.onOpen((msg) => sent.push(msg));
+
+      await h.onMessage(JSON.stringify({ type: "select_goal", goalId: "coding" }));
+
+      expect(onFailure).toHaveBeenCalledTimes(1);
+      expect(onFailure).toHaveBeenCalledWith({
+        stage: "greeting",
+        reasonKind: "goal_persistence_failed",
+      });
+      expect(JSON.stringify(onFailure.mock.calls)).not.toContain("postgres");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("reports onboarding failure telemetry when the Gemini Live connection fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.mocked(createGeminiLiveClient).mockImplementationOnce(() => ({
+        on: vi.fn(),
+        connect: vi.fn().mockRejectedValue(new Error("upstream socket reset")),
+        close: vi.fn(),
+        sendText: vi.fn(),
+        sendAudio: vi.fn(),
+        sendToolResponse: vi.fn(),
+      }) as unknown as ReturnType<typeof createGeminiLiveClient>);
+      const onFailure = vi.fn();
+      const h = createOnboardingHandler({
+        homePath,
+        geminiApiKey: "test-gemini-key",
+        geminiModel: "test-model",
+        onFailure,
+      });
+      await h.onOpen((msg) => sent.push(msg));
+
+      await h.onMessage(JSON.stringify({ type: "start", audioFormat: "pcm16" }));
+
+      expect(onFailure).toHaveBeenCalledTimes(1);
+      expect(onFailure).toHaveBeenCalledWith({
+        stage: "greeting",
+        reasonKind: "gemini_connect_failed",
+      });
+      expect(JSON.stringify(onFailure.mock.calls)).not.toContain("socket reset");
+      expect(sent).toContainEqual({ type: "mode_change", mode: "text" });
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("never lets a throwing onFailure callback break the onboarding flow", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const readinessService = {
+        getReadiness: vi.fn(async () => {
+          throw new Error("postgres connection refused");
+        }),
+        selectGoals: vi.fn(),
+      };
+      const h = createOnboardingHandler({
+        homePath,
+        geminiApiKey: "",
+        geminiModel: "test-model",
+        readinessService,
+        ownerId: "owner_1",
+        onFailure: () => {
+          throw new Error("posthog down");
+        },
+      });
+      await h.onOpen((msg) => sent.push(msg));
+
+      await h.onMessage(JSON.stringify({ type: "select_goal", goalId: "coding" }));
+
+      expect(sent).toContainEqual(expect.objectContaining({
+        type: "error",
+        code: "internal",
+      }));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("closes an existing Gemini client before handling a duplicate start", async () => {

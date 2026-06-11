@@ -73,3 +73,12 @@ groups:
         annotations:
           summary: "VPS {{ $labels.handle }} stuck in provisioning"
           description: "VPS {{ $labels.handle }} has been in provisioning state for more than 15 minutes."
+
+      - alert: VpsProvisionFailed
+        expr: increase(matrix_vps_provision_failures_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "VPS provisioning failures ({{ $labels.failure_code }})"
+          description: "{{ $value }} VPS provision request(s) failed with failure_code {{ $labels.failure_code }} in the last 15 minutes. New users may be unable to get through signup."
