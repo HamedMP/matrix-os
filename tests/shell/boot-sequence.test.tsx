@@ -16,6 +16,7 @@ vi.mock("@clerk/nextjs", () => ({
     isSignedIn: clerkState.isSignedIn,
     getToken: clerkState.getToken,
   }),
+  RedirectToSignIn: () => <div data-testid="redirect-to-sign-in">redirecting to sign in</div>,
 }));
 
 import { BootSequence } from "../../shell/src/components/BootSequence";
@@ -159,6 +160,21 @@ describe("BootSequence", () => {
     mockJourney(baseState, false);
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
     expect(await screen.findByText("We can’t reach Matrix right now.")).toBeTruthy();
+    expect(screen.queryByTestId("shell")).toBeNull();
+  });
+
+  it("redirects a signed-out user to sign-in instead of spinning forever", async () => {
+    clerkState.isSignedIn = false;
+    mockJourney(baseState);
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    expect(await screen.findByTestId("redirect-to-sign-in")).toBeTruthy();
+    expect(screen.queryByTestId("shell")).toBeNull();
+  });
+
+  it("never hands the shell to an account_required phase", async () => {
+    mockJourney({ phase: "account_required", detail: "Create your account.", nextAction: { kind: "none" } });
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    expect(await screen.findByTestId("redirect-to-sign-in")).toBeTruthy();
     expect(screen.queryByTestId("shell")).toBeNull();
   });
 });

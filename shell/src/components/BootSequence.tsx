@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, RedirectToSignIn } from "@clerk/nextjs";
 import { AlertCircleIcon, Loader2Icon, RefreshCwIcon } from "lucide-react";
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
 
@@ -123,7 +123,22 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
     }
   }
 
-  if (!isLoaded || status === "loading") {
+  if (!isLoaded) {
+    return (
+      <BootShell>
+        <Spinner />
+        <p className="text-sm">Loading your Matrix computer…</p>
+      </BootShell>
+    );
+  }
+
+  // Signed-out / session-expired: the journey hook is disabled, so without this
+  // branch the user would spin forever. Send them to the sign-in door.
+  if (!isSignedIn) {
+    return <RedirectToSignIn />;
+  }
+
+  if (status === "loading") {
     return (
       <BootShell>
         <Spinner />
@@ -205,7 +220,16 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
           )}
         </BootShell>
       );
+    case "account_required":
+      // No account yet — never render the shell; send to the sign-in/up door.
+      return <RedirectToSignIn />;
     default:
-      return <>{children}</>;
+      // Unknown phase: do NOT fall through to the shell. Show a safe wait state.
+      return (
+        <BootShell>
+          <Spinner />
+          <p className="text-sm">Loading your Matrix computer…</p>
+        </BootShell>
+      );
   }
 }
