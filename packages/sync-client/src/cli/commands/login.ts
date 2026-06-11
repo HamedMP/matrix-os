@@ -21,6 +21,7 @@ import {
   formatCliErrorMessage,
   formatCliSuccess,
 } from "../output.js";
+import { getCliTelemetry } from "../telemetry.js";
 
 function localProfileFromArgs(args: Record<string, unknown>) {
   return {
@@ -117,6 +118,8 @@ export const loginCommand = defineCommand({
           pauseSync: existingDev?.pauseSync ?? false,
         };
         await saveConfig(next);
+
+        getCliTelemetry().captureLoggedIn();
 
         const data = {
           profile: "local",
@@ -246,6 +249,8 @@ export const loginCommand = defineCommand({
       platformUrl,
       gatewayUrl: next.gatewayUrl,
     });
+
+    getCliTelemetry().captureLoggedIn();
 
     const data = {
       profile: profileName,

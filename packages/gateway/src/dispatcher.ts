@@ -15,6 +15,7 @@ import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel
 import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChannelId } from "./channels/types.js";
+import type { AiGenerationInput } from "./ai-analytics.js";
 import { createInteractionLogger } from "./logger.js";
 import { createUsageTracker } from "@matrix-os/kernel";
 import {
@@ -32,6 +33,10 @@ export interface DispatchOptions {
   maxTurns?: number;
   spawnFn?: SpawnFn;
   maxConcurrency?: number;
+  /** Called once per completed kernel query with usage metadata only
+      (trace/session id, model, latency, token counts, error category input).
+      Never receives message content. Failures are swallowed. */
+  onAiGeneration?: (input: AiGenerationInput) => void;
 }
 
 export interface DispatchContext {
@@ -112,6 +117,15 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
   function logNonFatal(label: string, err: unknown) {
     console.warn(label, err instanceof Error ? err.message : String(err));
+  }
+
+  function recordAiGeneration(input: AiGenerationInput) {
+    if (!opts.onAiGeneration) return;
+    try {
+      opts.onAiGeneration(input);
+    } catch (err: unknown) {
+      logNonFatal("[dispatcher] ai generation capture failed:", err);
+    }
   }
 
   async function buildKernelEnv(): Promise<Record<string, string | undefined> | undefined> {
@@ -233,6 +247,14 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       if (tokensIn > 0) aiTokensTotal.inc({ model, direction: "in" }, tokensIn);
       if (tokensOut > 0) aiTokensTotal.inc({ model, direction: "out" }, tokensOut);
 
+      recordAiGeneration({
+        traceId: resultSessionId || entry.sessionId,
+        model: opts.model,
+        latencyMs: durationMs,
+        tokensIn: resultData?.tokensIn,
+        tokensOut: resultData?.tokensOut,
+      });
+
       try {
         interactionLogger.log({
           source,
@@ -271,6 +293,15 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       const durationSec = durationMs / 1000;
       kernelDispatchTotal.inc({ source, status: "error" });
       kernelDispatchDuration.observe({ source }, durationSec);
+
+      recordAiGeneration({
+        traceId: resultSessionId || entry.sessionId,
+        model: opts.model,
+        latencyMs: durationMs,
+        tokensIn: resultData?.tokensIn,
+        tokensOut: resultData?.tokensOut,
+        error,
+      });
 
       const err = error as Error;
       try {
@@ -328,6 +359,15 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           }
 
           const durationMs = Date.now() - startTime;
+
+          recordAiGeneration({
+            traceId: batchSessionId || undefined,
+            model: opts.model,
+            latencyMs: durationMs,
+            tokensIn: batchResultData?.tokensIn,
+            tokensOut: batchResultData?.tokensOut,
+          });
+
           try {
             interactionLogger.log({
               source: "batch",
@@ -368,6 +408,13 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           return { taskId, status: "fulfilled" as const };
         }
         const err = result.reason instanceof Error ? result.reason : new Error(String(result.reason));
+        // Latency and session id are not observable here for failed batch
+        // entries; capture the error category with what is available.
+        recordAiGeneration({
+          model: opts.model,
+          latencyMs: 0,
+          error: err,
+        });
         try {
           interactionLogger.log({
             source: "batch",

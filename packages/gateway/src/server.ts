@@ -16,6 +16,7 @@ import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
+import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
@@ -546,11 +547,18 @@ export async function createGateway(config: GatewayConfig) {
       },
     });
   };
+  // PostHog LLM analytics: one $ai_generation per completed kernel query.
+  // Reuses the tracker above (already flushed per-capture and shut down on
+  // gateway close), so no separate PostHog client or shutdown path is needed.
+  const recordAiGeneration = createAiGenerationRecorder({
+    capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
+  });
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
     model: config.model,
     maxTurns: config.maxTurns,
     spawnFn: config.spawnFn,
+    onAiGeneration: recordAiGeneration,
   });
 
   const watcher: Watcher = createWatcher(homePath);
