@@ -70,7 +70,7 @@ Existing (`db.ts:566-607`): `machine_id` PK, `clerk_user_id`, `handle`, `runtime
 | `steps` | jsonb NOT NULL DEFAULT '{}' | Completed/skipped step map (bounded, Zod-validated ≤ 4 KB) |
 | `source` | text NOT NULL | `gateway_ws \| shell_manual \| backfill` |
 
-- Upserted (`ON CONFLICT (clerk_user_id) DO UPDATE`) by `POST /internal/first-run` (gateway, `UPGRADE_TOKEN` auth) and by lazy backfill (R4).
+- Upserted (`ON CONFLICT (clerk_user_id) DO UPDATE`) by `POST /internal/first-run` (gateway, `UPGRADE_TOKEN` auth) and by the off-read-path reconciler backfill for legacy users (R4).
 - The VPS-local `~/system/onboarding-complete.json` continues to be written as the owner-inspectable artifact but is derived (constitution I).
 
 ## New table: `onboarding_journey_events` (append-only telemetry)
