@@ -24,15 +24,15 @@ account_required → plan_required → payment_settling → provisioning → fir
 
 ## Changed table: `user_machines`
 
-Existing (`db.ts:566-607`): `machine_id` PK, `clerk_user_id`, `handle`, `runtime_slot`, `status` (`provisioning|running|failed|recovering|deleted`), `provisioned_at`, `registration_token_hash`, `registration_token_expires_at`, `hetzner_server_id`, `deleted_at`, …
+Existing (`db.ts:566-607`): `machine_id` PK, `clerk_user_id`, `handle`, `runtime_slot`, `status` (`provisioning|running|failed|recovering|deleted`), `provisioned_at`, `registration_token_hash`, `registration_token_expires_at`, `hetzner_server_id`, `deleted_at`, and — **already present** — `failure_code` and `failure_at`.
 
-**New columns**
+**New columns (Phase A migration adds exactly one)**
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `provisioning_stage` | text NULL | `creating_server \| booting \| registering \| finalizing`; set by provision/registration steps; exposed as journey `progress` |
-| `failure_code` | text NULL | `registration_timeout \| provider_unavailable \| not_found \| boot_failed`; set on transition to `failed` |
-| `attempt` | int NOT NULL DEFAULT 1 | Per-user attempt counter; copied+incremented when a retry retires a failed row |
+| `attempt` | int NOT NULL DEFAULT 1 | Per-user attempt counter; incremented when a retry retires a failed row |
+
+`failure_code`/`failure_at` already exist (Phase A reuses them with the new code `registration_timeout`). There is **no** `provisioning_stage` column: the journey `progress.stage` is derived at read time from observable columns (`hetzner_server_id`, `public_ipv4`, `status`), so no schema change is needed for stage reporting.
 
 **State transitions (enforced in `customer-vps.ts`, all inside transactions)**
 
@@ -67,7 +67,7 @@ Existing (`db.ts:566-607`): `machine_id` PK, `clerk_user_id`, `handle`, `runtime
 | `clerk_user_id` | text PK | One record per user — survives machine replacement (FR-005) |
 | `completed_at` | timestamptz NOT NULL | |
 | `goal` | text NULL | `coding \| company_brain \| assistant` (spec 082 goal step) |
-| `steps` | jsonb NOT NULL DEFAULT '{}' | Completed/skipped step map (bounded, Zod-validated ≤ 4 KB) |
+| `steps` | text (JSON) NOT NULL DEFAULT '{}' | Completed/skipped step map as a JSON string (bounded, Zod-validated). TEXT not jsonb to match the file's uniformly-TEXT schema and avoid driver serialization edge cases. |
 | `source` | text NOT NULL | `gateway_ws \| shell_manual \| backfill` |
 
 - Written by two paths with different conflict policies (R4): the gateway write-behind `POST /internal/first-run` (carries real `goal`/`steps`) upserts `ON CONFLICT (clerk_user_id) DO UPDATE` and is the only path that may replace a record; the off-read-path reconciler backfill for legacy users inserts `ON CONFLICT (clerk_user_id) DO NOTHING`, so a best-effort backfill can never clobber an authoritative gateway record in a race.
@@ -77,7 +77,7 @@ Existing (`db.ts:566-607`): `machine_id` PK, `clerk_user_id`, `handle`, `runtime
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `id` | bigserial PK | |
+| `id` | text (uuid) PK | TEXT uuid to match the file's schema convention (no serial); ordering uses `at`, not `id` |
 | `clerk_user_id` | text NOT NULL, indexed `(clerk_user_id, at)` | |
 | `from_phase` | text NULL | NULL for first observation |
 | `to_phase` | text NOT NULL | |

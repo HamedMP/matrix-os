@@ -30,11 +30,11 @@
 
 ### Implementation
 
-- [ ] T007 [US2] Add columns `provisioning_stage` (text NULL), `failure_code` (text NULL), `attempt` (int NOT NULL DEFAULT 1) to `user_machines`, and create table `billing_checkout_attempts` per data-model.md, as new inline statements in `migrate()` in `packages/platform/src/db.ts`
+- [ ] T007 [US2] Add the one new column `attempt` (int NOT NULL DEFAULT 1) to `user_machines` as an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in `migrate()` in `packages/platform/src/db.ts`. `failure_code`/`failure_at` already exist (Phase A reuses them); there is no `provisioning_stage` column (journey derives the stage from observable columns). `billing_checkout_attempts` is created in **Phase B**, not here (see the phasing-refinement note).
 - [ ] T008 [US2] Add Kysely query helpers: `retireFailedMachineAndInsertAttempt` (single transaction, `SELECT ... FOR UPDATE` on the user's machine rows), `listRegistrationExpiredMachines`, checkout-attempt insert/resolve/sweep helpers in `packages/platform/src/db.ts`
 - [ ] T009 [US2] Extend `reconcileProvisioning()` to fail machines whose registration token has expired (reason `registration_timeout`) in addition to existing no-server/server-gone cases; log every correction with machine id + reason (FR-030) in `packages/platform/src/customer-vps.ts`
 - [ ] T010 [US2] Change provision blocking semantics: only `provisioning|recovering|running` block; a latest `failed` row routes through `retireFailedMachineAndInsertAttempt`; copy+increment `attempt`; enforce attempt cap; queue provider deletion for the retired row's `hetzner_server_id` (FR-007/008/011) in `packages/platform/src/customer-vps.ts`
-- [ ] T011 [US2] Set `provisioning_stage` through the lifecycle: `creating_server` before the Hetzner call, `booting` after server create, `registering` when cloud-init reaches registration window, `finalizing` during register handler, cleared on `running` in `packages/platform/src/customer-vps.ts` and `packages/platform/src/customer-vps-schema.ts`
+- [ ] T011 [US2] (Superseded — no schema change.) The journey `progress.stage` is derived at read time from observable `user_machines` columns: `creating_server` (no `hetzner_server_id`), `booting` (server id, no `public_ipv4`), `registering` (has `public_ipv4`), `finalizing` (`recovering`). Implemented in `deriveJourneyPhase()` (Phase B), so no provisioning-stage column or lifecycle writes are needed in Phase A.
 - [ ] T012 [US2] Reject stale registrations: `/vps/register` returns 410 `attempt_retired` for retired/replaced/expired attempts in `packages/platform/src/customer-vps-routes.ts` and the register flow in `packages/platform/src/customer-vps.ts`
 - [ ] T013 [US2] Make `recover()` retire-old + activate-new atomic: move the old-row retirement into the same `runInPlatformTransaction` block that activates the replacement; provider deletion stays queued outside the transaction in `packages/platform/src/customer-vps.ts`
 - [ ] T014 [US3] Record checkout attempts in `POST /billing/checkout` (status `open`, same request that creates the Stripe session) and resolve them in the Stripe webhook handler by subscribing to `checkout.session.completed` (→ `paid`) and `checkout.session.expired` (→ `expired`) in `packages/platform/src/billing-routes.ts`
@@ -178,7 +178,7 @@ Phase D (US5, US6) ── independent of B/C/E (only T045 touches Phase A's bill
 Phase F ── after C, D, E (documents the final state)
 ```
 
-- A → B: journey derivation reads `provisioning_stage`, `failure_code`, `attempt`, `billing_checkout_attempts` created in A.
+- A → B: journey derivation reads `failure_code`/`attempt` (Phase A) and derives the provisioning stage from observable columns; `billing_checkout_attempts` is created in Phase B alongside its consumer.
 - B → C and B → E: BootSequence, CLI, and mobile all consume `/api/journey`.
 - D can be developed in parallel with B/C (different files); land it as a sibling branch in the stack to keep PRs small.
 - Within each phase: test tasks [P] run in parallel first; implementation tasks follow their listed order (db.ts before services before routes).
