@@ -36,7 +36,7 @@ describe('platform billing routes', () => {
     ({ db } = await createTestPlatformDb());
     stripe = {
       apiTimeoutMs: 10_000,
-      createCheckoutSession: vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session' }),
+      createCheckoutSession: vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session', id: 'cs_test_session' }),
       createPortalSession: vi.fn().mockResolvedValue({ url: 'https://billing.stripe.test/session' }),
       constructWebhookEvent: vi.fn(),
     };

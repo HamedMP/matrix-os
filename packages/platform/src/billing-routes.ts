@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod/v4';
 import {
   getBillingCustomerByClerkUserId,
@@ -7,6 +8,8 @@ import {
   getBillingEntitlement,
   getBillingEntitlementState,
   insertBillingWebhookEvent,
+  insertCheckoutAttempt,
+  resolveCheckoutAttempt,
   runBillingWebhookTransaction,
   upsertBillingCustomer,
   upsertBillingEntitlement,
@@ -65,7 +68,7 @@ export interface StripeBillingClient {
    * Stripe Customer when needed; the signed subscription webhook links it back
    * to the Clerk user from server-written metadata.
    */
-  createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{ url: string }>;
+  createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{ url: string; id: string }>;
   createPortalSession(input: { customerId: string; returnUrl: string }): Promise<{ url: string }>;
   constructWebhookEvent(rawBody: string, signature: string, webhookSecret: string): StripeWebhookEvent;
 }
@@ -132,6 +135,18 @@ export function createBillingRoutes(options: {
         successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
         cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
       });
+      // Record the attempt so the journey can derive payment_settling without a
+      // client-side marker. Best-effort: never block the user's checkout on it.
+      try {
+        await insertCheckoutAttempt(options.db, {
+          id: randomUUID(),
+          clerkUserId,
+          stripeSessionId: session.id,
+          createdAt: now().toISOString(),
+        });
+      } catch (err: unknown) {
+        console.error('[billing] checkout attempt record failed:', err instanceof Error ? err.message : String(err));
+      }
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] checkout creation failed:', err instanceof Error ? err.message : String(err));
@@ -206,6 +221,22 @@ export function createBillingRoutes(options: {
         });
         if (!inserted.inserted) {
           return { received: true, duplicate: true };
+        }
+
+        // Checkout session lifecycle drives the settling-attempt status: a
+        // confirmed payment marks the attempt `paid` (sticky), an expiry marks
+        // it `expired`. Both only transition `open` rows.
+        if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
+          const sessionId = readStripeObjectId(event.data.object);
+          if (sessionId) {
+            await resolveCheckoutAttempt(
+              trx,
+              sessionId,
+              event.type === 'checkout.session.completed' ? 'paid' : 'expired',
+              webhookProcessedAt.toISOString(),
+            );
+          }
+          return { received: true, processed: true };
         }
 
         if (!isSubscriptionEvent(event.type)) {
@@ -336,6 +367,12 @@ async function projectSubscription(
       }];
     }),
   };
+}
+
+function readStripeObjectId(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const id = (value as { id?: unknown }).id;
+  return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
 function readClerkUserIdFromStripeMetadata(metadata: unknown): string | null {

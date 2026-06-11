@@ -6,6 +6,8 @@ import {
   getLatestCheckoutAttempt,
   getLatestJourneyEvent,
   getOnboardingFirstRun,
+  insertOnboardingFirstRunIfAbsent,
+  listRunningMachinesMissingFirstRun,
   type BillingCheckoutAttemptRecord,
   type OnboardingFirstRunRecord,
   type PlatformDB,
@@ -243,6 +245,46 @@ export async function loadJourney(clerkUserId: string, deps: LoadJourneyDeps): P
   }
 
   return state;
+}
+
+export interface FirstRunProbeResult {
+  completedAt: string;
+  goal?: string | null;
+}
+
+/**
+ * Backfills server-owned first-run records for legacy users — those whose
+ * machine predates the write-behind path. Runs OFF the journey read path (the
+ * reconciler calls it): the read path never probes a VPS, so it stays fast and
+ * never hangs. `probe` returns a result for a completed onboarding, null for
+ * not-completed-or-unreachable; unreachable machines simply retry next pass.
+ * Persists with DO NOTHING so it can never clobber an authoritative write-behind.
+ */
+export async function backfillFirstRunRecords(
+  db: PlatformDB,
+  opts: { probe: (machine: UserMachineRecord) => Promise<FirstRunProbeResult | null>; limit?: number },
+): Promise<{ checked: number; filled: number }> {
+  const machines = await listRunningMachinesMissingFirstRun(db, opts.limit ?? 25);
+  let filled = 0;
+  for (const machine of machines) {
+    let result: FirstRunProbeResult | null;
+    try {
+      result = await opts.probe(machine);
+    } catch (err: unknown) {
+      // Unreachable / transient probe failure — skip and retry on a later pass.
+      void err;
+      continue;
+    }
+    if (!result) continue;
+    await insertOnboardingFirstRunIfAbsent(db, {
+      clerkUserId: machine.clerkUserId,
+      completedAt: result.completedAt,
+      goal: result.goal ?? null,
+      source: 'backfill',
+    });
+    filled += 1;
+  }
+  return { checked: machines.length, filled };
 }
 
 /** Appends a journey event only when the phase differs from the latest recorded one. */

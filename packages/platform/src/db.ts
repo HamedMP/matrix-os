@@ -2341,7 +2341,9 @@ function parseFirstRunSteps(raw: string): Record<string, unknown> {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
-  } catch {
+  } catch (err: unknown) {
+    // Corrupt persisted JSON → treat as no steps rather than failing the read.
+    void err;
     return {};
   }
 }
