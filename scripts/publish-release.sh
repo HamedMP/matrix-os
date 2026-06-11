@@ -247,7 +247,13 @@ printf '%s' "$REGISTRATION_BODY" | curl --fail --silent --show-error --max-time 
   --data-binary @-
 
 echo ""
-echo "Published $VERSION to $CHANNEL"
-echo "  Release metadata: ${PLATFORM_PUBLIC_URL%/}/system-bundles/releases/$VERSION.json"
-echo "  Sync agents will discover this within 5 minutes."
-echo "  To deploy now: curl -X POST https://app.matrix-os.com/vps/deploy -H 'Authorization: Bearer \$PLATFORM_SECRET' -d '{\"version\":\"$VERSION\"}'"
+if [ "$CHANNEL" = "none" ]; then
+  echo "Registered $VERSION (no channel promotion; deploy is version-pinned only)"
+  echo "  Release metadata: ${PLATFORM_PUBLIC_URL%/}/system-bundles/releases/$VERSION.json"
+  echo "  To deploy to one handle: curl -X POST https://app.matrix-os.com/vps/deploy -H 'Authorization: Bearer \$PLATFORM_SECRET' -d '{\"version\":\"$VERSION\",\"handle\":\"<handle>\"}'"
+else
+  echo "Published $VERSION to $CHANNEL"
+  echo "  Release metadata: ${PLATFORM_PUBLIC_URL%/}/system-bundles/releases/$VERSION.json"
+  echo "  Sync agents will discover this within 5 minutes."
+  echo "  To deploy now: curl -X POST https://app.matrix-os.com/vps/deploy -H 'Authorization: Bearer \$PLATFORM_SECRET' -d '{\"version\":\"$VERSION\"}'"
+fi

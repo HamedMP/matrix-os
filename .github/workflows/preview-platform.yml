@@ -105,7 +105,7 @@ jobs:
           desc="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json)"
           url="$(jq -r --arg tag "pr-${PR_NUMBER}" \
-            '[.status.traffic[] | select(.tag == $tag) | .url] | first // ""' <<< "$desc")"
+            '[(.status.traffic // [])[] | select(.tag == $tag) | .url] | first // ""' <<< "$desc")"
           if [ -z "$url" ]; then
             # Describe can lag a fresh deploy; tagged URLs are deterministic.
             base="$(jq -r '.status.url' <<< "$desc")"
@@ -171,7 +171,7 @@ jobs:
           revisions="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json |
             jq -r --arg tag "pr-${PR_NUMBER}" \
-              '[.status.traffic[] | select(.tag == $tag) | .revisionName] | unique | .[]')"
+              '[(.status.traffic // [])[] | select(.tag == $tag) | .revisionName] | unique | .[]')"
           if [ -z "$revisions" ]; then
             echo "No revisions tagged pr-${PR_NUMBER}; nothing to tear down."
             exit 0
