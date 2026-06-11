@@ -167,11 +167,10 @@ EOF
 chmod 0640 /etc/alloy/matrix-logship.alloy
 
 umask 077
-cat > /opt/matrix/env/logship.env << EOF
-LOGS_INGEST_URL=${INGEST_URL}
-LOGS_INGEST_USER=${INGEST_USER}
-LOGS_INGEST_PASSWORD=${INGEST_PASSWORD}
-EOF
+# printf %s writes values byte-for-byte; no heredoc/expansion semantics to
+# reason about for credentials containing shell-special characters.
+printf 'LOGS_INGEST_URL=%s\nLOGS_INGEST_USER=%s\nLOGS_INGEST_PASSWORD=%s\n' \
+  "$INGEST_URL" "$INGEST_USER" "$INGEST_PASSWORD" > /opt/matrix/env/logship.env
 chmod 0600 /opt/matrix/env/logship.env
 
 cat > /etc/systemd/system/matrix-logship.service << 'EOF'
