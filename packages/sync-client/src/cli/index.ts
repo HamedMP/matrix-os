@@ -17,9 +17,31 @@ import { downloadCommand } from "./commands/download.js";
 import { agentCommand } from "./commands/agent.js";
 import { forwardAliasCommand, portCommand } from "./commands/port.js";
 import { normalizeLeadingGlobalFlags } from "./global-flags.js";
+import { getCliTelemetry } from "./telemetry.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../../package.json") as { version: string };
+
+const subCommands = {
+  login: loginCommand,
+  logout: logoutCommand,
+  sync: syncCommand,
+  peers: peersCommand,
+  shell: shellCommand,
+  sh: shellCommand,
+  profile: profileCommand,
+  whoami: whoamiCommand,
+  status: statusCommand,
+  run: runCommand,
+  upload: uploadCommand,
+  download: downloadCommand,
+  agent: agentCommand,
+  port: portCommand,
+  forward: forwardAliasCommand,
+  doctor: doctorCommand,
+  instance: instanceCommand,
+  completion: completionCommand,
+};
 
 const main = defineCommand({
   meta: {
@@ -27,26 +49,26 @@ const main = defineCommand({
     version: pkg.version,
     description: "Matrix OS CLI — file sync, shell sessions, and instance access",
   },
-  subCommands: {
-    login: loginCommand,
-    logout: logoutCommand,
-    sync: syncCommand,
-    peers: peersCommand,
-    shell: shellCommand,
-    sh: shellCommand,
-    profile: profileCommand,
-    whoami: whoamiCommand,
-    status: statusCommand,
-    run: runCommand,
-    upload: uploadCommand,
-    download: downloadCommand,
-    agent: agentCommand,
-    port: portCommand,
-    forward: forwardAliasCommand,
-    doctor: doctorCommand,
-    instance: instanceCommand,
-    completion: completionCommand,
-  },
+  subCommands,
 });
 
-await runMain(main, { rawArgs: normalizeLeadingGlobalFlags(process.argv.slice(2)) });
+const rawArgs = normalizeLeadingGlobalFlags(process.argv.slice(2));
+
+// Anonymous usage telemetry (no-op without a PostHog token; opt out with
+// MATRIX_NO_TELEMETRY). Only the resolved command name and an argument count
+// are captured -- never argument values or paths. Unknown first tokens are
+// reported as "unknown" so typos cannot leak file names.
+const telemetry = getCliTelemetry();
+const firstPositional = rawArgs.find((arg) => !arg.startsWith("-"));
+const commandName = firstPositional
+  ? Object.hasOwn(subCommands, firstPositional)
+    ? firstPositional
+    : "unknown"
+  : "root";
+telemetry.captureCommandRun(commandName, Math.max(rawArgs.length - (firstPositional ? 1 : 0), 0));
+
+try {
+  await runMain(main, { rawArgs });
+} finally {
+  await telemetry.shutdown();
+}
