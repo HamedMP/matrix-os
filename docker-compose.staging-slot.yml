@@ -1,0 +1,75 @@
+# Matrix OS -- Per-worktree staging slot (1..4) on the ops VPS
+#
+# Parameterized variant of docker-compose.staging.yml driven by
+# scripts/staging-slot.sh. Each slot is a hot-reloading dev container whose
+# source is bind-mounted from a git worktree, exposed through the existing
+# cloudflared tunnel as staging-<SLOT>.matrix-os.com /
+# api-staging-<SLOT>.matrix-os.com.
+#
+# Do not invoke directly; scripts/staging-slot.sh sets SLOT, the project
+# name (mx-staging-<SLOT>), and the project directory (the worktree), and
+# records ownership in ~/.matrixos/staging-slots/.
+#
+# Reuses the platform postgres on matrixos-net with database
+# matrixos_staging_<SLOT>.
+
+services:
+  staging-dev:
+    container_name: matrixos-staging-${SLOT:?staging-slot.sh sets SLOT}
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./packages:/app/packages
+      - ./shell:/app/shell
+      - ./home:/app/home
+      - ./skills:/app/skills
+      - ./tests:/app/tests
+      - ./specs:/app/specs
+      - ./docs:/app/docs
+      - ./distro:/app/distro
+      - ./scripts:/app/scripts
+      - ./package.json:/app/package.json
+      - ./pnpm-workspace.yaml:/app/pnpm-workspace.yaml
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml:ro
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./vitest.config.ts:/app/vitest.config.ts
+      - slot-node-modules:/app/node_modules
+      - slot-home:/home/matrixos/home
+    environment:
+      - NODE_ENV=development
+      - MATRIX_HOME=/home/matrixos/home
+      - MATRIX_HANDLE=staging-${SLOT}
+      - MATRIX_DISPLAY_NAME=Staging ${SLOT}
+      - PORT=4000
+      # Public URLs the browser will see. Cloudflared terminates TLS.
+      - NEXT_PUBLIC_GATEWAY_WS=wss://api-staging-${SLOT}.matrix-os.com/ws
+      - NEXT_PUBLIC_GATEWAY_URL=https://api-staging-${SLOT}.matrix-os.com
+      - GATEWAY_URL=http://localhost:4000
+      - POSTHOG_TOKEN=${POSTHOG_TOKEN:-}
+      - POSTHOG_HOST=${POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY:-}
+      - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}
+      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
+      - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
+      # Reuse platform postgres on matrixos-net. Password stays in .env.
+      - DATABASE_URL=${STAGING_DATABASE_URL:-postgresql://${STAGING_DB_USER:-matrixos}:${STAGING_DB_PASSWORD:?set STAGING_DB_PASSWORD in .env}@postgres:5432/matrixos_staging_${SLOT}}
+      - PLATFORM_DATABASE_URL=${STAGING_PLATFORM_DATABASE_URL:-postgresql://${STAGING_DB_USER:-matrixos}:${STAGING_DB_PASSWORD:?set STAGING_DB_PASSWORD in .env}@postgres:5432/matrixos_staging_${SLOT}}
+    networks:
+      - matrixos-net
+    restart: unless-stopped
+    healthcheck:
+      test: wget -qO- http://localhost:4000/health || exit 1
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+
+volumes:
+  # Named per compose project (mx-staging-<SLOT>), so each slot keeps its own.
+  slot-node-modules:
+  slot-home:
+
+networks:
+  matrixos-net:
+    external: true
+    name: matrixos-net

@@ -4,9 +4,29 @@ credentials-file: /etc/cloudflared/credentials.json
 ingress:
   - hostname: grafana.matrix-os.com
     service: http://grafana:3000
+  # Authenticated push-only Loki ingest edge (basic auth in logs-edge).
+  - hostname: logs.matrix-os.com
+    service: http://logs-edge:8080
   # Staging dev container (HMR shell).
   - hostname: staging.matrix-os.com
     service: http://matrixos-staging:3000
   - hostname: api-staging.matrix-os.com
     service: http://matrixos-staging:4000
+  # Per-worktree HMR staging slots (scripts/staging-slot.sh).
+  - hostname: staging-1.matrix-os.com
+    service: http://matrixos-staging-1:3000
+  - hostname: api-staging-1.matrix-os.com
+    service: http://matrixos-staging-1:4000
+  - hostname: staging-2.matrix-os.com
+    service: http://matrixos-staging-2:3000
+  - hostname: api-staging-2.matrix-os.com
+    service: http://matrixos-staging-2:4000
+  - hostname: staging-3.matrix-os.com
+    service: http://matrixos-staging-3:3000
+  - hostname: api-staging-3.matrix-os.com
+    service: http://matrixos-staging-3:4000
+  - hostname: staging-4.matrix-os.com
+    service: http://matrixos-staging-4:3000
+  - hostname: api-staging-4.matrix-os.com
+    service: http://matrixos-staging-4:4000
   - service: http_status:404
