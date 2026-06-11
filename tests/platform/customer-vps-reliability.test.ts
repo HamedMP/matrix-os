@@ -160,6 +160,9 @@ describe('platform/customer-vps reliability', () => {
     const retired = await getUserMachine(db, first.machineId);
     expect(retired?.deletedAt).not.toBeNull();
     expect(hetzner.createServer).toHaveBeenCalledTimes(2);
+
+    const pending = await listPendingProviderDeletions(db, '2099-01-01T00:00:00.000Z', 50);
+    expect(pending.some((d) => d.reason === 'failed_retry_retire' && d.providerServerId === 123456)).toBe(true);
   });
 
   it('converges concurrent retries on a failed row to a single live machine', async () => {
@@ -177,6 +180,32 @@ describe('platform/customer-vps reliability', () => {
     ]);
 
     expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+    const live = (await listUserMachines(db)).filter(
+      (m) => m.clerkUserId === 'user_123' && m.deletedAt === null,
+    );
+    expect(live).toHaveLength(1);
+  });
+
+  it('converges concurrent retries with no billing lock via the unique index alone', async () => {
+    // entitled:false skips lockUserMachineProvisioning, so the unique partial
+    // index on (clerk_user_id, runtime_slot) WHERE deleted_at IS NULL is the
+    // sole safety net. A losing racer must surface an error, never a silent
+    // second live machine.
+    const { service } = createHarness({ entitled: false });
+    const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    await updateUserMachine(db, first.machineId, { status: 'failed', failureAt: '2026-04-26T12:05:00.000Z' });
+
+    const results = await Promise.allSettled([
+      service.provision({ clerkUserId: 'user_123', handle: 'alice' }),
+      service.provision({ clerkUserId: 'user_123', handle: 'alice' }),
+    ]);
+
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        expect(r.reason).toBeInstanceOf(Error);
+      }
+    }
     const live = (await listUserMachines(db)).filter(
       (m) => m.clerkUserId === 'user_123' && m.deletedAt === null,
     );

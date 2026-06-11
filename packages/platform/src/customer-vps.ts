@@ -387,6 +387,34 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
+  // Enqueues a provider-server deletion on the given transaction-or-db handle.
+  // Unlike queueProviderDeletion, this propagates insert failures so a caller
+  // can keep the status change and the deletion enqueue in one atomic unit —
+  // if the enqueue fails the whole transaction rolls back and the machine is
+  // retried on the next reconciler pass instead of orphaning its server.
+  async function enqueueProviderDeletionTx(
+    handle: PlatformDB,
+    input: {
+      providerServerId: number;
+      reason: string;
+      machineId?: string | null;
+      handle?: string | null;
+      detail: string;
+    },
+  ): Promise<void> {
+    const currentTime = now().toISOString();
+    await insertProviderDeletion(handle, {
+      id: randomUUID(),
+      providerServerId: input.providerServerId,
+      reason: input.reason,
+      machineId: input.machineId ?? null,
+      handle: input.handle ?? null,
+      nextAttemptAt: currentTime,
+      createdAt: currentTime,
+      lastError: input.detail,
+    });
+  }
+
   async function retryProviderDeletions(): Promise<void> {
     const pending = await listPendingProviderDeletions(
       deps.db,
@@ -497,22 +525,29 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         }
         const existing = await getActiveUserMachineByClerkId(trx, request.clerkUserId, request.runtimeSlot);
         let attempt = 1;
-        let retiredServerId: number | null = null;
-        let retiredMachineId: string | null = null;
         if (existing) {
           if (existing.status !== 'failed') {
-            return { existing, retiredServerId: null, retiredMachineId: null };
+            return { existing };
           }
-          // The active slot is held by a failed attempt. Retire it and provision
-          // a fresh one in the same transaction so the unique (clerk, slot) slot
-          // is satisfied at every instant and the user is never blocked.
+          // The active slot is held by a failed attempt. Retire it, enqueue its
+          // server for reaping, and provision a fresh one — all in one
+          // transaction so the unique (clerk, slot) slot is satisfied at every
+          // instant, the user is never blocked, and the retired server is never
+          // orphaned (a failed enqueue rolls back the whole retry).
           attempt = existing.attempt + 1;
           if (attempt > deps.config.maxProvisionAttempts) {
             throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
           }
           await retireUserMachine(trx, existing.machineId, currentTime.toISOString());
-          retiredServerId = existing.hetznerServerId;
-          retiredMachineId = existing.machineId;
+          if (existing.hetznerServerId !== null) {
+            await enqueueProviderDeletionTx(trx, {
+              providerServerId: existing.hetznerServerId,
+              reason: 'failed_retry_retire',
+              machineId: existing.machineId,
+              handle: request.handle,
+              detail: 'retiring failed machine before retry',
+            });
+          }
         }
         if (billingContext) {
           const activeMachines = await listActiveUserMachinesByClerkId(trx, request.clerkUserId);
@@ -533,21 +568,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           provisionedAt: currentTime.toISOString(),
           attempt,
         });
-        return { existing: null, retiredServerId, retiredMachineId };
+        return { existing: null };
       });
       if (provisionRow.existing) {
         return activeProvisionResponse(provisionRow.existing, deps.config.provisionEtaSeconds);
-      }
-      // Reap the retired failed attempt's server outside the transaction so the
-      // abandoned VPS does not accrue cost (network call never inside the txn).
-      if (provisionRow.retiredServerId !== null) {
-        await queueProviderDeletion({
-          providerServerId: provisionRow.retiredServerId,
-          reason: 'failed_retry_retire',
-          machineId: provisionRow.retiredMachineId,
-          handle: request.handle,
-          err: new Error('retiring failed machine before retry'),
-        });
       }
 
       const userData = renderCloudInitTemplate(
@@ -924,17 +948,24 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           row.registrationTokenExpiresAt &&
           new Date(row.registrationTokenExpiresAt).getTime() < now().getTime()
         ) {
-          await updateUserMachine(deps.db, row.machineId, {
-            status: 'failed',
-            failureCode: 'registration_timeout',
-            failureAt: now().toISOString(),
-          });
-          await queueProviderDeletion({
-            providerServerId: row.hetznerServerId,
-            reason: 'registration_timeout',
-            machineId: row.machineId,
-            handle: row.handle,
-            err: new Error('registration token expired before register()'),
+          // Mark failed and enqueue the server for reaping atomically: once the
+          // row is `failed` it leaves listStaleUserMachines, so if the enqueue
+          // were a separate write that failed, the server would be orphaned
+          // forever. Rolling back keeps the row reconcilable next pass.
+          const serverId = row.hetznerServerId;
+          await runInPlatformTransaction(deps.db, async (trx) => {
+            await updateUserMachine(trx, row.machineId, {
+              status: 'failed',
+              failureCode: 'registration_timeout',
+              failureAt: now().toISOString(),
+            });
+            await enqueueProviderDeletionTx(trx, {
+              providerServerId: serverId,
+              reason: 'registration_timeout',
+              machineId: row.machineId,
+              handle: row.handle,
+              detail: 'registration token expired before register()',
+            });
           });
           failed += 1;
           continue;
