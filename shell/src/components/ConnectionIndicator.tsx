@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { RefreshCwIcon } from "lucide-react";
 import { useConnectionHealth } from "@/hooks/useConnectionHealth";
 import { manualReconnect } from "@/hooks/useSocket";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -91,37 +92,48 @@ export function ConnectionIndicator() {
   }, [state]);
 
   const copy = resolveConnectionCopy(state, status);
-  const toneClass = copy.tone === "danger" ? "text-red-500" : "text-yellow-500";
-  const dotClass = copy.tone === "danger" ? "bg-red-500" : "bg-yellow-500";
+  const toneClass = copy.tone === "danger" ? "text-red-500" : "text-amber-500";
+  const dotClass = copy.tone === "danger" ? "bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.14)]" : "bg-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.16)]";
+  const panelClass = copy.tone === "danger"
+    ? "border-red-500/25 bg-card/95 shadow-[0_18px_60px_-24px_rgba(239,68,68,0.58),0_24px_60px_-30px_rgba(0,0,0,0.38)]"
+    : "border-amber-500/20 bg-card/95 shadow-[0_18px_60px_-24px_rgba(245,158,11,0.45),0_24px_60px_-30px_rgba(0,0,0,0.34)]";
 
   if (state === "connected") return null;
 
   return (
     <aside
-      className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center bg-background/70 px-4 backdrop-blur-md"
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-[90] flex justify-center px-3 sm:px-4"
       aria-label="Matrix connection status"
+      data-variant="dock"
       role="status"
     >
-      <div className="pointer-events-auto w-full max-w-sm rounded-md border border-border bg-card/95 p-4 text-card-foreground shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
-        <div className="flex items-start gap-3">
-          <span className={`mt-1 size-2.5 shrink-0 rounded-full ${dotClass} ${state === "reconnecting" ? "animate-pulse" : ""}`} />
+      <div className={`pointer-events-auto flex w-full max-w-[min(92vw,560px)] flex-col gap-3 rounded-2xl border px-3.5 py-3 text-card-foreground backdrop-blur-md backdrop-saturate-150 sm:flex-row sm:items-center sm:gap-4 ${panelClass}`}>
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <span
+            className={`mt-2 size-2.5 shrink-0 rounded-full ${dotClass} ${state === "reconnecting" ? "animate-pulse" : ""}`}
+            aria-hidden="true"
+          />
           <div className="min-w-0 flex-1">
-            <div className={`text-sm font-semibold ${toneClass}`}>{copy.title}</div>
-            <p className="mt-1 text-sm leading-5 text-muted-foreground">{copy.detail}</p>
+            <div className={`text-sm font-semibold leading-5 ${toneClass}`}>{copy.title}</div>
+            <p className="mt-0.5 text-sm leading-5 text-muted-foreground">{copy.detail}</p>
             {status.releaseChannel && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Channel <span className="font-mono">{status.releaseChannel}</span>
-              </p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/80">
+                <span className="rounded-full border border-border/50 bg-background/50 px-2 py-0.5 font-mono">
+                  {status.releaseChannel}
+                </span>
+                {status.releaseVersion && <span className="truncate font-mono">{status.releaseVersion}</span>}
+              </div>
             )}
-            <button
-              className="mt-4 inline-flex min-h-8 items-center rounded-md border border-border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted"
-              onClick={manualReconnect}
-              type="button"
-            >
-              {copy.action}
-            </button>
           </div>
         </div>
+        <button
+          className="inline-flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-border/70 bg-background/80 px-3 text-sm font-medium text-foreground transition hover:border-border hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={manualReconnect}
+          type="button"
+        >
+          <RefreshCwIcon className="size-3.5" aria-hidden="true" />
+          {copy.action}
+        </button>
       </div>
     </aside>
   );

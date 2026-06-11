@@ -22,7 +22,7 @@ export function resolveConnectionCopy(state: ConnectionState, status: RuntimeSta
       title: "Connection lost",
       detail: status.reachability === "online"
         ? "Your Matrix computer is online, but the live shell socket is closed."
-        : "Your Matrix computer is not reachable yet. It may be restarting after an update.",
+        : "The gateway is not answering yet. Matrix will keep retrying in the background.",
       action: "Reconnect",
     };
   }
@@ -40,16 +40,16 @@ export function resolveConnectionCopy(state: ConnectionState, status: RuntimeSta
   if (status.reachability === "checking") {
     return {
       tone: "warn",
-      title: "Checking Matrix computer",
-      detail: "Matrix is checking whether your computer is restarting or applying an update.",
+      title: "Checking connection",
+      detail: "Matrix is checking the gateway and live shell session.",
       action: "Retry now",
     };
   }
 
   return {
     tone: "warn",
-    title: "Matrix computer is restarting",
-    detail: "Services are coming back online. This usually happens during bundle upgrades or gateway restarts.",
+    title: "Matrix is reconnecting",
+    detail: "The gateway did not answer yet. Matrix is keeping your workspace open while services settle.",
     action: "Retry now",
   };
 }
