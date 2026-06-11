@@ -223,6 +223,9 @@ jobs:
             echo "Provision accepted; waiting for the VPS to come up..."
             deadline=$((SECONDS + 600))
             while true; do
+              # Let the record settle before reading; a fresh provision can
+              # transiently read as absent.
+              sleep 15
               status="$(curl -fsS --max-time 30 \
                 -H "authorization: Bearer ${PLATFORM_SECRET}" \
                 "${PLATFORM_PUBLIC_URL}/vps/fleet" |
@@ -335,7 +338,9 @@ jobs:
           now="$(date +%s)"
           ttl_secs=$((PREVIEW_TTL_HOURS * 3600))
           lookup_failures=/tmp/reaper-lookup-failures
+          delete_failures=/tmp/reaper-delete-failures
           : > "$lookup_failures"
+          : > "$delete_failures"
           curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
@@ -369,10 +374,20 @@ jobs:
                 -H "authorization: Bearer ${PLATFORM_SECRET}")"
               if [ "$code" != "200" ]; then
                 echo "Failed to delete ${handle} (HTTP ${code})" >&2
+                echo "$handle" >> "$delete_failures"
               fi
             done
+          failed=0
           if [ -s "$lookup_failures" ]; then
             echo "Reaper could not confirm PR state for: $(tr '\n' ' ' < "$lookup_failures")" >&2
-            echo "Those VPSes were skipped (fail-safe); failing the job so the skips are visible." >&2
+            echo "Those VPSes were skipped (fail-safe)." >&2
+            failed=1
+          fi
+          if [ -s "$delete_failures" ]; then
+            echo "Reaper could not delete: $(tr '\n' ' ' < "$delete_failures")" >&2
+            failed=1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "Failing the job so skips/failed deletes are visible instead of silently accumulating cost." >&2
             exit 1
           fi

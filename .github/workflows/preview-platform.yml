@@ -78,7 +78,8 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${GITHUB_SHA::12}"
+          head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \
             --config cloudbuild.platform.yaml \
@@ -101,10 +102,15 @@ jobs:
             --set-secrets "PLATFORM_DATABASE_URL=platform-preview-database-url:latest,PLATFORM_SECRET=platform-preview-secret:latest" \
             --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 \
             --quiet
-          url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-            --format json | jq -r --arg tag "pr-${PR_NUMBER}" \
-            '.status.traffic[] | select(.tag == $tag) | .url')"
+          desc="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json)"
+          url="$(jq -r --arg tag "pr-${PR_NUMBER}" \
+            '[.status.traffic[] | select(.tag == $tag) | .url] | first // ""' <<< "$desc")"
+          if [ -z "$url" ]; then
+            # Describe can lag a fresh deploy; tagged URLs are deterministic.
+            base="$(jq -r '.status.url' <<< "$desc")"
+            url="https://pr-${PR_NUMBER}---${base#https://}"
+          fi
           echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
 
       - name: Comment preview URL on PR
