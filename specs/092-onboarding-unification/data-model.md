@@ -7,16 +7,16 @@ All persistence is platform PostgreSQL via Kysely, added through the existing in
 ```
 account_required → plan_required → payment_settling → provisioning → first_run → ready
                         ↑                │   │              │
-                        │  (attempt      │   │ (entitlement │ (timeout / provider
-                        │   expired/     │   │  activates)  │  failure / token expiry)
-                        │   abandoned)   │   ▼              ▼
-                        └────────────────┘  (stays here,   provisioning_failed ──retry──→ provisioning
-                                             delayed:true
-                                             past window)
+                        │  (open attempt │   │ (entitlement │ (timeout / provider
+                        │   ages past    │   │  activates)  │  failure / token expiry)
+                        │   window, or   │   ▼              ▼
+                        └── expired/  ───┘  (paid attempt   provisioning_failed ──retry──→ provisioning
+                            abandoned)       stays here,
+                                             delayed:true past window)
 ```
 
 - Exactly one phase per user per read (FR-001); derivation order in research.md R1.
-- `payment_settling` persists while an `open` checkout attempt exists; exceeding the settling window sets `settling.delayed:true` (not a phase change), so the paywall is never re-shown after payment (US3, FR-014). It leaves only on entitlement activation (→ `provisioning`) or webhook resolution of the attempt to `expired`/`abandoned` (→ `plan_required`).
+- `payment_settling` distinguishes *confirmed payment* from an *unconfirmed open attempt* (R3): a `paid` attempt (Stripe `checkout.session.completed` received, entitlement still propagating) sustains settling indefinitely and never re-shows the paywall (US3) — past the window it only sets `settling.delayed:true` with a `contact_support` action (FR-014). An `open` attempt sustains settling only *within* the window (the seconds before `checkout.session.completed`); once it ages past the window with no confirmation it falls back to `plan_required` so an abandoned checkout does not trap the user. It leaves settling on entitlement activation (→ `provisioning`), window-expiry of an unconfirmed `open` attempt (→ `plan_required`), or `expired`/`abandoned` resolution (→ `plan_required`).
 - `ready` carries a `readiness: ok | degraded` annotation (FR-025); annotation never regresses the phase.
 - `provisioning` carries `progress` (stage + startedAt) only once a machine lifecycle record exists; in the pre-machine "start provisioning" sub-state (entitled, no machine yet, `nextAction.kind = start_provision`) `progress` is absent.
 - `provisioning_failed` carries `retryable: boolean` (false once attempts ≥ cap, FR-008).
@@ -52,13 +52,13 @@ Existing (`db.ts:566-607`): `machine_id` PK, `clerk_user_id`, `handle`, `runtime
 | `id` | uuid PK | |
 | `clerk_user_id` | text NOT NULL, indexed | |
 | `stripe_session_id` | text NOT NULL UNIQUE | Idempotency key; webhook correlates by it |
-| `status` | text NOT NULL | `open \| completed \| expired \| abandoned` |
+| `status` | text NOT NULL | `open \| paid \| expired \| abandoned` |
 | `created_at` | timestamptz NOT NULL | Settling window measured from here (default 10 min, env `BILLING_SETTLING_WINDOW_MS`) |
-| `resolved_at` | timestamptz NULL | Set by webhook (`checkout.session.completed` → `completed`, `checkout.session.expired` → `expired`) |
+| `resolved_at` | timestamptz NULL | Set by webhook (`checkout.session.completed` → `paid`, `checkout.session.expired` → `expired`) |
 
-- Written by `/billing/checkout` in the same flow that creates the Stripe session.
-- Journey reads the newest row per user; any `open` attempt + entitlement not active ⇒ `payment_settling`; the settling window sets only the `delayed` annotation, never the phase (R3).
-- Rows older than 30 days swept by the existing reconciler interval (resource-cleanup policy).
+- Written by `/billing/checkout` (status `open`) in the same flow that creates the Stripe session; `stripe_session_id` is the idempotency/correlation key the `checkout.session.*` webhook resolves by.
+- Journey reads the newest row per user (R3): a `paid` row with entitlement not active ⇒ `payment_settling` indefinitely (never re-shows the paywall); an `open` row ⇒ `payment_settling` only within the window, then it no longer sustains settling and the user falls back to `plan_required`; `expired`/`abandoned` ⇒ `plan_required`. The window sets only the `delayed` annotation on a `paid` row.
+- Rows older than 30 days swept by the existing reconciler interval (resource-cleanup policy); a still-`open` swept row becomes `abandoned`.
 
 ## New table: `onboarding_first_run`
 
