@@ -40,9 +40,12 @@ services:
     image: caddy:2-alpine
     # Authenticated push-only front for Loki, reachable only via the
     # cloudflared tunnel (logs.matrix-os.com). No host port on purpose.
-    environment:
-      - LOGS_INGEST_USER=${LOGS_INGEST_USER:?LOGS_INGEST_USER must be set}
-      - LOGS_INGEST_PASSWORD_HASH=${LOGS_INGEST_PASSWORD_HASH:?LOGS_INGEST_PASSWORD_HASH must be set}
+    # Credentials come via env_file with format: raw -- the bcrypt hash
+    # contains `$` sequences that compose interpolation would mangle.
+    # Copy logs-edge.env.example to logs-edge.env.
+    env_file:
+      - path: ./observability/logs-edge/logs-edge.env
+        format: raw
     volumes:
       - ./observability/logs-edge/Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:

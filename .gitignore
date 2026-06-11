@@ -141,3 +141,4 @@ paper/*.log
 paper/*.out
 paper/*.pdf
 .gstack/
+distro/observability/logs-edge/logs-edge.env
