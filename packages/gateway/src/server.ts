@@ -522,7 +522,9 @@ export async function createGateway(config: GatewayConfig) {
     scrollbackStore: shellScrollbackStore,
   });
   const forwardTunnelHub = createForwardTunnelHub();
-  const ownerTelemetryDistinctId = resolveOwnerTelemetryDistinctId();
+  // One distinct id for every gateway telemetry event so all events on a
+  // dev gateway without owner env vars land under the same person.
+  const ownerTelemetryDistinctId = resolveOwnerTelemetryDistinctId() ?? "matrix-gateway";
   const captureTerminalEvent = (
     event: string,
     properties: Record<string, string | number | boolean | undefined> = {},
@@ -4060,7 +4062,7 @@ export async function createGateway(config: GatewayConfig) {
         ? { channel: parsedTarget.target.value }
         : { version: parsedTarget.target.value };
     void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
-      distinctId: resolveOwnerTelemetryDistinctId() ?? "matrix-gateway",
+      distinctId: ownerTelemetryDistinctId,
       properties: {
         ...targetProperty,
         targetType: parsedTarget.target.type,

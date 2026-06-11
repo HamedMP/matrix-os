@@ -25,6 +25,12 @@ describe("gateway telemetry distinct id wiring", () => {
   it("does not attribute system update requests to the raw handle env only", () => {
     expect(source).not.toMatch(/distinctId:\s*process\.env\.MATRIX_HANDLE\s*\?\?\s*"matrix-gateway"/);
   });
+
+  it("resolves the owner distinct id once so all gateway events share one person", () => {
+    const calls = source.match(/resolveOwnerTelemetryDistinctId\(\)/g) ?? [];
+    expect(calls).toHaveLength(1);
+    expect(source).toMatch(/resolveOwnerTelemetryDistinctId\(\)\s*\?\?\s*"matrix-gateway"/);
+  });
 });
 
 function extractFunction(source: string, name: string): string {
