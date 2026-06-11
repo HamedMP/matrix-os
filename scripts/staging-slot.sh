@@ -34,6 +34,42 @@ compose() {
     "$@"
 }
 
+# The dev image runs as the matrixos user (uid 100); on Linux hosts the
+# bind-mounted worktree is owned by the invoking user, so Next/tsx watchers
+# could not write build output (next-env.d.ts, .next, dist). Grant the
+# container uid an ACL on the worktree, with inheritance for new files.
+# Docker Desktop (macOS) maps uids transparently and never hits this.
+ensure_worktree_writable() {
+  local worktree="$1" uid="${SLOT_CONTAINER_UID:-100}"
+  if ! command -v setfacl > /dev/null 2>&1; then
+    echo "staging-slot: setfacl not found; container writes to the worktree may fail (sudo apt install acl)" >&2
+    return 0
+  fi
+  # Files created by the container itself are owned by the container uid;
+  # the invoking user cannot set ACLs on those, but they are already
+  # writable by the container -- so per-file failures here are benign.
+  if ! setfacl -R -m "u:${uid}:rwX" -m "d:u:${uid}:rwX" "$worktree" 2> /dev/null; then
+    echo "staging-slot: some ACL entries could not be set (container-owned files); continuing"
+  fi
+}
+
+# The legacy platform postgres is gone (Cloud Run cutover); slots share a
+# dedicated dev postgres (network alias "postgres" on matrixos-net) with one
+# database per slot.
+ensure_staging_db() {
+  local slot="$1" db_user
+  db_user="${STAGING_DB_USER:-matrixos}"
+  docker compose -f "$REPO_ROOT/docker-compose.staging-db.yml" \
+    --env-file "$ENV_FILE" up -d --wait staging-postgres
+  if ! docker exec matrixos-staging-postgres \
+    psql -U "$db_user" -d matrixos_staging -tAc \
+    "SELECT 1 FROM pg_database WHERE datname = 'matrixos_staging_${slot}'" | grep -q 1; then
+    docker exec matrixos-staging-postgres \
+      psql -U "$db_user" -d matrixos_staging -c \
+      "CREATE DATABASE matrixos_staging_${slot}"
+  fi
+}
+
 validate_slot() {
   case "$1" in
     1 | 2 | 3 | 4) ;;
@@ -86,6 +122,8 @@ cmd_up() {
     '{worktree: $worktree, branch: $branch, claimedAt: $claimedAt}' > "$(slot_file "$slot")"
 
   echo "staging-slot: claimed slot $slot for $branch"
+  ensure_worktree_writable "$worktree"
+  ensure_staging_db "$slot"
   if ! compose "$slot" "$worktree" up -d --build; then
     echo "staging-slot: start failed; slot $slot released" >&2
     exit 1

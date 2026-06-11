@@ -10,8 +10,9 @@
 # name (mx-staging-<SLOT>), and the project directory (the worktree), and
 # records ownership in ~/.matrixos/staging-slots/.
 #
-# Reuses the platform postgres on matrixos-net with database
-# matrixos_staging_<SLOT>.
+# Uses the dedicated staging postgres (docker-compose.staging-db.yml, network
+# alias "postgres" on matrixos-net) with database matrixos_staging_<SLOT>,
+# created by staging-slot.sh on claim.
 
 services:
   staging-dev:
@@ -52,7 +53,7 @@ services:
       - NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=${NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN:-}
       - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST:-}
       - NEXT_PUBLIC_POSTHOG_API_HOST=${NEXT_PUBLIC_POSTHOG_API_HOST:-}
-      # Reuse platform postgres on matrixos-net. Password stays in .env.
+      # Dedicated staging postgres (alias "postgres"). Password stays in .env.
       - DATABASE_URL=${STAGING_DATABASE_URL:-postgresql://${STAGING_DB_USER:-matrixos}:${STAGING_DB_PASSWORD:?set STAGING_DB_PASSWORD in .env}@postgres:5432/matrixos_staging_${SLOT}}
       - PLATFORM_DATABASE_URL=${STAGING_PLATFORM_DATABASE_URL:-postgresql://${STAGING_DB_USER:-matrixos}:${STAGING_DB_PASSWORD:?set STAGING_DB_PASSWORD in .env}@postgres:5432/matrixos_staging_${SLOT}}
     networks:

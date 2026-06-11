@@ -53,7 +53,9 @@ if [ -z "$ip" ] || [ "$ip" = "null" ]; then
 fi
 
 echo "enable-vps-logship: enrolling ${HANDLE} (${ip}) as env=${MATRIX_ENV}"
-# Credentials go via stdin, not argv, so they never appear in remote ps output.
+# Credentials travel via stdin and become ENVIRONMENT variables on the remote
+# (never argv on either side): /proc/<pid>/cmdline is world-readable, while
+# /proc/<pid>/environ is owner/root-only.
 # accept-new trusts a host on FIRST contact only; a changed key for a known IP
 # is rejected loudly (it is not StrictHostKeyChecking=no). Keys are pinned in a
 # dedicated known-hosts file so a rebuilt VPS on a reused IP fails closed until
@@ -63,7 +65,7 @@ mkdir -p "$(dirname "$KNOWN_HOSTS")"
 printf '%s\n%s\n' "$LOGS_INGEST_USER" "$LOGS_INGEST_PASSWORD" |
   ssh -i "$VPS_SSH_KEY" -o StrictHostKeyChecking=accept-new \
     -o UserKnownHostsFile="$KNOWN_HOSTS" "root@${ip}" \
-    "IFS= read -r u && IFS= read -r p && /opt/matrix/app/bin/matrix-install-logship '${LOGS_INGEST_URL}' \"\$u\" \"\$p\" '${HANDLE}' '${MATRIX_ENV}'"
+    "IFS= read -r u && IFS= read -r p && LOGS_INGEST_USER=\"\$u\" LOGS_INGEST_PASSWORD=\"\$p\" /opt/matrix/app/bin/matrix-install-logship '${LOGS_INGEST_URL}' '${HANDLE}' '${MATRIX_ENV}'"
 
 # Record enrollment in the ops-side inventory so credential rotation has a
 # concrete target list (spec 093). Idempotent: one line per handle.

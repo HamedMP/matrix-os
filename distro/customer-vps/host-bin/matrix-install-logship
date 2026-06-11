@@ -2,13 +2,15 @@
 # Install and enable the Grafana Alloy log shipper on a Matrix OS VPS.
 #
 # Usage:
-#   matrix-install-logship <ingest-url> <user> <password> <handle> <env>
+#   LOGS_INGEST_USER=... LOGS_INGEST_PASSWORD=... \
+#     matrix-install-logship <ingest-url> <handle> <env>
 #
 #   ingest-url  https URL of the Loki push edge (e.g. https://logs.matrix-os.com)
-#   user        basic-auth user for the ingest edge
-#   password    basic-auth password for the ingest edge
 #   handle      this VPS's matrix handle (labels every stream)
 #   env         one of: preview | prod | staging
+#
+# Credentials come via environment variables, never argv: /proc/<pid>/cmdline
+# is world-readable, /proc/<pid>/environ is owner/root-only.
 #
 # Self-contained: downloads a pinned, checksum-verified Alloy binary, writes
 # /etc/alloy/matrix-logship.alloy, /opt/matrix/env/logship.env (0600), and the
@@ -26,16 +28,16 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if [ "$#" -ne 5 ]; then
-  echo "usage: matrix-install-logship <ingest-url> <user> <password> <handle> <env>" >&2
+if [ "$#" -ne 3 ]; then
+  echo "usage: LOGS_INGEST_USER=... LOGS_INGEST_PASSWORD=... matrix-install-logship <ingest-url> <handle> <env>" >&2
   exit 64
 fi
 
 INGEST_URL="$1"
-INGEST_USER="$2"
-INGEST_PASSWORD="$3"
-HANDLE="$4"
-MATRIX_ENV="$5"
+HANDLE="$2"
+MATRIX_ENV="$3"
+INGEST_USER="${LOGS_INGEST_USER:?LOGS_INGEST_USER must be set in the environment}"
+INGEST_PASSWORD="${LOGS_INGEST_PASSWORD:?LOGS_INGEST_PASSWORD must be set in the environment}"
 
 case "$INGEST_URL" in
   https://*) ;;
