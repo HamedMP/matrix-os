@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
@@ -82,6 +82,21 @@ describe("GET /icons/:file", () => {
     const res = await app.request("/icons/..%2F..%2Fsecrets.png");
     expect(res.status).toBe(404);
   });
+
+  // Root ignores file permission bits, so the EACCES simulation only works
+  // when the test runs as an unprivileged user.
+  it.skipIf(process.getuid?.() === 0)(
+    "returns a generic 500 when the resolved icon is unreadable",
+    async () => {
+      const iconPath = join(homePath, "system/icons/locked.png");
+      writeFileSync(iconPath, "png-bytes");
+      chmodSync(iconPath, 0o000);
+
+      const res = await app.request("/icons/locked.png");
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("Icon unavailable");
+    },
+  );
 });
 
 describe("GET /system-icons/:file", () => {

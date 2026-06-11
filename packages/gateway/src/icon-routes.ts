@@ -6,6 +6,17 @@ import { getMimeType } from "./file-utils.js";
 
 type IconPathResolver = (homePath: string, requestedFile: string) => Promise<string | null>;
 
+// ENOENT means the resolved icon vanished (regeneration race) -- a true 404.
+// Anything else (EACCES, EMFILE, ...) is a server-side failure and must not
+// masquerade as not-found; return a generic 500 and log the real error.
+function iconReadErrorResponse(c: Context, err: unknown, operation: string) {
+  if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+    return c.text("Icon not found", 404);
+  }
+  console.warn(`[icons] failed to ${operation} resolved icon:`, err instanceof Error ? err.message : String(err));
+  return c.text("Icon unavailable", 500);
+}
+
 // Icons must be served as bytes, never as redirects: an uncacheable 307 forces
 // the browser to re-fetch every launcher icon through the whole proxy chain on
 // each open. The `?v={etag}` query in icon URLs makes immutable caching safe.
@@ -19,8 +30,7 @@ function createIconHandler(homePath: string, resolveIconPath: IconPathResolver) 
     try {
       iconStat = await stat(target);
     } catch (err) {
-      console.warn("[icons] failed to stat resolved icon:", err instanceof Error ? err.message : String(err));
-      return c.text("Icon not found", 404);
+      return iconReadErrorResponse(c, err, "stat");
     }
     const etag = `"${iconStat.mtimeMs.toString(36)}-${iconStat.size.toString(36)}"`;
     const headers = {
@@ -35,8 +45,7 @@ function createIconHandler(homePath: string, resolveIconPath: IconPathResolver) 
     try {
       iconBody = await readFile(target);
     } catch (err) {
-      console.warn("[icons] failed to read resolved icon:", err instanceof Error ? err.message : String(err));
-      return c.text("Icon not found", 404);
+      return iconReadErrorResponse(c, err, "read");
     }
     return c.body(iconBody, 200, headers);
   };
