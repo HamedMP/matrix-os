@@ -1,6 +1,6 @@
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import type { NextConfig } from "next";
-import { withPostHogConfig } from "@posthog/nextjs-config";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 
@@ -82,15 +82,23 @@ const nextConfig: NextConfig = {
 // PostHog source-map upload runs only when build credentials are present so
 // uploads happen in release builds while local/dev builds stay byte-identical
 // to a build without the plugin (the plain object is exported unchanged).
+// @posthog/nextjs-config is a devDependency, so it MUST NOT be imported at
+// module top level: `next start` loads this file at runtime in pruned
+// production images (platform Cloud Run) where dev deps are absent.
 const posthogPersonalApiKey = process.env.POSTHOG_API_KEY;
 const posthogProjectId = process.env.POSTHOG_PROJECT_ID;
 
-export default posthogPersonalApiKey && posthogProjectId
-  ? withPostHogConfig(nextConfig, {
-      personalApiKey: posthogPersonalApiKey,
-      projectId: posthogProjectId,
-      // Private API host (not the ingestion host): EU is https://eu.posthog.com.
-      host: process.env.POSTHOG_HOST ?? "https://eu.posthog.com",
-      sourcemaps: { enabled: true },
-    })
-  : nextConfig;
+function withSourcemapUpload(config: NextConfig): NextConfig {
+  if (!posthogPersonalApiKey || !posthogProjectId) return config;
+  const require = createRequire(import.meta.url);
+  const { withPostHogConfig } = require("@posthog/nextjs-config") as typeof import("@posthog/nextjs-config");
+  return withPostHogConfig(config, {
+    personalApiKey: posthogPersonalApiKey,
+    projectId: posthogProjectId,
+    // Private API host (not the ingestion host): EU is https://eu.posthog.com.
+    host: process.env.POSTHOG_HOST ?? "https://eu.posthog.com",
+    sourcemaps: { enabled: true },
+  });
+}
+
+export default withSourcemapUpload(nextConfig);
