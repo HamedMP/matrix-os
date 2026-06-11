@@ -21,6 +21,18 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay",
 });
 const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
+// Replay kill switch. NEXT_PUBLIC_* is inlined at build time, so the build
+// flag alone cannot stop replay during an incident. The layout additionally
+// exposes the server's runtime POSTHOG_DISABLE_REPLAY env as a data
+// attribute, so flipping the env and restarting matrix-shell suppresses
+// replay without a rebuild.
+const buildTimeReplayDisabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY);
+
+function isSessionReplayDisabled(): boolean {
+  if (buildTimeReplayDisabled) return true;
+  if (typeof document === "undefined") return false;
+  return document.documentElement.dataset.posthogDisableReplay === "1";
+}
 let initialized = false;
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
@@ -137,7 +149,8 @@ export function initializeShellPostHog(
 ) {
   if (!currentConfig || initialized) return;
   // The shell serves a same-origin PostHog proxy at /relay (see next.config
-  // rewrites), so relative api hosts are first-party on every user subdomain.
+  // rewrites), so the relative api host stays first-party on whichever origin
+  // serves the shell (app.matrix-os.com session routing, staging, local dev).
   const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: true });
   posthog.init(currentConfig.token, {
     ...(apiHost ? { api_host: apiHost } : {}),
@@ -146,7 +159,21 @@ export function initializeShellPostHog(
     capture_exceptions: true,
     capture_dead_clicks: false,
     rageclick: false,
-    disable_session_recording: true,
+    // Masked session replay: all inputs masked, opt-in text masking via
+    // [data-ph-mask], and sensitive surfaces (terminal, chat transcripts,
+    // file listings) blocked entirely via the ph-no-capture class, which
+    // posthog-js honors natively (blockClass default) -- the blockSelector
+    // is set as well so the block survives a future blockClass override.
+    disable_session_recording: isSessionReplayDisabled(),
+    session_recording: {
+      maskAllInputs: true,
+      maskTextSelector: "[data-ph-mask]",
+      blockSelector: ".ph-no-capture",
+    },
+    // Console output stays out of shell replays: the terminal and agent
+    // surfaces can log tokens or session ids, and DOM blocking does not
+    // cover console capture.
+    enable_recording_console_log: false,
     debug: process.env.NODE_ENV === "development",
     logs: {
       captureConsoleLogs: false,

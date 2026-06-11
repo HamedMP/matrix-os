@@ -93,6 +93,7 @@ export default async function RootLayout({
       lang="en"
       suppressHydrationWarning
       data-posthog-visitor-country={visitorCountry ?? undefined}
+      data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
       <head>
         <link rel="dns-prefetch" href="https://clerk.matrix-os.com" />

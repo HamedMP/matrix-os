@@ -1238,7 +1238,9 @@ export function TerminalPane({
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
     <div
       ref={containerRef}
-      className="h-full w-full min-h-0 min-w-0 relative overflow-hidden"
+      // ph-no-capture: terminal output can contain secrets (env vars, tokens,
+      // file contents); PostHog session replay blocks this element natively.
+      className="ph-no-capture h-full w-full min-h-0 min-w-0 relative overflow-hidden"
       style={{
         outline: isFocused ? "1px solid var(--primary)" : "none",
         outlineOffset: "-1px",

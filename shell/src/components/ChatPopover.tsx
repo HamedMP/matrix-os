@@ -564,7 +564,9 @@ function ChatMessages({
   }
 
   return (
-    <div ref={attachScrollRef} className="flex-1 overflow-y-auto px-3.5 py-3">
+    // ph-no-capture: chat transcripts are private user/agent conversations;
+    // PostHog session replay blocks this element natively.
+    <div ref={attachScrollRef} className="ph-no-capture flex-1 overflow-y-auto px-3.5 py-3">
       <ul className="flex flex-col gap-2.5">
         {visibleMessages.map((msg) => (
           // MessageItem is memoized below: settled messages don't re-render

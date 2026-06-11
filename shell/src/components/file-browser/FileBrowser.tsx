@@ -273,7 +273,9 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
           />
         )}
         <FileContextMenu onOpenFile={openFile}>
-          <div className="flex-1 min-w-0 overflow-auto">
+          {/* ph-no-capture: the listing renders file names from the user home;
+              PostHog session replay blocks this element natively. */}
+          <div className="ph-no-capture flex-1 min-w-0 overflow-auto">
             {showingTrash ? (
               <TrashView />
             ) : searchResults ? (
