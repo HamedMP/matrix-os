@@ -127,19 +127,25 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
   app.post('/provision', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
     const authError = requirePlatformAuth(c);
     if (authError) return authError;
-    let clerkUserId: string | undefined;
-    let handle: string | undefined;
+    // Body-parse and validation failures are request errors, not provisioning
+    // failures: they must not increment the provision-failure counter or emit
+    // VPS_PROVISION_FAILED, or malformed traffic would fire the alert.
+    let parsed: ReturnType<typeof ProvisionRequestSchema.safeParse>;
     try {
-      const parsed = ProvisionRequestSchema.safeParse(await readJson(c));
-      if (!parsed.success) {
-        return c.json({ error: 'Invalid request' }, 400);
-      }
-      clerkUserId = parsed.data.clerkUserId;
-      handle = parsed.data.handle;
-      emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_REQUESTED, {
-        distinctId: clerkUserId ?? handle,
-        properties: { handle },
-      });
+      parsed = ProvisionRequestSchema.safeParse(await readJson(c));
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/provision');
+    }
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    const clerkUserId = parsed.data.clerkUserId;
+    const handle = parsed.data.handle;
+    emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_REQUESTED, {
+      distinctId: clerkUserId ?? handle,
+      properties: { handle },
+    });
+    try {
       return c.json(await deps.service.provision(parsed.data), 202);
     } catch (err: unknown) {
       const failureCode = customerVpsFailureCode(err);
@@ -157,13 +163,17 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
   });
 
   app.post('/register', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
-    let machineId: string | undefined;
+    let parsed: ReturnType<typeof RegisterRequestSchema.safeParse>;
     try {
-      const parsed = RegisterRequestSchema.safeParse(await readJson(c));
-      if (!parsed.success) {
-        return c.json({ error: 'Invalid request' }, 400);
-      }
-      machineId = parsed.data.machineId;
+      parsed = RegisterRequestSchema.safeParse(await readJson(c));
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/register');
+    }
+    if (!parsed.success) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    const machineId = parsed.data.machineId;
+    try {
       const auth = c.req.header('authorization');
       const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
       const result = await deps.service.register(token, parsed.data);

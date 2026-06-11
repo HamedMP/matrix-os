@@ -129,6 +129,46 @@ describe('platform/customer-vps-routes telemetry', () => {
     ]);
   });
 
+  it('treats malformed provision bodies as request errors, not provision failures', async () => {
+    const captureEvent = vi.fn();
+    const service = { provision: vi.fn() };
+    const app = buildApp(service, captureEvent);
+
+    const malformed = await app.request('/vps/provision', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: '{not json',
+    });
+    const invalid = await app.request('/vps/provision', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ unexpected: true }),
+    });
+
+    expect(malformed.status).toBe(400);
+    expect(invalid.status).toBe(400);
+    expect(service.provision).not.toHaveBeenCalled();
+    expect(captureEvent).not.toHaveBeenCalled();
+    const metric = await vpsProvisionFailuresTotal.get();
+    expect(metric.values).toEqual([]);
+  });
+
+  it('treats malformed register bodies as request errors, not registration failures', async () => {
+    const captureEvent = vi.fn();
+    const service = { register: vi.fn() };
+    const app = buildApp(service, captureEvent);
+
+    const malformed = await app.request('/vps/register', {
+      method: 'POST',
+      headers: { authorization: 'Bearer registration-token', 'content-type': 'application/json' },
+      body: '{not json',
+    });
+
+    expect(malformed.status).toBe(400);
+    expect(service.register).not.toHaveBeenCalled();
+    expect(captureEvent).not.toHaveBeenCalled();
+  });
+
   it('never lets a throwing captureEvent affect the provision response', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
