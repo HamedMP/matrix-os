@@ -253,6 +253,14 @@ react-doctor scans a **project directory that has a React `package.json`** (e.g.
 minimal React `package.json` and running react-doctor there. See
 https://github.com/millionco/react-doctor. CI runs this on the project dirs of changed React files.
 
+**Screenshot evidence (mandatory for frontend-facing changes)**: every PR that changes
+user-visible UI, visual styling, layout, frontend copy, app surfaces, or screenshots must include
+a current screenshot or short screen recording of the changed state. Prefer capturing it directly
+from the coding-agent environment with Playwright/browser tooling after running the relevant
+stack. If the agent cannot run the surface locally, it must ask the developer to run the stack and
+provide the screenshot before treating the frontend work as review-ready. Do not rely on verbal
+descriptions for visual changes when a screenshot is practical.
+
 ### Three Review Passes
 
 1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns` and fix all violations. The scanner checks: bare catch, fetch without signal, sync file I/O, unbounded Map/Set. Warnings (bodyLimit, path ops, external headers) require manual verification.
