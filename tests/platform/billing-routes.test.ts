@@ -568,6 +568,102 @@ describe('platform billing routes', () => {
     });
   });
 
+  it('captures matrix_billing_webhook_failed when the Stripe signature is invalid', async () => {
+    vi.mocked(stripe.constructWebhookEvent).mockImplementation(() => {
+      throw new Error('bad signature: sk_live_secret');
+    });
+    const captureEvent = vi.fn();
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve(null),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      captureEvent,
+    }));
+
+    const res = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'invalid' },
+      body: '{}',
+    });
+
+    expect(res.status).toBe(400);
+    expect(captureEvent).toHaveBeenCalledTimes(1);
+    expect(captureEvent).toHaveBeenCalledWith('matrix_billing_webhook_failed', {
+      properties: { reason: 'invalid_signature' },
+    });
+    expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('sk_live_secret');
+  });
+
+  it('captures matrix_billing_webhook_failed with the Stripe event type on processing errors', async () => {
+    await upsertBillingCustomer(db, {
+      clerkUserId: 'user_123',
+      stripeCustomerId: 'cus_123',
+      createdAt: '2026-05-30T00:00:00.000Z',
+      updatedAt: '2026-05-30T00:00:00.000Z',
+    });
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_capture_fail'));
+    const captureEvent = vi.fn();
+    const app = new Hono();
+    app.route('/billing', createBillingRoutes({
+      db,
+      stripe,
+      env,
+      resolveClerkUserId: () => Promise.resolve(null),
+      now: () => new Date('2026-05-30T00:00:00.000Z'),
+      captureEvent,
+      upsertEntitlement: async () => {
+        throw new Error('entitlement write timeout');
+      },
+    }));
+
+    const res = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(res.status).toBe(500);
+    expect(captureEvent).toHaveBeenCalledTimes(1);
+    expect(captureEvent).toHaveBeenCalledWith('matrix_billing_webhook_failed', {
+      properties: { reason: 'processing_error', event_type: 'customer.subscription.updated' },
+    });
+    expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('entitlement write timeout');
+  });
+
+  it('never lets a throwing captureEvent change the webhook response', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      vi.mocked(stripe.constructWebhookEvent).mockImplementation(() => {
+        throw new Error('bad signature');
+      });
+      const app = new Hono();
+      app.route('/billing', createBillingRoutes({
+        db,
+        stripe,
+        env,
+        resolveClerkUserId: () => Promise.resolve(null),
+        now: () => new Date('2026-05-30T00:00:00.000Z'),
+        captureEvent: () => {
+          throw new Error('posthog down');
+        },
+      }));
+
+      const res = await app.request('/billing/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'stripe-signature': 'invalid' },
+        body: '{}',
+      });
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'Invalid webhook' });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('does not regress entitlements for previously processed event ids', async () => {
     await insertBillingWebhookEvent(db, {
       stripeEventId: 'evt_123',

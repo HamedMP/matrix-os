@@ -2698,6 +2698,9 @@ export async function createGateway(config: GatewayConfig) {
     geminiModel: process.env.ONBOARDING_GEMINI_MODEL ?? "gemini-3.1-flash-live-preview",
     readinessService,
     ownerId: process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE,
+    onFailure: ({ stage, reasonKind }) => {
+      captureGatewayProductEvent("onboarding_failed", { stage, reason_kind: reasonKind });
+    },
   });
 
   app.get(

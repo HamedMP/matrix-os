@@ -128,4 +128,11 @@ describe("alerting rules", () => {
     expect(raw).toContain("VpsProvisioningStuck");
     expect(raw).toContain("matrixos-vps");
   });
+
+  it("alerts on any VPS provision failure within 15 minutes", () => {
+    const raw = readFileSync(join(ALERTING_DIR, "rules.yml"), "utf-8");
+
+    expect(raw).toContain("VpsProvisionFailed");
+    expect(raw).toContain("increase(matrix_vps_provision_failures_total[15m]) > 0");
+  });
 });

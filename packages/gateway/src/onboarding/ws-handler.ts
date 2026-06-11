@@ -30,6 +30,13 @@ export interface OnboardingDeps {
   geminiModel: string;
   readinessService?: Pick<ReadinessService, "getReadiness" | "selectGoals">;
   ownerId?: string;
+  /**
+   * Optional failure telemetry sink invoked when onboarding errors (stage
+   * timeouts, upstream AI failures, persistence failures). `reasonKind` is a
+   * stable category, never a raw error message. Fire-and-forget: callback
+   * errors are swallowed and must never affect the onboarding flow.
+   */
+  onFailure?: (failure: { stage: OnboardingStage; reasonKind: string }) => void;
 }
 
 type SendFn = (msg: GatewayToShell) => void;
@@ -118,6 +125,16 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
     sendToClient?.(msg);
   }
 
+  function reportFailure(stage: OnboardingStage, reasonKind: string) {
+    if (!deps.onFailure) return;
+    try {
+      deps.onFailure({ stage, reasonKind });
+    } catch (err: unknown) {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[onboarding] failure telemetry capture failed (${reasonKind}): ${kind}`);
+    }
+  }
+
   function estimateBase64DecodedBytes(value: string): number {
     const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
     return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
@@ -186,6 +203,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         client.sendToolResponse(e.id, { success: true });
         void finishOnboarding().catch((err: unknown) => {
           console.error("[onboarding] finishOnboarding failed:", err instanceof Error ? err.message : String(err));
+          reportFailure(sm.current, "finish_failed");
           send({ type: "error", code: "audio_error", stage: sm.current, message: "Onboarding could not finish", retryable: true });
         });
       }
@@ -220,6 +238,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       if (gemini !== client) return;
       const e = evt as GeminiEvent & { type: "error" };
       console.error("[onboarding] gemini error:", e.message);
+      reportFailure(sm.current, "gemini_unavailable");
       send({ type: "error", code: "gemini_unavailable", stage: sm.current, message: "Voice unavailable", retryable: true });
     });
 
@@ -247,12 +266,14 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       console.log("[onboarding] Resuming from snapshot:", snapshot.current);
       sm = createStateMachine(snapshot, {
         onTimeout: (stage) => {
+          reportFailure(stage, "stage_timeout");
           send({ type: "error", code: "stage_timeout", stage, message: "Stage timed out", retryable: false });
         },
       });
     } else {
       sm = createStateMachine(undefined, {
         onTimeout: (stage) => {
+          reportFailure(stage, "stage_timeout");
           send({ type: "error", code: "stage_timeout", stage, message: "Stage timed out", retryable: false });
         },
       });
@@ -282,6 +303,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
         console.error("[onboarding] Gemini Live connection FAILED:", err instanceof Error ? err.message : String(err));
         if (gemini !== client) return;
         gemini = null;
+        reportFailure(sm.current, "gemini_connect_failed");
         send({ type: "mode_change", mode: "text" });
         audioMode = false;
       }
@@ -450,6 +472,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
       });
     } catch (err: unknown) {
       console.warn("[onboarding] select_goal persistence failed:", err instanceof Error ? err.message : String(err));
+      reportFailure(sm.current, "goal_persistence_failed");
       send({ type: "error", code: "internal", stage: sm.current, message: "Could not update setup goal", retryable: true });
     }
   }

@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 import { z } from 'zod/v4';
 import {
   getBillingCustomerByClerkUserId,
@@ -84,11 +85,33 @@ export function createBillingRoutes(options: {
   resolveClerkUserId: (c: Context) => Promise<string | null>;
   now?: () => Date;
   upsertEntitlement?: typeof upsertBillingEntitlement;
+  /**
+   * Optional product telemetry sink. Fire-and-forget: implementations must
+   * never throw into the request path, and callers only pass low-cardinality,
+   * PII-free properties (reason codes and Stripe event types).
+   */
+  captureEvent?: (
+    event: string,
+    options?: { distinctId?: string; properties?: Record<string, string | number | boolean | undefined> },
+  ) => void;
 }): Hono {
   const app = new Hono();
   const env = options.env ?? process.env;
   const now = options.now ?? (() => new Date());
   const persistEntitlement = options.upsertEntitlement ?? upsertBillingEntitlement;
+
+  function emitTelemetry(
+    event: string,
+    captureOptions?: { distinctId?: string; properties?: Record<string, string | number | boolean | undefined> },
+  ): void {
+    if (!options.captureEvent) return;
+    try {
+      options.captureEvent(event, captureOptions);
+    } catch (err: unknown) {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[billing] telemetry capture failed for ${event}: ${kind}`);
+    }
+  }
 
   async function resolveRouteClerkUserId(c: Context, route: string): Promise<string | null> {
     try {
@@ -190,6 +213,9 @@ export function createBillingRoutes(options: {
       event = options.stripe.constructWebhookEvent(rawBody, signature, webhookSecret);
     } catch (err: unknown) {
       console.warn('[billing] invalid Stripe webhook signature:', err instanceof Error ? err.message : String(err));
+      emitTelemetry(MATRIX_TELEMETRY_EVENTS.BILLING_WEBHOOK_FAILED, {
+        properties: { reason: 'invalid_signature' },
+      });
       return c.json({ error: 'Invalid webhook' }, 400);
     }
 
@@ -226,6 +252,9 @@ export function createBillingRoutes(options: {
       return c.json(result, 200);
     } catch (err: unknown) {
       console.error('[billing] Stripe webhook processing failed:', err instanceof Error ? err.message : String(err));
+      emitTelemetry(MATRIX_TELEMETRY_EVENTS.BILLING_WEBHOOK_FAILED, {
+        properties: { reason: 'processing_error', event_type: event.type },
+      });
       return c.json({ error: 'Webhook processing failed' }, 500);
     }
   });
