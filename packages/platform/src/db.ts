@@ -2327,12 +2327,16 @@ export async function sweepStaleCheckoutAttempts(
     .limit(limit)
     .execute();
   if (stale.length === 0) return 0;
-  await db.executor
+  const updated = await db.executor
     .updateTable('billing_checkout_attempts')
     .set({ status: 'abandoned', resolved_at: resolvedAt })
     .where('id', 'in', stale.map((r) => r.id))
+    // Re-check status in the UPDATE: a concurrent webhook may have resolved the
+    // row to paid/expired between the SELECT and here; never overwrite it.
+    .where('status', '=', 'open')
+    .returning('id')
     .execute();
-  return stale.length;
+  return updated.length;
 }
 
 function parseFirstRunSteps(raw: string): Record<string, unknown> {

@@ -2717,6 +2717,10 @@ export function createApp(deps: {
     verifyInternalToken: platformSecret
       ? (handle, token) => timingSafeTokenEquals(token, buildPlatformVerificationToken(handle, platformSecret))
       : undefined,
+    resolveHandleOwner: async (handle) => {
+      const machine = await getActiveUserMachineByHandle(db, handle);
+      return machine?.clerkUserId ?? null;
+    },
     appOrigin: journeyAppOrigin,
     maxProvisionAttempts: Number(appEnv.CUSTOMER_VPS_MAX_PROVISION_ATTEMPTS) || 3,
     settlingWindowMs: Number(appEnv.BILLING_SETTLING_WINDOW_MS) || undefined,
@@ -4326,6 +4330,9 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
                   const res = await fetch(`https://${machine.publicIPv4}:443/api/settings/onboarding-status`, {
                     headers: { authorization: `Bearer ${token}` },
                     signal: AbortSignal.timeout(3000),
+                    // Never follow a redirect: a compromised VPS must not be able
+                    // to capture the platform bearer token by redirecting elsewhere.
+                    redirect: 'error',
                     ...(customerVpsProxyDispatcher ? { dispatcher: customerVpsProxyDispatcher } : {}),
                   } as RequestInit & { dispatcher?: import('undici').Dispatcher });
                   if (!res.ok) return null;

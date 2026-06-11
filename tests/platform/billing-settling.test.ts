@@ -3,6 +3,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import {
   getLatestCheckoutAttempt,
   insertCheckoutAttempt,
+  resolveCheckoutAttempt,
   sweepStaleCheckoutAttempts,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
@@ -106,5 +107,15 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
     const swept = await sweepStaleCheckoutAttempts(db, '2026-05-12T00:00:00.000Z', '2026-06-11T12:00:00.000Z', 50);
     expect(swept).toBe(1);
     expect((await getLatestCheckoutAttempt(db, 'user_123'))?.status).toBe('abandoned');
+  });
+
+  it('does not sweep an attempt that resolved to paid (status guard)', async () => {
+    // Simulate the race: the row is stale-and-open at SELECT time, but resolves
+    // to paid before the UPDATE. The status='open' guard must skip it.
+    await insertCheckoutAttempt(db, { id: 'a1', clerkUserId: 'user_123', stripeSessionId: 'cs_paid', createdAt: '2026-04-01T00:00:00.000Z' });
+    await resolveCheckoutAttempt(db, 'cs_paid', 'paid', '2026-04-01T00:01:00.000Z');
+    const swept = await sweepStaleCheckoutAttempts(db, '2026-05-12T00:00:00.000Z', '2026-06-11T12:00:00.000Z', 50);
+    expect(swept).toBe(0);
+    expect((await getLatestCheckoutAttempt(db, 'user_123'))?.status).toBe('paid');
   });
 });
