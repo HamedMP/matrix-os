@@ -168,6 +168,13 @@ jobs:
       # capture calls stay first-party on every user subdomain (ad blockers
       # block *.posthog.com and shared proxy hosts).
       NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
+      # Optional PostHog source-map upload credentials. When absent, next.config
+      # exports the plain config and the build is byte-identical to today.
+      # POSTHOG_HOST is the private API host (EU: https://eu.posthog.com), not
+      # the eu.i.posthog.com ingestion host used above.
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY || '' }}
+      POSTHOG_PROJECT_ID: ${{ vars.POSTHOG_PROJECT_ID || '' }}
+      POSTHOG_HOST: ${{ vars.POSTHOG_HOST || 'https://eu.posthog.com' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.channel.outputs.channel }}

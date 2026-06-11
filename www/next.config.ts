@@ -1,5 +1,6 @@
 import { createMDX } from 'fumadocs-mdx/next';
 import type { NextConfig } from 'next';
+import { withPostHogConfig } from '@posthog/nextjs-config';
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
@@ -40,4 +41,19 @@ const nextConfig: NextConfig = {
 
 const withMDX = createMDX();
 
-export default withMDX(nextConfig);
+// PostHog source-map upload runs only when build credentials are present so
+// uploads happen in release builds while builds without credentials stay
+// byte-identical to today. withPostHogConfig must stay the OUTERMOST wrapper
+// (wrapping it in withMDX would drop its build hooks; the package warns).
+const posthogPersonalApiKey = process.env.POSTHOG_API_KEY;
+const posthogProjectId = process.env.POSTHOG_PROJECT_ID;
+
+export default posthogPersonalApiKey && posthogProjectId
+  ? withPostHogConfig(withMDX(nextConfig), {
+      personalApiKey: posthogPersonalApiKey,
+      projectId: posthogProjectId,
+      // Private API host (not the ingestion host): EU is https://eu.posthog.com.
+      host: process.env.POSTHOG_HOST ?? 'https://eu.posthog.com',
+      sourcemaps: { enabled: true },
+    })
+  : withMDX(nextConfig);

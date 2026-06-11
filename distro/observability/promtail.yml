@@ -16,6 +16,9 @@ scrape_configs:
           job: matrixos
           type: interaction
           __path__: /var/log/matrixos/system/logs/*.jsonl
+          # client-errors.jsonl ships under its own job below; excluding it
+          # here keeps the two jobs from fighting over file positions.
+          __path_exclude__: /var/log/matrixos/system/logs/client-errors.jsonl
     pipeline_stages:
       - json:
           expressions:
@@ -23,6 +26,27 @@ scrape_configs:
             source: source
             costUsd: costUsd
             durationMs: durationMs
+      - labels:
+          source:
+      - timestamp:
+          source: timestamp
+          format: RFC3339
+
+  - job_name: matrixos-client-errors
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: matrixos-client-errors
+          type: client-error
+          __path__: /var/log/matrixos/system/logs/client-errors.jsonl
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: timestamp
+            source: source
+            errorId: errorId
+            digest: digest
       - labels:
           source:
       - timestamp:

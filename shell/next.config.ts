@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { NextConfig } from "next";
+import { withPostHogConfig } from "@posthog/nextjs-config";
 
 const gatewayUrl = process.env.GATEWAY_URL ?? "http://localhost:4000";
 
@@ -78,4 +79,18 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// PostHog source-map upload runs only when build credentials are present so
+// uploads happen in release builds while local/dev builds stay byte-identical
+// to a build without the plugin (the plain object is exported unchanged).
+const posthogPersonalApiKey = process.env.POSTHOG_API_KEY;
+const posthogProjectId = process.env.POSTHOG_PROJECT_ID;
+
+export default posthogPersonalApiKey && posthogProjectId
+  ? withPostHogConfig(nextConfig, {
+      personalApiKey: posthogPersonalApiKey,
+      projectId: posthogProjectId,
+      // Private API host (not the ingestion host): EU is https://eu.posthog.com.
+      host: process.env.POSTHOG_HOST ?? "https://eu.posthog.com",
+      sourcemaps: { enabled: true },
+    })
+  : nextConfig;

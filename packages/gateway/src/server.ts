@@ -220,6 +220,7 @@ import {
 import {
   CLIENT_ERROR_LOG_BODY_LIMIT,
   ClientErrorReportSchema,
+  forwardClientErrorToPostHog,
   writeClientErrorReport,
 } from "./client-error-log.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
@@ -1977,6 +1978,19 @@ export async function createGateway(config: GatewayConfig) {
   const appDispatcher = createAppDispatcher(homePath, {
     processManager,
     publicHost: process.env.PUBLIC_HOST ?? "localhost",
+    // App-runtime failure telemetry: stable error class names only, never
+    // raw error messages or filesystem paths.
+    onAppError: ({ errorKind, appSlug }) => {
+      void posthogErrorTracker.captureEvent("gateway_app_runtime", {
+        distinctId: ownerTelemetryDistinctId,
+        properties: {
+          source: "gateway-app-runtime",
+          event: "app_error",
+          error_kind: errorKind,
+          app_slug: appSlug,
+        },
+      });
+    },
   });
   app.route("/apps/:slug", appDispatcher);
 
@@ -4146,6 +4160,9 @@ export async function createGateway(config: GatewayConfig) {
 
     try {
       await writeClientErrorReport(homePath, parsed.data);
+      // Fire-and-forget PostHog forwarding so client exceptions are visible
+      // beyond the owner-local JSONL. Must never affect the 2xx response.
+      forwardClientErrorToPostHog(posthogErrorTracker, ownerTelemetryDistinctId, parsed.data);
       return c.json({ ok: true });
     } catch (err: unknown) {
       console.warn("[client-error-log] Failed to persist client error report:", err instanceof Error ? err.message : String(err));
