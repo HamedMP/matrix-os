@@ -34,7 +34,7 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
 | Onboarding | Fresh preview VPS | Same pipeline; a newly provisioned VPS is virgin by construction |
 | Platform (Cloud Run) | Tagged preview revision | CI label `preview-platform`: build image, deploy to the dedicated preview service with `--tag pr-<N> --no-traffic` |
 | macOS app | CI `.app` artifact + any preview VPS | `macos-086.yml` artifact, runtime switcher `app.matrix-os.com/vm/<handle>` |
-| CLI beta x shell | npm dist-tag + preview VPS | `matrixos@pr-<N>` dist-tag paired via `~/.matrixos` profiles (068) |
+| CLI beta x shell | npm dist-tag + preview VPS | `matrixos@pr-<N>` dist-tag paired via `~/.matrixos` profiles (068). Deferred: dist-tag automation ships publish AND removal together (`npm dist-tag rm` on PR close) -- a dangling dist-tag is publicly reachable forever |
 | Fast UI iteration (HMR) | Staging slot `staging-<1..4>.matrix-os.com` | Per-worktree HMR container on the ops VPS behind the existing tunnel |
 
 ## Architecture
@@ -84,6 +84,10 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   `--tag pr-<N> --no-traffic`, using preview-scoped secrets (separate database URL —
   Neon branch databases are the intended pairing, deferred). The job no-ops with a
   clear message when preview secrets are not configured.
+- Teardown mirrors the VPS model: on PR close the workflow removes the `pr-<N>`
+  traffic tag and deletes its revision(s), so labeled PRs cannot accumulate
+  revisions in the preview service. A periodic sweeper for revisions that escape
+  close-teardown ships with the Neon automation (deferred).
 
 ### Staging slots (`scripts/staging-slot.sh` + `docker-compose.staging-slot.yml`)
 
@@ -150,6 +154,11 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   `matrix-install-logship` on enrolled VPSes. Documented in runbook.
 - **Reaper deletes a VPS still in use**: only `pr-*` handles are eligible, never
   `primary` runtime slots, and PR-open state is checked before age-based deletion.
+- **Reaper cannot confirm PR state** (GitHub API failure/rate limit): fail-safe —
+  that VPS is skipped, never deleted on unknown state, and age-based deletion also
+  requires a confirmed state. The reaper job exits non-zero after processing when
+  any lookup failed, so repeated skips surface as workflow failures instead of
+  silently accumulating orphans.
 
 ## Resource Management
 
@@ -161,6 +170,11 @@ connect to, CLI betas need a paired shell), and today each is assembled by hand.
   for idle slots; `down` removes containers and the per-slot named volumes are reused
   per slot (bounded count).
 - Preview VPSes: hard TTL 72h via reaper; one VPS per PR (idempotent provision).
+- Cloud Run preview revisions: deleted on PR close (see Architecture); bounded by
+  open labeled PRs.
+- Logship enrollment inventory: `enable-vps-logship.sh` records every enrolled
+  handle in an ops-side inventory file (`~/.matrixos/logship-enrolled.tsv`), giving
+  credential rotation a concrete target list for the re-enrollment runbook.
 - CI: preview jobs use `concurrency: preview-vps-<N>` with cancel-in-progress to avoid
   pile-ups on rapid pushes.
 
