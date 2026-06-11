@@ -240,6 +240,7 @@ describe("OS Bridge", () => {
       const script = buildBridgeScript("test-app");
       expect(script).toContain('parentFetch("/api/bridge/service", {}, 10000)');
       expect(script).toContain("}, 35000).then");
+      expect(script).toContain("gatewayFetch: function(url, init, timeoutMs)");
       expect(script).toContain("MatrixOS bridge fetch timed out");
     });
   });

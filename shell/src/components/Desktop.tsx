@@ -49,6 +49,7 @@ import { MenuBar } from "./MenuBar";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
 import { getGatewayUrl } from "@/lib/gateway";
+import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
 import { OnboardingScreen } from "./OnboardingScreen";
@@ -758,7 +759,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       } else {
         regenerateIcon(slug);
       }
-    }).catch((err) => console.warn(`[desktop] Failed to check icon for "${slug}":`, err));
+    }).catch((err) => {
+      if (process.env.NODE_ENV !== "production") {
+        console.debug(`[desktop] Failed to check icon for "${slug}":`, err instanceof Error ? err.message : String(err));
+      }
+    });
   }, [wmSetApps, regenerateIcon]);
 
   const renameAppOnServer = (slug: string, newName: string) => {
@@ -955,12 +960,16 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const loadModules = useCallback(async () => {
     try {
       const [layoutRes, modulesRes, appsRes] = await Promise.all([
-        fetch(`${GATEWAY_URL}/api/layout`, {
-          signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-        }).catch((err) => {
-          console.warn("[desktop] Failed to fetch layout:", err);
-          return null;
-        }),
+        isPreVpsBillingSetupRoute()
+          ? Promise.resolve(null)
+          : fetch(`${GATEWAY_URL}/api/layout`, {
+              signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+            }).catch((err) => {
+              if (process.env.NODE_ENV !== "production") {
+                console.debug("[desktop] Failed to fetch layout:", err instanceof Error ? err.message : String(err));
+              }
+              return null;
+            }),
         fetch(`${GATEWAY_URL}/files/system/modules.json`, {
           signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
         }).catch((err) => {

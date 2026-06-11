@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../home/apps/symphony/src/App.js";
 
@@ -13,13 +13,6 @@ vi.mock("@/components/ui/button", () => ({
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children, className }: { children: React.ReactNode; className?: string }) => <span className={className}>{children}</span>,
 }));
-
-function json(body: unknown, init?: ResponseInit): Response {
-  return new Response(JSON.stringify(body), {
-    status: init?.status ?? 200,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 function symphonyState() {
   return {
@@ -33,66 +26,74 @@ function symphonyState() {
   };
 }
 
+function gatewayFetchMock() {
+  return vi.mocked(window.MatrixOS!.gatewayFetch!);
+}
+
 describe("Symphony app", () => {
   let calls: Array<{ url: string; init?: RequestInit }> = [];
 
   beforeEach(() => {
     calls = [];
     vi.stubGlobal("open", vi.fn());
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      calls.push({ url, init });
-      if (url === "/api/symphony/state") {
-        return json(symphonyState());
-      }
-      if (url === "/api/symphony/issues/MAT-32") {
-        return json({
-          issueIdentifier: "MAT-32",
-          issueId: "issue_32",
-          status: "running",
-          sessionId: "thread-1-turn-2",
-          turnCount: 2,
-          latestEvent: "session_started",
-          latestMessage: "Agent session started",
-          workspacePath: "/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-32",
-          workpadUrl: "https://linear.app/acme/issue/MAT-32#comment",
-          logs: { codexSessionLogs: ["session started", "tool call"] },
-          recentEvents: [{ event: "session_started", message: "Agent session started" }],
-          retry: null,
-          allowedActions: ["refresh", "open_workspace", "stop"],
-        });
-      }
-      if (url === "/api/symphony/issues/MAT-33") {
-        return json({
-          issueIdentifier: "MAT-33",
-          issueId: "issue_33",
-          status: "needs_attention",
-          sessionId: null,
-          turnCount: 0,
-          latestEvent: "retrying",
-          latestMessage: "Retry detail",
-          workspacePath: "/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-33",
-          workpadUrl: null,
-          logs: { codexSessionLogs: ["retry detail"] },
-          recentEvents: [{ event: "retrying", message: "Retry detail" }],
-          retry: { attempt: 2, dueAt: null },
-          allowedActions: ["refresh", "open_workspace"],
-        });
-      }
-      if (url === "/api/symphony/refresh") {
-        return json({ requested: true, requestedAt: "2026-05-25T00:00:01Z" }, { status: 202 });
-      }
-      if (url === "/api/symphony/runs/MAT-32/stop") {
-        return json({ stopped: true });
-      }
-      if (url === "/api/symphony/service") {
-        return json({ service: { available: true, running: true, status: "running", canStart: false, canStop: true, credentialConfigured: true } });
-      }
-      if (url === "/api/symphony/service/start" || url === "/api/symphony/service/stop") {
-        return json({ service: { available: true, running: url.endsWith("/start"), status: url.endsWith("/start") ? "running" : "stopped", canStart: !url.endsWith("/start"), canStop: url.endsWith("/start"), credentialConfigured: true } });
-      }
-      return json({ ok: true });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("Symphony app must use the MatrixOS bridge");
     }));
+    window.MatrixOS = {
+      gatewayFetch: vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        if (url === "/api/symphony/state") {
+          return symphonyState();
+        }
+        if (url === "/api/symphony/issues/MAT-32") {
+          return {
+            issueIdentifier: "MAT-32",
+            issueId: "issue_32",
+            status: "running",
+            sessionId: "thread-1-turn-2",
+            turnCount: 2,
+            latestEvent: "session_started",
+            latestMessage: "Agent session started",
+            workspacePath: "/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-32",
+            workpadUrl: "https://linear.app/acme/issue/MAT-32#comment",
+            logs: { codexSessionLogs: ["session started", "tool call"] },
+            recentEvents: [{ event: "session_started", message: "Agent session started" }],
+            retry: null,
+            allowedActions: ["refresh", "open_workspace", "stop"],
+          };
+        }
+        if (url === "/api/symphony/issues/MAT-33") {
+          return {
+            issueIdentifier: "MAT-33",
+            issueId: "issue_33",
+            status: "needs_attention",
+            sessionId: null,
+            turnCount: 0,
+            latestEvent: "retrying",
+            latestMessage: "Retry detail",
+            workspacePath: "/home/matrix/home/projects/matrix-os/symphony-workspaces/MAT-33",
+            workpadUrl: null,
+            logs: { codexSessionLogs: ["retry detail"] },
+            recentEvents: [{ event: "retrying", message: "Retry detail" }],
+            retry: { attempt: 2, dueAt: null },
+            allowedActions: ["refresh", "open_workspace"],
+          };
+        }
+        if (url === "/api/symphony/refresh") {
+          return { requested: true, requestedAt: "2026-05-25T00:00:01Z" };
+        }
+        if (url === "/api/symphony/runs/MAT-32/stop") {
+          return { stopped: true };
+        }
+        if (url === "/api/symphony/service") {
+          return { service: { available: true, running: true, status: "running", canStart: false, canStop: true, credentialConfigured: true } };
+        }
+        if (url === "/api/symphony/service/start" || url === "/api/symphony/service/stop") {
+          return { service: { available: true, running: url.endsWith("/start"), status: url.endsWith("/start") ? "running" : "stopped", canStart: !url.endsWith("/start"), canStop: url.endsWith("/start"), credentialConfigured: true } };
+        }
+        return { ok: true };
+      }),
+    };
   });
 
   afterEach(() => {
@@ -138,20 +139,19 @@ describe("Symphony app", () => {
 
   it("disables issue selection while refresh state is in flight", async () => {
     let stateCalls = 0;
-    let resolveRefreshState: ((response: Response) => void) | null = null;
-    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+    let resolveRefreshState: ((state: ReturnType<typeof symphonyState>) => void) | null = null;
+    gatewayFetchMock().mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url === "/api/symphony/state") {
         stateCalls += 1;
-        if (stateCalls === 1) return json(symphonyState());
-        return await new Promise<Response>((resolve) => {
+        if (stateCalls === 1) return symphonyState();
+        return await new Promise<ReturnType<typeof symphonyState>>((resolve) => {
           resolveRefreshState = resolve;
         });
       }
-      if (url === "/api/symphony/refresh") return json({ requested: true }, { status: 202 });
+      if (url === "/api/symphony/refresh") return { requested: true };
       if (url === "/api/symphony/issues/MAT-32") {
-        return json({
+        return {
           issueIdentifier: "MAT-32",
           issueId: "issue_32",
           status: "running",
@@ -165,10 +165,10 @@ describe("Symphony app", () => {
           recentEvents: [],
           retry: null,
           allowedActions: ["refresh", "open_workspace", "stop"],
-        });
+        };
       }
       if (url === "/api/symphony/issues/MAT-33") {
-        return json({
+        return {
           issueIdentifier: "MAT-33",
           issueId: "issue_33",
           status: "needs_attention",
@@ -182,9 +182,9 @@ describe("Symphony app", () => {
           recentEvents: [],
           retry: { attempt: 2, dueAt: null },
           allowedActions: ["refresh", "open_workspace"],
-        });
+        };
       }
-      return json({ ok: true });
+      return { ok: true };
     });
 
     render(<App />);
@@ -198,7 +198,7 @@ describe("Symphony app", () => {
 
     fireEvent.click(screen.getByText("MAT-33"));
     expect(calls.some((call) => call.url === "/api/symphony/issues/MAT-33")).toBe(false);
-    resolveRefreshState?.(json(symphonyState()));
+    resolveRefreshState?.(symphonyState());
 
     await waitFor(() => expect(screen.getAllByText("session started").length).toBeGreaterThan(0));
     expect(calls.some((call) => call.url === "/api/symphony/issues/MAT-33")).toBe(false);
@@ -213,21 +213,20 @@ describe("Symphony app", () => {
 
     fireEvent.click(screen.getByText("Stop Run"));
     await waitFor(() => expect(calls.some((call) => call.url === "/api/symphony/runs/MAT-32/stop" && call.init?.method === "POST")).toBe(true));
-    expect(calls.every((call) => call.init?.signal instanceof AbortSignal)).toBe(true);
+    expect(calls.every((call) => !("signal" in (call.init ?? {})))).toBe(true);
   });
 
   it("lets the user start Symphony when the service is stopped", async () => {
-    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+    gatewayFetchMock().mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      if (url === "/api/symphony/state") return json({ error: { code: "service_unavailable" } }, { status: 503 });
+      if (url === "/api/symphony/state") throw new Error("request_failed");
       if (url === "/api/symphony/service") {
-        return json({ service: { available: true, running: false, status: "stopped", canStart: true, canStop: false, credentialConfigured: true } });
+        return { service: { available: true, running: false, status: "stopped", canStart: true, canStop: false, credentialConfigured: true } };
       }
       if (url === "/api/symphony/service/start") {
-        return json({ service: { available: true, running: true, status: "running", canStart: false, canStop: true, credentialConfigured: true } });
+        return { service: { available: true, running: true, status: "running", canStart: false, canStop: true, credentialConfigured: true } };
       }
-      return json({ ok: true });
+      return { ok: true };
     });
 
     render(<App />);
@@ -241,12 +240,11 @@ describe("Symphony app", () => {
   });
 
   it("keeps rendered state when the active issue detail endpoint fails", async () => {
-    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+    gatewayFetchMock().mockImplementation(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      if (url === "/api/symphony/state") return json(symphonyState());
-      if (url === "/api/symphony/issues/MAT-32") return json({ error: "temporarily unavailable" }, { status: 503 });
-      return json({ ok: true });
+      if (url === "/api/symphony/state") return symphonyState();
+      if (url === "/api/symphony/issues/MAT-32") throw new Error("request_failed");
+      return { ok: true };
     });
 
     render(<App />);
@@ -256,16 +254,29 @@ describe("Symphony app", () => {
     expect(screen.getByText("Issue detail could not be loaded.")).toBeTruthy();
   });
 
+  it("does not show an issue-detail error for bridge timeouts", async () => {
+    gatewayFetchMock().mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === "/api/symphony/state") return symphonyState();
+      if (url === "/api/symphony/issues/MAT-32") throw new Error("MatrixOS bridge fetch timed out");
+      return { service: { available: true, running: true, status: "running", canStart: false, canStop: true, credentialConfigured: true } };
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getAllByText("Queue").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Issue detail could not be loaded.")).toBeNull();
+  });
+
   it("clears initial loading once state is ready before issue detail resolves", async () => {
-    let resolveDetail: (response: Response) => void = () => {};
-    const detailResponse = new Promise<Response>((resolve) => {
+    let resolveDetail: (detail: Record<string, unknown>) => void = () => {};
+    const detailResponse = new Promise<Record<string, unknown>>((resolve) => {
       resolveDetail = resolve;
     });
 
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
+    gatewayFetchMock().mockImplementation(async (url: string) => {
       if (url === "/api/symphony/state") {
-        return json({
+        return {
           service: { status: "ready", credentialStatus: "setup_required", generatedAt: "2026-05-25T00:00:00Z" },
           groups: {
             queue: [],
@@ -273,13 +284,13 @@ describe("Symphony app", () => {
             needsAttention: [],
             done: [],
           },
-        });
+        };
       }
       if (url === "/api/symphony/issues/MAT-32") {
         return detailResponse;
       }
-      return json({ ok: true });
-    }));
+      return { ok: true };
+    });
 
     render(<App />);
 
@@ -288,13 +299,16 @@ describe("Symphony app", () => {
     });
     expect(screen.queryByText("Loading Symphony state...")).toBeNull();
 
-    resolveDetail(json({
-      issueIdentifier: "MAT-32",
-      status: "running",
-      allowedActions: ["refresh"],
-      logs: { codexSessionLogs: [] },
-      recentEvents: [],
-    }));
+    await act(async () => {
+      resolveDetail({
+        issueIdentifier: "MAT-32",
+        status: "running",
+        allowedActions: ["refresh"],
+        logs: { codexSessionLogs: [] },
+        recentEvents: [],
+      });
+      await Promise.resolve();
+    });
   });
 
   it("keeps long session and workspace text visible for mobile-friendly layouts", async () => {
@@ -306,13 +320,14 @@ describe("Symphony app", () => {
     expect(appSource).toContain("break-words");
     expect(appSource).toContain("minmax(0,1fr)");
     expect(appSource).toContain('const RUN_GROUPS: RunGroup[] = ["queue", "running", "needsAttention", "done"]');
-    expect(appSource).toContain("AbortSignal.timeout(10_000)");
+    expect(appSource).toContain("matrix_bridge_unavailable");
     expect(appSource).toContain('"/api/symphony/service/start"');
     expect(appSource).toContain('"/api/symphony/service/stop"');
-    expect(appSource).toContain("withTimeoutSignal(controller.signal, 10_000)");
-    expect(appSource).toContain("AbortSignal.any([signal, timeoutSignal])");
+    expect(appSource).toContain("window.MatrixOS.gatewayFetch");
+    expect(appSource).not.toContain("await fetch(url");
     expect(appSource).toContain("if (controller.signal.aborted) return;");
-    expect(appSource).not.toContain("controller.signal.aborted || isAbortError(err)");
+    expect(appSource).toContain("isBridgeTimeoutError(err)");
+    expect(appSource).not.toContain("withTimeoutSignal(");
     expect(appSource).toContain('setError("Issue detail could not be loaded.")');
     expect(appSource).toContain("detailAbortRef.current?.abort()");
     expect(appSource).toContain("selectedIssueRef.current");

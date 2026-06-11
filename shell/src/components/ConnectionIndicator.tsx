@@ -21,7 +21,9 @@ function classifyRuntimeStatusError(error: unknown): string {
 }
 
 function logRuntimeStatusError(stage: string, error: unknown): void {
-  console.warn(`[connection-indicator] ${stage} failed: ${classifyRuntimeStatusError(error)}`);
+  if (process.env.NODE_ENV !== "production") {
+    console.debug(`[connection-indicator] ${stage} failed: ${classifyRuntimeStatusError(error)}`);
+  }
 }
 
 async function loadRuntimeStatus(): Promise<RuntimeStatus> {

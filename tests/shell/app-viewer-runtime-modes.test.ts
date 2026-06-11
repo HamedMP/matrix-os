@@ -3,6 +3,7 @@ import {
   APP_IFRAME_SANDBOX,
   injectBridgeIntoAppHtml,
 } from "../../shell/src/components/app-viewer-helpers.js";
+import { isAllowedBridgeFetchUrl } from "../../shell/src/components/app-viewer-bridge-policy.js";
 
 describe("AppViewer bridged runtime loading", () => {
   describe("bridge guarantee: slug apps only ever load via bridged srcDoc", () => {
@@ -151,6 +152,15 @@ describe("AppViewer bridged runtime loading", () => {
       expect(result).toContain('src="./assets/app.js"');
       expect(result).toContain('href="./assets/app.css"');
       expect(result).toContain("crossorigin");
+    });
+
+    it("only allows Symphony to bridge its first-party API routes", () => {
+      expect(isAllowedBridgeFetchUrl("symphony", "/api/symphony/state")).toBe(true);
+      expect(isAllowedBridgeFetchUrl("apps/symphony", "/api/symphony/service/start")).toBe(true);
+      expect(isAllowedBridgeFetchUrl("notes", "/api/symphony/state")).toBe(false);
+      expect(isAllowedBridgeFetchUrl("symphony", "https://app.matrix-os.com/api/symphony/state")).toBe(false);
+      expect(isAllowedBridgeFetchUrl("symphony", "/api/auth/app-session")).toBe(false);
+      expect(isAllowedBridgeFetchUrl("notes", "/api/bridge/query")).toBe(true);
     });
   });
 });

@@ -20,6 +20,7 @@ import {
   shouldRenderAppIframe,
   injectBridgeIntoAppHtml,
 } from "./app-viewer-helpers";
+import { isAllowedBridgeFetchUrl } from "./app-viewer-bridge-policy";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
@@ -44,13 +45,13 @@ function readCurrentTheme(): ThemeVars {
   return getThemeVariables(style);
 }
 
-async function handleBridgeFetch(payload: unknown, port: MessagePort): Promise<void> {
+async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort): Promise<void> {
   try {
     if (!payload || typeof payload !== "object") {
       throw new Error("Invalid bridge fetch payload");
     }
     const { url, init } = payload as { url?: unknown; init?: unknown };
-    if (typeof url !== "string" || !url.startsWith("/api/bridge/")) {
+    if (typeof url !== "string" || !isAllowedBridgeFetchUrl(appName, url)) {
       throw new Error("Blocked bridge fetch URL");
     }
     const requestInit = init && typeof init === "object" ? init as RequestInit : {};
@@ -180,7 +181,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         && data.app === appName
         && event.ports[0]
       ) {
-        void handleBridgeFetch(data.payload, event.ports[0]);
+        void handleBridgeFetch(appName, data.payload, event.ports[0]);
         return;
       }
       handleBridgeMessage(event, handler, {

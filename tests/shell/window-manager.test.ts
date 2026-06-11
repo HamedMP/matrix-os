@@ -23,6 +23,7 @@ function resetStore() {
 describe("Window Manager Store", () => {
   beforeEach(() => {
     resetStore();
+    window.history.pushState(null, "", "/");
     fetchSpy.mockClear();
     vi.useFakeTimers();
   });
@@ -178,6 +179,16 @@ describe("Window Manager Store", () => {
         expect.stringContaining("/api/layout"),
         expect.objectContaining({ method: "PUT" }),
       );
+    });
+
+    it("does not save layout on the pre-VPS billing setup route", () => {
+      window.history.pushState(null, "", "/?billing=setup");
+      useWindowManager.getState().openWindow("Settings", "__settings__", 80);
+      vi.advanceTimersByTime(500);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      window.history.pushState(null, "", "/");
     });
 
     it("includes closed paths in layout save", () => {

@@ -251,12 +251,16 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars): strin
 	        .then(function(d) { return d.services || []; });
 	    },
 
-	    service: function(service, action, params, label) {
+    service: function(service, action, params, label) {
 	      return parentFetch("/api/bridge/service", {
 	        method: "POST",
 	        headers: { "Content-Type": "application/json" },
 	        body: JSON.stringify({ service: service, action: action, params: params || {}, label: label })
 	      }, 35000).then(function(r) { return r.json(); });
+	    },
+
+	    gatewayFetch: function(url, init, timeoutMs) {
+	      return parentFetch(url, init || {}, timeoutMs || 10000).then(function(r) { return r.json(); });
 	    },
 
 	    proxyFetch: function(url) {

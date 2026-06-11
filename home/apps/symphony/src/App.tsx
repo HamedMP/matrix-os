@@ -62,6 +62,7 @@ interface SymphonyIssueDetail {
 
 interface MatrixOSBridge {
   openApp?: (name: string, path: string) => void;
+  gatewayFetch?: <T>(url: string, init?: RequestInit, timeoutMs?: number) => Promise<T>;
 }
 
 declare global {
@@ -84,13 +85,15 @@ const EMPTY_SERVICE_CONTROL: SymphonyServiceControl = {
 };
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    signal: init?.signal ?? AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error("request_failed");
-  return await response.json() as T;
+  if (window.MatrixOS?.gatewayFetch) {
+    const { signal: _signal, ...bridgeInit } = init ?? {};
+    return await window.MatrixOS.gatewayFetch<T>(url, {
+      ...bridgeInit,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    }, 10_000);
+  }
+
+  throw new Error("matrix_bridge_unavailable");
 }
 
 function allRuns(state: SymphonyState): SymphonyRun[] {
@@ -147,20 +150,21 @@ function flattenLogs(logs: unknown): string[] {
 }
 
 function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
+  return err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError");
 }
 
-function withTimeoutSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  if (typeof AbortSignal.any === "function") return AbortSignal.any([signal, timeoutSignal]);
-  if (signal.aborted) return signal;
-  if (timeoutSignal.aborted) return timeoutSignal;
+function isBridgeTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.message === "MatrixOS bridge fetch timed out";
+}
 
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  signal.addEventListener("abort", abort, { once: true });
-  timeoutSignal.addEventListener("abort", abort, { once: true });
-  return controller.signal;
+function isDetailAbort(err: unknown): boolean {
+  return isAbortError(err) || isBridgeTimeoutError(err);
+}
+
+function logSymphonyDebug(label: string, err: unknown): void {
+  if (!import.meta.env.PROD) {
+    console.debug(label, err instanceof Error ? err.message : String(err));
+  }
 }
 
 export default function App() {
@@ -191,11 +195,13 @@ export default function App() {
     detailAbortRef.current = controller;
 
     try {
-      const signal = withTimeoutSignal(controller.signal, 10_000);
-      const nextDetail = await fetchJson<SymphonyIssueDetail>(`/api/symphony/issues/${issueIdentifier}`, { signal });
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- the bridge request cannot receive AbortSignal over postMessage, so this post-await guard prevents late/stale detail writes after a newer request or unmount aborts the controller.
+      const nextDetail = await fetchJson<SymphonyIssueDetail>(`/api/symphony/issues/${issueIdentifier}`);
+      if (controller.signal.aborted) return;
       if (detailRequestRef.current === requestId) setDetail(nextDetail);
     } catch (err: unknown) {
       if (controller.signal.aborted) return;
+      if (isBridgeTimeoutError(err)) return;
       throw err;
     } finally {
       if (detailRequestRef.current === requestId) detailAbortRef.current = null;
@@ -214,7 +220,7 @@ export default function App() {
     const [next] = await Promise.all([
       fetchJson<SymphonyState>("/api/symphony/state"),
       loadServiceControl().catch((err: unknown) => {
-        console.warn("[symphony] service status failed:", err instanceof Error ? err.message : String(err));
+        logSymphonyDebug("[symphony] service status failed:", err);
         return null;
       }),
     ]);
@@ -226,8 +232,8 @@ export default function App() {
       try {
         await loadIssueDetail(nextActive);
       } catch (err: unknown) {
-        if (isAbortError(err)) return;
-        console.warn("[symphony] issue detail failed:", err instanceof Error ? err.message : String(err));
+        if (isDetailAbort(err)) return;
+        logSymphonyDebug("[symphony] issue detail failed:", err);
         setError("Issue detail could not be loaded.");
       }
     } else {
@@ -238,11 +244,11 @@ export default function App() {
 
   useEffect(() => {
     void loadState().catch((err: unknown) => {
-      console.warn("[symphony] state load failed:", err instanceof Error ? err.message : String(err));
+      logSymphonyDebug("[symphony] state load failed:", err);
       setError("Symphony is unavailable.");
       setLoading(false);
       void loadServiceControl().catch((serviceErr: unknown) => {
-        console.warn("[symphony] service status failed:", serviceErr instanceof Error ? serviceErr.message : String(serviceErr));
+        logSymphonyDebug("[symphony] service status failed:", serviceErr);
       });
     });
   }, [loadState, loadServiceControl]);
@@ -258,7 +264,7 @@ export default function App() {
       await fetchJson("/api/symphony/refresh", { method: "POST", body: "{}" });
       await loadState(activeIssue);
     } catch (err: unknown) {
-      console.warn("[symphony] refresh failed:", err instanceof Error ? err.message : String(err));
+      logSymphonyDebug("[symphony] refresh failed:", err);
       setError("Symphony refresh failed.");
     } finally {
       setBusy(null);
@@ -273,7 +279,7 @@ export default function App() {
       await fetchJson(`/api/symphony/runs/${activeIssue}/stop`, { method: "POST", body: "{}" });
       await loadState(activeIssue);
     } catch (err: unknown) {
-      console.warn("[symphony] stop failed:", err instanceof Error ? err.message : String(err));
+      logSymphonyDebug("[symphony] stop failed:", err);
       setError("Symphony stop failed.");
     } finally {
       setBusy(null);
@@ -287,15 +293,15 @@ export default function App() {
       const next = await fetchJson<SymphonyServiceControlResponse>("/api/symphony/service/start", { method: "POST", body: "{}" });
       setServiceControl(next.service);
       await loadState(activeIssue).catch((stateErr: unknown) => {
-        console.warn("[symphony] state load after service start failed:", stateErr instanceof Error ? stateErr.message : String(stateErr));
+        logSymphonyDebug("[symphony] state load after service start failed:", stateErr);
         setLoading(false);
         setError("Symphony is starting.");
       });
     } catch (err: unknown) {
-      console.warn("[symphony] service start failed:", err instanceof Error ? err.message : String(err));
+      logSymphonyDebug("[symphony] service start failed:", err);
       setError("Symphony start failed.");
       await loadServiceControl().catch((serviceErr: unknown) => {
-        console.warn("[symphony] service status failed:", serviceErr instanceof Error ? serviceErr.message : String(serviceErr));
+        logSymphonyDebug("[symphony] service status failed:", serviceErr);
       });
     } finally {
       setBusy(null);
@@ -312,10 +318,10 @@ export default function App() {
       setActiveIssue(null);
       setDetail(null);
     } catch (err: unknown) {
-      console.warn("[symphony] service stop failed:", err instanceof Error ? err.message : String(err));
+      logSymphonyDebug("[symphony] service stop failed:", err);
       setError("Symphony stop failed.");
       await loadServiceControl().catch((serviceErr: unknown) => {
-        console.warn("[symphony] service status failed:", serviceErr instanceof Error ? serviceErr.message : String(serviceErr));
+        logSymphonyDebug("[symphony] service status failed:", serviceErr);
       });
     } finally {
       setBusy(null);
@@ -331,8 +337,8 @@ export default function App() {
     const thisRequestId = detailRequestRef.current;
     void detailPromise
       .catch((err: unknown) => {
-        if (isAbortError(err)) return;
-        console.warn("[symphony] issue detail failed:", err instanceof Error ? err.message : String(err));
+        if (isDetailAbort(err)) return;
+        logSymphonyDebug("[symphony] issue detail failed:", err);
         setError("Issue detail could not be loaded.");
       })
       .finally(() => {

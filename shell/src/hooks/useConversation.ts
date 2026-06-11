@@ -29,6 +29,12 @@ const GATEWAY_URL = getGatewayUrl();
 
 const CONV_PATTERN = /^system\/conversations\//;
 
+function logConversationFetchError(label: string, err: unknown): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.debug(label, err instanceof Error ? err.message : String(err));
+  }
+}
+
 async function fetchConversations(): Promise<ConversationMeta[]> {
   try {
     const res = await fetch(`${GATEWAY_URL}/api/conversations`, {
@@ -36,7 +42,7 @@ async function fetchConversations(): Promise<ConversationMeta[]> {
     });
     if (res.ok) return res.json();
   } catch (err: unknown) {
-    console.warn("[conversation] Failed to fetch conversations:", err instanceof Error ? err.message : String(err));
+    logConversationFetchError("[conversation] Failed to fetch conversations:", err);
   }
   return [];
 }
@@ -51,7 +57,7 @@ async function fetchConversation(
     );
     if (res.ok) return res.json();
   } catch (err: unknown) {
-    console.warn("[conversation] Failed to fetch conversation:", err instanceof Error ? err.message : String(err));
+    logConversationFetchError("[conversation] Failed to fetch conversation:", err);
   }
   return null;
 }
