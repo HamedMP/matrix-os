@@ -2749,7 +2749,9 @@ export function createApp(deps: {
       reqPath.startsWith('/auth/device/') ||
       reqPath.startsWith('/api/auth/device/') ||
       reqPath === '/api/auth/app-session' ||
-      reqPath === '/api/auth/provision-runtime'
+      reqPath === '/api/auth/provision-runtime' ||
+      reqPath === '/api/journey' ||
+      reqPath === '/api/journey/retry-provision'
     )) {
       return next();
     }
