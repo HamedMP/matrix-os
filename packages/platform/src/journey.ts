@@ -271,8 +271,12 @@ export async function backfillFirstRunRecords(
     try {
       result = await opts.probe(machine);
     } catch (err: unknown) {
-      // Unreachable / transient probe failure — skip and retry on a later pass.
-      void err;
+      // Unreachable / transient probe failure — log so systematic failures are
+      // visible, then skip and retry on a later reconciler pass.
+      console.warn(
+        `[journey] first-run backfill probe failed machine=${machine.machineId}`,
+        err instanceof Error ? err.name : typeof err,
+      );
       continue;
     }
     if (!result) continue;
