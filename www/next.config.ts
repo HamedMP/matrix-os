@@ -1,6 +1,6 @@
+import { createRequire } from 'node:module';
 import { createMDX } from 'fumadocs-mdx/next';
 import type { NextConfig } from 'next';
-import { withPostHogConfig } from '@posthog/nextjs-config';
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
@@ -45,15 +45,23 @@ const withMDX = createMDX();
 // uploads happen in release builds while builds without credentials stay
 // byte-identical to today. withPostHogConfig must stay the OUTERMOST wrapper
 // (wrapping it in withMDX would drop its build hooks; the package warns).
+// @posthog/nextjs-config is a devDependency, so it MUST NOT be imported at
+// module top level: `next start` loads this file at runtime in pruned
+// production images where dev deps are absent.
 const posthogPersonalApiKey = process.env.POSTHOG_API_KEY;
 const posthogProjectId = process.env.POSTHOG_PROJECT_ID;
 
-export default posthogPersonalApiKey && posthogProjectId
-  ? withPostHogConfig(withMDX(nextConfig), {
-      personalApiKey: posthogPersonalApiKey,
-      projectId: posthogProjectId,
-      // Private API host (not the ingestion host): EU is https://eu.posthog.com.
-      host: process.env.POSTHOG_HOST ?? 'https://eu.posthog.com',
-      sourcemaps: { enabled: true },
-    })
-  : withMDX(nextConfig);
+function withSourcemapUpload(config: NextConfig): NextConfig {
+  if (!posthogPersonalApiKey || !posthogProjectId) return config;
+  const require = createRequire(import.meta.url);
+  const { withPostHogConfig } = require('@posthog/nextjs-config') as typeof import('@posthog/nextjs-config');
+  return withPostHogConfig(config, {
+    personalApiKey: posthogPersonalApiKey,
+    projectId: posthogProjectId,
+    // Private API host (not the ingestion host): EU is https://eu.posthog.com.
+    host: process.env.POSTHOG_HOST ?? 'https://eu.posthog.com',
+    sourcemaps: { enabled: true },
+  });
+}
+
+export default withSourcemapUpload(withMDX(nextConfig));

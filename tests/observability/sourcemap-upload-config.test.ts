@@ -65,8 +65,25 @@ describe("www source-map upload config", () => {
   it("keeps withPostHogConfig as the outermost wrapper around withMDX", () => {
     // The package warns when another wrapper swallows its config function:
     // PostHog must wrap withMDX(...), never the other way around.
-    expect(source).toMatch(/withPostHogConfig\(\s*withMDX\(/);
+    expect(source).toMatch(/withSourcemapUpload\(withMDX\(/);
     expect(source).not.toMatch(/withMDX\(\s*withPostHogConfig\(/);
+    expect(source).toMatch(/withPostHogConfig\(config/);
+  });
+});
+
+describe("runtime-safe sourcemap plugin loading", () => {
+  // @posthog/nextjs-config is a devDependency. `next start` evaluates
+  // next.config at runtime, and pruned production images (platform Cloud Run)
+  // have no dev deps -- a top-level import crashes the auth shell and the
+  // container never listens on its port. The plugin must load lazily behind
+  // the credential gate.
+  const configs = ["shell/next.config.ts", "www/next.config.ts"];
+
+  it.each(configs)("%s does not import @posthog/nextjs-config at top level", (file) => {
+    const source = readFileSync(join(process.cwd(), file), "utf8");
+    expect(source).not.toMatch(/^import\s+[^;]*@posthog\/nextjs-config/m);
+    expect(source).toMatch(/createRequire/);
+    expect(source).toMatch(/require\(['"]@posthog\/nextjs-config['"]\)/);
   });
 });
 
