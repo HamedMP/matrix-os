@@ -59,10 +59,6 @@ export function categorizeAiError(error: unknown): string {
   return error instanceof Error ? error.name || "Error" : typeof error;
 }
 
-function errorKind(err: unknown): string {
-  return err instanceof Error ? err.name : typeof err;
-}
-
 function isPromiseLike(value: unknown): value is Promise<unknown> {
   return (
     typeof value === "object" &&
@@ -100,12 +96,12 @@ export function createAiGenerationRecorder(
       });
       if (isPromiseLike(result)) {
         result.then(undefined, (err: unknown) => {
-          logger.warn(`[ai-analytics] failed to capture generation: ${errorKind(err)}`);
+          logger.warn(`[ai-analytics] failed to capture generation: ${categorizeAiError(err)}`);
         });
       }
     } catch (err: unknown) {
       // Observability must never break dispatch. Log the error kind only.
-      logger.warn(`[ai-analytics] failed to capture generation: ${errorKind(err)}`);
+      logger.warn(`[ai-analytics] failed to capture generation: ${categorizeAiError(err)}`);
     }
   };
 }

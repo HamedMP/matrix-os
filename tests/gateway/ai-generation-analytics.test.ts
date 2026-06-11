@@ -298,4 +298,27 @@ describe("dispatcher $ai_generation wiring", () => {
       expect(call[0].tokensIn).toBe(120);
     }
   });
+
+  it("records failed batch entries with their session id and timing", async () => {
+    const onAiGeneration = vi.fn();
+    const dispatcher = createDispatcher({
+      homePath,
+      model: "claude-opus-4-6",
+      spawnFn: failingSpawn(),
+      maxConcurrency: 1,
+      onAiGeneration,
+    });
+
+    const results = await dispatcher.dispatchBatch([
+      { taskId: "t1", message: "one", onEvent: () => {} },
+    ]);
+
+    expect(results[0].status).toBe("rejected");
+    expect(onAiGeneration).toHaveBeenCalledTimes(1);
+    const input = onAiGeneration.mock.calls[0][0];
+    expect(input.traceId).toBe("kernel-session-err");
+    expect(input.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(input.error).toBeInstanceOf(Error);
+    expect(JSON.stringify(input)).not.toContain("conversation content");
+  });
 });

@@ -352,10 +352,23 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             env: await buildKernelEnv(),
           };
 
-          for await (const event of spawnFn(batchEntry.message, config)) {
-            batchEntry.onEvent(event);
-            if (event.type === "init") batchSessionId = event.sessionId;
-            if (event.type === "result") batchResultData = event.data;
+          try {
+            for await (const event of spawnFn(batchEntry.message, config)) {
+              batchEntry.onEvent(event);
+              if (event.type === "init") batchSessionId = event.sessionId;
+              if (event.type === "result") batchResultData = event.data;
+            }
+          } catch (err: unknown) {
+            // Record the failed generation here, where the session id and
+            // timing are still in scope; the allSettled rejection branch
+            // only sees the bare reason.
+            recordAiGeneration({
+              traceId: batchSessionId || undefined,
+              model: opts.model,
+              latencyMs: Date.now() - startTime,
+              error: err,
+            });
+            throw err;
           }
 
           const durationMs = Date.now() - startTime;
@@ -408,13 +421,8 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           return { taskId, status: "fulfilled" as const };
         }
         const err = result.reason instanceof Error ? result.reason : new Error(String(result.reason));
-        // Latency and session id are not observable here for failed batch
-        // entries; capture the error category with what is available.
-        recordAiGeneration({
-          model: opts.model,
-          latencyMs: 0,
-          error: err,
-        });
+        // The failed generation was already recorded inside the entry
+        // closure, where the session id and timing are in scope.
         try {
           interactionLogger.log({
             source: "batch",
