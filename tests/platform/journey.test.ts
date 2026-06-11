@@ -16,6 +16,7 @@ import {
   getOnboardingFirstRun,
   insertCheckoutAttempt,
   insertUserMachine,
+  resolveCheckoutAttempt,
   upsertOnboardingFirstRun,
 } from '../../packages/platform/src/db.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
@@ -212,6 +213,16 @@ describe('platform/journey loadJourney', () => {
       id: 'att-1', clerkUserId: 'user_pay', stripeSessionId: 'cs_live_1', createdAt: '2026-06-11T11:57:00.000Z',
     });
     const state = await loadJourney('user_pay', { db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN });
+    expect(state.phase).toBe('payment_settling');
+  });
+
+  it('keeps a paid attempt sticky even when a newer open attempt exists past the window', async () => {
+    // User paid (old attempt), then opened a second checkout that has aged past
+    // the window. The paid attempt must win → still settling, never plan_required.
+    await insertCheckoutAttempt(db, { id: 'paid-1', clerkUserId: 'user_two', stripeSessionId: 'cs_paid', createdAt: '2026-06-11T11:40:00.000Z' });
+    await resolveCheckoutAttempt(db, 'cs_paid', 'paid', '2026-06-11T11:41:00.000Z');
+    await insertCheckoutAttempt(db, { id: 'open-2', clerkUserId: 'user_two', stripeSessionId: 'cs_open_new', createdAt: '2026-06-11T11:45:00.000Z' });
+    const state = await loadJourney('user_two', { db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN });
     expect(state.phase).toBe('payment_settling');
   });
 
