@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod/v4';
-import { appOrigin } from './origins.js';
+import { appOrigin, resolveReturnPath } from './origins.js';
 import {
   getBillingCustomerByClerkUserId,
   getBillingCustomerByStripeCustomerId,
@@ -45,7 +45,9 @@ const CheckoutRequestSchema = z.object({
   interval: z.enum(['monthly', 'annual']).default('monthly'),
   regionSlug: z.enum(['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil']).default('region_fsn1'),
   returnPath: z.string().min(1).max(2048).optional().refine(
-    (value) => value === undefined || isSafeBillingReturnPath(value),
+    // Safe iff it is already a same-origin allowlisted path (origins.ts is the
+    // single source of truth for redirect-target validation).
+    (value) => value === undefined || resolveReturnPath(value) === value,
     { message: 'Invalid return path' },
   ),
 });
@@ -278,17 +280,6 @@ function resolvePriceId(
   return env[key];
 }
 
-function isSafeBillingReturnPath(value: string): boolean {
-  if (!value.startsWith('/') || value.startsWith('//')) return false;
-  try {
-    const url = new URL(value, 'https://matrix-os-return.invalid');
-    return url.pathname.startsWith('/');
-  } catch (err: unknown) {
-    if (err instanceof TypeError || err instanceof Error) return false;
-    return false;
-  }
-}
-
 function resolveBillingReturnUrl(
   env: NodeJS.ProcessEnv,
   state: 'success' | 'canceled' | 'portal',
@@ -297,7 +288,9 @@ function resolveBillingReturnUrl(
   const appUrl = appOrigin(env);
   if (returnPath && state !== 'portal') {
     const appBase = new URL(appUrl);
-    const url = new URL(returnPath, appBase.origin);
+    // resolveReturnPath is the authoritative allowlist guard — never build the
+    // redirect from the raw client path (off-allowlist values collapse to "/").
+    const url = new URL(resolveReturnPath(returnPath), appBase.origin);
     url.searchParams.set('billing', state);
     if (state === 'success') url.searchParams.set('checkout', 'success');
     return url.toString();
