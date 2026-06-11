@@ -150,26 +150,21 @@ function flattenLogs(logs: unknown): string[] {
 }
 
 function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
+  return err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError");
+}
+
+function isBridgeTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.message === "MatrixOS bridge fetch timed out";
+}
+
+function isDetailAbort(err: unknown): boolean {
+  return isAbortError(err) || isBridgeTimeoutError(err);
 }
 
 function logSymphonyDebug(label: string, err: unknown): void {
   if (!import.meta.env.PROD) {
     console.debug(label, err instanceof Error ? err.message : String(err));
   }
-}
-
-function withTimeoutSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  if (typeof AbortSignal.any === "function") return AbortSignal.any([signal, timeoutSignal]);
-  if (signal.aborted) return signal;
-  if (timeoutSignal.aborted) return timeoutSignal;
-
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  signal.addEventListener("abort", abort, { once: true });
-  timeoutSignal.addEventListener("abort", abort, { once: true });
-  return controller.signal;
 }
 
 export default function App() {
@@ -200,11 +195,13 @@ export default function App() {
     detailAbortRef.current = controller;
 
     try {
-      const signal = withTimeoutSignal(controller.signal, 10_000);
-      const nextDetail = await fetchJson<SymphonyIssueDetail>(`/api/symphony/issues/${issueIdentifier}`, { signal });
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- the bridge request cannot receive AbortSignal over postMessage, so this post-await guard prevents late/stale detail writes after a newer request or unmount aborts the controller.
+      const nextDetail = await fetchJson<SymphonyIssueDetail>(`/api/symphony/issues/${issueIdentifier}`);
+      if (controller.signal.aborted) return;
       if (detailRequestRef.current === requestId) setDetail(nextDetail);
     } catch (err: unknown) {
       if (controller.signal.aborted) return;
+      if (isBridgeTimeoutError(err)) return;
       throw err;
     } finally {
       if (detailRequestRef.current === requestId) detailAbortRef.current = null;
@@ -235,7 +232,7 @@ export default function App() {
       try {
         await loadIssueDetail(nextActive);
       } catch (err: unknown) {
-        if (isAbortError(err)) return;
+        if (isDetailAbort(err)) return;
         logSymphonyDebug("[symphony] issue detail failed:", err);
         setError("Issue detail could not be loaded.");
       }
@@ -340,7 +337,7 @@ export default function App() {
     const thisRequestId = detailRequestRef.current;
     void detailPromise
       .catch((err: unknown) => {
-        if (isAbortError(err)) return;
+        if (isDetailAbort(err)) return;
         logSymphonyDebug("[symphony] issue detail failed:", err);
         setError("Issue detail could not be loaded.");
       })

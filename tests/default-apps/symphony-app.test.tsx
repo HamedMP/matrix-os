@@ -254,6 +254,20 @@ describe("Symphony app", () => {
     expect(screen.getByText("Issue detail could not be loaded.")).toBeTruthy();
   });
 
+  it("does not show an issue-detail error for bridge timeouts", async () => {
+    gatewayFetchMock().mockImplementation(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === "/api/symphony/state") return symphonyState();
+      if (url === "/api/symphony/issues/MAT-32") throw new Error("MatrixOS bridge fetch timed out");
+      return { service: { available: true, running: true, status: "running", canStart: false, canStop: true, credentialConfigured: true } };
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getAllByText("Queue").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Issue detail could not be loaded.")).toBeNull();
+  });
+
   it("clears initial loading once state is ready before issue detail resolves", async () => {
     let resolveDetail: (detail: Record<string, unknown>) => void = () => {};
     const detailResponse = new Promise<Record<string, unknown>>((resolve) => {
@@ -309,12 +323,11 @@ describe("Symphony app", () => {
     expect(appSource).toContain("matrix_bridge_unavailable");
     expect(appSource).toContain('"/api/symphony/service/start"');
     expect(appSource).toContain('"/api/symphony/service/stop"');
-    expect(appSource).toContain("withTimeoutSignal(controller.signal, 10_000)");
-    expect(appSource).toContain("AbortSignal.any([signal, timeoutSignal])");
     expect(appSource).toContain("window.MatrixOS.gatewayFetch");
     expect(appSource).not.toContain("await fetch(url");
     expect(appSource).toContain("if (controller.signal.aborted) return;");
-    expect(appSource).not.toContain("controller.signal.aborted || isAbortError(err)");
+    expect(appSource).toContain("isBridgeTimeoutError(err)");
+    expect(appSource).not.toContain("withTimeoutSignal(");
     expect(appSource).toContain('setError("Issue detail could not be loaded.")');
     expect(appSource).toContain("detailAbortRef.current?.abort()");
     expect(appSource).toContain("selectedIssueRef.current");
