@@ -3,7 +3,7 @@ import {
   appendJourneyEvent,
   getActiveUserMachineByClerkId,
   getBillingEntitlementState,
-  getLatestCheckoutAttempt,
+  getSettlingCheckoutAttempt,
   getLatestJourneyEvent,
   getOnboardingFirstRun,
   insertOnboardingFirstRunIfAbsent,
@@ -220,7 +220,7 @@ export async function loadJourney(clerkUserId: string, deps: LoadJourneyDeps): P
   const now = (deps.now ?? (() => new Date()))();
   const [entitlement, checkoutAttempt, liveMachine, firstRun] = await Promise.all([
     resolveEffectiveEntitlement(deps.db, clerkUserId, now),
-    getLatestCheckoutAttempt(deps.db, clerkUserId),
+    getSettlingCheckoutAttempt(deps.db, clerkUserId),
     getActiveUserMachineByClerkId(deps.db, clerkUserId, deps.runtimeSlot),
     getOnboardingFirstRun(deps.db, clerkUserId),
   ]);

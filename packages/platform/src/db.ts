@@ -2294,6 +2294,28 @@ export async function getLatestCheckoutAttempt(
   return row ? mapCheckoutAttempt(row) : undefined;
 }
 
+/**
+ * The attempt that governs payment settling: a confirmed `paid` attempt always
+ * wins over a newer still-`open` one, so a paying user who opens a second
+ * checkout before activation is never bounced back to plan selection. Terminal
+ * (`expired`/`abandoned`) attempts never sustain settling and are excluded.
+ */
+export async function getSettlingCheckoutAttempt(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<BillingCheckoutAttemptRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_checkout_attempts')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('status', 'in', ['paid', 'open'])
+    .orderBy(sql`CASE status WHEN 'paid' THEN 0 ELSE 1 END`)
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst();
+  return row ? mapCheckoutAttempt(row) : undefined;
+}
+
 /** Resolves an open checkout attempt by Stripe session id. Only transitions
  * `open` rows so a later/duplicate webhook cannot rewrite a terminal state. */
 export async function resolveCheckoutAttempt(
