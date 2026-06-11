@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod/v4';
+import { appOrigin } from './origins.js';
 import {
   getBillingCustomerByClerkUserId,
   getBillingCustomerByStripeCustomerId,
@@ -293,7 +294,7 @@ function resolveBillingReturnUrl(
   state: 'success' | 'canceled' | 'portal',
   returnPath?: string,
 ): string {
-  const appUrl = env.NEXT_PUBLIC_MATRIX_APP_URL ?? env.PLATFORM_PUBLIC_URL ?? 'https://app.matrix-os.com';
+  const appUrl = appOrigin(env);
   if (returnPath && state !== 'portal') {
     const appBase = new URL(appUrl);
     const url = new URL(returnPath, appBase.origin);

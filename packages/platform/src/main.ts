@@ -85,6 +85,7 @@ import {
 import { createBillingRoutes } from './billing-routes.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
 import { backfillFirstRunRecords } from './journey.js';
+import { appOrigin } from './origins.js';
 import {
   createStripeBillingClient,
   createUnavailableStripeBillingClient,
@@ -2621,7 +2622,7 @@ export function createApp(deps: {
     }
   }
 
-  const journeyAppOrigin = appEnv.NEXT_PUBLIC_MATRIX_APP_URL ?? appEnv.PLATFORM_PUBLIC_URL ?? 'https://app.matrix-os.com';
+  const journeyAppOrigin = appOrigin(appEnv);
   app.route('/', createJourneyRoutes({
     db,
     resolveUserId: createJourneyUserResolver({
