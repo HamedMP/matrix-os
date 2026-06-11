@@ -4,8 +4,9 @@
 services:
   prometheus:
     image: prom/prometheus:latest
+    # Loopback only: no auth on the Prometheus API; reach it via SSH tunnel.
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/alerting/rules.yml:/etc/prometheus/rules.yml:ro
@@ -22,8 +23,10 @@ services:
 
   loki:
     image: grafana/loki:latest
+    # Loopback only: Loki has no auth; local promtail reaches it over the
+    # docker network, remote shippers must come through an authenticated edge.
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - ./observability/loki.yml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
@@ -35,8 +38,10 @@ services:
 
   grafana:
     image: grafana/grafana:latest
+    # Loopback only: public access goes through the cloudflared tunnel
+    # (grafana.matrix-os.com -> grafana:3000 on the docker network).
     ports:
-      - "3200:3000"
+      - "127.0.0.1:3200:3000"
     volumes:
       - ./observability/provisioning/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - ./observability/provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
@@ -44,8 +49,13 @@ services:
       - grafana-data:/var/lib/grafana
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=false
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-matrixos}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
       - GF_SERVER_ROOT_URL=https://grafana.matrix-os.com
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_COOKIE_SECURE=true
+      - GF_SECURITY_DISABLE_GRAVATAR=true
+      - GF_SNAPSHOTS_EXTERNAL_ENABLED=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
     healthcheck:
       test: curl -sf http://localhost:3000/api/health || exit 1
       interval: 15s
