@@ -149,6 +149,18 @@ cmd_down() {
   # can still resolve the project by name and remove containers.
   [ -d "$worktree" ] || worktree="$REPO_ROOT"
   compose "$slot" "$worktree" down --remove-orphans
+  # Clean slate for the next claimant: drop the per-slot database and the
+  # slot-home volume (prior occupant's MATRIX_HOME). node_modules volume is
+  # kept on purpose -- it only caches dependencies and saves minutes on the
+  # next claim.
+  local db_user
+  db_user="${STAGING_DB_USER:-matrixos}"
+  if ! docker exec matrixos-staging-postgres \
+    psql -U "$db_user" -d matrixos_staging -c \
+    "DROP DATABASE IF EXISTS matrixos_staging_${slot}" > /dev/null 2>&1; then
+    echo "staging-slot: warning: could not drop matrixos_staging_${slot}; next claim will reuse it" >&2
+  fi
+  docker volume rm -f "mx-staging-${slot}_slot-home" > /dev/null 2>&1 || true
   rm -f "$f"
   echo "staging-slot: slot $slot released"
 }
