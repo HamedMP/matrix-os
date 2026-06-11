@@ -106,6 +106,22 @@ describe("client error PostHog forwarding", () => {
     });
   });
 
+  it("strips query strings from the forwarded path", () => {
+    const captureException = vi.fn().mockResolvedValue(true);
+    const reportWithQuery = ClientErrorReportSchema.parse({
+      ...report,
+      path: "/vm/hamed-billing-staging?token=secret&tab=billing",
+    });
+
+    forwardClientErrorToPostHog({ captureException }, "user_123", reportWithQuery);
+
+    const [, options] = captureException.mock.calls[0] as [Error, {
+      properties?: Record<string, unknown>;
+    }];
+    expect(options.properties?.path).toBe("/vm/hamed-billing-staging");
+    expect(JSON.stringify(options.properties)).not.toContain("token=secret");
+  });
+
   it("falls back to a generic error shape when name and message are absent", () => {
     const captureException = vi.fn().mockResolvedValue(true);
 

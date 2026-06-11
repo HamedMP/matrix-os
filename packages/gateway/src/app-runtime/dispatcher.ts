@@ -280,10 +280,10 @@ async function dispatchNode(
     });
   } catch (err: unknown) {
     const isTimeout = err instanceof DOMException && err.name === "TimeoutError";
-    // Upstream failures map to the ProxyError class (backend_timeout,
-    // backend_unreachable, upstream_closed); the raw fetch error carries
-    // hosts/ports and must not be forwarded.
-    reportAppError("ProxyError", slug);
+    // Upstream failures map to the ProxyError class; timeouts get their own
+    // kind so dashboards can split slow backends from unreachable ones. The
+    // raw fetch error carries hosts/ports and must not be forwarded.
+    reportAppError(isTimeout ? "ProxyTimeoutError" : "ProxyError", slug);
     return c.json(
       { error: "upstream error", correlationId },
       isTimeout ? 504 : 502,

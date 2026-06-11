@@ -36,6 +36,12 @@ export interface ClientErrorExceptionTracker {
   ): Promise<boolean>;
 }
 
+function stripQuery(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  const queryIndex = path.indexOf("?");
+  return queryIndex === -1 ? path : path.slice(0, queryIndex);
+}
+
 function logForwardFailure(err: unknown): void {
   // Error NAME only: capture failures must never echo provider details,
   // messages, or paths into gateway logs.
@@ -48,7 +54,12 @@ function logForwardFailure(err: unknown): void {
  * a reconstructed exception. Fire-and-forget: failures are logged by error
  * name only and never affect the HTTP response or the local JSONL append.
  * The reconstructed message/stack are the error-tracking payload itself;
- * event properties stay free of raw messages and paths.
+ * event properties stay free of raw error messages. `path` is a deliberate
+ * exception to the no-paths rule: it is the in-app route the shell reporter
+ * captured (bounded to 512 chars, already persisted locally), and locating
+ * the failing screen is the point of the report. It can contain handle or
+ * resource slugs, so it lives under the same PostHog retention policy as
+ * the exception payload itself -- never filesystem paths or query strings.
  */
 export function forwardClientErrorToPostHog(
   tracker: ClientErrorExceptionTracker,
@@ -69,7 +80,7 @@ export function forwardClientErrorToPostHog(
           report_source: report.source,
           digest: report.digest,
           errorId: report.errorId,
-          path: report.path,
+          path: stripQuery(report.path),
           build_sha: report.buildSha,
           user_agent: report.userAgent,
         },

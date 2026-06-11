@@ -90,7 +90,7 @@ export default posthogPersonalApiKey && posthogProjectId
       personalApiKey: posthogPersonalApiKey,
       projectId: posthogProjectId,
       // Private API host (not the ingestion host): EU is https://eu.posthog.com.
-      host: process.env.POSTHOG_HOST ?? process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://eu.posthog.com",
+      host: process.env.POSTHOG_HOST ?? "https://eu.posthog.com",
       sourcemaps: { enabled: true },
     })
   : nextConfig;
