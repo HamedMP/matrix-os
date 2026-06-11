@@ -57,9 +57,38 @@ export function sanitizeAppResponseHeaders(headers: Headers): Headers {
   return sanitized;
 }
 
+export interface AppRuntimeErrorReport {
+  /** Stable error class name (ManifestError, BuildError, SpawnError, ...). Never a raw message. */
+  errorKind: string;
+  /** SAFE_SLUG-validated app slug, when known. */
+  appSlug?: string;
+}
+
 export interface DispatcherConfig {
   publicHost?: string;
   processManager?: ProcessManager;
+  /**
+   * Optional failure telemetry sink invoked when app-runtime errors funnel
+   * through the dispatcher (manifest failures, process start failures,
+   * upstream proxy failures). Receives only the error class name and the
+   * validated slug -- never raw error messages or filesystem paths.
+   * Fire-and-forget: callback errors are logged by name and swallowed.
+   */
+  onAppError?: (failure: AppRuntimeErrorReport) => void;
+}
+
+type ReportAppError = (errorKind: string, appSlug?: string) => void;
+
+function createAppErrorReporter(onAppError?: (failure: AppRuntimeErrorReport) => void): ReportAppError {
+  return (errorKind, appSlug) => {
+    if (!onAppError) return;
+    try {
+      onAppError(appSlug ? { errorKind, appSlug } : { errorKind });
+    } catch (err: unknown) {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[app-runtime] error telemetry capture failed (${errorKind}): ${kind}`);
+    }
+  };
 }
 
 function isWithinRealPath(baseReal: string, candidateReal: string): boolean {
@@ -96,6 +125,7 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
   const app = new Hono();
   const pm = config?.processManager;
   const publicHost = config?.publicHost ?? "localhost";
+  const reportAppError = createAppErrorReporter(config?.onAppError);
 
   app.use("*", bodyLimit({ maxSize: MAX_BODY_SIZE }));
 
@@ -111,6 +141,7 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
       if (result.error.code === "not_found") {
         return c.json({ error: "not found" }, 404);
       }
+      reportAppError(result.error.name, slug);
       return c.json({ error: "manifest error" }, 500);
     }
 
@@ -159,7 +190,7 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
       }
 
       case "node": {
-        return dispatchNode(c, slug, subPath, pm, publicHost);
+        return dispatchNode(c, slug, subPath, pm, publicHost, reportAppError);
       }
 
       default: {
@@ -177,6 +208,7 @@ async function dispatchNode(
   subPath: string,
   pm: ProcessManager | undefined,
   publicHost: string,
+  reportAppError: ReportAppError,
 ): Promise<Response> {
   const correlationId = randomUUID();
 
@@ -191,6 +223,9 @@ async function dispatchNode(
   try {
     record = await pm.ensureRunning(slug);
   } catch (err: unknown) {
+    // ensureRunning funnels SpawnError / BuildError / HealthCheckError /
+    // ManifestError; report the class name only, never the message.
+    reportAppError(err instanceof Error ? err.name : "UnknownError", slug);
     return c.json(
       { error: "app failed to start", correlationId },
       503,
@@ -245,6 +280,10 @@ async function dispatchNode(
     });
   } catch (err: unknown) {
     const isTimeout = err instanceof DOMException && err.name === "TimeoutError";
+    // Upstream failures map to the ProxyError class (backend_timeout,
+    // backend_unreachable, upstream_closed); the raw fetch error carries
+    // hosts/ports and must not be forwarded.
+    reportAppError("ProxyError", slug);
     return c.json(
       { error: "upstream error", correlationId },
       isTimeout ? 504 : 502,

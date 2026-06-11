@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile, mkdir, rm, cp, symlink, truncate } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { createAppDispatcher } from "../../../packages/gateway/src/app-runtime/dispatcher.js";
+import { createAppDispatcher, type AppRuntimeErrorReport } from "../../../packages/gateway/src/app-runtime/dispatcher.js";
+import { SpawnError } from "../../../packages/gateway/src/app-runtime/errors.js";
 import { invalidateManifestCache } from "../../../packages/gateway/src/app-runtime/manifest-loader.js";
 import { ProcessManager } from "../../../packages/gateway/src/app-runtime/process-manager.js";
 import { PortPool } from "../../../packages/gateway/src/app-runtime/port-pool.js";
@@ -320,6 +321,113 @@ describe("App Runtime Dispatcher", () => {
       expect(r1.status).toBe(200);
       expect(r2.status).toBe(200);
     }, 15_000);
+  });
+
+  describe("app error telemetry", () => {
+    function dispatcherWithHook(
+      onAppError: (failure: AppRuntimeErrorReport) => void,
+      processManager?: ProcessManager,
+    ): Hono {
+      const hookedApp = new Hono();
+      hookedApp.route(
+        "/apps/:slug",
+        createAppDispatcher(homeDir, { onAppError, processManager }),
+      );
+      return hookedApp;
+    }
+
+    it("reports ManifestError kind for manifest failures other than not_found", async () => {
+      const appDir = join(homeDir, "apps", "broken-manifest");
+      await mkdir(appDir, { recursive: true });
+      await writeFile(join(appDir, "matrix.json"), "{ not valid json");
+
+      const failures: AppRuntimeErrorReport[] = [];
+      const hookedApp = dispatcherWithHook((failure) => failures.push(failure));
+
+      const res = await hookedApp.request("/apps/broken-manifest/");
+      expect(res.status).toBe(500);
+      expect(failures).toEqual([{ errorKind: "ManifestError", appSlug: "broken-manifest" }]);
+    });
+
+    it("does not report manifest not_found lookups", async () => {
+      const failures: AppRuntimeErrorReport[] = [];
+      const hookedApp = dispatcherWithHook((failure) => failures.push(failure));
+
+      const res = await hookedApp.request("/apps/nonexistent/");
+      expect(res.status).toBe(404);
+      expect(failures).toEqual([]);
+    });
+
+    async function installNodeManifest(slug: string) {
+      const appDir = join(homeDir, "apps", slug);
+      await mkdir(appDir, { recursive: true });
+      await writeFile(
+        join(appDir, "matrix.json"),
+        JSON.stringify({
+          name: slug,
+          slug,
+          version: "1.0.0",
+          runtime: "node",
+          runtimeVersion: "^1.0.0",
+          build: { command: "echo ok", output: "dist" },
+          serve: { start: "node server.js", healthCheck: "/", startTimeout: 3, idleShutdown: 300 },
+        }),
+      );
+    }
+
+    it("reports the thrown error class when the process manager fails to start an app", async () => {
+      await installNodeManifest("spawn-fails");
+
+      const failures: AppRuntimeErrorReport[] = [];
+      const pm = {
+        ensureRunning: async () => {
+          throw new SpawnError("spawn_failed", "raw detail /home/matrix/apps/spawn-fails");
+        },
+        markUsed: () => {},
+      } as unknown as ProcessManager;
+      const hookedApp = dispatcherWithHook((failure) => failures.push(failure), pm);
+
+      const res = await hookedApp.request("/apps/spawn-fails/");
+      expect(res.status).toBe(503);
+      expect(failures).toEqual([{ errorKind: "SpawnError", appSlug: "spawn-fails" }]);
+      // Properties must never carry raw messages or paths.
+      expect(JSON.stringify(failures)).not.toContain("raw detail");
+      expect(JSON.stringify(failures)).not.toContain("/home/matrix");
+    });
+
+    it("reports ProxyError kind when the upstream fetch fails", async () => {
+      await installNodeManifest("proxy-fails");
+
+      const failures: AppRuntimeErrorReport[] = [];
+      const pm = {
+        // Port 1 is never listening; the proxy fetch fails fast with ECONNREFUSED.
+        ensureRunning: async () => ({ port: 1 }),
+        markUsed: () => {},
+      } as unknown as ProcessManager;
+      const hookedApp = dispatcherWithHook((failure) => failures.push(failure), pm);
+
+      const res = await hookedApp.request("/apps/proxy-fails/api/data");
+      expect([502, 504]).toContain(res.status);
+      expect(failures).toEqual([{ errorKind: "ProxyError", appSlug: "proxy-fails" }]);
+    });
+
+    it("isolates throwing telemetry hooks from the response path", async () => {
+      const appDir = join(homeDir, "apps", "broken-manifest2");
+      await mkdir(appDir, { recursive: true });
+      await writeFile(join(appDir, "matrix.json"), "{ not valid json");
+
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const hookedApp = dispatcherWithHook(() => {
+        throw new RangeError("hook-detail-leak");
+      });
+
+      const res = await hookedApp.request("/apps/broken-manifest2/");
+      expect(res.status).toBe(500);
+      const logged = warn.mock.calls.map((call) => call.join(" ")).join(" ");
+      expect(logged).toContain("RangeError");
+      expect(logged).not.toContain("hook-detail-leak");
+      warn.mockRestore();
+    });
   });
 
   // T056: WebSocket tests for node mode
