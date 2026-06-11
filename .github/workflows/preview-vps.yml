@@ -348,7 +348,7 @@ jobs:
             while IFS= read -r machine; do
               handle="$(jq -r .handle <<< "$machine")"
               machine_id="$(jq -r .machineId <<< "$machine")"
-              provisioned="$(jq -r .provisionedAt <<< "$machine")"
+              provisioned="$(jq -r '.provisionedAt // empty' <<< "$machine")"
               pr="${handle#pr-}"
               pr_state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq .state 2>/dev/null || echo unknown)"
               # Fail-safe: never delete on unconfirmed PR state (spec 093).
@@ -357,15 +357,21 @@ jobs:
                 echo "$handle" >> "$lookup_failures"
                 continue
               fi
-              age=$((now - $(date -d "$provisioned" +%s)))
               reason=""
               if [ "$pr_state" = "closed" ]; then
                 reason="PR #${pr} is closed"
-              elif [ "$age" -gt "$ttl_secs" ]; then
-                reason="older than ${PREVIEW_TTL_HOURS}h"
-              fi
-              if [ -z "$reason" ]; then
-                echo "Keeping ${handle} (PR ${pr_state}, age $((age / 3600))h)"
+              # failed/provisioning VPSes can have a null provisionedAt; a
+              # date crash here would abort the whole sweep under set -e.
+              elif provisioned_epoch="$(date -d "$provisioned" +%s 2>/dev/null)" && [ -n "$provisioned" ]; then
+                age=$((now - provisioned_epoch))
+                if [ "$age" -gt "$ttl_secs" ]; then
+                  reason="older than ${PREVIEW_TTL_HOURS}h"
+                else
+                  echo "Keeping ${handle} (PR ${pr_state}, age $((age / 3600))h)"
+                  continue
+                fi
+              else
+                echo "Keeping ${handle} (PR ${pr_state}, no valid provisionedAt; age-based reaping skipped)"
                 continue
               fi
               echo "Reaping ${handle}: ${reason}"
