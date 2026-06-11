@@ -126,9 +126,29 @@ async function apiRequest(config, requestPath, { method = "GET", body, fetch: fe
 
 async function findByExactName(config, listPath, name, deps) {
   const search = encodeURIComponent(name);
-  const page = await apiRequest(config, `${listPath}?search=${search}&limit=300`, deps);
-  const results = Array.isArray(page?.results) ? page.results : [];
-  return results.find((item) => item?.name === name) ?? null;
+  // Follow pagination: a truncated first page in a large org would miss the
+  // match and create a duplicate instead of reusing the existing object.
+  let requestPath = `${listPath}?search=${search}&limit=300`;
+  while (requestPath) {
+    const page = await apiRequest(config, requestPath, deps);
+    const results = Array.isArray(page?.results) ? page.results : [];
+    const match = results.find((item) => item?.name === name);
+    if (match) return match;
+    requestPath = toApiPath(page?.next);
+  }
+  return null;
+}
+
+function toApiPath(next) {
+  if (typeof next !== "string" || next.length === 0) return null;
+  if (next.startsWith("/")) return next;
+  try {
+    const url = new URL(next);
+    return `${url.pathname}${url.search}`;
+  } catch (err) {
+    if (err instanceof TypeError) return null;
+    throw err;
+  }
 }
 
 export async function ensureDashboard(config, deps = {}) {

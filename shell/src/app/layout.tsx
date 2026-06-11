@@ -61,7 +61,14 @@ export default async function RootLayout({
 
   return (
     <ClerkProvider>
-      <html lang="en" data-posthog-visitor-country={visitorCountry ?? undefined}>
+      <html
+        lang="en"
+        data-posthog-visitor-country={visitorCountry ?? undefined}
+        // Runtime replay kill switch: read on the server per request, so
+        // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops
+        // replay without rebuilding the bundle.
+        data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
+      >
         <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
           {children}
           <PostHogIdentify />

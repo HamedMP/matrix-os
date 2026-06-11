@@ -38,7 +38,7 @@ describe("shell session replay init", () => {
     vi.unstubAllEnvs();
   });
 
-  it("enables masked session recording with console log capture", async () => {
+  it("enables masked session recording without console log capture", async () => {
     const { initializeShellPostHog } = await importShellPostHog();
 
     initializeShellPostHog("US", TEST_CONFIG);
@@ -46,7 +46,9 @@ describe("shell session replay init", () => {
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
     expect(options.disable_session_recording).toBe(false);
-    expect(options.enable_recording_console_log).toBe(true);
+    // Terminal/agent surfaces can log tokens; console output stays out of
+    // shell replays.
+    expect(options.enable_recording_console_log).toBe(false);
     expect(options.session_recording).toEqual({
       maskAllInputs: true,
       maskTextSelector: "[data-ph-mask]",
@@ -63,6 +65,26 @@ describe("shell session replay init", () => {
     expect(posthogMock.init).toHaveBeenCalledTimes(1);
     const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
     expect(options.disable_session_recording).toBe(true);
+  });
+
+  it("honors the runtime kill switch exposed via the layout data attribute", async () => {
+    document.documentElement.dataset.posthogDisableReplay = "1";
+    try {
+      const { initializeShellPostHog } = await importShellPostHog();
+
+      initializeShellPostHog("US", TEST_CONFIG);
+
+      expect(posthogMock.init).toHaveBeenCalledTimes(1);
+      const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
+      expect(options.disable_session_recording).toBe(true);
+    } finally {
+      delete document.documentElement.dataset.posthogDisableReplay;
+    }
+  });
+
+  it("exposes the runtime kill switch from the shell layout", () => {
+    const layout = readFileSync(join(process.cwd(), "shell/src/app/layout.tsx"), "utf8");
+    expect(layout).toMatch(/data-posthog-disable-replay=\{process\.env\.POSTHOG_DISABLE_REPLAY/);
   });
 });
 

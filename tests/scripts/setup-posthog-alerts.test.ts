@@ -116,6 +116,27 @@ describe("insight definitions", () => {
 });
 
 describe("idempotent provisioning", () => {
+  it("follows pagination before concluding an object does not exist", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("page=2")) {
+        return jsonResponse({ results: [{ id: 9, name: DASHBOARD_NAME }], next: null });
+      }
+      return jsonResponse({
+        results: [{ id: 1, name: "Unrelated dashboard" }],
+        next: "https://eu.posthog.com/api/projects/123/dashboards/?search=x&limit=300&page=2",
+      });
+    });
+
+    const result = await ensureDashboard(CONFIG, { fetch: fetchMock });
+
+    expect(result).toEqual({ id: 9, created: false });
+    // Two list pages, no POST: the match on page 2 prevents a duplicate.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondUrl = fetchMock.mock.calls[1][0] as string;
+    expect(secondUrl).toContain("page=2");
+    expect(fetchMock.mock.calls.every(([, init]) => ((init as RequestInit)?.method ?? "GET") === "GET")).toBe(true);
+  });
+
   it("reuses an existing dashboard with the same name instead of creating a duplicate", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({ results: [{ id: 9, name: DASHBOARD_NAME }] }),

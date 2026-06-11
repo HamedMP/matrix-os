@@ -10,9 +10,17 @@ import {
 type ClientProperties = Record<string, string | number | boolean | undefined>;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 
-// Kill switch: any non-empty value disables session replay without a rebuild
-// of the masking config (masked replay is on by default for failure triage).
-const sessionReplayDisabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY);
+// Replay kill switch. NEXT_PUBLIC_* is inlined at build time, so the build
+// flag alone needs a rebuild to change. The layout additionally exposes the
+// server's runtime POSTHOG_DISABLE_REPLAY env as a data attribute, so a
+// redeploy with the env set suppresses replay without code changes.
+const buildTimeReplayDisabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY);
+
+function isSessionReplayDisabled(): boolean {
+  if (buildTimeReplayDisabled) return true;
+  if (typeof document === "undefined") return false;
+  return document.documentElement.dataset.posthogDisableReplay === "1";
+}
 
 const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
@@ -87,7 +95,7 @@ export function initializeWwwPostHog(
     capture_exceptions: true,
     // Masked session replay: every input is masked by default so signup and
     // billing failures can be replayed without capturing what users typed.
-    disable_session_recording: sessionReplayDisabled,
+    disable_session_recording: isSessionReplayDisabled(),
     session_recording: {
       maskAllInputs: true,
     },
