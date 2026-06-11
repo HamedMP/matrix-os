@@ -60,8 +60,28 @@ describe("ConnectionIndicator", () => {
     await waitFor(() => {
       expect(screen.getByRole("status", { name: /matrix connection status/i })).toBeTruthy();
       expect(screen.getByText("Reconnecting shell")).toBeTruthy();
-      expect(screen.getByText(/v2026\.05\.29-test/)).toBeTruthy();
+      expect(screen.getByText("v2026.05.29-test")).toBeTruthy();
       expect(screen.getByText("stable")).toBeTruthy();
+    });
+  });
+
+  it("shows the runtime version even when the gateway omits a release channel", async () => {
+    act(() => {
+      useConnectionHealth.setState({ state: "reconnecting" });
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/health")) return Promise.resolve(jsonResponse({ status: "ok" }));
+      if (url.endsWith("/api/system/info")) {
+        return Promise.resolve(jsonResponse({ version: "v2026.06.11-version-only" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    }));
+
+    render(<ConnectionIndicator />);
+
+    await waitFor(() => {
+      expect(screen.getByText("v2026.06.11-version-only")).toBeTruthy();
     });
   });
 
@@ -74,8 +94,11 @@ describe("ConnectionIndicator", () => {
     render(<ConnectionIndicator />);
 
     await waitFor(() => {
-      expect(screen.getByText("Matrix computer is restarting")).toBeTruthy();
-      expect(screen.getByText(/bundle upgrades or gateway restarts/i)).toBeTruthy();
+      expect(screen.getByText("Matrix is reconnecting")).toBeTruthy();
+      expect(screen.getByText(/keeping your workspace open/i)).toBeTruthy();
+      expect(screen.queryByText("Matrix computer is restarting")).toBeNull();
+      expect(screen.queryByText(/bundle upgrades or gateway restarts/i)).toBeNull();
+      expect(screen.getByRole("status", { name: /matrix connection status/i }).getAttribute("data-variant")).toBe("dock");
     });
   });
 
@@ -108,14 +131,14 @@ describe("resolveConnectionCopy", () => {
       releaseVersion: "v2026.05.29-test",
     })).toMatchObject({
       title: "Reconnecting shell",
-      detail: expect.stringContaining("v2026.05.29-test"),
+      detail: "The gateway is online. Waiting for the live session to resume.",
       action: "Retry now",
     });
   });
 
   it("uses checking copy before runtime polling settles", () => {
     expect(resolveConnectionCopy("reconnecting", { reachability: "checking" })).toMatchObject({
-      title: "Checking Matrix computer",
+      title: "Checking connection",
       detail: expect.stringContaining("checking"),
       action: "Retry now",
     });
@@ -123,8 +146,8 @@ describe("resolveConnectionCopy", () => {
 
   it("uses restart copy when the runtime is unreachable", () => {
     expect(resolveConnectionCopy("reconnecting", { reachability: "unavailable" })).toMatchObject({
-      title: "Matrix computer is restarting",
-      detail: expect.stringContaining("Services are coming back online"),
+      title: "Matrix is reconnecting",
+      detail: expect.stringContaining("keeping your workspace open"),
       action: "Retry now",
     });
   });
