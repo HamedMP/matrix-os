@@ -289,6 +289,7 @@ Every backend PR must include an "Invariants" section:
 ### CI Timeouts
 
 - **Timeouts must cover observed runtime with margin**. If a CI job completes all tests successfully but is canceled by `timeout-minutes`, raise or split the job instead of treating it as a product test failure.
+- **Screenshot jobs are expensive and often stall on browser install**. If the `Screenshots` workflow hangs, first check whether it is stuck at `pnpm exec playwright install chromium`; Playwright docs note browser cache restore can be as slow as download on Linux. For headless-only screenshot tests, prefer `pnpm exec playwright install --only-shell chromium`. For non-visual PRs, use the `skip-screenshots`/`no-screenshots` label or cancel optional screenshot runs rather than blocking a release.
 
 ### Branch Freeze
 
