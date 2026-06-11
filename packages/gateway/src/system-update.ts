@@ -138,9 +138,13 @@ export function resolveInternalUpgradeStartTarget(
   if (!parsed.ok) return parsed;
   if (parsed.target) return { ok: true, target: parsed.target };
 
-  const channel = resolveSystemUpdateChannel(undefined, options);
-  if (!channel) return { ok: false, error: "Invalid update channel" };
-  return { ok: true, target: { type: "channel", value: channel } };
+  return {
+    ok: true,
+    target: {
+      type: "channel",
+      value: resolveSystemUpdateChannel(undefined, options) ?? "stable",
+    },
+  };
 }
 
 export async function writeInternalUpgradeTrigger(options: {
