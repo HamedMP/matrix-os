@@ -60,7 +60,7 @@ describe("ConnectionIndicator", () => {
     await waitFor(() => {
       expect(screen.getByRole("status", { name: /matrix connection status/i })).toBeTruthy();
       expect(screen.getByText("Reconnecting shell")).toBeTruthy();
-      expect(screen.getAllByText(/v2026\.05\.29-test/).length).toBeGreaterThan(0);
+      expect(screen.getByText("v2026.05.29-test")).toBeTruthy();
       expect(screen.getByText("stable")).toBeTruthy();
     });
   });
@@ -111,7 +111,7 @@ describe("resolveConnectionCopy", () => {
       releaseVersion: "v2026.05.29-test",
     })).toMatchObject({
       title: "Reconnecting shell",
-      detail: expect.stringContaining("v2026.05.29-test"),
+      detail: "The gateway is online. Waiting for the live session to resume.",
       action: "Retry now",
     });
   });

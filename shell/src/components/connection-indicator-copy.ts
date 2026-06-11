@@ -28,11 +28,10 @@ export function resolveConnectionCopy(state: ConnectionState, status: RuntimeSta
   }
 
   if (status.reachability === "online") {
-    const version = status.releaseVersion ? ` ${status.releaseVersion}` : "";
     return {
       tone: "warn",
       title: "Reconnecting shell",
-      detail: `The gateway is online${version}. Waiting for the live session to resume.`,
+      detail: "The gateway is online. Waiting for the live session to resume.",
       action: "Retry now",
     };
   }
