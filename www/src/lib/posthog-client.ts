@@ -55,10 +55,11 @@ export function identifyPostHogUser(
 export function resetPostHogIdentity(currentConfig: typeof config = config) {
   if (!currentConfig || !initialized) return;
   try {
-    // Only reset identified sessions; resetting an anonymous session would
-    // rotate its distinct id on every signed-out page load.
+    // Only reset provably identified sessions; resetting an anonymous session
+    // would rotate its distinct id on every signed-out page load. If the
+    // identity check is unavailable, skip the reset rather than risk it.
     const withIdentity = posthog as typeof posthog & { _isIdentified?: () => boolean };
-    if (typeof withIdentity._isIdentified === "function" && !withIdentity._isIdentified()) return;
+    if (typeof withIdentity._isIdentified !== "function" || !withIdentity._isIdentified()) return;
     posthog.reset();
   } catch (err: unknown) {
     console.warn("[posthog] Failed to reset identity:", err instanceof Error ? err.name : typeof err);

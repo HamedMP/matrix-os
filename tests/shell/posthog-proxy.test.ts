@@ -68,6 +68,30 @@ describe("shell PostHog same-origin proxy", () => {
     expect(options.ui_host).toBe("https://eu.posthog.com");
   });
 
+  it("only resets identity for provably identified sessions", async () => {
+    const { initializeShellPostHog, resetPostHogIdentity } = await import(
+      "../../shell/src/lib/posthog-client"
+    );
+    const config = { token: "phc_test", apiHost: "/relay", uiHost: "https://eu.posthog.com" };
+    initializeShellPostHog("US", config);
+    const mock = posthogMock as typeof posthogMock & { _isIdentified?: () => boolean };
+
+    // Identity check unavailable: never reset (would rotate anonymous ids).
+    delete mock._isIdentified;
+    resetPostHogIdentity(config);
+    expect(posthogMock.reset).not.toHaveBeenCalled();
+
+    // Anonymous session: no reset.
+    mock._isIdentified = () => false;
+    resetPostHogIdentity(config);
+    expect(posthogMock.reset).not.toHaveBeenCalled();
+
+    // Identified session: reset.
+    mock._isIdentified = () => true;
+    resetPostHogIdentity(config);
+    expect(posthogMock.reset).toHaveBeenCalledTimes(1);
+  });
+
   it("defaults the shell api host to the /relay same-origin proxy", () => {
     // Source-level invariant: the env read must fall back to "/relay" so host
     // bundles built without NEXT_PUBLIC_POSTHOG_API_HOST stay un-blockable.
