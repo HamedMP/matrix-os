@@ -13,7 +13,9 @@
 
 ## Phase A: Provisioning & Billing Reliability (US2, US3 — backend) — PR 1
 
-**Goal**: No user can get permanently stuck. Stuck `provisioning` rows fail automatically, `failed` rows stop blocking retries, machine replacement is atomic, stale registrations are rejected, and checkout attempts are recorded server-side so settling becomes derivable.
+**Goal**: No user can get permanently stuck. Stuck `provisioning` rows fail automatically, `failed` rows stop blocking retries, machine replacement is atomic, and stale registrations are rejected.
+
+> **Phasing refinement (decided during implementation)**: the `billing_checkout_attempts` record (T005, T014, T015) moves to **Phase B**, where the journey's `payment_settling` derivation consumes it — producer and consumer ship in one cohesive PR. PR 1 is provisioning-reliability-only. `recover()` was verified already atomic (single row mutated in place inside `runInPlatformTransaction`), so T013 reduces to a regression test (no two-row window) rather than a rewrite. `failure_code`/`failure_at` already exist on `user_machines`; only `attempt` is a new column.
 
 **Independent test**: quickstart.md "Verify the reliability fixes" — force a stale provisioning row, watch the reconciler fail it within one interval; retry succeeds with exactly one live row; complete a Stripe test checkout with the webhook paused and confirm the attempt row records and later resolves.
 

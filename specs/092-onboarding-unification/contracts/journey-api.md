@@ -16,7 +16,10 @@
                                        // contact_support | begin_first_run | open_shell | none
     "url": "https://app.matrix-os.com/?plans=1"   // present when kind is a navigation; origin from origins.ts
   },
-  "progress": {                        // present ONLY when phase = provisioning
+  "progress": {                        // present when phase = provisioning AND a machine
+                                       // lifecycle record exists. ABSENT in the pre-machine
+                                       // "start provisioning" sub-state (entitled, no machine yet,
+                                       // nextAction.kind = start_provision).
     "stage": "booting",                // creating_server | booting | registering | finalizing
     "startedAt": "2026-06-11T10:00:00Z"
   },
@@ -30,7 +33,10 @@
   },
   "settling": {                        // present ONLY when phase = payment_settling
     "since": "2026-06-11T10:00:00Z",
-    "delayed": false                   // true once past the settling window (FR-014 escalation UI)
+    "delayed": false                   // true once past the settling window (FR-014 escalation UI).
+                                       // delayed does NOT change the phase — the user stays in
+                                       // payment_settling so the paywall is never re-shown (US3).
+                                       // When delayed:true, nextAction.kind = contact_support.
   }
 }
 ```
