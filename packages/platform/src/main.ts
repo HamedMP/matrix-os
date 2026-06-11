@@ -45,6 +45,7 @@ import {
   HostBundleReleaseConflictError,
   listHostBundleReleases,
   promoteHostBundleChannel,
+  sweepStaleCheckoutAttempts,
   upsertHostBundleRelease,
   type HostBundleReleaseRecord,
   type UserMachineRecord,
@@ -90,6 +91,8 @@ import {
   type RuntimeAccessDecision,
 } from './billing.js';
 import { createBillingRoutes } from './billing-routes.js';
+import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
+import { backfillFirstRunRecords } from './journey.js';
 import {
   createStripeBillingClient,
   createUnavailableStripeBillingClient,
@@ -2665,6 +2668,60 @@ export function createApp(deps: {
     captureEvent: captureFunnelEvent,
   }));
 
+  // Onboarding journey (spec 092): one server-owned signup-to-ready state every
+  // surface renders from. Triggers provisioning through the same building blocks
+  // as /api/auth/provision-runtime so billing and identity checks stay identical.
+  async function provisionRuntimeForJourney(clerkUserId: string, runtimeSlot: string): Promise<void> {
+    if (!deps.customerVpsService) {
+      throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
+    }
+    if (stripeBillingEntitlementsEnabled(appEnv)) {
+      const checkedAt = new Date();
+      const entitlement = await resolveEffectiveBillingEntitlement(db, clerkUserId, checkedAt);
+      if (!getRuntimeAccessDecision(entitlement, checkedAt).runtimeProxyAllowed) {
+        throw new CustomerVpsError(402, 'billing_required', 'Billing upgrade required');
+      }
+    }
+    const identity = await selectProvisionIdentityForClerkUser(db, clerkUserId, appEnv);
+    if (!identity) {
+      throw new CustomerVpsError(409, 'invalid_state', 'Handle unavailable');
+    }
+    const provisioned = await deps.customerVpsService.provision({ handle: identity.handle, clerkUserId, runtimeSlot });
+    await ensureProvisionedPlatformUser(db, {
+      clerkUserId,
+      handle: identity.handle,
+      displayName: identity.displayName,
+      email: identity.email,
+      runtimeId: `vps:${provisioned.machineId}`,
+    });
+    if (matrixProvisioner) {
+      try {
+        await matrixProvisioner.provisionUser(identity.handle);
+      } catch (matrixErr: unknown) {
+        console.error(
+          `[matrix] Failed to provision Matrix accounts for ${identity.handle}:`,
+          matrixErr instanceof Error ? matrixErr.message : String(matrixErr),
+        );
+      }
+    }
+  }
+
+  const journeyAppOrigin = appEnv.NEXT_PUBLIC_MATRIX_APP_URL ?? appEnv.PLATFORM_PUBLIC_URL ?? 'https://app.matrix-os.com';
+  app.route('/', createJourneyRoutes({
+    db,
+    resolveUserId: createJourneyUserResolver({
+      clerkAuth: clerkAuth ?? undefined,
+      syncJwtSecret: platformJwtSecret ?? undefined,
+    }),
+    provisionRuntime: deps.customerVpsService ? provisionRuntimeForJourney : undefined,
+    verifyInternalToken: platformSecret
+      ? (handle, token) => timingSafeTokenEquals(token, buildPlatformVerificationToken(handle, platformSecret))
+      : undefined,
+    appOrigin: journeyAppOrigin,
+    maxProvisionAttempts: Number(appEnv.CUSTOMER_VPS_MAX_PROVISION_ATTEMPTS) || 3,
+    settlingWindowMs: Number(appEnv.BILLING_SETTLING_WINDOW_MS) || undefined,
+  }));
+
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
@@ -4240,14 +4297,50 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         reconciliationRunning = true;
         customerVpsReconciliationPromise = (async () => {
           try {
-            const result = await customerVpsService!.reconcileProvisioning();
-            if (result.checked > 0) {
-              console.log(
-                `[platform] customer VPS reconciliation checked=${result.checked} running=${result.running} failed=${result.failed}`,
-              );
+            try {
+              const result = await customerVpsService!.reconcileProvisioning();
+              if (result.checked > 0) {
+                console.log(
+                  `[platform] customer VPS reconciliation checked=${result.checked} running=${result.running} failed=${result.failed}`,
+                );
+              }
+            } catch (err: unknown) {
+              logPlatformRouteError('customer VPS reconciliation', err);
             }
-          } catch (err: unknown) {
-            logPlatformRouteError('customer VPS reconciliation', err);
+            // Onboarding journey maintenance, off the read path (spec 092):
+            // sweep stale open checkout attempts and backfill legacy first-run records.
+            try {
+              const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+              await sweepStaleCheckoutAttempts(db, thirtyDaysAgoIso, new Date().toISOString(), 200);
+            } catch (err: unknown) {
+              logPlatformRouteError('checkout attempt sweep', err);
+            }
+            try {
+              await backfillFirstRunRecords(db, {
+                limit: 25,
+                probe: async (machine) => {
+                  if (!machine.publicIPv4 || !customerVpsConfig.platformSecret) return null;
+                  const token = buildPlatformVerificationToken(machine.handle, customerVpsConfig.platformSecret);
+                  const res = await fetch(`https://${machine.publicIPv4}:443/api/settings/onboarding-status`, {
+                    headers: { authorization: `Bearer ${token}` },
+                    signal: AbortSignal.timeout(3000),
+                    ...(customerVpsProxyDispatcher ? { dispatcher: customerVpsProxyDispatcher } : {}),
+                  } as RequestInit & { dispatcher?: import('undici').Dispatcher });
+                  if (!res.ok) return null;
+                  let body: { complete?: unknown } | null = null;
+                  try {
+                    body = (await res.json()) as { complete?: unknown };
+                  } catch (parseErr: unknown) {
+                    // Malformed status body → treat as not-yet-complete.
+                    void parseErr;
+                    return null;
+                  }
+                  return body?.complete === true ? { completedAt: new Date().toISOString() } : null;
+                },
+              });
+            } catch (err: unknown) {
+              logPlatformRouteError('first-run backfill', err);
+            }
           } finally {
             reconciliationRunning = false;
             customerVpsReconciliationPromise = undefined;

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
+  backfillFirstRunRecords,
   deriveJourneyPhase,
   loadJourney,
   type JourneyDerivationInputs,
@@ -11,8 +12,8 @@ import type {
   PlatformDB,
 } from '../../packages/platform/src/db.js';
 import {
-  appendJourneyEvent,
   getLatestJourneyEvent,
+  getOnboardingFirstRun,
   insertCheckoutAttempt,
   insertUserMachine,
   upsertOnboardingFirstRun,
@@ -223,5 +224,42 @@ describe('platform/journey loadJourney', () => {
     // Entitlement is absent, so without access the phase is plan_required regardless of the machine.
     const state = await loadJourney('user_run', { db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN });
     expect(state.phase).toBe('plan_required');
+  });
+});
+
+describe('platform/journey backfillFirstRunRecords', () => {
+  let db: PlatformDB;
+  beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
+  afterEach(async () => { await destroyTestPlatformDb(db); });
+
+  it('fills missing records for running machines whose probe reports completion', async () => {
+    await insertUserMachine(db, { machineId: 'm-done', clerkUserId: 'user_done', handle: 'done', status: 'running', hetznerServerId: 1, publicIPv4: '203.0.113.1', provisionedAt: '2026-06-11T10:00:00.000Z' });
+    await insertUserMachine(db, { machineId: 'm-no', clerkUserId: 'user_no', handle: 'no', status: 'running', hetznerServerId: 2, publicIPv4: '203.0.113.2', provisionedAt: '2026-06-11T10:00:00.000Z' });
+    await insertUserMachine(db, { machineId: 'm-down', clerkUserId: 'user_down', handle: 'down', status: 'running', hetznerServerId: 3, publicIPv4: '203.0.113.3', provisionedAt: '2026-06-11T10:00:00.000Z' });
+
+    const result = await backfillFirstRunRecords(db, {
+      probe: async (machine) => {
+        if (machine.handle === 'done') return { completedAt: '2026-06-10T00:00:00.000Z', goal: 'coding' };
+        if (machine.handle === 'down') throw new Error('unreachable');
+        return null; // user_no: not completed
+      },
+    });
+
+    expect(result.checked).toBe(3);
+    expect(result.filled).toBe(1);
+    expect((await getOnboardingFirstRun(db, 'user_done'))?.source).toBe('backfill');
+    expect(await getOnboardingFirstRun(db, 'user_no')).toBeUndefined();
+    expect(await getOnboardingFirstRun(db, 'user_down')).toBeUndefined();
+  });
+
+  it('never overwrites an authoritative write-behind record', async () => {
+    await insertUserMachine(db, { machineId: 'm1', clerkUserId: 'user_x', handle: 'x', status: 'running', hetznerServerId: 1, publicIPv4: '203.0.113.1', provisionedAt: '2026-06-11T10:00:00.000Z' });
+    await upsertOnboardingFirstRun(db, { clerkUserId: 'user_x', completedAt: '2026-06-09T00:00:00.000Z', goal: 'company_brain', source: 'gateway_ws' });
+    // The machine now has a record, so it is not even a candidate.
+    const result = await backfillFirstRunRecords(db, { probe: async () => ({ completedAt: '2099-01-01T00:00:00.000Z', goal: 'coding' }) });
+    expect(result.checked).toBe(0);
+    const row = await getOnboardingFirstRun(db, 'user_x');
+    expect(row?.goal).toBe('company_brain');
+    expect(row?.source).toBe('gateway_ws');
   });
 });

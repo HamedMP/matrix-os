@@ -54,7 +54,7 @@ export function createStripeBillingClient(options: {
       if (!session.url) {
         throw new Error('Stripe checkout session missing redirect URL');
       }
-      return { url: session.url };
+      return { url: session.url, id: session.id };
     },
 
     async createPortalSession(input) {

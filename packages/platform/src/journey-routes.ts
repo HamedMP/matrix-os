@@ -1,6 +1,5 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod/v4';
 import {
   getActiveUserMachineByClerkId,
@@ -37,8 +36,10 @@ export function createJourneyUserResolver(opts: {
           const result = await opts.clerkAuth.verify(token);
           if (result.authenticated && result.userId) return result.userId;
         }
-      } catch {
-        // fall through to sync-JWT
+      } catch (err: unknown) {
+        // Expected when the token is a platform sync JWT rather than a Clerk
+        // session; fall through to sync-JWT verification below (not an error).
+        void err;
       }
     }
     // 2. Platform sync JWT (CLI / native / mobile token paste).
@@ -49,7 +50,8 @@ export function createJourneyUserResolver(opts: {
       try {
         const claims = await verifySyncJwt(bearer, { secret: opts.syncJwtSecret });
         if (claims.sub) return claims.sub;
-      } catch {
+      } catch (err: unknown) {
+        // Invalid/expired/forged sync JWT → unauthenticated (do not leak why).
         return null;
       }
     }
@@ -84,8 +86,13 @@ export interface JourneyRoutesOptions {
   resolveUserId: (c: Context) => Promise<string | null>;
   /** Triggers a provisioning attempt (billing-checked). Absent when provisioning is unavailable. */
   provisionRuntime?: (clerkUserId: string, runtimeSlot: string) => Promise<void>;
-  /** Expected internal token for gateway->platform first-run reports (UPGRADE_TOKEN). */
-  internalToken?: string;
+  /**
+   * Verifies the gateway->platform first-run report's per-handle token
+   * (constant-time). main.ts supplies
+   * `(handle, token) => timingSafeTokenEquals(token, buildPlatformVerificationToken(handle, secret))`.
+   * Absent when internal auth is not configured.
+   */
+  verifyInternalToken?: (handle: string, token: string | undefined) => boolean;
   appOrigin: string;
   maxProvisionAttempts: number;
   settlingWindowMs?: number;
@@ -96,12 +103,6 @@ export interface JourneyRoutesOptions {
 
 function applyNoStore(c: Context): void {
   c.header('Cache-Control', 'no-store');
-}
-
-function tokensMatch(a: string, b: string): boolean {
-  const ha = createHash('sha256').update(a).digest();
-  const hb = createHash('sha256').update(b).digest();
-  return timingSafeEqual(ha, hb);
 }
 
 const LIVE_MACHINE_STATUSES = new Set(['provisioning', 'recovering', 'running']);
@@ -146,7 +147,8 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     if (raw.trim().length > 0) {
       try {
         body = JSON.parse(raw);
-      } catch {
+      } catch (err: unknown) {
+        if (!(err instanceof SyntaxError)) throw err;
         return c.json({ error: 'Invalid request' }, 400);
       }
     }
@@ -178,10 +180,12 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
 
   app.post('/internal/first-run', bodyLimit({ maxSize: INTERNAL_BODY_LIMIT }), async (c) => {
     applyNoStore(c);
-    const expected = options.internalToken;
-    const header = c.req.header('authorization');
-    const presented = header?.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : undefined;
-    if (!expected || !presented || !tokensMatch(presented, expected)) {
+    // Per-handle internal auth: the gateway presents the same derived token it
+    // uses for every platform->VPS internal call, scoped to its own handle.
+    const handle = c.req.header('x-matrix-handle');
+    const authHeader = c.req.header('authorization');
+    const token = authHeader?.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : undefined;
+    if (!handle || !options.verifyInternalToken || !options.verifyInternalToken(handle, token)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
@@ -195,9 +199,8 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
     const parsed = FirstRunBodySchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 422);
 
-    // The header handle must match the body handle the gateway claims for.
-    const headerHandle = c.req.header('x-matrix-handle');
-    if (headerHandle && headerHandle !== parsed.data.handle) {
+    // The authenticated handle must own the reported completion.
+    if (parsed.data.handle !== handle) {
       return c.json({ error: 'Invalid request' }, 422);
     }
 

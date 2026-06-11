@@ -25,7 +25,9 @@ describe('platform/journey-routes', () => {
       db,
       resolveUserId: async () => 'user_123',
       provisionRuntime: vi.fn(async () => {}),
-      internalToken: 'internal-secret-token',
+      // Per-handle verifier: accept the fixed token only for handle "alice".
+      verifyInternalToken: (handle: string, token: string | undefined) =>
+        handle === 'alice' && token === 'token-for-alice',
       appOrigin: APP_ORIGIN,
       maxProvisionAttempts: 3,
       now: () => new Date('2026-06-11T12:00:00.000Z'),
@@ -158,11 +160,11 @@ describe('platform/journey-routes', () => {
       expect(res.status).toBe(401);
     });
 
-    it('204 and upserts with a valid token', async () => {
+    it('204 and upserts with a valid per-handle token', async () => {
       const app = routes();
       const res = await app.request('/internal/first-run', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: 'Bearer internal-secret-token', 'x-matrix-handle': 'alice' },
+        headers: { 'content-type': 'application/json', authorization: 'Bearer token-for-alice', 'x-matrix-handle': 'alice' },
         body: JSON.stringify(validBody),
       });
       expect(res.status).toBe(204);
@@ -171,22 +173,32 @@ describe('platform/journey-routes', () => {
       expect(row?.steps).toEqual({ api_key: 'skipped' });
     });
 
+    it('401 when the token does not match the claimed handle', async () => {
+      const app = routes();
+      const res = await app.request('/internal/first-run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer token-for-alice', 'x-matrix-handle': 'mallory' },
+        body: JSON.stringify({ ...validBody, handle: 'mallory' }),
+      });
+      expect(res.status).toBe(401);
+    });
+
     it('422 on an invalid body', async () => {
       const app = routes();
       const res = await app.request('/internal/first-run', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: 'Bearer internal-secret-token' },
+        headers: { 'content-type': 'application/json', authorization: 'Bearer token-for-alice', 'x-matrix-handle': 'alice' },
         body: JSON.stringify({ clerkUserId: 'user_123' }),
       });
       expect(res.status).toBe(422);
     });
 
-    it('422 when the header handle does not match the body', async () => {
+    it('422 when the authenticated handle does not own the reported completion', async () => {
       const app = routes();
       const res = await app.request('/internal/first-run', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: 'Bearer internal-secret-token', 'x-matrix-handle': 'mallory' },
-        body: JSON.stringify(validBody),
+        headers: { 'content-type': 'application/json', authorization: 'Bearer token-for-alice', 'x-matrix-handle': 'alice' },
+        body: JSON.stringify({ ...validBody, handle: 'someone-else' }),
       });
       expect(res.status).toBe(422);
     });
