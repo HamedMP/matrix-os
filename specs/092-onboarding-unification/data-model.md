@@ -16,7 +16,7 @@ account_required → plan_required → payment_settling → provisioning → fir
 ```
 
 - Exactly one phase per user per read (FR-001); derivation order in research.md R1.
-- `payment_settling` distinguishes *confirmed payment* from an *unconfirmed open attempt* (R3): a `paid` attempt (Stripe `checkout.session.completed` received, entitlement still propagating) sustains settling indefinitely and never re-shows the paywall (US3) — past the window it only sets `settling.delayed:true` with a `contact_support` action (FR-014). An `open` attempt sustains settling only *within* the window (the seconds before `checkout.session.completed`); once it ages past the window with no confirmation it falls back to `plan_required` so an abandoned checkout does not trap the user. It leaves settling on entitlement activation (→ `provisioning`), window-expiry of an unconfirmed `open` attempt (→ `plan_required`), or `expired`/`abandoned` resolution (→ `plan_required`).
+- `payment_settling` is a **pre-activation** state gated on the entitlement being absent or status `incomplete` (R3). It distinguishes *confirmed payment* from an *unconfirmed open attempt*: a `paid` attempt (Stripe `checkout.session.completed` received, entitlement still propagating) sustains settling indefinitely and never re-shows the paywall (US3) — past the window it only sets `settling.delayed:true` with a `contact_support` action (FR-014). An `open` attempt sustains settling only *within* the window; past it with no confirmation it falls back to `plan_required` so an abandoned checkout does not trap the user. A **lapsed** entitlement (was active, now `canceled`/`ended`/`unpaid`/past grace) always wins over any stale attempt and routes to `plan_required`, so a churned subscriber is never trapped in settling. It leaves settling on first entitlement activation (→ `provisioning`), an unconfirmed `open` attempt aging past the window (→ `plan_required`), or `expired`/`abandoned` resolution (→ `plan_required`).
 - `ready` carries a `readiness: ok | degraded` annotation (FR-025); annotation never regresses the phase.
 - `provisioning` carries `progress` (stage + startedAt) only once a machine lifecycle record exists; in the pre-machine "start provisioning" sub-state (entitled, no machine yet, `nextAction.kind = start_provision`) `progress` is absent.
 - `provisioning_failed` carries `retryable: boolean` (false once attempts ≥ cap, FR-008).
@@ -70,7 +70,7 @@ Existing (`db.ts:566-607`): `machine_id` PK, `clerk_user_id`, `handle`, `runtime
 | `steps` | jsonb NOT NULL DEFAULT '{}' | Completed/skipped step map (bounded, Zod-validated ≤ 4 KB) |
 | `source` | text NOT NULL | `gateway_ws \| shell_manual \| backfill` |
 
-- Upserted (`ON CONFLICT (clerk_user_id) DO UPDATE`) by `POST /internal/first-run` (gateway, `UPGRADE_TOKEN` auth) and by the off-read-path reconciler backfill for legacy users (R4).
+- Written by two paths with different conflict policies (R4): the gateway write-behind `POST /internal/first-run` (carries real `goal`/`steps`) upserts `ON CONFLICT (clerk_user_id) DO UPDATE` and is the only path that may replace a record; the off-read-path reconciler backfill for legacy users inserts `ON CONFLICT (clerk_user_id) DO NOTHING`, so a best-effort backfill can never clobber an authoritative gateway record in a race.
 - The VPS-local `~/system/onboarding-complete.json` continues to be written as the owner-inspectable artifact but is derived (constitution I).
 
 ## New table: `onboarding_journey_events` (append-only telemetry)
