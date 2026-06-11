@@ -114,6 +114,7 @@ import {
   checkForSystemUpdate,
   listSystemReleases,
   parseInternalUpgradeTarget,
+  resolveInternalUpgradeStartTarget,
   resolveSystemUpdateChannel,
   startSystemUpdate,
   writeInternalUpgradeTrigger,
@@ -4040,30 +4041,33 @@ export async function createGateway(config: GatewayConfig) {
         console.warn("[system-update] Failed to parse update request:", err);
       }
     }
-    const requestedChannel =
-      body && typeof body === "object" && "channel" in body ? (body as { channel?: unknown }).channel : undefined;
     const info = getSystemInfo(homePath);
-    const channel = resolveSystemUpdateChannel(requestedChannel, {
+    const parsedTarget = resolveInternalUpgradeStartTarget(body, {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
     });
-    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
+    if (!parsedTarget.ok) return c.json({ error: "Invalid request" }, 400);
 
-    const result = await startSystemUpdate({ channel });
+    const result = await startSystemUpdate({ target: parsedTarget.target });
     if (!result.ok) {
       return c.json({ error: "Update not configured" }, 503);
     }
+    const targetProperty =
+      parsedTarget.target.type === "channel"
+        ? { channel: parsedTarget.target.value }
+        : { version: parsedTarget.target.value };
     void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
       distinctId: process.env.MATRIX_HANDLE ?? "matrix-gateway",
       properties: {
-        channel,
+        ...targetProperty,
+        targetType: parsedTarget.target.type,
         handle: process.env.MATRIX_HANDLE,
       },
     }).catch((err: unknown) => {
       const kind = err instanceof Error ? err.name : typeof err;
       console.warn(`[posthog] Failed to queue system update event: ${kind}`);
     });
-    return c.json({ ok: true, status: result.status, channel }, 202);
+    return c.json({ ok: true, status: result.status, ...targetProperty }, 202);
   }
 
   app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);

@@ -125,6 +125,28 @@ export function parseInternalUpgradeTarget(body: unknown):
   return { ok: true, target: null };
 }
 
+export function resolveInternalUpgradeStartTarget(
+  body: unknown,
+  options: {
+    envChannel?: unknown;
+    installedChannel?: unknown;
+  } = {},
+):
+  | { ok: true; target: InternalUpgradeTarget }
+  | { ok: false; error: string } {
+  const parsed = parseInternalUpgradeTarget(body);
+  if (!parsed.ok) return parsed;
+  if (parsed.target) return { ok: true, target: parsed.target };
+
+  return {
+    ok: true,
+    target: {
+      type: "channel",
+      value: resolveSystemUpdateChannel(undefined, options) ?? "stable",
+    },
+  };
+}
+
 export async function writeInternalUpgradeTrigger(options: {
   body: unknown;
   appDir?: string;
