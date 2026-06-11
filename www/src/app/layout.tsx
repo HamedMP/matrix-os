@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import {
   Inter,
   Instrument_Sans,
+  Instrument_Serif,
   JetBrains_Mono,
   Caveat,
   Cormorant_Garamond,
@@ -23,6 +24,13 @@ const inter = Inter({
 const instrumentSans = Instrument_Sans({
   variable: "--font-instrument",
   subsets: ["latin"],
+});
+
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-serif-display",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
 });
 
 const jetbrainsMono = JetBrains_Mono({
@@ -101,7 +109,7 @@ export default async function RootLayout({
         <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
       </head>
-      <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
+      <body className={`${inter.variable} ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
         <ClerkProvider>
           {children}
           <PostHogIdentify />

@@ -1,29 +1,29 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "@clerk/ui/themes/shadcn.css";
-@import "fumadocs-ui/css/purple.css";
+@import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 
 @source "../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* ── Brand palette overrides (crisp Fumadocs shell with Matrix accents) ── */
+/* ── Brand palette overrides (Ona-style docs: white content, quiet grey chrome, forest accent) ── */
 @theme {
-  --color-fd-background: #FCFCFB;
+  --color-fd-background: #FFFFFF;
   --color-fd-primary: #434E3F;
-  --color-fd-border: #E2E0D8;
-  --color-fd-accent: #F6F4ED;
+  --color-fd-border: #ECEAE4;
+  --color-fd-accent: #F2F1EC;
   --color-fd-accent-foreground: #272B24;
-  --color-fd-muted: #F7F6F1;
-  --color-fd-muted-foreground: #6E6A5F;
-  --color-fd-foreground: #282C25;
-  --color-fd-secondary: #F7F4EA;
+  --color-fd-muted: #F7F6F2;
+  --color-fd-muted-foreground: #75716A;
+  --color-fd-foreground: #25291F;
+  --color-fd-secondary: #F2F1EC;
   --color-fd-secondary-foreground: #434E3F;
   --color-fd-card: #FFFFFF;
-  --color-fd-card-foreground: #282C25;
+  --color-fd-card-foreground: #25291F;
   --color-fd-popover: #FFFFFF;
-  --color-fd-popover-foreground: #282C25;
+  --color-fd-popover-foreground: #25291F;
   --color-fd-primary-foreground: #FAFAF5;
-  --color-fd-ring: #D06F25;
+  --color-fd-ring: #434E3F;
 }
 
 .dark {
@@ -111,7 +111,7 @@ html, body {
   --ink: #1C1917;
   --lichen: #9AA48C;
   --pebble: #E5E5E4;
-  --docs-sidebar-bg: #F6F4ED;
+  --docs-sidebar-bg: #F8F8F5;
 }
 
 html:not(.dark) body {
@@ -133,6 +133,20 @@ html:not(.dark) #nd-toc {
 html:not(.dark) [data-sidebar-placeholder],
 html:not(.dark) #nd-sidebar {
   background: var(--docs-sidebar-bg) !important;
+}
+
+/* Ona-style docs polish: quiet sidebar links, rounded active pill, soft content imagery */
+#nd-sidebar a[data-active="true"] {
+  border-radius: 0.5rem;
+}
+
+#nd-page article img,
+#nd-page article video {
+  border-radius: 0.75rem;
+}
+
+#nd-page h1 {
+  letter-spacing: -0.01em;
 }
 
 .docs-sidebar-footer svg {
@@ -314,6 +328,47 @@ code, pre { font-family: var(--font-mono); }
 .delay-500 { animation-delay: 500ms; }
 .delay-700 { animation-delay: 700ms; }
 .delay-1000 { animation-delay: 1000ms; }
+
+/* ── Landing (Ona-style) ── */
+@keyframes landing-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.landing-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: landing-marquee 36s linear infinite;
+}
+
+.landing-marquee:hover .landing-marquee-track {
+  animation-play-state: paused;
+}
+
+.landing-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+.landing-reveal[data-revealed="true"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-marquee-track {
+    animation: none;
+  }
+  .landing-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
 
 /* Typing cursor */
 .typing-cursor::after {
