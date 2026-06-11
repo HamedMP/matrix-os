@@ -4340,8 +4340,11 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
                   try {
                     body = (await res.json()) as { complete?: unknown };
                   } catch (parseErr: unknown) {
-                    // Malformed status body → treat as not-yet-complete.
-                    void parseErr;
+                    // Malformed status body → log and treat as not-yet-complete.
+                    console.warn(
+                      `[platform] backfill onboarding-status parse failed machine=${machine.machineId}`,
+                      parseErr instanceof Error ? parseErr.name : typeof parseErr,
+                    );
                     return null;
                   }
                   return body?.complete === true ? { completedAt: new Date().toISOString() } : null;
