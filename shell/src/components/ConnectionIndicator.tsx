@@ -116,11 +116,13 @@ export function ConnectionIndicator() {
           <div className="min-w-0 flex-1">
             <div className={`text-sm font-semibold leading-5 ${toneClass}`}>{copy.title}</div>
             <p className="mt-0.5 text-sm leading-5 text-muted-foreground">{copy.detail}</p>
-            {status.releaseChannel && (
+            {(status.releaseChannel || status.releaseVersion) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/80">
-                <span className="rounded-full border border-border/50 bg-background/50 px-2 py-0.5 font-mono">
-                  {status.releaseChannel}
-                </span>
+                {status.releaseChannel && (
+                  <span className="rounded-full border border-border/50 bg-background/50 px-2 py-0.5 font-mono">
+                    {status.releaseChannel}
+                  </span>
+                )}
                 {status.releaseVersion && <span className="truncate font-mono">{status.releaseVersion}</span>}
               </div>
             )}

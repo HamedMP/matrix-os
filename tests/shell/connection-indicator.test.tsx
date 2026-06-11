@@ -65,6 +65,26 @@ describe("ConnectionIndicator", () => {
     });
   });
 
+  it("shows the runtime version even when the gateway omits a release channel", async () => {
+    act(() => {
+      useConnectionHealth.setState({ state: "reconnecting" });
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/health")) return Promise.resolve(jsonResponse({ status: "ok" }));
+      if (url.endsWith("/api/system/info")) {
+        return Promise.resolve(jsonResponse({ version: "v2026.06.11-version-only" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    }));
+
+    render(<ConnectionIndicator />);
+
+    await waitFor(() => {
+      expect(screen.getByText("v2026.06.11-version-only")).toBeTruthy();
+    });
+  });
+
   it("shows an update/restart state when the gateway is unavailable", async () => {
     act(() => {
       useConnectionHealth.setState({ state: "reconnecting" });
