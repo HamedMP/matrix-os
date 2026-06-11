@@ -60,7 +60,8 @@ Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
 
 Teardown is automatic on PR close. A daily reaper deletes any `pr-*` VPS whose
 PR is closed or that is older than 72h — orphaned previews cannot accumulate
-Hetzner cost. Manual deploy: `gh workflow run preview-vps.yml -f pr=<N>`.
+Hetzner cost. The reaper is fail-safe: a VPS whose PR state cannot be confirmed
+is skipped, and the job fails so the skip is visible. Manual deploy: `gh workflow run preview-vps.yml -f pr=<N>`.
 
 Required repo secrets (beyond the existing release secrets):
 `PREVIEW_CLERK_USER_ID` — the Clerk user that owns preview VPSes.
@@ -76,9 +77,10 @@ to the dedicated preview Cloud Run service (`vars.CLOUD_RUN_PREVIEW_SERVICE`)
 as a zero-traffic tagged revision (`https://pr-<N>---<service-url>`), using
 preview-scoped Secret Manager entries (`platform-preview-database-url`,
 `platform-preview-secret`). The intended database pairing is a Neon branch per
-preview (deferred; see spec 093). The job no-ops with a notice until the
-preview service is configured. Production `CLOUD_RUN_SERVICE` and its secrets
-are never referenced.
+preview (deferred; see spec 093). On PR close the workflow removes the
+`pr-<N>` tag and deletes its revisions, mirroring the VPS teardown model. The
+jobs no-op with a notice until the preview service is configured. Production
+`CLOUD_RUN_SERVICE` and its secrets are never referenced.
 
 ## Centralized logs
 

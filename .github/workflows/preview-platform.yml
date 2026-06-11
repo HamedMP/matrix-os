@@ -15,7 +15,7 @@ name: Preview Platform
 
 on:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled, synchronize, closed]
   workflow_dispatch:
     inputs:
       pr:
@@ -38,6 +38,7 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.action != 'closed' &&
         ((github.event.action == 'labeled' && github.event.label.name == 'preview-platform') ||
          (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview-platform')))))
     runs-on: ubuntu-latest
@@ -125,3 +126,55 @@ jobs:
           else
             gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" > /dev/null
           fi
+
+  teardown:
+    name: Remove preview revision
+    if: >-
+      github.event.action == 'closed' &&
+      contains(github.event.pull_request.labels.*.name, 'preview-platform')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Check preview configuration
+        id: config
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUD_RUN_PREVIEW_SERVICE:-}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUD_RUN_PREVIEW_SERVICE is not configured; nothing to tear down."
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        if: steps.config.outputs.configured == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Remove tag and delete tagged revisions
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          revisions="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json |
+            jq -r --arg tag "pr-${PR_NUMBER}" \
+              '[.status.traffic[] | select(.tag == $tag) | .revisionName] | unique | .[]')"
+          if [ -z "$revisions" ]; then
+            echo "No revisions tagged pr-${PR_NUMBER}; nothing to tear down."
+            exit 0
+          fi
+          gcloud run services update-traffic "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --remove-tags "pr-${PR_NUMBER}" --quiet
+          for rev in $revisions; do
+            gcloud run revisions delete "$rev" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+            echo "Deleted revision $rev"
+          done

@@ -334,6 +334,8 @@ jobs:
           set -euo pipefail
           now="$(date +%s)"
           ttl_secs=$((PREVIEW_TTL_HOURS * 3600))
+          lookup_failures=/tmp/reaper-lookup-failures
+          : > "$lookup_failures"
           curl -fsS --max-time 30 \
             -H "authorization: Bearer ${PLATFORM_SECRET}" \
             "${PLATFORM_PUBLIC_URL}/vps/fleet" |
@@ -344,11 +346,17 @@ jobs:
               provisioned="$(jq -r .provisionedAt <<< "$machine")"
               pr="${handle#pr-}"
               pr_state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq .state 2>/dev/null || echo unknown)"
+              # Fail-safe: never delete on unconfirmed PR state (spec 093).
+              if [ "$pr_state" = "unknown" ]; then
+                echo "Skipping ${handle}: could not confirm PR #${pr} state" >&2
+                echo "$handle" >> "$lookup_failures"
+                continue
+              fi
               age=$((now - $(date -d "$provisioned" +%s)))
               reason=""
               if [ "$pr_state" = "closed" ]; then
                 reason="PR #${pr} is closed"
-              elif [ "$age" -gt "$ttl_secs" ] && [ "$pr_state" != "unknown" ]; then
+              elif [ "$age" -gt "$ttl_secs" ]; then
                 reason="older than ${PREVIEW_TTL_HOURS}h"
               fi
               if [ -z "$reason" ]; then
@@ -363,3 +371,8 @@ jobs:
                 echo "Failed to delete ${handle} (HTTP ${code})" >&2
               fi
             done
+          if [ -s "$lookup_failures" ]; then
+            echo "Reaper could not confirm PR state for: $(tr '\n' ' ' < "$lookup_failures")" >&2
+            echo "Those VPSes were skipped (fail-safe); failing the job so the skips are visible." >&2
+            exit 1
+          fi
