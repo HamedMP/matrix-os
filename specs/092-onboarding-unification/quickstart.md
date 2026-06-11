@@ -26,7 +26,7 @@ curl -s -H "Authorization: Bearer $SYNC_JWT" http://localhost:9000/api/journey |
 |-------|-----|
 | `plan_required` | New Clerk user, no `billing_entitlements` row |
 | `payment_settling` | Insert an `open` row in `billing_checkout_attempts` (< settling window), no active entitlement |
-| `provisioning` | Active entitlement + `user_machines` row in `provisioning` with a `provisioning_stage` |
+| `provisioning` | Active entitlement + `user_machines` row in `provisioning` (the journey derives the stage from `hetzner_server_id`/`public_ipv4`) |
 | `provisioning_failed` | Set machine `status='failed'`, `failure_code='registration_timeout'` |
 | `first_run` | Machine `running`, delete the user's `onboarding_first_run` row |
 | `ready` | Machine `running` + `onboarding_first_run` row present |

@@ -30,7 +30,7 @@ All decisions below are grounded in code verified on 2026-06-11 at `origin/main`
 **Decision**:
 1. Reconciler marks a machine `failed` when it is in `provisioning`/`recovering` and its `registration_token_expires_at` has passed (covers booted-but-never-registered), in addition to the existing no-server/server-gone cases. Failure reason codes distinguish `registration_timeout`, `provider_unavailable`, `not_found`.
 2. Provision/retry treats only `provisioning|recovering|running` as blocking. A `failed` row is retired (soft-deleted with `deleted_at`, status preserved) **inside the same transaction** that inserts the new attempt, keeping the partial unique index satisfied at every instant.
-3. `user_machines` gains `attempt` (int, per user counter) and `failure_code`; auto-retry is bounded (default 3) — beyond that, journey reports `provisioning_failed` with `retryable: false` and a support action (FR-008).
+3. `user_machines` gains `attempt` (int, per user counter) — `failure_code`/`failure_at` already exist and are reused; auto-retry is bounded (default 3) — beyond that, journey reports `provisioning_failed` with `retryable: false` and a support action (FR-008).
 4. Failed/retired machines with a `hetzner_server_id` are reaped via the existing `queueProviderDeletion()` path (`customer-vps.ts:751-764`) — FR-011 reuses it, no new mechanism.
 
 **Alternatives considered**: client-side timeout + manual support deletion (status quo) — rejected, loses paying users; hard-deleting failed rows — rejected, destroys audit/telemetry trail.
