@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { getGatewayUrl } from "@/lib/gateway";
+import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 
 export interface AppWindow {
   id: string;
@@ -82,6 +83,7 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
 function debouncedSave(state: WindowManagerState) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
+    if (isPreVpsBillingSetupRoute()) return;
     const gatewayUrl = getGatewayUrl();
     const layoutWindows: LayoutWindow[] = state.windows.map((w) => ({
       path: w.path,
@@ -116,7 +118,9 @@ function debouncedSave(state: WindowManagerState) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ windows: layoutWindows }),
     }).catch((err: unknown) => {
-      console.warn("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("[window-manager] failed to save layout:", err instanceof Error ? err.message : String(err));
+      }
     });
   }, 500);
 }

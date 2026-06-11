@@ -116,6 +116,9 @@ export function initializeShellPostHog(
     ui_host: currentConfig.uiHost,
     defaults: "2026-01-30",
     capture_exceptions: true,
+    capture_dead_clicks: false,
+    rageclick: false,
+    disable_session_recording: true,
     debug: process.env.NODE_ENV === "development",
     logs: {
       captureConsoleLogs: false,

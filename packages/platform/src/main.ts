@@ -663,19 +663,6 @@ self.addEventListener("activate", (event) => {
     await self.registration.unregister();
   })());
 });
-
-self.addEventListener("fetch", (event) => {
-  event.respondWith(fetch(event.request).catch((err) => {
-    console.warn("[app cleanup sw] fetch failed:", err?.message ?? err);
-    return new Response("offline", {
-      status: 504,
-      headers: {
-        "content-type": "text/plain; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
-  }));
-});
 `.trim();
 
 function appDomainServiceWorkerResponse(): Response {

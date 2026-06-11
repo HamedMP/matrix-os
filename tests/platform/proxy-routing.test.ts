@@ -4316,8 +4316,8 @@ describe("platform proxy routing", () => {
       expect(res.headers.get("service-worker-allowed")).toBe("/");
       const body = await res.text();
       expect(body).toContain("registration.unregister()");
-      expect(body).toContain(".catch((err) =>");
-      expect(body).toContain('new Response("offline",');
+      expect(body).not.toContain("[app cleanup sw] fetch failed");
+      expect(body).not.toContain('new Response("offline",');
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
