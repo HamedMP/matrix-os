@@ -76,6 +76,10 @@ cmd_up() {
     exit 1
   fi
 
+  # Any failure between winning the claim and a healthy start must release
+  # the slot, or it stays locked until --reap. Cleared after compose succeeds.
+  trap 'rm -f "$(slot_file "$slot")"' EXIT
+
   branch="$(git -C "$worktree" rev-parse --abbrev-ref HEAD)"
   jq -n --arg worktree "$worktree" --arg branch "$branch" \
     --arg claimedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -83,10 +87,10 @@ cmd_up() {
 
   echo "staging-slot: claimed slot $slot for $branch"
   if ! compose "$slot" "$worktree" up -d --build; then
-    rm -f "$(slot_file "$slot")"
     echo "staging-slot: start failed; slot $slot released" >&2
     exit 1
   fi
+  trap - EXIT
   echo "staging-slot: slot $slot up"
   echo "  shell: https://staging-${slot}.matrix-os.com"
   echo "  api:   https://api-staging-${slot}.matrix-os.com"
@@ -122,6 +126,7 @@ cmd_status() {
     worktree="$(jq -r .worktree "$f")"
     branch="$(jq -r .branch "$f")"
     claimed="$(jq -r .claimedAt "$f")"
+    # GNU date (-d): this script targets the Linux ops VPS only.
     age_hours=$((($(date +%s) - $(date -d "$claimed" +%s)) / 3600))
     echo "slot $i: $branch ($worktree) claimed ${claimed} (${age_hours}h ago)"
     if [ "$reap" = "--reap" ] && [ "$age_hours" -ge "$IDLE_TTL_HOURS" ]; then

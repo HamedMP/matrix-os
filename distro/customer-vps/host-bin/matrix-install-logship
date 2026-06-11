@@ -73,7 +73,8 @@ case "$ARCH" in
 esac
 
 install_alloy() {
-  if [ -x /usr/local/bin/alloy ] && /usr/local/bin/alloy --version 2>/dev/null | grep -q "$ALLOY_VERSION"; then
+  # Exact token match so v1.16.3 does not false-hit v1.16.30.
+  if [ -x /usr/local/bin/alloy ] && /usr/local/bin/alloy --version 2>/dev/null | tr ' ' '\n' | grep -qx "$ALLOY_VERSION"; then
     return 0
   fi
   tmpdir="$(mktemp -d)"

@@ -19,6 +19,8 @@
 		basic_auth {
 			{$LOGS_INGEST_USER} {$LOGS_INGEST_PASSWORD_HASH}
 		}
+		# Senders must not steer Loki multi-tenancy.
+		request_header -X-Scope-OrgID
 		reverse_proxy loki:3100
 	}
 

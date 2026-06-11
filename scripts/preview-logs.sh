@@ -70,6 +70,11 @@ if [ -z "$SELECTOR" ]; then
     fi
     SELECTOR="{handle=\"${HANDLE}\"}"
     if [ -n "$UNIT" ]; then
+      # systemd unit-name charset; blocks selector breakout via quotes/braces.
+      if ! printf '%s' "$UNIT" | grep -Eq '^[a-zA-Z0-9@._-]+$'; then
+        echo "preview-logs: invalid unit name" >&2
+        exit 64
+      fi
       SELECTOR="{handle=\"${HANDLE}\", unit=\"${UNIT}.service\"}"
     fi
   elif [ -n "$SLOT" ]; then
