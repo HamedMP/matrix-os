@@ -25,23 +25,24 @@
 - [ ] T002 [P] [US2] Write failing tests for provision/retry with a `failed` row present: row is retired (`deleted_at` set, status preserved) and a new attempt inserted in ONE transaction with `attempt` incremented; concurrent double-retry serializes via row lock and the loser observes the winner's attempt (FR-028/R12) in `tests/platform/customer-vps-retry.test.ts`
 - [ ] T003 [P] [US2] Write failing tests for `/vps/register` returning 410 `attempt_retired` when the registration token belongs to a retired/replaced row, and for expired tokens not resurrecting failed rows (FR-010) in `tests/platform/customer-vps-register.test.ts`
 - [ ] T004 [P] [US2] Write failing tests for `recover()` retiring the old machine row and activating the replacement in one transaction — assert no intermediate read can observe two non-deleted routable rows for the user (FR-009) in `tests/platform/customer-vps-recover.test.ts`
-- [ ] T005 [P] [US3] Write failing tests for `billing_checkout_attempts`: `/billing/checkout` inserts an `open` row with the Stripe session id; `checkout.session.completed` webhook marks it `paid`; `checkout.session.expired` marks it `expired`; still-`open` rows >30 days are swept to `abandoned` by the reconciler pass in `tests/platform/billing-settling.test.ts`
 - [ ] T006 [P] [US2] Write failing tests for bounded retries: `attempt` > cap (default 3, env `CUSTOMER_VPS_MAX_ATTEMPTS`) makes retry return 409 `retry_exhausted` in `tests/platform/customer-vps-retry.test.ts`
+
+> **Moved to Phase B**: the former T005 (`billing_checkout_attempts` tests) ships with the table and its journey consumer in Phase B (see B's task list), per the phasing-refinement note.
 
 ### Implementation
 
 - [ ] T007 [US2] Add the one new column `attempt` (int NOT NULL DEFAULT 1) to `user_machines` as an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in `migrate()` in `packages/platform/src/db.ts`. `failure_code`/`failure_at` already exist (Phase A reuses them); there is no `provisioning_stage` column (journey derives the stage from observable columns). `billing_checkout_attempts` is created in **Phase B**, not here (see the phasing-refinement note).
-- [ ] T008 [US2] Add Kysely query helpers: `retireFailedMachineAndInsertAttempt` (single transaction, `SELECT ... FOR UPDATE` on the user's machine rows), `listRegistrationExpiredMachines`, checkout-attempt insert/resolve/sweep helpers in `packages/platform/src/db.ts`
+- [ ] T008 [US2] Add Kysely query helpers for the provision path: `retireUserMachine` (soft-delete, guarded `WHERE status='failed'`) and the registration-expiry reconcile query in `packages/platform/src/db.ts`. (Checkout-attempt helpers belong to Phase B.)
 - [ ] T009 [US2] Extend `reconcileProvisioning()` to fail machines whose registration token has expired (reason `registration_timeout`) in addition to existing no-server/server-gone cases; log every correction with machine id + reason (FR-030) in `packages/platform/src/customer-vps.ts`
 - [ ] T010 [US2] Change provision blocking semantics: only `provisioning|recovering|running` block; a latest `failed` row routes through `retireFailedMachineAndInsertAttempt`; copy+increment `attempt`; enforce attempt cap; queue provider deletion for the retired row's `hetzner_server_id` (FR-007/008/011) in `packages/platform/src/customer-vps.ts`
 - [ ] T011 [US2] (Superseded — no schema change.) The journey `progress.stage` is derived at read time from observable `user_machines` columns: `creating_server` (no `hetzner_server_id`), `booting` (server id, no `public_ipv4`), `registering` (has `public_ipv4`), `finalizing` (`recovering`). Implemented in `deriveJourneyPhase()` (Phase B), so no provisioning-stage column or lifecycle writes are needed in Phase A.
 - [ ] T012 [US2] Reject stale registrations: `/vps/register` returns 410 `attempt_retired` for retired/replaced/expired attempts in `packages/platform/src/customer-vps-routes.ts` and the register flow in `packages/platform/src/customer-vps.ts`
 - [ ] T013 [US2] Make `recover()` retire-old + activate-new atomic: move the old-row retirement into the same `runInPlatformTransaction` block that activates the replacement; provider deletion stays queued outside the transaction in `packages/platform/src/customer-vps.ts`
-- [ ] T014 [US3] Record checkout attempts in `POST /billing/checkout` (status `open`, same request that creates the Stripe session) and resolve them in the Stripe webhook handler by subscribing to `checkout.session.completed` (→ `paid`) and `checkout.session.expired` (→ `expired`) in `packages/platform/src/billing-routes.ts`
-- [ ] T015 [US3] Add checkout-attempt sweep (>30 days → `abandoned`) and journey-event sweep stub to the existing reconciler interval in `packages/platform/src/main.ts`
 - [ ] T016 Run `bun run typecheck && bun run check:patterns && bun run test` and fix all findings for Phase A files
 
-**Checkpoint A**: stuck users self-heal; retries work; checkout attempts are recorded. No UI change yet — shippable alone.
+> **Moved to Phase B**: the former T014 (checkout recording + `checkout.session.*` webhook resolution) and T015 (checkout-attempt sweep) ship with the `billing_checkout_attempts` table in Phase B.
+
+**Checkpoint A**: stuck users self-heal; retries work. No UI change yet — shippable alone.
 
 ---
 
@@ -62,7 +63,8 @@
 
 ### Implementation
 
-- [ ] T023 [US1] Create tables `onboarding_first_run` and `onboarding_journey_events` per data-model.md in `migrate()` in `packages/platform/src/db.ts`, plus query helpers (upsert first-run, latest-event read, append event, 180-day sweep)
+- [ ] T023 [US1] Create tables `billing_checkout_attempts`, `onboarding_first_run`, and `onboarding_journey_events` per data-model.md in `migrate()` in `packages/platform/src/db.ts`, plus query helpers (checkout-attempt insert/resolve/sweep; upsert first-run via `DO UPDATE` and insert-if-absent via `DO NOTHING`; latest-event read, append event, 180-day sweep)
+- [ ] T023b [US3] Record checkout attempts in `POST /billing/checkout` (status `open`) and resolve them in the Stripe webhook via `checkout.session.completed` (→ `paid`) / `checkout.session.expired` (→ `expired`); `createCheckoutSession` returns the session id. Add the sweep (`open` >30 days → `abandoned`, status-guarded) to the reconciler. Tests in `tests/platform/billing-settling.test.ts` (the former Phase A T005)
 - [ ] T024 [US1] Implement `deriveJourneyPhase()` + `recordJourneyTransition()` in new `packages/platform/src/journey.ts`, consuming `getRuntimeAccessDecision` (billing), checkout attempts, `user_machines`, `onboarding_first_run`; settling window env `BILLING_SETTLING_WINDOW_MS` default 600000. Gate `payment_settling` on a pre-activation entitlement (absent or `incomplete`); a lapsed entitlement (`canceled`/`ended`/`unpaid`/past grace) must route to `plan_required` even when a stale `paid` attempt exists (no churned-subscriber trap — R1/R3)
 - [ ] T025 [US1] Implement `GET /api/journey` and `POST /api/journey/retry-provision` in new `packages/platform/src/journey-routes.ts` (dual auth resolution copied from the existing `/api/me` pattern in `packages/platform/src/auth-routes.ts`; per-user rate limit with capped LRU map; `bodyLimit`; generic errors only) and mount in `packages/platform/src/main.ts`
 - [ ] T026 [US1] Implement `POST /internal/first-run` (UPGRADE_TOKEN + `x-matrix-handle`, `timingSafeEqual`, Zod schema, 16 KB bodyLimit, upsert) in `packages/platform/src/journey-routes.ts`
