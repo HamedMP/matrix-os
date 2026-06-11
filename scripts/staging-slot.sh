@@ -124,8 +124,10 @@ cmd_up() {
   echo "staging-slot: claimed slot $slot for $branch"
   ensure_worktree_writable "$worktree"
   ensure_staging_db "$slot"
-  if ! compose "$slot" "$worktree" up -d --build; then
-    echo "staging-slot: start failed; slot $slot released" >&2
+  # --wait holds until healthchecks pass, so the EXIT trap still releases
+  # the slot when the container starts but never becomes healthy.
+  if ! compose "$slot" "$worktree" up -d --build --wait --wait-timeout 600; then
+    echo "staging-slot: start failed or unhealthy; slot $slot released" >&2
     exit 1
   fi
   trap - EXIT
@@ -158,7 +160,10 @@ cmd_down() {
   if ! docker exec matrixos-staging-postgres \
     psql -U "$db_user" -d matrixos_staging -c \
     "DROP DATABASE IF EXISTS matrixos_staging_${slot}" > /dev/null 2>&1; then
-    echo "staging-slot: warning: could not drop matrixos_staging_${slot}; next claim will reuse it" >&2
+    echo "staging-slot: could not drop matrixos_staging_${slot}; keeping the claim so the next" >&2
+    echo "staging-slot: occupant cannot inherit stale data. Start matrixos-staging-postgres and" >&2
+    echo "staging-slot: rerun 'staging-slot.sh down ${slot}'." >&2
+    exit 1
   fi
   docker volume rm -f "mx-staging-${slot}_slot-home" > /dev/null 2>&1 || true
   rm -f "$f"
