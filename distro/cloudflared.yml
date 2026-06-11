@@ -4,8 +4,7 @@ credentials-file: /etc/cloudflared/credentials.json
 ingress:
   - hostname: grafana.matrix-os.com
     service: http://grafana:3000
-  # Staging dev container (HMR shell). MUST come before the *.matrix-os.com
-  # wildcard or it would be swallowed by the platform router.
+  # Staging dev container (HMR shell).
   - hostname: staging.matrix-os.com
     service: http://matrixos-staging:3000
   - hostname: api-staging.matrix-os.com
