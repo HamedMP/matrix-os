@@ -1,11 +1,12 @@
 import { createPostHogServerExceptionReporter, getPostHogConfig } from '@matrix-os/observability';
 import { PostHog } from 'posthog-node';
 
-type AnalyticsClient = Pick<PostHog, 'capture' | 'identify' | 'captureException' | 'flush' | 'shutdown'>;
+type AnalyticsClient = Pick<PostHog, 'capture' | 'identify' | 'alias' | 'captureException' | 'flush' | 'shutdown'>;
 
 const noopClient: AnalyticsClient = {
   capture: (..._args: Parameters<PostHog['capture']>) => undefined,
   identify: (..._args: Parameters<PostHog['identify']>) => undefined,
+  alias: (..._args: Parameters<PostHog['alias']>) => undefined,
   captureException: (..._args: Parameters<PostHog['captureException']>) => undefined,
   flush: async () => undefined,
   shutdown: async () => undefined,

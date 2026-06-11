@@ -95,6 +95,15 @@ export const provisionUser = inngest.createFunction(
           },
         });
 
+        // Customer VPS gateways may only know the handle (MATRIX_HANDLE); the
+        // alias merges handle-keyed server events into the Clerk person. It
+        // must use the handle the platform actually assigned, which is only
+        // known after a successful sync (earlier candidates may 409).
+        posthog.alias({
+          distinctId: user.id,
+          alias: candidateHandle,
+        });
+
         await shutdownPostHog();
         return;
       }

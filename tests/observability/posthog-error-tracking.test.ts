@@ -32,7 +32,7 @@ describe("PostHog error tracking", () => {
     expect(getPostHogClientConfig({})).toBeNull();
   });
 
-  it("lets shell ignore relative PostHog API hosts that it cannot proxy", async () => {
+  it("resolves relative PostHog API hosts for shells that proxy them", async () => {
     const relativeConfig = getPostHogClientConfig({
       NEXT_PUBLIC_POSTHOG_KEY: "phc_test",
       NEXT_PUBLIC_POSTHOG_API_HOST: "/ingest",
@@ -64,7 +64,9 @@ describe("PostHog error tracking", () => {
     const shellLayout = await readFile("shell/src/app/layout.tsx", "utf8");
     const wwwLayout = await readFile("www/src/app/layout.tsx", "utf8");
     expect(shellClient).toContain("resolvePostHogClientApiHost");
-    expect(shellClient).toContain("allowRelativeApiHost: false");
+    // The shell ships a same-origin /relay rewrite, so it opts into relative
+    // API hosts to keep capture calls first-party on user subdomains.
+    expect(shellClient).toContain("allowRelativeApiHost: true");
     expect(shellClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(wwwClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(shellLayout).not.toContain("PostHogCookieBanner");
@@ -471,7 +473,8 @@ describe("PostHog error tracking", () => {
     expect(shellClient).toContain("initializeShellPostHog");
 
     const shellPostHogClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
-    expect(shellPostHogClient).toContain("Shell has no local PostHog /ingest proxy");
+    expect(shellPostHogClient).toContain("same-origin PostHog proxy at /relay");
+    expect(shellPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay"');
     expect(shellPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(shellPostHogClient).not.toContain("__loaded");
 
@@ -480,7 +483,7 @@ describe("PostHog error tracking", () => {
     expect(wwwPostHogClient).toContain("posthog.init(currentConfig.token");
     expect(wwwPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(wwwPostHogClient).not.toContain("__loaded");
-    expect(wwwPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/ingest"');
+    expect(wwwPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay"');
 
     const wwwClient = await readFile("www/instrumentation-client.ts", "utf8");
     expect(wwwClient).toContain("initializeWwwPostHog");

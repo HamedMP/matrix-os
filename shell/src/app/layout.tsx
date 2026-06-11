@@ -12,6 +12,7 @@ import "@fontsource/fira-code/500.css";
 import "./globals.css";
 import { PwaRegister } from "@/components/pwa/PwaRegister";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
+import { PostHogIdentify } from "@/components/PostHogIdentify";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -63,6 +64,7 @@ export default async function RootLayout({
       <html lang="en" data-posthog-visitor-country={visitorCountry ?? undefined}>
         <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
           {children}
+          <PostHogIdentify />
           <PwaRegister />
           <InstallPrompt />
         </body>

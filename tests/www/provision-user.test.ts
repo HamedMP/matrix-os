@@ -56,6 +56,23 @@ describe("provisionUser", () => {
     expect(signupEvent).toBeLessThan(syncStep);
   });
 
+  it("aliases the assigned handle to the Clerk user id after a successful sync", () => {
+    // Gateway telemetry on the customer VPS may only know the handle; the
+    // alias merges handle-keyed events into the Clerk person. It must use the
+    // handle the platform actually assigned (candidateHandle), not the first
+    // candidate, which can 409 and be replaced.
+    const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
+    const syncStep = findStepRunRange(source, "sync-platform-user");
+    const alias = source.indexOf("posthog.alias(");
+
+    expect(alias).toBeGreaterThan(syncStep.start);
+    expect(alias).toBeLessThan(syncStep.end);
+    const aliasBlock = source.slice(alias, source.indexOf(")", alias) + 1);
+    expect(aliasBlock).toContain("distinctId: user.id");
+    expect(aliasBlock).toContain("alias: candidateHandle");
+    expect(aliasBlock).not.toContain("alias: handle,");
+  });
+
   it("keeps PostHog operations scoped to deterministic Inngest steps", () => {
     const source = readFileSync(join(process.cwd(), "www/src/inngest/provision-user.ts"), "utf8");
     const stepRanges = [
@@ -64,7 +81,7 @@ describe("provisionUser", () => {
     ].map((stepName) => findStepRunRange(source, stepName));
 
     const posthogOperations = [
-      ...source.matchAll(/getPostHogClient\(\)|posthog\.(?:capture|identify)\(/g),
+      ...source.matchAll(/getPostHogClient\(\)|posthog\.(?:capture|identify|alias)\(/g),
     ];
     expect(posthogOperations.length).toBeGreaterThan(0);
 
