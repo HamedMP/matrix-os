@@ -58,4 +58,13 @@ printf '%s\n%s\n' "$LOGS_INGEST_USER" "$LOGS_INGEST_PASSWORD" |
   ssh -i "$VPS_SSH_KEY" -o StrictHostKeyChecking=accept-new "root@${ip}" \
     "IFS= read -r u && IFS= read -r p && /opt/matrix/app/bin/matrix-install-logship '${LOGS_INGEST_URL}' \"\$u\" \"\$p\" '${HANDLE}' '${MATRIX_ENV}'"
 
+# Record enrollment in the ops-side inventory so credential rotation has a
+# concrete target list (spec 093). Idempotent: one line per handle.
+INVENTORY="${LOGSHIP_INVENTORY:-$HOME/.matrixos/logship-enrolled.tsv}"
+mkdir -p "$(dirname "$INVENTORY")"
+touch "$INVENTORY"
+if ! cut -f1 "$INVENTORY" | grep -qx "$HANDLE"; then
+  printf '%s\t%s\t%s\n' "$HANDLE" "$MATRIX_ENV" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$INVENTORY"
+fi
+
 echo "enable-vps-logship: done. Verify with: ./scripts/preview-logs.sh --handle ${HANDLE} --since 5m"
