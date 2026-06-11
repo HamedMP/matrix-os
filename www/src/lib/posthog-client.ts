@@ -10,6 +10,10 @@ import {
 type ClientProperties = Record<string, string | number | boolean | undefined>;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 
+// Kill switch: any non-empty value disables session replay without a rebuild
+// of the masking config (masked replay is on by default for failure triage).
+const sessionReplayDisabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY);
+
 const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN,
   NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
@@ -81,6 +85,13 @@ export function initializeWwwPostHog(
     ui_host: currentConfig.uiHost,
     defaults: "2026-01-30",
     capture_exceptions: true,
+    // Masked session replay: every input is masked by default so signup and
+    // billing failures can be replayed without capturing what users typed.
+    disable_session_recording: sessionReplayDisabled,
+    session_recording: {
+      maskAllInputs: true,
+    },
+    enable_recording_console_log: true,
     debug: process.env.NODE_ENV === "development",
     ...buildPostHogCookieConsentInitOptions(visitorCountry),
   } as PostHogInitOptions);

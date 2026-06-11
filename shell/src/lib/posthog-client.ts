@@ -21,6 +21,9 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay",
 });
 const CLIENT_ERROR_REPORT_TIMEOUT_MS = 10_000;
+// Kill switch: any non-empty value disables session replay without a rebuild
+// of the masking config (masked replay is on by default for failure triage).
+const sessionReplayDisabled = Boolean(process.env.NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY);
 let initialized = false;
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
@@ -137,7 +140,8 @@ export function initializeShellPostHog(
 ) {
   if (!currentConfig || initialized) return;
   // The shell serves a same-origin PostHog proxy at /relay (see next.config
-  // rewrites), so relative api hosts are first-party on every user subdomain.
+  // rewrites), so the relative api host stays first-party on whichever origin
+  // serves the shell (app.matrix-os.com session routing, staging, local dev).
   const apiHost = resolvePostHogClientApiHost(currentConfig, { allowRelativeApiHost: true });
   posthog.init(currentConfig.token, {
     ...(apiHost ? { api_host: apiHost } : {}),
@@ -146,7 +150,18 @@ export function initializeShellPostHog(
     capture_exceptions: true,
     capture_dead_clicks: false,
     rageclick: false,
-    disable_session_recording: true,
+    // Masked session replay: all inputs masked, opt-in text masking via
+    // [data-ph-mask], and sensitive surfaces (terminal, chat transcripts,
+    // file listings) blocked entirely via the ph-no-capture class, which
+    // posthog-js honors natively (blockClass default) -- the blockSelector
+    // is set as well so the block survives a future blockClass override.
+    disable_session_recording: sessionReplayDisabled,
+    session_recording: {
+      maskAllInputs: true,
+      maskTextSelector: "[data-ph-mask]",
+      blockSelector: ".ph-no-capture",
+    },
+    enable_recording_console_log: true,
     debug: process.env.NODE_ENV === "development",
     logs: {
       captureConsoleLogs: false,

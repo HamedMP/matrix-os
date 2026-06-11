@@ -11,7 +11,10 @@ export type ConversationProps = ComponentProps<typeof StickToBottom>;
 
 export const Conversation = ({ className, ...props }: ConversationProps) => (
   <StickToBottom
-    className={cn("relative flex-1 overflow-y-hidden", className)}
+    // ph-no-capture: chat transcripts are private user/agent conversations;
+    // PostHog session replay blocks this element natively. Covers every
+    // Conversation consumer (ChatApp in Desktop and Canvas, ChatPanel).
+    className={cn("ph-no-capture relative flex-1 overflow-y-hidden", className)}
     initial="smooth"
     resize="smooth"
     role="log"
