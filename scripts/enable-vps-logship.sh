@@ -32,6 +32,13 @@ if ! printf '%s' "$HANDLE" | grep -Eq '^[a-z0-9][a-z0-9-]{1,62}$'; then
   echo "enable-vps-logship: invalid handle" >&2
   exit 64
 fi
+# Strict character allowlist: this value is interpolated into a root SSH
+# command on the VPS, so anything outside [A-Za-z0-9.:/_-] (notably quotes,
+# spaces, $, ;) must be rejected, not just the scheme.
+if ! printf '%s' "$LOGS_INGEST_URL" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$'; then
+  echo "enable-vps-logship: LOGS_INGEST_URL must be a plain https URL (no quotes, spaces, or shell metacharacters)" >&2
+  exit 64
+fi
 case "$MATRIX_ENV" in
   preview | prod | staging) ;;
   *)
