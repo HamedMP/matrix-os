@@ -186,7 +186,11 @@ cmd_status() {
     echo "slot $i: $branch ($worktree) claimed ${claimed} (${age_hours}h ago)"
     if [ "$reap" = "--reap" ] && [ "$age_hours" -ge "$IDLE_TTL_HOURS" ]; then
       echo "slot $i: idle past ${IDLE_TTL_HOURS}h TTL, reaping"
-      cmd_down "$i"
+      # Subshell: cmd_down exits non-zero on a failed DB drop; one bad slot
+      # must not abort reaping of the remaining expired slots.
+      if ! (cmd_down "$i"); then
+        echo "slot $i: reap failed; continuing with remaining slots" >&2
+      fi
     fi
   done
 }
