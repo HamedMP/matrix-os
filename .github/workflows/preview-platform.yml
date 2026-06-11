@@ -1,0 +1,127 @@
+# Platform preview revision per PR (spec 093) -- scaffold
+#
+# Label a same-repo PR with `preview-platform` to deploy the platform image to
+# a DEDICATED preview Cloud Run service as a tagged, zero-traffic revision:
+#   https://pr-<N>---<preview-service-url>
+#
+# Safety model: the preview service (vars.CLOUD_RUN_PREVIEW_SERVICE) is a
+# separate Cloud Run service with its own preview-scoped Secret Manager
+# entries (notably platform-preview-database-url -- intended pairing is a
+# Neon branch database). Production CLOUD_RUN_SERVICE and its secrets are
+# never referenced here. The job no-ops with a clear message until the
+# preview service vars/secrets are configured.
+
+name: Preview Platform
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to deploy a platform preview for"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+concurrency:
+  group: preview-platform-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Deploy preview revision
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        ((github.event.action == 'labeled' && github.event.label.name == 'preview-platform') ||
+         (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview-platform')))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
+      CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT || vars.CLOUD_RUN_SERVICE_ACCOUNT }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+    steps:
+      - name: Check preview configuration
+        id: config
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUD_RUN_PREVIEW_SERVICE:-}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUD_RUN_PREVIEW_SERVICE is not configured; platform previews are disabled. See specs/093-preview-environments/."
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        if: steps.config.outputs.configured == 'true'
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Authenticate to Google Cloud
+        if: steps.config.outputs.configured == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Build platform image
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${GITHUB_SHA::12}"
+          gcloud builds submit . \
+            --project "$GCP_PROJECT_ID" \
+            --config cloudbuild.platform.yaml \
+            --substitutions "_IMAGE=$image" \
+            --quiet
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Deploy zero-traffic tagged revision to preview service
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
+            --tag "pr-${PR_NUMBER}" \
+            --no-traffic \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-preview-database-url:latest,PLATFORM_SECRET=platform-preview-secret:latest" \
+            --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 \
+            --quiet
+          url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format json | jq -r --arg tag "pr-${PR_NUMBER}" \
+            '.status.traffic[] | select(.tag == $tag) | .url')"
+          echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
+
+      - name: Comment preview URL on PR
+        if: steps.config.outputs.configured == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          body="**Platform preview revision deployed**
+
+          - URL: ${PREVIEW_URL}
+          - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (zero traffic, tag \`pr-${PR_NUMBER}\`)
+
+          Preview revisions use preview-scoped secrets and database; production is untouched."
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | startswith("**Platform preview revision deployed**"))] | .[0].id // ""')"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$body" > /dev/null
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$body" > /dev/null
+          fi

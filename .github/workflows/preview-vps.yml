@@ -1,0 +1,365 @@
+# Preview VPS per PR (spec 093)
+#
+# Label a same-repo PR with `preview-vps` to get a disposable Hetzner VPS
+# running that PR's host bundle, reachable at app.matrix-os.com/vm/pr-<N>.
+#
+# Flow:
+#   deploy   — on label / push while labeled: build bundle 0.0.0-pr<N>.<sha7>,
+#              publish register-only (--channel none, never promoted),
+#              provision pr-<N> if absent, deploy the exact version, comment.
+#   teardown — on PR close: delete the pr-<N> VPS.
+#   reaper   — daily: delete any pr-* VPS whose PR is closed or older than 72h,
+#              so orphans cannot accumulate Hetzner cost.
+#
+# Centralized logs: enroll once from the ops box with
+#   ./scripts/enable-vps-logship.sh pr-<N> preview
+# then query with ./scripts/preview-logs.sh --handle pr-<N>.
+
+name: Preview VPS
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened, closed]
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to deploy a preview VPS for"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: preview-vps-${{ github.event.pull_request.number || inputs.pr || 'reaper' }}
+  cancel-in-progress: ${{ github.event.action != 'closed' && github.event_name != 'schedule' }}
+
+env:
+  PREVIEW_TTL_HOURS: 72
+
+jobs:
+  gate:
+    name: Gate
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.decide.outputs.action }}
+      pr: ${{ steps.decide.outputs.pr }}
+      handle: ${{ steps.decide.outputs.handle }}
+    steps:
+      - name: Decide action
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+          LABELED_NAME: ${{ github.event.label.name }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'preview-vps') }}
+          SAME_REPO: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          set -euo pipefail
+          action="skip"
+          if [ "$SAME_REPO" != "true" ]; then
+            echo "Fork PRs never get preview VPSes (secrets are not exposed to them anyway)."
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            action="deploy"
+          elif [ "$EVENT_ACTION" = "closed" ]; then
+            if [ "$HAS_LABEL" = "true" ]; then action="teardown"; fi
+          elif [ "$EVENT_ACTION" = "labeled" ]; then
+            if [ "$LABELED_NAME" = "preview-vps" ]; then action="deploy"; fi
+          elif [ "$HAS_LABEL" = "true" ]; then
+            action="deploy"
+          fi
+          if ! printf '%s' "$PR_NUMBER" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid PR number" >&2
+            exit 1
+          fi
+          {
+            echo "action=$action"
+            echo "pr=$PR_NUMBER"
+            echo "handle=pr-$PR_NUMBER"
+          } >> "$GITHUB_OUTPUT"
+          echo "action=$action pr=$PR_NUMBER"
+
+  build:
+    name: Build preview bundle
+    needs: gate
+    if: needs.gate.outputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+      NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.i.posthog.com' }}
+      NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || 'https://eu.i.posthog.com' }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: 28
+          elixir-version: 1.19
+
+      - name: Validate public build environment
+        run: |
+          set -euo pipefail
+          if [ -z "${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}" ]; then
+            echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required." >&2
+            exit 1
+          fi
+          if [ "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" = "pk_test_Y2xlcmsuZXhhbXBsZS5jb20k" ]; then
+            echo "Refusing to build a preview bundle with the example Clerk key." >&2
+            exit 1
+          fi
+
+      - name: Generate preview version
+        id: version
+        env:
+          PR_NUMBER: ${{ needs.gate.outputs.pr }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          VERSION="0.0.0-pr${PR_NUMBER}.${HEAD_SHA:0:7}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Preview version: $VERSION"
+
+      - name: Build host bundle
+        env:
+          HOST_BUNDLE_VERSION: ${{ steps.version.outputs.version }}
+          HOST_BUNDLE_CHANNEL: none
+          MATRIX_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          MATRIX_BUILD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ./scripts/build-host-bundle.sh
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: preview-bundle-${{ needs.gate.outputs.pr }}
+          path: |
+            dist/host-bundle/matrix-host-bundle.tar.gz
+            dist/host-bundle/matrix-host-bundle.tar.gz.sha256
+            dist/host-bundle/manifest.json
+            dist/host-bundle/release.json
+          if-no-files-found: error
+          retention-days: 3
+
+  deploy:
+    name: Publish and deploy preview VPS
+    needs: [gate, build]
+    if: needs.gate.outputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_BUNDLES_ACCESS_KEY_ID || secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_BUNDLES_SECRET_ACCESS_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ vars.R2_BUNDLES_BUCKET || vars.R2_BUCKET || 'matrixos-sync' }}
+      R2_ENDPOINT: ${{ vars.R2_BUNDLES_ENDPOINT || vars.R2_ENDPOINT || format('https://{0}.r2.cloudflarestorage.com', secrets.R2_BUNDLES_ACCOUNT_ID || secrets.R2_ACCOUNT_ID) }}
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      HANDLE: ${{ needs.gate.outputs.handle }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Download bundle artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: preview-bundle-${{ needs.gate.outputs.pr }}
+          path: dist/host-bundle
+
+      - name: Publish release (register-only, no channel)
+        run: |
+          set -euo pipefail
+          ./scripts/publish-release.sh "$VERSION" --channel none \
+            --changelog "Preview bundle for PR #${{ needs.gate.outputs.pr }}"
+
+      - name: Provision preview VPS if absent
+        run: |
+          set -euo pipefail
+          if [ -z "${PREVIEW_CLERK_USER_ID:-}" ]; then
+            echo "PREVIEW_CLERK_USER_ID secret is not configured." >&2
+            exit 1
+          fi
+          status="$(curl -fsS --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL}/vps/fleet" |
+            jq -r --arg h "$HANDLE" \
+              '[.machines[] | select(.handle == $h and .status != "deleted")] | .[0].status // "absent"')"
+          echo "Fleet status for ${HANDLE}: ${status}"
+          if [ "$status" = "absent" ]; then
+            code="$(curl -sS --max-time 60 -o /tmp/provision.json -w '%{http_code}' \
+              -X POST "${PLATFORM_PUBLIC_URL}/vps/provision" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              -H "content-type: application/json" \
+              -d "{\"clerkUserId\":\"${PREVIEW_CLERK_USER_ID}\",\"handle\":\"${HANDLE}\",\"runtimeSlot\":\"preview\"}")"
+            if [ "$code" != "202" ] && [ "$code" != "200" ]; then
+              echo "Provision failed with HTTP ${code} (body in workflow log)" >&2
+              cat /tmp/provision.json >&2
+              exit 1
+            fi
+            echo "Provision accepted; waiting for the VPS to come up..."
+            deadline=$((SECONDS + 600))
+            while true; do
+              status="$(curl -fsS --max-time 30 \
+                -H "authorization: Bearer ${PLATFORM_SECRET}" \
+                "${PLATFORM_PUBLIC_URL}/vps/fleet" |
+                jq -r --arg h "$HANDLE" \
+                  '[.machines[] | select(.handle == $h)] | .[0].status // "absent"')"
+              [ "$status" = "running" ] && break
+              if [ "$status" = "failed" ]; then
+                echo "Provisioning failed for ${HANDLE}" >&2
+                exit 1
+              fi
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "Timed out waiting for ${HANDLE} to reach running (last: ${status})" >&2
+                exit 1
+              fi
+              sleep 15
+            done
+          fi
+
+      - name: Deploy preview bundle to preview VPS
+        run: |
+          set -euo pipefail
+          attempt() {
+            curl -sS --max-time 120 -o /tmp/deploy.json -w '%{http_code}' \
+              -X POST "${PLATFORM_PUBLIC_URL}/vps/deploy" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              -H "content-type: application/json" \
+              -d "{\"version\":\"${VERSION}\",\"handle\":\"${HANDLE}\"}"
+          }
+          code="$(attempt)"
+          if [ "$code" != "200" ]; then
+            echo "Deploy returned HTTP ${code}; retrying once in 30s..."
+            sleep 30
+            code="$(attempt)"
+          fi
+          if [ "$code" != "200" ]; then
+            echo "Deploy failed with HTTP ${code} (body in workflow log)" >&2
+            cat /tmp/deploy.json >&2
+            exit 1
+          fi
+          jq . /tmp/deploy.json
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.gate.outputs.pr }}
+        run: |
+          set -euo pipefail
+          body="**Preview VPS deployed**
+
+          - Shell: https://app.matrix-os.com/vm/${HANDLE}
+          - Bundle: \`${VERSION}\`
+          - Logs (from the ops box): \`./scripts/preview-logs.sh --handle ${HANDLE}\` (enroll first with \`./scripts/enable-vps-logship.sh ${HANDLE} preview\`)
+
+          The VPS is deleted when this PR closes, or by the daily reaper after ${PREVIEW_TTL_HOURS}h."
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+            --jq '[.[] | select(.body | startswith("**Preview VPS deployed**"))] | .[0].id // ""')"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -f body="$body" > /dev/null
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="$body" > /dev/null
+          fi
+
+  teardown:
+    name: Teardown preview VPS
+    needs: gate
+    if: needs.gate.outputs.action == 'teardown'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      HANDLE: ${{ needs.gate.outputs.handle }}
+    steps:
+      - name: Delete preview VPS
+        run: |
+          set -euo pipefail
+          machine_id="$(curl -fsS --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL}/vps/fleet" |
+            jq -r --arg h "$HANDLE" \
+              '[.machines[] | select(.handle == $h and .status != "deleted")] | .[0].machineId // ""')"
+          if [ -z "$machine_id" ]; then
+            echo "No active VPS for ${HANDLE}; nothing to tear down."
+            exit 0
+          fi
+          code="$(curl -sS --max-time 60 -o /tmp/delete.json -w '%{http_code}' \
+            -X DELETE "${PLATFORM_PUBLIC_URL}/vps/${machine_id}" \
+            -H "authorization: Bearer ${PLATFORM_SECRET}")"
+          if [ "$code" != "200" ]; then
+            echo "Delete failed with HTTP ${code} (body in workflow log)" >&2
+            cat /tmp/delete.json >&2
+            exit 1
+          fi
+          echo "Deleted ${HANDLE} (${machine_id})"
+
+  reaper:
+    name: Reap stale preview VPSes
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Delete previews for closed PRs and expired previews
+        run: |
+          set -euo pipefail
+          now="$(date +%s)"
+          ttl_secs=$((PREVIEW_TTL_HOURS * 3600))
+          curl -fsS --max-time 30 \
+            -H "authorization: Bearer ${PLATFORM_SECRET}" \
+            "${PLATFORM_PUBLIC_URL}/vps/fleet" |
+            jq -c '.machines[] | select((.handle | test("^pr-[0-9]+$")) and .status != "deleted")' |
+            while IFS= read -r machine; do
+              handle="$(jq -r .handle <<< "$machine")"
+              machine_id="$(jq -r .machineId <<< "$machine")"
+              provisioned="$(jq -r .provisionedAt <<< "$machine")"
+              pr="${handle#pr-}"
+              pr_state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq .state 2>/dev/null || echo unknown)"
+              age=$((now - $(date -d "$provisioned" +%s)))
+              reason=""
+              if [ "$pr_state" = "closed" ]; then
+                reason="PR #${pr} is closed"
+              elif [ "$age" -gt "$ttl_secs" ] && [ "$pr_state" != "unknown" ]; then
+                reason="older than ${PREVIEW_TTL_HOURS}h"
+              fi
+              if [ -z "$reason" ]; then
+                echo "Keeping ${handle} (PR ${pr_state}, age $((age / 3600))h)"
+                continue
+              fi
+              echo "Reaping ${handle}: ${reason}"
+              code="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' \
+                -X DELETE "${PLATFORM_PUBLIC_URL}/vps/${machine_id}" \
+                -H "authorization: Bearer ${PLATFORM_SECRET}")"
+              if [ "$code" != "200" ]; then
+                echo "Failed to delete ${handle} (HTTP ${code})" >&2
+              fi
+            done

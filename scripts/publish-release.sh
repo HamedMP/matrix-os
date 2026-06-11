@@ -50,6 +50,7 @@ fi
 
 case "$CHANNEL" in
   dev|canary|beta|stable) ;;
+  none) ;; # register-only: no channel promotion (preview/PR bundles)
   *) echo "Invalid channel: $CHANNEL" >&2; exit 1 ;;
 esac
 
@@ -112,7 +113,7 @@ print(json.dumps({
     'severity': sys.argv[9],
     'updateType': sys.argv[10],
     'changelog': sys.argv[11] or None,
-    'channel': sys.argv[12],
+    **({} if sys.argv[12] == 'none' else {'channel': sys.argv[12]}),
 }, indent=2))
 " "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL")
 
