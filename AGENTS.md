@@ -336,6 +336,7 @@ Read these on demand, not every session:
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS
+- `docs/dev/preview-environments.md` -- when a change needs to be seen running: per-PR preview VPSes (`preview-vps` label), platform preview revisions, HMR staging slots, and centralized log queries via `scripts/preview-logs.sh`
 - `docs/dev/releases.md` -- when tagging a release or managing versions
 - `specs/quality-gates.md` -- when writing a new spec or reviewing a PR
 - `specs/ux-guide.md` -- when working on shell/frontend UI

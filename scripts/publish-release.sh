@@ -50,6 +50,7 @@ fi
 
 case "$CHANNEL" in
   dev|canary|beta|stable) ;;
+  none) ;; # register-only: no channel promotion (preview/PR bundles)
   *) echo "Invalid channel: $CHANNEL" >&2; exit 1 ;;
 esac
 
@@ -112,7 +113,7 @@ print(json.dumps({
     'severity': sys.argv[9],
     'updateType': sys.argv[10],
     'changelog': sys.argv[11] or None,
-    'channel': sys.argv[12],
+    **({} if sys.argv[12] == 'none' else {'channel': sys.argv[12]}),
 }, indent=2))
 " "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL")
 
@@ -246,7 +247,13 @@ printf '%s' "$REGISTRATION_BODY" | curl --fail --silent --show-error --max-time 
   --data-binary @-
 
 echo ""
-echo "Published $VERSION to $CHANNEL"
-echo "  Release metadata: ${PLATFORM_PUBLIC_URL%/}/system-bundles/releases/$VERSION.json"
-echo "  Sync agents will discover this within 5 minutes."
-echo "  To deploy now: curl -X POST https://app.matrix-os.com/vps/deploy -H 'Authorization: Bearer \$PLATFORM_SECRET' -d '{\"version\":\"$VERSION\"}'"
+if [ "$CHANNEL" = "none" ]; then
+  echo "Registered $VERSION (no channel promotion; deploy is version-pinned only)"
+  echo "  Release metadata: ${PLATFORM_PUBLIC_URL%/}/system-bundles/releases/$VERSION.json"
+  echo "  To deploy to one handle: curl -X POST https://app.matrix-os.com/vps/deploy -H 'Authorization: Bearer \$PLATFORM_SECRET' -d '{\"version\":\"$VERSION\",\"handle\":\"<handle>\"}'"
+else
+  echo "Published $VERSION to $CHANNEL"
+  echo "  Release metadata: ${PLATFORM_PUBLIC_URL%/}/system-bundles/releases/$VERSION.json"
+  echo "  Sync agents will discover this within 5 minutes."
+  echo "  To deploy now: curl -X POST https://app.matrix-os.com/vps/deploy -H 'Authorization: Bearer \$PLATFORM_SECRET' -d '{\"version\":\"$VERSION\"}'"
+fi

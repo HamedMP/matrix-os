@@ -57,7 +57,8 @@ if (!version) {
   process.exit(2);
 }
 
-if (!["dev", "canary", "beta", "stable"].includes(channel)) {
+// "none" registers the release without promoting any channel (preview/PR bundles).
+if (!["dev", "canary", "beta", "stable", "none"].includes(channel)) {
   console.error(`Invalid channel: ${channel}`);
   process.exit(1);
 }
@@ -176,7 +177,7 @@ const registrationBody = {
   severity,
   updateType,
   changelog: changelog || null,
-  channel,
+  ...(channel === "none" ? {} : { channel }),
 };
 
 console.log(`Publishing ${version} to channel ${channel}...`);
