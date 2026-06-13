@@ -3,7 +3,7 @@ import { SectionCard, SectionShell, SectionTitle } from "./primitives";
 import { Reveal } from "./Reveal";
 
 const steps = [
-  { step: "01", title: "Provision your Matrix computer", desc: "Choose power and region, start the hosted trial, and get a private cloud workstation for development." },
+  { step: "01", title: "Provision your Matrix computer", desc: "Choose power and region, activate billing, and get a private cloud workstation for development." },
   { step: "02", title: "Connect tools and repos", desc: "Open the shell, run GitHub auth, clone the repo, and attach from the web UI or Matrix CLI." },
   { step: "03", title: "Run agents and workflows", desc: "Launch Claude, Codex, Cursor, OpenCode, Pi, Gemini CLI, or Hermes in persistent sessions." },
 ] as const;

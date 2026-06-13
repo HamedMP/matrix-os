@@ -4,7 +4,7 @@ export const faqItems = [
   { q: "What is Symphony?", a: "Symphony is the Matrix orchestration layer for autonomous coding: parallel sessions, task queues, terminal runs, previews, PR review, and handoff between agents and humans." },
   { q: "What is Hermes?", a: "Hermes is the Matrix-native agent for workflows and connected tools. It can work across GitHub, Linear, Slack, Gmail, Calendar, Drive, billing, settings, and Matrix apps with your permission." },
   { q: "What happens to my data?", a: "Your files live in your Matrix home and workspace data lives in your Matrix database. Matrix is built around owner-controlled data, exportability, and isolated hosted computers." },
-  { q: "What does it cost?", a: "Signup is free. Provisioning a hosted Matrix computer starts a 3-day trial through Clerk Billing because the private VPS has real runtime cost. Teams, enterprises, and universities can contact us for guided pilots." },
+  { q: "What does it cost?", a: "Signup is free, and you can explore your account before committing. Provisioning a hosted Matrix computer requires active billing through Stripe because the private VPS has real runtime cost; there are no hosted runtime trials. Teams, enterprises, and universities can contact us for guided pilots." },
 ] as const;
 
 export const COPYABLE_AGENT_SETUP_PROMPT = `Help me set up Matrix OS, my own cloud dev computer.
