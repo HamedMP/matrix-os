@@ -1,3 +1,4 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./MonacoHost-dgIoIA_W.js","./MonacoHost-DjMEC8bx.css"])))=>i.map(i=>d[i]);
 function _mergeNamespaces(n, m2) {
   for (var i8 = 0; i8 < m2.length; i8++) {
     const e = m2[i8];
@@ -11244,7 +11245,7 @@ function requireReactDomClient_production() {
     r: requestFormReset,
     D: prefetchDNS,
     C: preconnect,
-    L: preload,
+    L: preload2,
     m: preloadModule,
     X: preinitScript,
     S: preinitStyle,
@@ -11276,7 +11277,7 @@ function requireReactDomClient_production() {
     previousDispatcher.C(href, crossOrigin);
     preconnectAs("preconnect", href, crossOrigin);
   }
-  function preload(href, as2, options2) {
+  function preload2(href, as2, options2) {
     previousDispatcher.L(href, as2, options2);
     var ownerDocument = globalDocument;
     if (ownerDocument && href && as2) {
@@ -12563,7 +12564,7 @@ function buildGatewayUrl(baseUrl, path, runtimeSlot) {
 }
 function createApiClient(options) {
   const fetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
-  async function request(path, init) {
+  async function send(path, init) {
     const url = buildGatewayUrl(options.baseUrl, path, options.getRuntimeSlot());
     let response;
     try {
@@ -12577,8 +12578,20 @@ function createApiClient(options) {
     if (!response.ok) {
       throw new AppError(classifyHttpStatus(response.status));
     }
+    return response;
+  }
+  async function request(path, init) {
+    const response = await send(path, init);
     try {
       return await response.json();
+    } catch (err) {
+      throw new AppError("server", { cause: err });
+    }
+  }
+  async function requestText(path, init) {
+    const response = await send(path, init);
+    try {
+      return await response.text();
     } catch (err) {
       throw new AppError("server", { cause: err });
     }
@@ -12586,6 +12599,7 @@ function createApiClient(options) {
   return {
     baseUrl: options.baseUrl,
     get: (path) => request(path, { method: "GET" }),
+    getText: (path) => requestText(path, { method: "GET" }),
     post: (path, body) => request(path, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -13419,6 +13433,7 @@ const string$3 = (params) => {
 };
 const integer = /^-?\d+$/;
 const number$2 = /^-?\d+(?:\.\d+)?$/;
+const boolean$2 = /^(?:true|false)$/i;
 const lowercase = /^[^A-Z]*$/;
 const uppercase = /^[^a-z]*$/;
 const $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
@@ -14292,6 +14307,27 @@ const $ZodNumber = /* @__PURE__ */ $constructor("$ZodNumber", (inst, def) => {
 const $ZodNumberFormat = /* @__PURE__ */ $constructor("$ZodNumberFormat", (inst, def) => {
   $ZodCheckNumberFormat.init(inst, def);
   $ZodNumber.init(inst, def);
+});
+const $ZodBoolean = /* @__PURE__ */ $constructor("$ZodBoolean", (inst, def) => {
+  $ZodType.init(inst, def);
+  inst._zod.pattern = boolean$2;
+  inst._zod.parse = (payload, _ctx) => {
+    if (def.coerce)
+      try {
+        payload.value = Boolean(payload.value);
+      } catch (_2) {
+      }
+    const input = payload.value;
+    if (typeof input === "boolean")
+      return payload;
+    payload.issues.push({
+      expected: "boolean",
+      code: "invalid_type",
+      input,
+      inst
+    });
+    return payload;
+  };
 });
 const $ZodUnknown = /* @__PURE__ */ $constructor("$ZodUnknown", (inst, def) => {
   $ZodType.init(inst, def);
@@ -15620,6 +15656,13 @@ function _int(Class, params) {
   });
 }
 // @__NO_SIDE_EFFECTS__
+function _boolean(Class, params) {
+  return new Class({
+    type: "boolean",
+    ...normalizeParams(params)
+  });
+}
+// @__NO_SIDE_EFFECTS__
 function _unknown(Class) {
   return new Class({
     type: "unknown"
@@ -15855,14 +15898,14 @@ function initializeContext(params) {
 function process$1(schema, ctx, _params = { path: [], schemaPath: [] }) {
   var _a2;
   const def = schema._zod.def;
-  const seen = ctx.seen.get(schema);
-  if (seen) {
-    seen.count++;
+  const seen2 = ctx.seen.get(schema);
+  if (seen2) {
+    seen2.count++;
     const isCycle = _params.schemaPath.includes(schema);
     if (isCycle) {
-      seen.cycle = _params.path;
+      seen2.cycle = _params.path;
     }
-    return seen.schema;
+    return seen2.schema;
   }
   const result = { schema: {}, count: 1, cycle: void 0, path: _params.path };
   ctx.seen.set(schema, result);
@@ -15945,12 +15988,12 @@ function extractDefs(ctx, schema) {
     if (entry[1].schema.$ref) {
       return;
     }
-    const seen = entry[1];
+    const seen2 = entry[1];
     const { ref, defId } = makeURI(entry);
-    seen.def = { ...seen.schema };
+    seen2.def = { ...seen2.schema };
     if (defId)
-      seen.defId = defId;
-    const schema2 = seen.schema;
+      seen2.defId = defId;
+    const schema2 = seen2.schema;
     for (const key2 in schema2) {
       delete schema2[key2];
     }
@@ -15958,16 +16001,16 @@ function extractDefs(ctx, schema) {
   };
   if (ctx.cycles === "throw") {
     for (const entry of ctx.seen.entries()) {
-      const seen = entry[1];
-      if (seen.cycle) {
-        throw new Error(`Cycle detected: #/${seen.cycle?.join("/")}/<root>
+      const seen2 = entry[1];
+      if (seen2.cycle) {
+        throw new Error(`Cycle detected: #/${seen2.cycle?.join("/")}/<root>
 
 Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.`);
       }
     }
   }
   for (const entry of ctx.seen.entries()) {
-    const seen = entry[1];
+    const seen2 = entry[1];
     if (schema === entry[0]) {
       extractToDef(entry);
       continue;
@@ -15984,11 +16027,11 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
       extractToDef(entry);
       continue;
     }
-    if (seen.cycle) {
+    if (seen2.cycle) {
       extractToDef(entry);
       continue;
     }
-    if (seen.count > 1) {
+    if (seen2.count > 1) {
       if (ctx.reused === "ref") {
         extractToDef(entry);
         continue;
@@ -16001,13 +16044,13 @@ function finalize(ctx, schema) {
   if (!root2)
     throw new Error("Unprocessed schema. This is a bug in Zod.");
   const flattenRef = (zodSchema) => {
-    const seen = ctx.seen.get(zodSchema);
-    if (seen.ref === null)
+    const seen2 = ctx.seen.get(zodSchema);
+    if (seen2.ref === null)
       return;
-    const schema2 = seen.def ?? seen.schema;
+    const schema2 = seen2.def ?? seen2.schema;
     const _cached = { ...schema2 };
-    const ref = seen.ref;
-    seen.ref = null;
+    const ref = seen2.ref;
+    seen2.ref = null;
     if (ref) {
       flattenRef(ref);
       const refSeen = ctx.seen.get(ref);
@@ -16059,7 +16102,7 @@ function finalize(ctx, schema) {
     ctx.override({
       zodSchema,
       jsonSchema: schema2,
-      path: seen.path ?? []
+      path: seen2.path ?? []
     });
   };
   for (const entry of [...ctx.seen.entries()].reverse()) {
@@ -16086,11 +16129,11 @@ function finalize(ctx, schema) {
     delete result.id;
   const defs = ctx.external?.defs ?? {};
   for (const entry of ctx.seen.entries()) {
-    const seen = entry[1];
-    if (seen.def && seen.defId) {
-      if (seen.def.id === seen.defId)
-        delete seen.def.id;
-      defs[seen.defId] = seen.def;
+    const seen2 = entry[1];
+    if (seen2.def && seen2.defId) {
+      if (seen2.def.id === seen2.defId)
+        delete seen2.def.id;
+      defs[seen2.defId] = seen2.def;
     }
   }
   if (ctx.external) ;
@@ -16259,6 +16302,9 @@ const numberProcessor = (schema, ctx, _json, _params) => {
   }
   if (typeof multipleOf === "number")
     json.multipleOf = multipleOf;
+};
+const booleanProcessor = (_schema, _ctx, json, _params) => {
+  json.type = "boolean";
 };
 const neverProcessor = (_schema, _ctx, json, _params) => {
   json.not = {};
@@ -16442,9 +16488,9 @@ const recordProcessor = (schema, ctx, _json, params) => {
 const nullableProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
   const inner = process$1(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
+  const seen2 = ctx.seen.get(schema);
   if (ctx.target === "openapi-3.0") {
-    seen.ref = def.innerType;
+    seen2.ref = def.innerType;
     json.nullable = true;
   } else {
     json.anyOf = [inner, { type: "null" }];
@@ -16453,29 +16499,29 @@ const nullableProcessor = (schema, ctx, json, params) => {
 const nonoptionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   process$1(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
 };
 const defaultProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
   process$1(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
   json.default = JSON.parse(JSON.stringify(def.defaultValue));
 };
 const prefaultProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
   process$1(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
   if (ctx.io === "input")
     json._prefault = JSON.parse(JSON.stringify(def.defaultValue));
 };
 const catchProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
   process$1(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
   let catchValue;
   try {
     catchValue = def.catchValue(void 0);
@@ -16489,21 +16535,21 @@ const pipeProcessor = (schema, ctx, _json, params) => {
   const inIsTransform = def.in._zod.traits.has("$ZodTransform");
   const innerType = ctx.io === "input" ? inIsTransform ? def.out : def.in : def.out;
   process$1(innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = innerType;
 };
 const readonlyProcessor = (schema, ctx, json, params) => {
   const def = schema._zod.def;
   process$1(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
   json.readOnly = true;
 };
 const optionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   process$1(def.innerType, ctx, params);
-  const seen = ctx.seen.get(schema);
-  seen.ref = def.innerType;
+  const seen2 = ctx.seen.get(schema);
+  seen2.ref = def.innerType;
 };
 const ZodISODateTime = /* @__PURE__ */ $constructor("ZodISODateTime", (inst, def) => {
   $ZodISODateTime.init(inst, def);
@@ -16986,6 +17032,14 @@ const ZodNumberFormat = /* @__PURE__ */ $constructor("ZodNumberFormat", (inst, d
 function int(params) {
   return /* @__PURE__ */ _int(ZodNumberFormat, params);
 }
+const ZodBoolean = /* @__PURE__ */ $constructor("ZodBoolean", (inst, def) => {
+  $ZodBoolean.init(inst, def);
+  ZodType.init(inst, def);
+  inst._zod.processJSONSchema = (ctx, json, params) => booleanProcessor(inst, ctx, json);
+});
+function boolean$1(params) {
+  return /* @__PURE__ */ _boolean(ZodBoolean, params);
+}
 const ZodUnknown = /* @__PURE__ */ $constructor("ZodUnknown", (inst, def) => {
   $ZodUnknown.init(inst, def);
   ZodType.init(inst, def);
@@ -17462,7 +17516,7 @@ function groupCardsByColumn(cards) {
   }
   return grouped;
 }
-function categoryOf(err) {
+function categoryOf$1(err) {
   return err instanceof AppError ? err.category : "server";
 }
 const TASKS_PAGE_LIMIT = 100;
@@ -17522,7 +17576,7 @@ const useBoard = create$1()((set, get) => {
       set({ refreshing: false, error: null });
     } catch (err) {
       console.error("[board] Failed to load tasks:", err);
-      set({ refreshing: false, error: categoryOf(err) });
+      set({ refreshing: false, error: categoryOf$1(err) });
     }
   }
   function mutateTask(api, slug, taskId, patch2) {
@@ -17539,7 +17593,7 @@ const useBoard = create$1()((set, get) => {
         console.error("[board] Task update failed:", err);
         patchCard(slug, taskId, () => before);
         await refreshInto(api, slug);
-        set({ error: categoryOf(err) });
+        set({ error: categoryOf$1(err) });
       }
     });
   }
@@ -17561,7 +17615,7 @@ const useBoard = create$1()((set, get) => {
         set({ projects, error: null });
       } catch (err) {
         console.error("[board] Failed to load projects:", err);
-        set({ error: categoryOf(err) });
+        set({ error: categoryOf$1(err) });
       }
     },
     selectProject: async (api, slug) => {
@@ -17594,7 +17648,7 @@ const useBoard = create$1()((set, get) => {
         return card;
       } catch (err) {
         console.error("[board] Task create failed:", err);
-        set({ error: categoryOf(err) });
+        set({ error: categoryOf$1(err) });
         return null;
       }
     },
@@ -17617,7 +17671,7 @@ const useBoard = create$1()((set, get) => {
             const restored = current.some((card) => card.id === taskId) ? current : [...current, target];
             return {
               cardsByProject: { ...state.cardsByProject, [slug]: restored },
-              error: categoryOf(err)
+              error: categoryOf$1(err)
             };
           });
         }
@@ -17661,11 +17715,144 @@ const useUi = create$1()((set) => ({
   createTaskOpen: false,
   composerOpen: false,
   paletteOpen: false,
+  quickOpenOpen: false,
   navigate: (view) => set({ view }),
   setCreateTaskOpen: (open) => set({ createTaskOpen: open }),
   setComposerOpen: (open) => set({ composerOpen: open }),
-  setPaletteOpen: (open) => set({ paletteOpen: open })
+  setPaletteOpen: (open) => set({ paletteOpen: open }),
+  setQuickOpenOpen: (open) => set({ quickOpenOpen: open })
 }));
+const PANEL_KINDS = [
+  "terminal",
+  "editor",
+  "git",
+  "browser",
+  "artifacts",
+  "processes"
+];
+const PANEL_MIN_PCT = {
+  terminal: 20,
+  editor: 25,
+  git: 15,
+  browser: 15,
+  artifacts: 15,
+  processes: 15
+};
+function equalSplitSizes(visible) {
+  const shown = PANEL_KINDS.filter((kind) => visible[kind]);
+  const share = shown.length > 0 ? 100 / shown.length : 0;
+  const sizes = {};
+  for (const kind of PANEL_KINDS) {
+    sizes[kind] = visible[kind] ? share : 0;
+  }
+  return sizes;
+}
+function defaultLayout(now = Date.now()) {
+  const visible = {};
+  for (const kind of PANEL_KINDS) {
+    visible[kind] = kind === "terminal";
+  }
+  return {
+    order: [...PANEL_KINDS],
+    visible,
+    sizes: equalSplitSizes(visible),
+    touchedAt: now
+  };
+}
+const WORKSPACE_LRU_CAP = 8;
+let persistence = null;
+function persistLayout(taskId, layout) {
+  if (!persistence) return;
+  persistence.saveLayout(taskId, layout).catch((err) => {
+    console.warn("[workspace] Failed to persist panel layout:", err);
+  });
+}
+const useWorkspace = create$1()((set, get) => {
+  function writeLayout(taskId, layout) {
+    set((state) => ({ layouts: { ...state.layouts, [taskId]: layout } }));
+    persistLayout(taskId, layout);
+  }
+  return {
+    entries: [],
+    layouts: {},
+    hydrated: false,
+    configure: (p2) => {
+      persistence = p2;
+    },
+    hydrate: async () => {
+      if (get().hydrated) return;
+      if (!persistence) {
+        set({ hydrated: true });
+        return;
+      }
+      try {
+        const loaded = await persistence.loadLayouts();
+        set((state) => ({
+          hydrated: true,
+          layouts: loaded ? { ...loaded, ...state.layouts } : state.layouts
+        }));
+      } catch (err) {
+        console.warn("[workspace] Failed to load persisted layouts:", err);
+        set({ hydrated: true });
+      }
+    },
+    openTask: (taskId, now = Date.now()) => {
+      const rest = get().entries.filter((entry) => entry.taskId !== taskId);
+      const reordered = [{ taskId, lastFocusedAt: now, live: true }, ...rest];
+      const evicted = [];
+      const entries = reordered.map((entry, index2) => {
+        if (index2 < WORKSPACE_LRU_CAP || !entry.live) return entry;
+        evicted.push(entry.taskId);
+        return { ...entry, live: false };
+      });
+      set({ entries });
+      return { evicted };
+    },
+    focusTask: (taskId, now = Date.now()) => {
+      const prior = get().entries;
+      const existing = prior.find((entry) => entry.taskId === taskId);
+      if (!existing) return;
+      set({
+        entries: [
+          { ...existing, lastFocusedAt: now, live: true },
+          ...prior.filter((entry) => entry.taskId !== taskId)
+        ]
+      });
+    },
+    closeTask: (taskId) => {
+      set((state) => ({ entries: state.entries.filter((entry) => entry.taskId !== taskId) }));
+    },
+    togglePanel: (taskId, panel, now = Date.now()) => {
+      const layout = get().layouts[taskId] ?? defaultLayout(now);
+      const visible = { ...layout.visible, [panel]: !layout.visible[panel] };
+      const sizes = visible[panel] && (layout.sizes[panel] ?? 0) <= 0 ? equalSplitSizes(visible) : { ...layout.sizes };
+      writeLayout(taskId, { ...layout, visible, sizes, touchedAt: now });
+    },
+    setPanelSizes: (taskId, sizes, now = Date.now()) => {
+      const layout = get().layouts[taskId] ?? defaultLayout(now);
+      const next = { ...layout.sizes };
+      for (const kind of PANEL_KINDS) {
+        const value = sizes[kind];
+        if (typeof value !== "number" || !Number.isFinite(value)) continue;
+        next[kind] = layout.visible[kind] ? Math.max(value, PANEL_MIN_PCT[kind]) : Math.max(value, 0);
+      }
+      writeLayout(taskId, { ...layout, sizes: next, touchedAt: now });
+    },
+    movePanel: (taskId, panel, direction, now = Date.now()) => {
+      const layout = get().layouts[taskId] ?? defaultLayout(now);
+      const index2 = layout.order.indexOf(panel);
+      if (index2 === -1) return;
+      const target = direction === "left" ? index2 - 1 : index2 + 1;
+      if (target < 0 || target >= layout.order.length) return;
+      const order2 = [...layout.order];
+      const swapped = order2[target];
+      order2[target] = order2[index2];
+      order2[index2] = swapped;
+      writeLayout(taskId, { ...layout, order: order2, touchedAt: now });
+    },
+    layoutFor: (taskId) => get().layouts[taskId] ?? defaultLayout()
+  };
+});
 const mergeClasses = (...classes) => classes.filter((className, index2, array2) => {
   return Boolean(className) && className.trim() !== "" && array2.indexOf(className) === index2;
 }).join(" ").trim();
@@ -17742,36 +17929,128 @@ const createLucideIcon = (iconName, iconNode) => {
   Component.displayName = toPascalCase(iconName);
   return Component;
 };
-const __iconNode$b = [
+const __iconNode$n = [
+  [
+    "path",
+    {
+      d: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2",
+      key: "169zse"
+    }
+  ]
+];
+const Activity = createLucideIcon("activity", __iconNode$n);
+const __iconNode$m = [
   ["path", { d: "m12 19-7-7 7-7", key: "1l729n" }],
   ["path", { d: "M19 12H5", key: "x3x0zl" }]
 ];
-const ArrowLeft = createLucideIcon("arrow-left", __iconNode$b);
-const __iconNode$a = [["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]];
-const ChevronDown = createLucideIcon("chevron-down", __iconNode$a);
-const __iconNode$9 = [
+const ArrowLeft = createLucideIcon("arrow-left", __iconNode$m);
+const __iconNode$l = [["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]];
+const ChevronDown = createLucideIcon("chevron-down", __iconNode$l);
+const __iconNode$k = [["path", { d: "m9 18 6-6-6-6", key: "mthhwq" }]];
+const ChevronRight = createLucideIcon("chevron-right", __iconNode$k);
+const __iconNode$j = [
   ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
   ["rect", { x: "9", y: "9", width: "6", height: "6", rx: "1", key: "1ssd4o" }]
 ];
-const CircleStop = createLucideIcon("circle-stop", __iconNode$9);
-const __iconNode$8 = [
+const CircleStop = createLucideIcon("circle-stop", __iconNode$j);
+const __iconNode$i = [
   ["path", { d: "M20 4v7a4 4 0 0 1-4 4H4", key: "6o5b7l" }],
   ["path", { d: "m9 10-5 5 5 5", key: "1kshq7" }]
 ];
-const CornerDownLeft = createLucideIcon("corner-down-left", __iconNode$8);
-const __iconNode$7 = [
+const CornerDownLeft = createLucideIcon("corner-down-left", __iconNode$i);
+const __iconNode$h = [
+  [
+    "path",
+    {
+      d: "M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35",
+      key: "1wthlu"
+    }
+  ],
+  ["path", { d: "M14 2v5a1 1 0 0 0 1 1h5", key: "wfsgrz" }],
+  ["path", { d: "m5 16-3 3 3 3", key: "331omg" }],
+  ["path", { d: "m9 22 3-3-3-3", key: "lsp7cz" }]
+];
+const FileCodeCorner = createLucideIcon("file-code-corner", __iconNode$h);
+const __iconNode$g = [
+  [
+    "path",
+    {
+      d: "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+      key: "1oefj6"
+    }
+  ],
+  ["path", { d: "M14 2v5a1 1 0 0 0 1 1h5", key: "wfsgrz" }]
+];
+const File = createLucideIcon("file", __iconNode$g);
+const __iconNode$f = [
+  ["path", { d: "M18 19a5 5 0 0 1-5-5v8", key: "sz5oeg" }],
+  [
+    "path",
+    {
+      d: "M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5",
+      key: "1w6njk"
+    }
+  ],
+  ["circle", { cx: "13", cy: "12", r: "2", key: "1j92g6" }],
+  ["circle", { cx: "20", cy: "19", r: "2", key: "1obnsp" }]
+];
+const FolderGit2 = createLucideIcon("folder-git-2", __iconNode$f);
+const __iconNode$e = [
+  [
+    "path",
+    {
+      d: "M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z",
+      key: "hod4my"
+    }
+  ],
+  [
+    "path",
+    {
+      d: "M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z",
+      key: "w4yl2u"
+    }
+  ],
+  ["path", { d: "M3 5a2 2 0 0 0 2 2h3", key: "f2jnh7" }],
+  ["path", { d: "M3 3v13a2 2 0 0 0 2 2h3", key: "k8epm1" }]
+];
+const FolderTree = createLucideIcon("folder-tree", __iconNode$e);
+const __iconNode$d = [
+  [
+    "path",
+    {
+      d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
+      key: "1kt360"
+    }
+  ]
+];
+const Folder = createLucideIcon("folder", __iconNode$d);
+const __iconNode$c = [
+  ["line", { x1: "6", x2: "6", y1: "3", y2: "15", key: "17qcm7" }],
+  ["circle", { cx: "18", cy: "6", r: "3", key: "1h7g24" }],
+  ["circle", { cx: "6", cy: "18", r: "3", key: "fqmcym" }],
+  ["path", { d: "M18 9a9 9 0 0 1-9 9", key: "n2h4wq" }]
+];
+const GitBranch = createLucideIcon("git-branch", __iconNode$c);
+const __iconNode$b = [
+  ["circle", { cx: "18", cy: "18", r: "3", key: "1xkwt0" }],
+  ["circle", { cx: "6", cy: "6", r: "3", key: "1lh9wr" }],
+  ["path", { d: "M13 6h3a2 2 0 0 1 2 2v7", key: "1yeb86" }],
+  ["line", { x1: "6", x2: "6", y1: "9", y2: "21", key: "rroup" }]
+];
+const GitPullRequest = createLucideIcon("git-pull-request", __iconNode$b);
+const __iconNode$a = [
   ["path", { d: "M5 3v14", key: "9nsxs2" }],
   ["path", { d: "M12 3v8", key: "1h2ygw" }],
   ["path", { d: "M19 3v18", key: "1sk56x" }]
 ];
-const Kanban = createLucideIcon("kanban", __iconNode$7);
-const __iconNode$6 = [
+const Kanban = createLucideIcon("kanban", __iconNode$a);
+const __iconNode$9 = [
   ["path", { d: "m16 17 5-5-5-5", key: "1bji2h" }],
   ["path", { d: "M21 12H9", key: "dn1m92" }],
   ["path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", key: "1uf3rs" }]
 ];
-const LogOut = createLucideIcon("log-out", __iconNode$6);
-const __iconNode$5 = [
+const LogOut = createLucideIcon("log-out", __iconNode$9);
+const __iconNode$8 = [
   [
     "path",
     {
@@ -17782,20 +18061,33 @@ const __iconNode$5 = [
   ["path", { d: "M12 8v6", key: "1ib9pf" }],
   ["path", { d: "M9 11h6", key: "1fldmi" }]
 ];
-const MessageSquarePlus = createLucideIcon("message-square-plus", __iconNode$5);
-const __iconNode$4 = [
+const MessageSquarePlus = createLucideIcon("message-square-plus", __iconNode$8);
+const __iconNode$7 = [
+  [
+    "path",
+    {
+      d: "M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z",
+      key: "1a0edw"
+    }
+  ],
+  ["path", { d: "M12 22V12", key: "d0xqtd" }],
+  ["polyline", { points: "3.29 7 12 12 20.71 7", key: "ousv84" }],
+  ["path", { d: "m7.5 4.27 9 5.15", key: "1c824w" }]
+];
+const Package = createLucideIcon("package", __iconNode$7);
+const __iconNode$6 = [
   ["path", { d: "M5 12h14", key: "1ays0h" }],
   ["path", { d: "M12 5v14", key: "s699le" }]
 ];
-const Plus = createLucideIcon("plus", __iconNode$4);
-const __iconNode$3 = [
+const Plus = createLucideIcon("plus", __iconNode$6);
+const __iconNode$5 = [
   ["path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8", key: "v9h5vc" }],
   ["path", { d: "M21 3v5h-5", key: "1q7to0" }],
   ["path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16", key: "3uifl3" }],
   ["path", { d: "M8 16H3v5", key: "1cv678" }]
 ];
-const RefreshCw = createLucideIcon("refresh-cw", __iconNode$3);
-const __iconNode$2 = [
+const RefreshCw = createLucideIcon("refresh-cw", __iconNode$5);
+const __iconNode$4 = [
   [
     "path",
     {
@@ -17805,14 +18097,27 @@ const __iconNode$2 = [
   ],
   ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
 ];
-const Settings = createLucideIcon("settings", __iconNode$2);
-const __iconNode$1 = [
+const Settings = createLucideIcon("settings", __iconNode$4);
+const __iconNode$3 = [
+  [
+    "path",
+    {
+      d: "M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z",
+      key: "1s2grr"
+    }
+  ],
+  ["path", { d: "M20 2v4", key: "1rf3ol" }],
+  ["path", { d: "M22 4h-4", key: "gwowj6" }],
+  ["circle", { cx: "4", cy: "20", r: "2", key: "6kqj1y" }]
+];
+const Sparkles = createLucideIcon("sparkles", __iconNode$3);
+const __iconNode$2 = [
   ["path", { d: "m7 11 2-2-2-2", key: "1lz0vl" }],
   ["path", { d: "M11 13h4", key: "1p7l4v" }],
   ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2", ry: "2", key: "1m3agn" }]
 ];
-const SquareTerminal = createLucideIcon("square-terminal", __iconNode$1);
-const __iconNode = [
+const SquareTerminal = createLucideIcon("square-terminal", __iconNode$2);
+const __iconNode$1 = [
   [
     "path",
     {
@@ -17821,7 +18126,12 @@ const __iconNode = [
     }
   ]
 ];
-const Wrench = createLucideIcon("wrench", __iconNode);
+const Wrench = createLucideIcon("wrench", __iconNode$1);
+const __iconNode = [
+  ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+  ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
+];
+const X$3 = createLucideIcon("x", __iconNode);
 const BUTTON_STYLES = {
   primary: { background: "var(--accent)", color: "var(--text-on-accent)" },
   ghost: { background: "transparent", color: "var(--text-secondary)" },
@@ -22855,6 +23165,536 @@ const useSessions = create$1()((set, get) => ({
     return get().aliasMap[linkedSessionId] ?? null;
   }
 }));
+const scriptRel = /* @__PURE__ */ (function detectScriptRel() {
+  const relList = typeof document !== "undefined" && document.createElement("link").relList;
+  return relList && relList.supports && relList.supports("modulepreload") ? "modulepreload" : "preload";
+})();
+const assetsURL = function(dep, importerUrl) {
+  return new URL(dep, importerUrl).href;
+};
+const seen = {};
+const __vitePreload = function preload(baseModule, deps, importerUrl) {
+  let promise = Promise.resolve();
+  if (deps && deps.length > 0) {
+    let allSettled = function(promises$2) {
+      return Promise.all(promises$2.map((p2) => Promise.resolve(p2).then((value$1) => ({
+        status: "fulfilled",
+        value: value$1
+      }), (reason) => ({
+        status: "rejected",
+        reason
+      }))));
+    };
+    const links = document.getElementsByTagName("link");
+    const cspNonceMeta = document.querySelector("meta[property=csp-nonce]");
+    const cspNonce = cspNonceMeta?.nonce || cspNonceMeta?.getAttribute("nonce");
+    promise = allSettled(deps.map((dep) => {
+      dep = assetsURL(dep, importerUrl);
+      if (dep in seen) return;
+      seen[dep] = true;
+      const isCss = dep.endsWith(".css");
+      const cssSelector = isCss ? '[rel="stylesheet"]' : "";
+      if (!!importerUrl) for (let i$1 = links.length - 1; i$1 >= 0; i$1--) {
+        const link$1 = links[i$1];
+        if (link$1.href === dep && (!isCss || link$1.rel === "stylesheet")) return;
+      }
+      else if (document.querySelector(`link[href="${dep}"]${cssSelector}`)) return;
+      const link2 = document.createElement("link");
+      link2.rel = isCss ? "stylesheet" : scriptRel;
+      if (!isCss) link2.as = "script";
+      link2.crossOrigin = "";
+      link2.href = dep;
+      if (cspNonce) link2.setAttribute("nonce", cspNonce);
+      document.head.appendChild(link2);
+      if (isCss) return new Promise((res, rej) => {
+        link2.addEventListener("load", res);
+        link2.addEventListener("error", () => rej(/* @__PURE__ */ new Error(`Unable to preload CSS for ${dep}`)));
+      });
+    }));
+  }
+  function handlePreloadError(err$2) {
+    const e$1 = new Event("vite:preloadError", { cancelable: true });
+    e$1.payload = err$2;
+    window.dispatchEvent(e$1);
+    if (!e$1.defaultPrevented) throw err$2;
+  }
+  return promise.then((res) => {
+    for (const item of res || []) {
+      if (item.status !== "rejected") continue;
+      handlePreloadError(item.reason);
+    }
+    return baseModule().catch(handlePreloadError);
+  });
+};
+const useEditorTabs = create$1()((set) => ({
+  tabsByTask: {},
+  activePathByTask: {},
+  dirtyPaths: [],
+  openTab: (taskId, path) => set((state) => {
+    const existing = state.tabsByTask[taskId] ?? [];
+    const tabs = existing.includes(path) ? existing : [...existing, path].slice(-16);
+    return {
+      tabsByTask: { ...state.tabsByTask, [taskId]: tabs },
+      activePathByTask: { ...state.activePathByTask, [taskId]: path }
+    };
+  }),
+  setActive: (taskId, path) => set((state) => ({
+    activePathByTask: { ...state.activePathByTask, [taskId]: path }
+  })),
+  closeTab: (taskId, path) => set((state) => {
+    const tabs = (state.tabsByTask[taskId] ?? []).filter((p2) => p2 !== path);
+    const active = state.activePathByTask[taskId] === path ? tabs[tabs.length - 1] ?? null : state.activePathByTask[taskId] ?? null;
+    return {
+      tabsByTask: { ...state.tabsByTask, [taskId]: tabs },
+      activePathByTask: { ...state.activePathByTask, [taskId]: active },
+      dirtyPaths: state.dirtyPaths.filter((p2) => p2 !== path)
+    };
+  }),
+  setDirty: (path, dirty) => set((state) => ({
+    dirtyPaths: dirty ? state.dirtyPaths.includes(path) ? state.dirtyPaths : [...state.dirtyPaths, path].slice(-64) : state.dirtyPaths.filter((p2) => p2 !== path)
+  })),
+  closeTask: (taskId) => set((state) => {
+    const tabsByTask = { ...state.tabsByTask };
+    const activePathByTask = { ...state.activePathByTask };
+    delete tabsByTask[taskId];
+    delete activePathByTask[taskId];
+    return { tabsByTask, activePathByTask };
+  })
+}));
+const MonacoHost = reactExports.lazy(() => __vitePreload(() => import("./MonacoHost-dgIoIA_W.js").then((n) => n.M), true ? __vite__mapDeps([0,1]) : void 0, import.meta.url));
+function EditorPanel({ taskId }) {
+  const api = useConnection((s15) => s15.api);
+  const tabs = useEditorTabs((s15) => s15.tabsByTask[taskId] ?? []);
+  const activePath = useEditorTabs((s15) => s15.activePathByTask[taskId] ?? null);
+  const setActive = useEditorTabs((s15) => s15.setActive);
+  const closeTab = useEditorTabs((s15) => s15.closeTab);
+  const dirtyPaths = useEditorTabs((s15) => s15.dirtyPaths);
+  if (tabs.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      EmptyState,
+      {
+        icon: /* @__PURE__ */ jsxRuntimeExports.jsx(FileCodeCorner, { size: 24 }),
+        headline: "No file open",
+        description: "Open a file from the file browser or press ⌘P to quick-open."
+      }
+    );
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 min-w-0 flex-1 flex-col", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: "flex shrink-0 items-center gap-0.5 overflow-x-auto border-b px-1 pt-1",
+        style: { borderColor: "var(--border-subtle)" },
+        children: tabs.map((path) => {
+          const name2 = path.split("/").pop() ?? path;
+          const active = path === activePath;
+          const dirty = dirtyPaths.includes(path);
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "div",
+            {
+              className: "flex max-w-[180px] items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 py-1.5 text-sm",
+              style: {
+                background: active ? "var(--bg-raised)" : "transparent",
+                borderColor: active ? "var(--border-subtle)" : "transparent",
+                color: active ? "var(--text-primary)" : "var(--text-tertiary)"
+              },
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    className: "min-w-0 truncate",
+                    title: path,
+                    onClick: () => setActive(taskId, path),
+                    children: name2
+                  }
+                ),
+                dirty ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "h-1.5 w-1.5 shrink-0 rounded-full", style: { background: "var(--accent)" } }) : null,
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    "aria-label": `Close ${name2}`,
+                    className: "shrink-0 rounded p-0.5 hover:bg-[var(--bg-hover)]",
+                    onClick: () => closeTab(taskId, path),
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx(X$3, { size: 11 })
+                  }
+                )
+              ]
+            },
+            path
+          );
+        })
+      }
+    ),
+    activePath && api ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      reactExports.Suspense,
+      {
+        fallback: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-1 items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pulse text-xs", style: { color: "var(--text-tertiary)" }, children: "Loading editor…" }) }),
+        children: /* @__PURE__ */ jsxRuntimeExports.jsx(MonacoHost, { taskId, path: activePath }, activePath)
+      }
+    ) : null
+  ] });
+}
+function ConflictBar({
+  onOverwrite,
+  onReload
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: "flex items-center justify-between gap-3 border-t px-3 py-2",
+      style: { background: "var(--warning-muted)", borderColor: "var(--border-default)" },
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm", style: { color: "var(--warning)" }, children: "This file changed on your computer since you opened it." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "subtle", onClick: onReload, children: "Reload" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "danger", onClick: onOverwrite, children: "Overwrite" })
+        ] })
+      ]
+    }
+  );
+}
+function parseEntries(value) {
+  if (!Array.isArray(value)) return [];
+  const entries = [];
+  for (const raw of value.slice(0, 500)) {
+    if (raw && typeof raw === "object" && typeof raw.name === "string" && (raw.type === "file" || raw.type === "directory")) {
+      entries.push({ name: raw.name, type: raw.type });
+    }
+  }
+  return entries.sort(
+    (a, b2) => a.type === b2.type ? a.name.localeCompare(b2.name) : a.type === "directory" ? -1 : 1
+  );
+}
+function TreeNode({
+  path,
+  name: name2,
+  depth,
+  onOpenFile
+}) {
+  const api = useConnection((s15) => s15.api);
+  const [expanded, setExpanded] = reactExports.useState(false);
+  const [children, setChildren] = reactExports.useState(null);
+  const toggle = reactExports.useCallback(() => {
+    setExpanded((prev) => !prev);
+    if (!children && api) {
+      api.get(`/api/files/list?path=${encodeURIComponent(path)}`).then((res) => setChildren(parseEntries(res.entries))).catch((err) => {
+        console.warn("[files] list failed:", err instanceof Error ? err.message : String(err));
+        setChildren([]);
+      });
+    }
+  }, [api, children, path]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        type: "button",
+        className: "flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm hover:bg-[var(--bg-hover)]",
+        style: { paddingLeft: 6 + depth * 14, color: "var(--text-secondary)" },
+        onClick: toggle,
+        children: [
+          expanded ? /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDown, { size: 12 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronRight, { size: 12 }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Folder, { size: 13, style: { color: "var(--text-tertiary)" } }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", style: { color: "var(--text-primary)" }, children: name2 })
+        ]
+      }
+    ),
+    expanded && children ? children.map((entry) => {
+      const childPath = path ? `${path}/${entry.name}` : entry.name;
+      return entry.type === "directory" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        TreeNode,
+        {
+          path: childPath,
+          name: entry.name,
+          depth: depth + 1,
+          onOpenFile
+        },
+        childPath
+      ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          type: "button",
+          className: "flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm hover:bg-[var(--bg-hover)]",
+          style: { paddingLeft: 6 + (depth + 1) * 14 + 14, color: "var(--text-secondary)" },
+          onClick: () => onOpenFile(childPath),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(File, { size: 13, style: { color: "var(--text-tertiary)" } }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: entry.name })
+          ]
+        },
+        childPath
+      );
+    }) : null
+  ] });
+}
+function FilesPanel({ taskId }) {
+  const api = useConnection((s15) => s15.api);
+  const openTab = useEditorTabs((s15) => s15.openTab);
+  const [roots, setRoots] = reactExports.useState(null);
+  const loadRoots = reactExports.useCallback(() => {
+    if (!api) return;
+    api.get(`/api/files/list?path=${encodeURIComponent("")}`).then((res) => setRoots(parseEntries(res.entries))).catch((err) => {
+      console.warn("[files] root list failed:", err instanceof Error ? err.message : String(err));
+      setRoots([]);
+    });
+  }, [api]);
+  reactExports.useEffect(() => {
+    if (roots === null) loadRoots();
+  }, [loadRoots, roots]);
+  const onOpenFile = reactExports.useCallback(
+    (path) => {
+      openTab(taskId, path);
+    },
+    [openTab, taskId]
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 flex-1 flex-col overflow-y-auto p-1.5", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-1 flex items-center justify-between px-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-semibold tracking-wide uppercase", style: { color: "var(--text-tertiary)" }, children: "Files" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(IconButton, { label: "Refresh files", onClick: loadRoots, children: /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 12 }) })
+    ] }),
+    roots?.map(
+      (entry) => entry.type === "directory" ? /* @__PURE__ */ jsxRuntimeExports.jsx(TreeNode, { path: entry.name, name: entry.name, depth: 0, onOpenFile }, entry.name) : /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          type: "button",
+          className: "flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-left text-sm hover:bg-[var(--bg-hover)]",
+          style: { paddingLeft: 20, color: "var(--text-secondary)" },
+          onClick: () => onOpenFile(entry.name),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(File, { size: 13, style: { color: "var(--text-tertiary)" } }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: entry.name })
+          ]
+        },
+        entry.name
+      )
+    )
+  ] });
+}
+const BranchSchema = object({
+  name: string$2().min(1),
+  current: boolean$1().optional(),
+  default: boolean$1().optional()
+});
+const PrSchema = object({
+  number: number$1(),
+  title: string$2().optional(),
+  author: string$2().optional(),
+  headRef: string$2().optional(),
+  baseRef: string$2().optional(),
+  state: string$2().optional()
+});
+const WorktreePrSchema = object({
+  number: number$1(),
+  title: string$2().optional(),
+  headRef: string$2().optional(),
+  baseRef: string$2().optional()
+});
+const WorktreeSchema = object({
+  id: string$2().min(1),
+  projectSlug: string$2().optional(),
+  path: string$2().optional(),
+  sourceBranch: string$2().optional(),
+  currentBranch: string$2().optional(),
+  dirtyState: string$2().optional(),
+  createdAt: string$2().optional(),
+  pr: WorktreePrSchema.optional()
+});
+const PreviewSchema = object({
+  id: string$2().min(1),
+  projectSlug: string$2().optional(),
+  taskId: string$2().nullable().optional(),
+  label: string$2().optional(),
+  url: string$2().optional(),
+  lastStatus: string$2().optional(),
+  displayPreference: string$2().optional(),
+  createdAt: string$2().optional(),
+  updatedAt: string$2().optional()
+});
+const SEVERITY = {
+  unauthorized: 6,
+  server: 5,
+  misconfigured: 4,
+  offline: 3,
+  timeout: 2,
+  fatalSession: 1,
+  notFound: 0
+};
+function categoryOf(err) {
+  return err instanceof AppError ? err.category : "server";
+}
+function worstCategory(categories) {
+  return categories.reduce((worst, next) => SEVERITY[next] > SEVERITY[worst] ? next : worst);
+}
+function parseRows(schema, rows) {
+  if (!Array.isArray(rows)) return [];
+  const out = [];
+  for (const row of rows) {
+    const result = schema.safeParse(row);
+    if (result.success) out.push(result.data);
+    else console.warn("[git] skipping malformed row");
+  }
+  return out;
+}
+const useGit = create$1()((set, get) => ({
+  branches: [],
+  prs: [],
+  worktrees: [],
+  previews: [],
+  refreshedAt: null,
+  loading: false,
+  error: null,
+  loadAll: async (api, slug) => {
+    set({ loading: true });
+    const failures = [];
+    const patch2 = {};
+    let branchRefreshed;
+    let prRefreshed;
+    await Promise.all([
+      (async () => {
+        try {
+          const res = await api.get(
+            `/api/projects/${slug}/branches`
+          );
+          patch2.branches = parseRows(BranchSchema, res.branches);
+          if (typeof res.refreshedAt === "string") branchRefreshed = res.refreshedAt;
+        } catch (err) {
+          failures.push(categoryOf(err));
+        }
+      })(),
+      (async () => {
+        try {
+          const res = await api.get(
+            `/api/projects/${slug}/prs`
+          );
+          patch2.prs = parseRows(PrSchema, res.prs);
+          if (typeof res.refreshedAt === "string") prRefreshed = res.refreshedAt;
+        } catch (err) {
+          failures.push(categoryOf(err));
+        }
+      })(),
+      (async () => {
+        try {
+          const res = await api.get(`/api/projects/${slug}/worktrees`);
+          patch2.worktrees = parseRows(WorktreeSchema, res.worktrees);
+        } catch (err) {
+          failures.push(categoryOf(err));
+        }
+      })()
+    ]);
+    set({
+      ...patch2,
+      refreshedAt: prRefreshed ?? branchRefreshed ?? get().refreshedAt,
+      loading: false,
+      error: failures.length > 0 ? worstCategory(failures) : null
+    });
+  },
+  loadPreviews: async (api, slug, taskId) => {
+    const query = taskId ? `?limit=100&taskId=${encodeURIComponent(taskId)}` : "?limit=100";
+    try {
+      const res = await api.get(`/api/projects/${slug}/previews${query}`);
+      set({ previews: parseRows(PreviewSchema, res.previews), error: null });
+    } catch (err) {
+      set({ error: categoryOf(err) });
+    }
+  },
+  createWorktree: async (api, slug, input) => {
+    try {
+      const res = await api.post(`/api/projects/${slug}/worktrees`, input);
+      const parsed = WorktreeSchema.safeParse(res.worktree);
+      if (!parsed.success) {
+        console.warn("[git] createWorktree returned a malformed worktree");
+        set({ error: "server" });
+        return null;
+      }
+      const worktree = parsed.data;
+      set((state) => ({
+        worktrees: [...state.worktrees.filter((w2) => w2.id !== worktree.id), worktree],
+        error: null
+      }));
+      return worktree;
+    } catch (err) {
+      set({ error: categoryOf(err) });
+      return null;
+    }
+  }
+}));
+function SectionHeading({ icon, label }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 mb-1 flex items-center gap-1.5 px-1 first:mt-0", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "var(--text-tertiary)" }, children: icon }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-semibold tracking-wide uppercase", style: { color: "var(--text-tertiary)" }, children: label })
+  ] });
+}
+function GitPanel({ projectSlug }) {
+  const api = useConnection((s15) => s15.api);
+  const branches = useGit((s15) => s15.branches);
+  const prs = useGit((s15) => s15.prs);
+  const worktrees = useGit((s15) => s15.worktrees);
+  const loadAll = useGit((s15) => s15.loadAll);
+  const setComposerOpen = useUi((s15) => s15.setComposerOpen);
+  reactExports.useEffect(() => {
+    if (api) void loadAll(api, projectSlug);
+  }, [api, loadAll, projectSlug]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 flex-1 flex-col overflow-y-auto p-2", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between px-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-medium", style: { color: "var(--text-primary)" }, children: projectSlug }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        IconButton,
+        {
+          label: "Refresh git",
+          onClick: () => {
+            if (api) void loadAll(api, projectSlug);
+          },
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 12 })
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SectionHeading, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(GitBranch, { size: 12 }), label: `Branches (${branches.length})` }),
+    branches.slice(0, 20).map((branch) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: "truncate rounded px-1.5 py-1 font-mono text-xs",
+        style: { color: "var(--text-secondary)" },
+        title: branch.name,
+        children: branch.name
+      },
+      branch.name
+    )),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SectionHeading, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(GitPullRequest, { size: 12 }), label: `Pull requests (${prs.length})` }),
+    prs.slice(0, 20).map((pr) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 rounded px-1.5 py-1 text-xs", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { color: "var(--text-tertiary)" }, children: [
+        "#",
+        pr.number
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", style: { color: "var(--text-secondary)" }, children: pr.title })
+    ] }, pr.number)),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SectionHeading, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(FolderGit2, { size: 12 }), label: `Worktrees (${worktrees.length})` }),
+    worktrees.slice(0, 20).map((worktree, i8) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: "truncate rounded px-1.5 py-1 font-mono text-xs",
+        style: { color: "var(--text-secondary)" },
+        title: worktree.path,
+        children: worktree.currentBranch ?? worktree.sourceBranch ?? worktree.path ?? "worktree"
+      },
+      worktree.id ?? i8
+    )),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: "mt-4 flex flex-col gap-2 rounded-lg border p-3",
+        style: { borderColor: "var(--border-subtle)", background: "var(--bg-raised)" },
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs", style: { color: "var(--text-secondary)" }, children: "Diff review lands with gateway diff support. Meanwhile, ask the agent to review changes." }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "subtle", onClick: () => setComposerOpen(true), children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Sparkles, { size: 13 }),
+            "Ask agent to review"
+          ] })
+        ]
+      }
+    )
+  ] });
+}
 var zs = Object.defineProperty;
 var Rl = Object.getOwnPropertyDescriptor;
 var Ll = (s15, t) => {
@@ -35398,6 +36238,167 @@ function TerminalView({ sessionName, onRecreate }) {
     ) : null
   ] });
 }
+function ArtifactsPanel({
+  projectSlug,
+  taskId
+}) {
+  const api = useConnection((s15) => s15.api);
+  const previews = useGit((s15) => s15.previews);
+  const loadPreviews = useGit((s15) => s15.loadPreviews);
+  reactExports.useEffect(() => {
+    if (api) void loadPreviews(api, projectSlug, taskId);
+  }, [api, loadPreviews, projectSlug, taskId]);
+  if (previews.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      EmptyState,
+      {
+        icon: /* @__PURE__ */ jsxRuntimeExports.jsx(Package, { size: 22 }),
+        headline: "No artifacts",
+        description: "Previews and artifacts created on this task appear here."
+      }
+    );
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-end", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      IconButton,
+      {
+        label: "Refresh artifacts",
+        onClick: () => {
+          if (api) void loadPreviews(api, projectSlug, taskId);
+        },
+        children: /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 12 })
+      }
+    ) }),
+    previews.slice(0, 50).map((preview) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        type: "button",
+        className: "flex flex-col gap-0.5 rounded-lg border p-2.5 text-left hover:border-[var(--border-strong)]",
+        style: { borderColor: "var(--border-subtle)", background: "var(--bg-raised)" },
+        onClick: () => {
+          if (preview.url && preview.url.startsWith("https://")) {
+            void invoke("shell:open-external", { url: preview.url });
+          }
+        },
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-sm", style: { color: "var(--text-primary)" }, children: preview.label ?? preview.id }),
+          preview.url ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-xs", style: { color: "var(--text-tertiary)" }, children: preview.url }) : null
+        ]
+      },
+      preview.id
+    ))
+  ] });
+}
+const PANEL_TITLES = {
+  terminal: "Terminal",
+  editor: "Editor",
+  git: "Git",
+  browser: "Browser",
+  artifacts: "Artifacts",
+  processes: "Processes"
+};
+function PanelStrip({ taskId, renderPanel }) {
+  const layouts = useWorkspace((s15) => s15.layouts);
+  const setPanelSizes = useWorkspace((s15) => s15.setPanelSizes);
+  const containerRef = reactExports.useRef(null);
+  const dragState = reactExports.useRef(null);
+  const layout = reactExports.useMemo(() => layouts[taskId] ?? defaultLayout(), [layouts, taskId]);
+  const visiblePanels = reactExports.useMemo(
+    () => layout.order.filter((panel) => layout.visible[panel]),
+    [layout]
+  );
+  const onDividerDown = reactExports.useCallback(
+    (left, right, e) => {
+      e.preventDefault();
+      e.target.setPointerCapture(e.pointerId);
+      dragState.current = {
+        left,
+        right,
+        startX: e.clientX,
+        startSizes: { ...layout.sizes }
+      };
+    },
+    [layout.sizes]
+  );
+  const onDividerMove = reactExports.useCallback(
+    (e) => {
+      const drag = dragState.current;
+      const container = containerRef.current;
+      if (!drag || !container) return;
+      const totalWidth = container.getBoundingClientRect().width;
+      if (totalWidth <= 0) return;
+      const deltaPct = (e.clientX - drag.startX) / totalWidth * 100;
+      const leftStart = drag.startSizes[drag.left] ?? 0;
+      const rightStart = drag.startSizes[drag.right] ?? 0;
+      const minLeft = PANEL_MIN_PCT[drag.left];
+      const minRight = PANEL_MIN_PCT[drag.right];
+      const clamped = Math.max(minLeft - leftStart, Math.min(deltaPct, rightStart - minRight));
+      setPanelSizes(taskId, {
+        ...drag.startSizes,
+        [drag.left]: leftStart + clamped,
+        [drag.right]: rightStart - clamped
+      });
+    },
+    [setPanelSizes, taskId]
+  );
+  const onDividerUp = reactExports.useCallback(() => {
+    dragState.current = null;
+  }, []);
+  if (visiblePanels.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-1 items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm", style: { color: "var(--text-tertiary)" }, children: "All panels hidden. Toggle one from the toolbar (⌘1–⌘6)." }) });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref: containerRef, className: "flex min-h-0 min-w-0 flex-1", children: visiblePanels.map((panel, index2) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 min-w-0", style: { flexBasis: `${layout.sizes[panel] ?? 100 / visiblePanels.length}%`, flexGrow: 0, flexShrink: 0, display: "flex" }, children: [
+    index2 > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        role: "separator",
+        "aria-orientation": "vertical",
+        className: "w-[5px] shrink-0 cursor-col-resize transition-colors duration-100 hover:bg-[var(--accent-muted)]",
+        style: { background: "var(--border-subtle)", backgroundClip: "padding-box", borderLeft: "2px solid transparent", borderRight: "2px solid transparent" },
+        onPointerDown: (e) => onDividerDown(visiblePanels[index2 - 1], panel, e),
+        onPointerMove: onDividerMove,
+        onPointerUp: onDividerUp
+      }
+    ) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "flex min-h-0 min-w-0 flex-1 flex-col", "aria-label": PANEL_TITLES[panel], children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "header",
+        {
+          className: "flex h-7 shrink-0 items-center border-b px-2.5 text-xs font-semibold tracking-wide uppercase",
+          style: { borderColor: "var(--border-subtle)", color: "var(--text-tertiary)", background: "var(--bg-surface)" },
+          children: PANEL_TITLES[panel]
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex min-h-0 min-w-0 flex-1 flex-col", children: renderPanel(panel) })
+    ] })
+  ] }, panel)) });
+}
+function ProcessesPanel() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    EmptyState,
+    {
+      icon: /* @__PURE__ */ jsxRuntimeExports.jsx(Activity, { size: 22 }),
+      headline: "Processes",
+      description: "Live process listing arrives with gateway support. Use the terminal (`htop`) meanwhile."
+    }
+  );
+}
+const PANEL_ICONS = {
+  terminal: /* @__PURE__ */ jsxRuntimeExports.jsx(SquareTerminal, { size: 14 }),
+  editor: /* @__PURE__ */ jsxRuntimeExports.jsx(FileCodeCorner, { size: 14 }),
+  git: /* @__PURE__ */ jsxRuntimeExports.jsx(GitBranch, { size: 14 }),
+  browser: /* @__PURE__ */ jsxRuntimeExports.jsx(FolderTree, { size: 14 }),
+  artifacts: /* @__PURE__ */ jsxRuntimeExports.jsx(Package, { size: 14 }),
+  processes: /* @__PURE__ */ jsxRuntimeExports.jsx(Activity, { size: 14 })
+};
+const PANEL_SHORTCUT_ORDER = [
+  "terminal",
+  "editor",
+  "git",
+  "browser",
+  "artifacts",
+  "processes"
+];
 function TaskWorkspace({ taskId }) {
   const api = useConnection((s15) => s15.api);
   const activeSlug = useBoard((s15) => s15.activeProjectSlug);
@@ -35405,6 +36406,11 @@ function TaskWorkspace({ taskId }) {
   const sessionsLoad = useSessions((s15) => s15.load);
   const aliasMap = useSessions((s15) => s15.aliasMap);
   const navigate = useUi((s15) => s15.navigate);
+  const openTask = useWorkspace((s15) => s15.openTask);
+  const focusTask = useWorkspace((s15) => s15.focusTask);
+  const togglePanel = useWorkspace((s15) => s15.togglePanel);
+  const layouts = useWorkspace((s15) => s15.layouts);
+  const layoutFor = useWorkspace((s15) => s15.layoutFor);
   const card = reactExports.useMemo(() => {
     for (const cards of Object.values(cardsByProject)) {
       const found = cards.find((c) => c.id === taskId);
@@ -35415,16 +36421,73 @@ function TaskWorkspace({ taskId }) {
   reactExports.useEffect(() => {
     if (api) void sessionsLoad(api);
   }, [api, sessionsLoad]);
+  reactExports.useEffect(() => {
+    const { evicted } = openTask(taskId);
+    const manager2 = getAttachManager();
+    const aliases = useSessions.getState().aliasMap;
+    for (const evictedTaskId of evicted) {
+      const evictedCard = Object.values(useBoard.getState().cardsByProject).flat().find((c) => c.id === evictedTaskId);
+      const attachName2 = evictedCard?.linkedSessionId ? aliases[evictedCard.linkedSessionId] : null;
+      if (attachName2) manager2.releaseSession(attachName2);
+    }
+    focusTask(taskId);
+  }, [taskId, openTask, focusTask]);
+  reactExports.useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      const index2 = Number.parseInt(e.key, 10);
+      if (Number.isInteger(index2) && index2 >= 1 && index2 <= PANEL_SHORTCUT_ORDER.length) {
+        e.preventDefault();
+        togglePanel(taskId, PANEL_SHORTCUT_ORDER[index2 - 1]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [taskId, togglePanel]);
   const attachName = card?.linkedSessionId ? aliasMap[card.linkedSessionId] ?? null : null;
+  const layout = layouts[taskId] ?? layoutFor(taskId);
+  const renderPanel = (panel) => {
+    switch (panel) {
+      case "terminal":
+        return attachName ? /* @__PURE__ */ jsxRuntimeExports.jsx(TerminalView, { sessionName: attachName }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+          EmptyState,
+          {
+            icon: /* @__PURE__ */ jsxRuntimeExports.jsx(SquareTerminal, { size: 22 }),
+            headline: "No live session",
+            description: card?.linkedSessionId ? "This task's session has ended on your computer." : "This task has no linked terminal session yet.",
+            action: /* @__PURE__ */ jsxRuntimeExports.jsx(
+              Button,
+              {
+                variant: "primary",
+                onClick: () => {
+                  if (api) void sessionsLoad(api);
+                },
+                children: "Refresh sessions"
+              }
+            )
+          }
+        );
+      case "editor":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(EditorPanel, { taskId });
+      case "git":
+        return activeSlug ? /* @__PURE__ */ jsxRuntimeExports.jsx(GitPanel, { projectSlug: activeSlug }) : null;
+      case "browser":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(FilesPanel, { taskId });
+      case "artifacts":
+        return activeSlug ? /* @__PURE__ */ jsxRuntimeExports.jsx(ArtifactsPanel, { projectSlug: activeSlug, taskId }) : null;
+      case "processes":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(ProcessesPanel, {});
+    }
+  };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 flex-1 flex-col", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: "flex shrink-0 items-center gap-2 border-b px-3 py-2",
+        className: "flex shrink-0 items-center gap-2 border-b px-3 py-1.5",
         style: { borderColor: "var(--border-subtle)", background: "var(--bg-surface)" },
         children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(IconButton, { label: "Back to board", onClick: () => navigate({ kind: "board" }), children: /* @__PURE__ */ jsxRuntimeExports.jsx(ArrowLeft, { size: 15 }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-sm font-semibold", style: { color: "var(--text-primary)" }, children: card?.title ?? "Task" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "min-w-0 flex-1 truncate text-sm font-semibold", style: { color: "var(--text-primary)" }, children: card?.title ?? "Task" }),
           attachName ? /* @__PURE__ */ jsxRuntimeExports.jsx(
             "span",
             {
@@ -35432,28 +36495,21 @@ function TaskWorkspace({ taskId }) {
               style: { borderColor: "var(--border-default)", color: "var(--text-tertiary)" },
               children: attachName
             }
-          ) : null
+          ) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center gap-0.5", children: PANEL_SHORTCUT_ORDER.map((panel, i8) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+            IconButton,
+            {
+              label: `${PANEL_TITLES[panel]} (⌘${i8 + 1})`,
+              active: Boolean(layout.visible[panel]),
+              onClick: () => togglePanel(taskId, panel),
+              children: PANEL_ICONS[panel]
+            },
+            panel
+          )) })
         ]
       }
     ),
-    attachName ? /* @__PURE__ */ jsxRuntimeExports.jsx(TerminalView, { sessionName: attachName }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-      EmptyState,
-      {
-        icon: /* @__PURE__ */ jsxRuntimeExports.jsx(SquareTerminal, { size: 28 }),
-        headline: "No live session",
-        description: card?.linkedSessionId ? "This task's session has ended on your computer." : "This task has no linked terminal session yet.",
-        action: activeSlug ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          Button,
-          {
-            variant: "primary",
-            onClick: () => {
-              if (api) void sessionsLoad(api);
-            },
-            children: "Refresh sessions"
-          }
-        ) : null
-      }
-    )
+    /* @__PURE__ */ jsxRuntimeExports.jsx(PanelStrip, { taskId, renderPanel })
   ] });
 }
 function ok$1() {
@@ -37913,15 +38969,15 @@ function initializeDocument(effects) {
       }
       const indexBeforeExits = self2.events.length;
       let indexBeforeFlow = indexBeforeExits;
-      let seen;
+      let seen2;
       let point2;
       while (indexBeforeFlow--) {
         if (self2.events[indexBeforeFlow][0] === "exit" && self2.events[indexBeforeFlow][1].type === "chunkFlow") {
-          if (seen) {
+          if (seen2) {
             point2 = self2.events[indexBeforeFlow][1].end;
             break;
           }
-          seen = true;
+          seen2 = true;
         }
       }
       exitContainers(continued);
@@ -39218,7 +40274,7 @@ function factoryDestination(effects, ok2, nok, type, literalType, literalMarkerT
 function factoryLabel(effects, ok2, nok, type, markerType, stringType) {
   const self2 = this;
   let size = 0;
-  let seen;
+  let seen2;
   return start;
   function start(code2) {
     effects.enter(type);
@@ -39229,7 +40285,7 @@ function factoryLabel(effects, ok2, nok, type, markerType, stringType) {
     return atBreak;
   }
   function atBreak(code2) {
-    if (size > 999 || code2 === null || code2 === 91 || code2 === 93 && !seen || // To do: remove in the future once we’ve switched from
+    if (size > 999 || code2 === null || code2 === 91 || code2 === 93 && !seen2 || // To do: remove in the future once we’ve switched from
     // `micromark-extension-footnote` to `micromark-extension-gfm-footnote`,
     // which doesn’t need this.
     // Hidden footnotes hook.
@@ -39262,7 +40318,7 @@ function factoryLabel(effects, ok2, nok, type, markerType, stringType) {
       return atBreak(code2);
     }
     effects.consume(code2);
-    if (!seen) seen = !markdownSpace(code2);
+    if (!seen2) seen2 = !markdownSpace(code2);
     return code2 === 92 ? labelEscape : labelInside;
   }
   function labelEscape(code2) {
@@ -39335,18 +40391,18 @@ function factoryTitle(effects, ok2, nok, type, markerType, stringType) {
   }
 }
 function factoryWhitespace(effects, ok2) {
-  let seen;
+  let seen2;
   return start;
   function start(code2) {
     if (markdownLineEnding(code2)) {
       effects.enter("lineEnding");
       effects.consume(code2);
       effects.exit("lineEnding");
-      seen = true;
+      seen2 = true;
       return start;
     }
     if (markdownSpace(code2)) {
-      return factorySpace(effects, start, seen ? "linePrefix" : "lineSuffix")(code2);
+      return factorySpace(effects, start, seen2 ? "linePrefix" : "lineSuffix")(code2);
     }
     return ok2(code2);
   }
@@ -45446,6 +46502,137 @@ function StandaloneSession({ sessionName }) {
     /* @__PURE__ */ jsxRuntimeExports.jsx(TerminalView, { sessionName })
   ] });
 }
+const SEARCH_DEBOUNCE_MS = 150;
+const MAX_RESULTS = 30;
+function QuickOpen() {
+  const open = useUi((s15) => s15.quickOpenOpen);
+  const setOpen = useUi((s15) => s15.setQuickOpenOpen);
+  const view = useUi((s15) => s15.view);
+  const navigate = useUi((s15) => s15.navigate);
+  const api = useConnection((s15) => s15.api);
+  const openTab = useEditorTabs((s15) => s15.openTab);
+  const togglePanel = useWorkspace((s15) => s15.togglePanel);
+  const layoutFor = useWorkspace((s15) => s15.layoutFor);
+  const [query, setQuery] = reactExports.useState("");
+  const [results, setResults] = reactExports.useState([]);
+  const [selected, setSelected] = reactExports.useState(0);
+  const inputRef = reactExports.useRef(null);
+  const debounceRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (open) {
+      setQuery("");
+      setResults([]);
+      setSelected(0);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [open]);
+  reactExports.useEffect(() => {
+    if (!open || !api || query.trim().length === 0) {
+      setResults([]);
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      api.get(
+        `/api/files/search?q=${encodeURIComponent(query.trim())}&limit=${MAX_RESULTS}`
+      ).then((res) => {
+        const raw = Array.isArray(res.results) ? res.results : Array.isArray(res.entries) ? res.entries : [];
+        const paths = [];
+        for (const item of raw.slice(0, MAX_RESULTS)) {
+          if (typeof item === "string") paths.push(item);
+          else if (item && typeof item === "object" && typeof item.path === "string") {
+            paths.push(item.path);
+          }
+        }
+        setResults(paths);
+        setSelected(0);
+      }).catch((err) => {
+        console.warn("[quick-open] search failed:", err instanceof Error ? err.message : String(err));
+        setResults([]);
+      });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [api, open, query]);
+  if (!open) return null;
+  const openPath = (path) => {
+    setOpen(false);
+    if (view.kind !== "task") return;
+    openTab(view.taskId, path);
+    if (!layoutFor(view.taskId).visible.editor) togglePanel(view.taskId, "editor");
+    navigate(view);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      className: "fixed inset-0 z-50 flex items-start justify-center pt-[16vh]",
+      style: { background: "rgba(0,0,0,0.45)" },
+      onMouseDown: (e) => {
+        if (e.target === e.currentTarget) setOpen(false);
+      },
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "div",
+        {
+          className: "fade-in w-[560px] overflow-hidden rounded-xl border",
+          style: {
+            background: "var(--bg-overlay)",
+            borderColor: "var(--border-default)",
+            boxShadow: "var(--shadow-3)"
+          },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                ref: inputRef,
+                value: query,
+                onChange: (e) => setQuery(e.target.value),
+                placeholder: "Go to file…",
+                className: "w-full border-b bg-transparent px-4 py-3 text-md outline-none",
+                style: { borderColor: "var(--border-subtle)", color: "var(--text-primary)" },
+                onKeyDown: (e) => {
+                  if (e.key === "Escape") setOpen(false);
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setSelected((s15) => Math.min(s15 + 1, results.length - 1));
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setSelected((s15) => Math.max(s15 - 1, 0));
+                  }
+                  if (e.key === "Enter" && results[selected]) {
+                    openPath(results[selected]);
+                  }
+                }
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "max-h-[300px] overflow-y-auto p-1.5", children: [
+              results.map((path, i8) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  type: "button",
+                  className: "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm",
+                  style: {
+                    background: i8 === selected ? "var(--bg-selected)" : "transparent",
+                    color: "var(--text-primary)"
+                  },
+                  onMouseEnter: () => setSelected(i8),
+                  onClick: () => openPath(path),
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(File, { size: 13, style: { color: "var(--text-tertiary)" } }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: path })
+                  ]
+                },
+                path
+              )),
+              query.trim().length > 0 && results.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "px-3 py-4 text-center text-sm", style: { color: "var(--text-tertiary)" }, children: "No files found." }) : null
+            ] })
+          ]
+        }
+      )
+    }
+  );
+}
 function Composer() {
   const open = useUi((s15) => s15.composerOpen);
   const setOpen = useUi((s15) => s15.setComposerOpen);
@@ -48067,6 +49254,11 @@ function useGlobalShortcuts() {
         ui3.setComposerOpen(!ui3.composerOpen);
         return;
       }
+      if (meta && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        ui3.setQuickOpenOpen(!ui3.quickOpenOpen);
+        return;
+      }
       if (!meta && e.key.toLowerCase() === "c" && !isTypingTarget(e.target)) {
         if (ui3.paletteOpen || ui3.composerOpen || ui3.createTaskOpen) return;
         e.preventDefault();
@@ -48074,7 +49266,21 @@ function useGlobalShortcuts() {
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    const offAction = onEvent("menu:action", ({ action }) => {
+      const ui3 = useUi.getState();
+      if (action === "new-task") ui3.setCreateTaskOpen(true);
+      if (action === "new-thread") ui3.setComposerOpen(true);
+      if (action === "palette") ui3.setPaletteOpen(!ui3.paletteOpen);
+      if (action === "quick-open") ui3.setQuickOpenOpen(!ui3.quickOpenOpen);
+    });
+    const offNavigate = onEvent("menu:navigate", ({ kind }) => {
+      useUi.getState().navigate({ kind });
+    });
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      offAction();
+      offNavigate();
+    };
   }, []);
 }
 function MissionControl() {
@@ -48082,6 +49288,24 @@ function MissionControl() {
   const loadProjects = useBoard((s15) => s15.loadProjects);
   const view = useUi((s15) => s15.view);
   useGlobalShortcuts();
+  reactExports.useEffect(() => {
+    const { configure: configure2, hydrate } = useWorkspace.getState();
+    configure2({
+      loadLayouts: async () => {
+        const result = await invoke("state:get", { key: "panelLayouts" });
+        return result.value ?? null;
+      },
+      saveLayout: async (taskKey, layout) => {
+        const current = await invoke("state:get", { key: "panelLayouts" });
+        const layouts = current.value ?? {};
+        await invoke("state:set", {
+          key: "panelLayouts",
+          value: { ...layouts, [taskKey]: layout }
+        });
+      }
+    });
+    void hydrate();
+  }, []);
   reactExports.useEffect(() => {
     if (!api) return;
     let cancelled = false;
@@ -48121,7 +49345,8 @@ function MissionControl() {
       )
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(Composer, {}),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(CommandPalette, {})
+    /* @__PURE__ */ jsxRuntimeExports.jsx(CommandPalette, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(QuickOpen, {})
   ] });
 }
 function App() {
@@ -48139,3 +49364,17 @@ function App() {
 ReactDOM$1.createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(React.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
 );
+export {
+  AppError as A,
+  ConflictBar as C,
+  __vitePreload as _,
+  useConnection as a,
+  useEditorTabs as b,
+  jsxRuntimeExports as j,
+  looseObject as l,
+  number$1 as n,
+  reactExports as r,
+  string$2 as s,
+  toUserMessage as t,
+  union as u
+};

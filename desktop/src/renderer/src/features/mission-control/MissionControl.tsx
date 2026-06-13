@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useUi } from "../../stores/ui";
+import { useWorkspace } from "../../stores/workspace";
 import Sidebar from "./Sidebar";
 import Titlebar from "./Titlebar";
 import Board from "../board/Board";
@@ -10,6 +11,7 @@ import ThreadView from "../threads/ThreadView";
 import SessionsView from "../sessions/SessionsView";
 import SettingsView from "../settings/SettingsView";
 import StandaloneSession from "../sessions/StandaloneSession";
+import QuickOpen from "../files/QuickOpen";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
 import { useGlobalShortcuts } from "./shortcuts";
@@ -22,6 +24,26 @@ export default function MissionControl() {
   const view = useUi((s) => s.view);
 
   useGlobalShortcuts();
+
+  useEffect(() => {
+    // Wire workspace layout persistence through the trusted core once.
+    const { configure, hydrate } = useWorkspace.getState();
+    configure({
+      loadLayouts: async () => {
+        const result = await invoke("state:get", { key: "panelLayouts" });
+        return (result.value as Record<string, never> | null) ?? null;
+      },
+      saveLayout: async (taskKey, layout) => {
+        const current = await invoke("state:get", { key: "panelLayouts" });
+        const layouts = (current.value as Record<string, unknown> | null) ?? {};
+        await invoke("state:set", {
+          key: "panelLayouts",
+          value: { ...layouts, [taskKey]: layout },
+        });
+      },
+    });
+    void hydrate();
+  }, []);
 
   useEffect(() => {
     if (!api) return;
@@ -64,6 +86,7 @@ export default function MissionControl() {
       </div>
       <Composer />
       <CommandPalette />
+      <QuickOpen />
     </div>
   );
 }

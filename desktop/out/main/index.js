@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, shell, safeStorage, Notification, ipcMain } from "electron";
+import { app, shell, Menu, BrowserWindow, session, safeStorage, Notification, ipcMain } from "electron";
 import { join } from "node:path";
 import { rm, readFile, mkdir, writeFile, rename } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
@@ -404,7 +404,9 @@ const EVENT_CHANNELS = {
   "notification:clicked": z.object({ threadId: z.string().min(1).max(128) }).strict(),
   "update:available": z.object({ version: z.string().max(64) }).strict(),
   "update:ready": z.object({ version: z.string().max(64) }).strict(),
-  "window:focus-changed": z.object({ focused: z.boolean() }).strict()
+  "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
+  "menu:action": z.object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open"]) }).strict(),
+  "menu:navigate": z.object({ kind: z.enum(["settings", "board"]) }).strict()
 };
 function registerIpcHandlers(ipcMain2, ctx) {
   function handle(channel, handler) {
@@ -576,6 +578,82 @@ function createLocalStore(options) {
     }
   };
 }
+function installAppMenu(getWindow) {
+  const send = (channel, payload) => {
+    getWindow()?.webContents.send(channel, payload);
+  };
+  const template = [
+    {
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        {
+          label: "Settings…",
+          accelerator: "Cmd+,",
+          click: () => send("menu:navigate", { kind: "settings" })
+        },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" }
+      ]
+    },
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Task",
+          accelerator: "Cmd+N",
+          click: () => send("menu:action", { action: "new-task" })
+        },
+        {
+          label: "New Agent Thread",
+          accelerator: "Cmd+J",
+          click: () => send("menu:action", { action: "new-thread" })
+        },
+        { type: "separator" },
+        { role: "close" }
+      ]
+    },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Command Palette",
+          accelerator: "Cmd+K",
+          click: () => send("menu:action", { action: "palette" })
+        },
+        {
+          label: "Go to File",
+          accelerator: "Cmd+P",
+          click: () => send("menu:action", { action: "quick-open" })
+        },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+        ...app.isPackaged ? [] : [{ type: "separator" }, { role: "reload" }, { role: "toggleDevTools" }]
+      ]
+    },
+    { role: "windowMenu" },
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Matrix OS Documentation",
+          click: () => {
+            void shell.openExternal("https://matrix-os.com/docs");
+          }
+        }
+      ]
+    }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 if (process.env.OPERATOR_USER_DATA_DIR) {
   app.setPath("userData", process.env.OPERATOR_USER_DATA_DIR);
@@ -687,6 +765,7 @@ app.whenReady().then(async () => {
   });
   const savedBounds = await store.get("windowBounds");
   mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });
+  installAppMenu(() => mainWindow);
   let boundsSaveTimer = null;
   const persistBounds = () => {
     if (boundsSaveTimer) clearTimeout(boundsSaveTimer);

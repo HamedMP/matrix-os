@@ -5,6 +5,7 @@ import { createCredentialStore } from "./auth/credential-store";
 import { installHeaderInjection } from "./auth/header-injection";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
+import { installAppMenu } from "./platform/menu";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
@@ -140,6 +141,7 @@ app.whenReady().then(async () => {
 
   const savedBounds = await store.get("windowBounds");
   mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });
+  installAppMenu(() => mainWindow);
 
   let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
   const persistBounds = () => {

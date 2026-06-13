@@ -4449,7 +4449,9 @@ const EVENT_CHANNELS = {
   "notification:clicked": object({ threadId: string().min(1).max(128) }).strict(),
   "update:available": object({ version: string().max(64) }).strict(),
   "update:ready": object({ version: string().max(64) }).strict(),
-  "window:focus-changed": object({ focused: boolean() }).strict()
+  "window:focus-changed": object({ focused: boolean() }).strict(),
+  "menu:action": object({ action: _enum(["new-task", "new-thread", "palette", "quick-open"]) }).strict(),
+  "menu:navigate": object({ kind: _enum(["settings", "board"]) }).strict()
 };
 const api = {
   invoke(channel, payload) {

@@ -170,6 +170,10 @@ export const EVENT_CHANNELS = {
   "update:available": z.object({ version: z.string().max(64) }).strict(),
   "update:ready": z.object({ version: z.string().max(64) }).strict(),
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),
+  "menu:action": z
+    .object({ action: z.enum(["new-task", "new-thread", "palette", "quick-open"]) })
+    .strict(),
+  "menu:navigate": z.object({ kind: z.enum(["settings", "board"]) }).strict(),
 } as const;
 
 export type InvokeChannel = keyof typeof INVOKE_CHANNELS;
