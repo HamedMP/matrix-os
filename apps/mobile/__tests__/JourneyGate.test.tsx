@@ -72,12 +72,26 @@ describe("JourneyGate", () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
-  it("offers no retry once exhausted", () => {
-    const { queryByTestId, getByText } = render(
-      <JourneyGate result={ok({ phase: "provisioning_failed", failure: { retryable: false, attempt: 3 } })} onRetry={noop} onOpenUrl={noop} />,
+  it("offers contact-support (not retry) once exhausted", () => {
+    const onOpenUrl = jest.fn();
+    const { queryByTestId, getByText, getByTestId } = render(
+      <JourneyGate result={ok({ phase: "provisioning_failed", failure: { retryable: false, attempt: 3 } })} onRetry={noop} onOpenUrl={onOpenUrl} />,
     );
     expect(getByText("Setup needs attention")).toBeTruthy();
     expect(queryByTestId("journey-retry")).toBeNull();
+    fireEvent.press(getByTestId("journey-support"));
+    expect(onOpenUrl).toHaveBeenCalledWith("mailto:support@matrix-os.com");
+  });
+
+  it("offers contact-support when payment settling is delayed", () => {
+    const onOpenUrl = jest.fn();
+    const { getByText, getByTestId, queryByTestId } = render(
+      <JourneyGate result={ok({ phase: "payment_settling", detail: "Delayed…", settling: { since: "x", delayed: true } })} onRetry={noop} onOpenUrl={onOpenUrl} />,
+    );
+    expect(getByText("Taking longer than expected")).toBeTruthy();
+    expect(queryByTestId("journey-loading")).toBeNull();
+    fireEvent.press(getByTestId("journey-support"));
+    expect(onOpenUrl).toHaveBeenCalledWith("mailto:support@matrix-os.com");
   });
 
   it("shows a retry on an unreachable result", () => {
