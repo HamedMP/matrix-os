@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell 
 import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
-import { installHeaderInjection } from "./auth/header-injection";
+import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
@@ -119,6 +119,12 @@ app.whenReady().then(async () => {
     () => auth.getToken(),
     () => auth.getGatewayOrigin(),
   );
+  // The renderer is a different origin than the gateway (file:// in prod,
+  // localhost in dev), so allow its cross-origin fetches to the gateway.
+  const rendererOrigin = process.env.ELECTRON_RENDERER_URL
+    ? new URL(process.env.ELECTRON_RENDERER_URL).origin
+    : "null";
+  installGatewayCors(session.defaultSession, () => auth.getGatewayOrigin(), rendererOrigin);
 
   const embeds = new EmbedService({
     getWindow: () => mainWindow,
