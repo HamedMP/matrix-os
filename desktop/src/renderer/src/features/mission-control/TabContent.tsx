@@ -8,11 +8,17 @@ import ThreadView from "../threads/ThreadView";
 import SettingsView from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
 import AgentsTab from "../threads/AgentsTab";
+import ChatTab from "../chat/ChatTab";
+import { AppLauncher } from "../embeds";
 
 function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
   switch (tab.kind) {
     case "home":
       return <HomeTab />;
+    case "chat":
+      return <ChatTab />;
+    case "apps":
+      return <AppLauncher />;
     case "board":
       return <Board projectSlug={tab.projectSlug} />;
     case "task":

@@ -4,7 +4,7 @@
 // instead of duplicating it.
 import { create } from "zustand";
 
-export type TabKind = "home" | "board" | "task" | "terminal" | "agents" | "thread" | "settings";
+export type TabKind = "home" | "chat" | "board" | "task" | "terminal" | "agents" | "thread" | "apps" | "settings";
 
 export interface Tab {
   id: string;

@@ -2,10 +2,22 @@
 // task events, native notifications, dock badge.
 import { invoke, onEvent } from "./operator";
 import { KernelSocket } from "./kernel-socket";
+import type { ChatEvent } from "./chat";
 import { useBoard } from "../stores/board";
 import { useConnection } from "../stores/connection";
+import { useHermesChat } from "../stores/hermes-chat";
 import { useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
+
+const KERNEL_CHAT_EVENT_TYPES = new Set([
+  "kernel:init",
+  "kernel:text",
+  "kernel:tool_start",
+  "kernel:tool_end",
+  "kernel:result",
+  "kernel:error",
+  "kernel:aborted",
+]);
 
 let socket: KernelSocket | null = null;
 
@@ -57,6 +69,10 @@ export function wireKernel(): () => void {
     }
     if (msg.type === "task:created" || msg.type === "task:updated") {
       useBoard.getState().applyTaskEvent(msg as never);
+    }
+    // Feed the OS-agent conversation (it filters to its own request id).
+    if (KERNEL_CHAT_EVENT_TYPES.has(msg.type)) {
+      useHermesChat.getState().ingest(msg as unknown as ChatEvent);
     }
   });
 
