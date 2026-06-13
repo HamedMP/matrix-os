@@ -10,6 +10,14 @@ export interface MatrixApp {
   category?: string;
 }
 
+// Apps resolve their icon through the gateway's /icons/{slug}.png, which falls
+// back to shipped assets. Bearer auth is injected by the trusted core for the
+// gateway origin, so the renderer can load it directly.
+export function appIconUrl(platformHost: string, slug: string): string | null {
+  if (!platformHost) return null;
+  return `${platformHost.replace(/\/$/, "")}/icons/${encodeURIComponent(slug)}.png`;
+}
+
 export function parseApps(value: unknown): MatrixApp[] {
   const list = Array.isArray(value)
     ? value

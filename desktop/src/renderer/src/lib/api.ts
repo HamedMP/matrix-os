@@ -1,7 +1,7 @@
 // Typed gateway client (contracts/gateway-contract.md). Auth rides the
 // Authorization header injected by the trusted core at the network layer —
 // this module never sees the credential. Every call has a timeout.
-import { AppError, classifyHttpStatus, classifyTransportError } from "../../../shared/app-error";
+import { AppError, classifyHttpStatus, classifyTransportError, safeErrorDetail } from "../../../shared/app-error";
 
 const API_TIMEOUT_MS = 10_000;
 
@@ -50,7 +50,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     }
     if (!response.ok) {
       if (response.status === 401) options.onUnauthorized?.();
-      throw new AppError(classifyHttpStatus(response.status));
+      // Extract the gateway's safe error CODE (e.g. invalid_session_request) so
+      // callers can surface a specific reason instead of only the generic copy.
+      let detail: string | undefined;
+      try {
+        const body = (await response.clone().json()) as { error?: unknown };
+        const err = body.error;
+        detail = safeErrorDetail(typeof err === "object" && err ? (err as { code?: unknown }).code : err);
+      } catch {
+        // Non-JSON / empty body — no detail to surface.
+      }
+      throw new AppError(classifyHttpStatus(response.status), detail ? { detail } : undefined);
     }
     return response;
   }

@@ -48,15 +48,17 @@ export default function StartSessionControls({
 }) {
   const api = useConnection((s) => s.api);
   const creating = useSessions((s) => s.creating);
+  const createError = useSessions((s) => s.createError);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const errorLabel = startSessionErrorLabel(error, compact);
 
   const launch = async (l: Launch) => {
     if (!api || pending) return;
     setPending(l.label);
     setError(null);
     try {
+      // The sessions store sets a specific `createError` on failure (mapped
+      // from the gateway's reason code); fall back to a generic line.
       const ok = await startTaskSession(api, {
         projectSlug,
         taskId,
@@ -66,13 +68,16 @@ export default function StartSessionControls({
         kind: l.kind,
         ...(l.kind === "agent" ? { agent: l.agent } : {}),
       });
-      if (!ok) setError("Couldn't start the session. Check that the agent is connected.");
+      if (!ok) setError(useSessions.getState().createError ?? "Couldn't start the session.");
     } catch (err: unknown) {
       setError(toUserMessage(err));
     } finally {
       setPending(null);
     }
   };
+
+  const shownError = error ?? createError;
+  const errorLabel = startSessionErrorLabel(shownError, compact);
 
   return (
     <div className={compact ? "flex items-center gap-1.5" : "flex flex-col items-center gap-2"}>
@@ -101,7 +106,7 @@ export default function StartSessionControls({
               : "flex items-center gap-1 text-xs"
           }
           style={{ color: "var(--danger)" }}
-          title={compact ? error ?? undefined : undefined}
+          title={compact ? shownError ?? undefined : undefined}
           aria-live="polite"
         >
           <AlertCircle size={12} className="shrink-0" />

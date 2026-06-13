@@ -10,6 +10,7 @@ import { Button, Dialog } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type CardPriority, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { useUi } from "../../stores/ui";
 
 const PRIORITIES: CardPriority[] = ["low", "normal", "high", "urgent"];
 const SELECT_STYLE: CSSProperties = {
@@ -20,6 +21,15 @@ const SELECT_STYLE: CSSProperties = {
   padding: "4px 8px",
   fontSize: "var(--text-sm)",
 };
+
+// Default the new task to the column its "+" was clicked from (set in the UI
+// store when opening), falling back to "todo".
+function initialStatus(): CardStatus {
+  const fromColumn = useUi.getState().createTaskStatus;
+  return fromColumn && (BOARD_COLUMNS as readonly string[]).includes(fromColumn)
+    ? (fromColumn as CardStatus)
+    : "todo";
+}
 
 // Inner form is mounted only while the dialog is open, so its state starts
 // fresh on each open without a reset-on-prop effect (react-doctor: no
@@ -39,7 +49,7 @@ function CreateTaskForm({
   const openTab = useTabs((s) => s.openTab);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [status, setStatus] = useState<CardStatus>("todo");
+  const [status, setStatus] = useState<CardStatus>(initialStatus);
   const [priority, setPriority] = useState<CardPriority>("normal");
   const [submitting, setSubmitting] = useState(false);
   const [failureMessage, setFailureMessage] = useState<string | null>(null);

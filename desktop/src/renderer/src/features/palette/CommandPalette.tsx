@@ -1,7 +1,7 @@
 import { Command } from "cmdk";
 import { useEffect } from "react";
 import { Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, SquareTerminal } from "lucide-react";
-import { useApps } from "../../stores/apps";
+import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
@@ -24,6 +24,7 @@ export default function CommandPalette() {
   const apps = useApps((s) => s.apps);
   const loadApps = useApps((s) => s.load);
   const api = useConnection((s) => s.api);
+  const platformHost = useConnection((s) => s.platformHost);
 
   // Make sure apps are available the first time the palette opens.
   useEffect(() => {
@@ -134,7 +135,7 @@ export default function CommandPalette() {
                   key={app.slug}
                   icon={<LayoutGrid size={14} />}
                   label={app.name}
-                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name }))}
+                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(appIconUrl(platformHost, app.slug) ? { icon: appIconUrl(platformHost, app.slug)! } : {}) }))}
                 />
               ))}
             </Command.Group>

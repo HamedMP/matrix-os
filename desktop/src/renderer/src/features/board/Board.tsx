@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { Kanban } from "lucide-react";
+import { Kanban, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
@@ -60,8 +60,9 @@ function Column({
   activeDragId: string | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `column:${status}` });
+  const openCreateTask = useUi((s) => s.openCreateTask);
   return (
-    <div className="flex w-[252px] shrink-0 flex-col">
+    <div className="group/col flex w-[252px] shrink-0 flex-col">
       <div className="mb-2 flex items-center gap-2 px-1">
         <span className="h-2 w-2 rounded-full" style={{ background: COLUMN_COLOR[status] }} />
         <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
@@ -70,6 +71,17 @@ function Column({
         <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
           {cards.length}
         </span>
+        <div className="flex-1" />
+        <button
+          type="button"
+          aria-label={`New task in ${COLUMN_LABEL[status]}`}
+          title={`New task in ${COLUMN_LABEL[status]}`}
+          className="flex h-5 w-5 items-center justify-center rounded opacity-0 transition-opacity duration-100 hover:bg-[var(--bg-hover)] group-hover/col:opacity-100"
+          style={{ color: "var(--text-tertiary)" }}
+          onClick={() => openCreateTask(status)}
+        >
+          <Plus size={14} />
+        </button>
       </div>
       <div
         ref={setNodeRef}
@@ -79,6 +91,15 @@ function Column({
         {cards.map((card) => (
           <DraggableCard key={card.id} card={card} dragging={activeDragId === card.id} />
         ))}
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-100 hover:bg-[var(--bg-hover)]"
+          style={{ color: "var(--text-tertiary)" }}
+          onClick={() => openCreateTask(status)}
+        >
+          <Plus size={13} />
+          New task
+        </button>
       </div>
     </div>
   );
