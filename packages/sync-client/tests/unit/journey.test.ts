@@ -23,6 +23,13 @@ describe("cli journeyGuidance", () => {
     expect(g.lines.join(" ")).toMatch(/mos setup/);
   });
 
+  it("account_required tells the user to re-authenticate, not to run setup", () => {
+    const g = journeyGuidance(state({ phase: "account_required" }));
+    expect(g.suggestedCommand).toBe("login");
+    expect(g.lines.join(" ")).toMatch(/sign in again/i);
+    expect(g.lines.join(" ")).not.toMatch(/mos setup/);
+  });
+
   it("plan_required prints the plans URL and suggests setup", () => {
     const g = journeyGuidance(state({ phase: "plan_required", nextAction: { kind: "open_plans", url: "https://app.matrix-os.com/?plans=1" } }));
     expect(g.lines.join("\n")).toContain("https://app.matrix-os.com/?plans=1");

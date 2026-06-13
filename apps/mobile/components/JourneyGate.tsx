@@ -123,7 +123,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, working = false }: Jou
         </Centered>
       );
     default:
-      // first_run / ready / account_required — the caller redirects.
+      // first_run / ready — the caller redirects.
       return (
         <Centered>
           <ActivityIndicator color={colors.light.primary} testID="journey-loading" />
