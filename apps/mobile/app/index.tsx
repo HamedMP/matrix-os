@@ -18,7 +18,7 @@ const JOURNEY_POLL_INTERVAL_MS = 5_000;
 // onboarding phase (plan / settling / building / retry) instead of a broken shell.
 function SignedInJourneyGate() {
   const router = useRouter();
-  const { getToken } = useAuth();
+  const { getToken, signOut } = useAuth();
   const [result, setResult] = useState<JourneyFetchResult | null>(null);
   const [working, setWorking] = useState(false);
   const [nonce, setNonce] = useState(0);
@@ -59,6 +59,16 @@ function SignedInJourneyGate() {
     setNonce((n) => n + 1);
   }
 
+  async function handleSignOut() {
+    // Clearing the Clerk session flips isSignedIn → false, so Index re-renders
+    // the landing screen where the user can sign in again.
+    try {
+      await signOut();
+    } catch (err: unknown) {
+      console.warn("[mobile] sign-out failed", err instanceof Error ? err.name : typeof err);
+    }
+  }
+
   async function handleRetry() {
     setWorking(true);
     try {
@@ -86,6 +96,7 @@ function SignedInJourneyGate() {
       working={working}
       onRetry={handleRetry}
       onRefresh={reload}
+      onSignOut={handleSignOut}
       onOpenUrl={(url) => { void Linking.openURL(url); }}
     />
   );

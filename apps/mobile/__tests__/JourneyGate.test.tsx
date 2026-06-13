@@ -27,12 +27,15 @@ describe("JourneyGate", () => {
     expect(onOpenUrl).toHaveBeenCalledWith("https://app.matrix-os.com/?plans=1");
   });
 
-  it("account_required prompts re-sign-in instead of a stuck spinner", () => {
-    const { getByText, queryByTestId } = render(
-      <JourneyGate result={ok({ phase: "account_required", detail: "Sign in to continue." })} onRetry={noop} onOpenUrl={noop} />,
+  it("account_required prompts re-sign-in with an actionable button", () => {
+    const onSignOut = jest.fn();
+    const { getByText, queryByTestId, getByTestId } = render(
+      <JourneyGate result={ok({ phase: "account_required", detail: "Sign in to continue." })} onRetry={noop} onOpenUrl={noop} onSignOut={onSignOut} />,
     );
     expect(getByText("Please sign in again")).toBeTruthy();
     expect(queryByTestId("journey-loading")).toBeNull();
+    fireEvent.press(getByTestId("journey-sign-in"));
+    expect(onSignOut).toHaveBeenCalled();
   });
 
   it("plan_required always offers a Check again CTA, even without a URL", () => {
@@ -84,8 +87,11 @@ describe("JourneyGate", () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
-  it("prompts re-sign-in when unauthorized", () => {
-    const { getByText } = render(<JourneyGate result={{ status: "unauthorized" }} onRetry={noop} onOpenUrl={noop} />);
+  it("prompts re-sign-in when unauthorized, with a sign-in action", () => {
+    const onSignOut = jest.fn();
+    const { getByText, getByTestId } = render(<JourneyGate result={{ status: "unauthorized" }} onRetry={noop} onOpenUrl={noop} onSignOut={onSignOut} />);
     expect(getByText("Please sign in again")).toBeTruthy();
+    fireEvent.press(getByTestId("journey-sign-in"));
+    expect(onSignOut).toHaveBeenCalled();
   });
 });
