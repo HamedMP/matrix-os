@@ -1,0 +1,108 @@
+/*
+ * Operator design tokens — dark-first, Linear/Codex-grade density.
+ * Spec: specs/094-electron-macos-shell (research R12).
+ * Seeded from shell/src/lib/theme-presets.ts dark preset, tuned for desktop density.
+ */
+
+:root {
+  /* ── Background layers (low → high) ─────────────────────────── */
+  --bg-app: #0e0e13;
+  --bg-surface: #14141b;
+  --bg-raised: #1a1a23;
+  --bg-overlay: #1f1f2a;
+  --bg-hover: rgba(255, 255, 255, 0.045);
+  --bg-active: rgba(255, 255, 255, 0.08);
+  --bg-selected: rgba(124, 111, 247, 0.14);
+
+  /* ── Hairlines & borders ────────────────────────────────────── */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* ── Text ───────────────────────────────────────────────────── */
+  --text-primary: #e9e9f1;
+  --text-secondary: #a3a3b8;
+  --text-tertiary: #6e6e83;
+  --text-disabled: #4a4a5c;
+  --text-on-accent: #ffffff;
+
+  /* ── Brand & semantic ───────────────────────────────────────── */
+  --accent: #7c6ff7;
+  --accent-hover: #8d82f9;
+  --accent-muted: rgba(124, 111, 247, 0.16);
+  --success: #3ecf8e;
+  --success-muted: rgba(62, 207, 142, 0.14);
+  --warning: #fbbf24;
+  --warning-muted: rgba(251, 191, 36, 0.14);
+  --danger: #f0506e;
+  --danger-muted: rgba(240, 80, 110, 0.14);
+  --info: #38bdf8;
+  --info-muted: rgba(56, 189, 248, 0.14);
+
+  /* ── Status (tasks / threads / sessions) ────────────────────── */
+  --status-todo: #8b8ba3;
+  --status-running: #7c6ff7;
+  --status-waiting: #38bdf8;
+  --status-blocked: #fb923c;
+  --status-complete: #3ecf8e;
+  --status-attention: #fbbf24;
+  --status-failed: #f0506e;
+
+  /* ── Typography ─────────────────────────────────────────────── */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code", "SF Mono", ui-monospace, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  /* ── Geometry ───────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --titlebar-height: 38px;
+
+  /* ── Elevation ──────────────────────────────────────────────── */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55);
+
+  /* ── Focus & motion ─────────────────────────────────────────── */
+  --focus-ring: 0 0 0 2px rgba(124, 111, 247, 0.45);
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg-app: #f7f7fa;
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-hover: rgba(20, 20, 40, 0.05);
+  --bg-active: rgba(20, 20, 40, 0.09);
+  --bg-selected: rgba(124, 111, 247, 0.12);
+
+  --border-subtle: rgba(20, 20, 40, 0.07);
+  --border-default: rgba(20, 20, 40, 0.12);
+  --border-strong: rgba(20, 20, 40, 0.2);
+
+  --text-primary: #1a1a26;
+  --text-secondary: #585870;
+  --text-tertiary: #8a8a9e;
+  --text-disabled: #b5b5c4;
+
+  --accent: #6c5ef0;
+  --accent-hover: #5b4ce8;
+
+  --shadow-1: 0 1px 2px rgba(20, 20, 40, 0.08);
+  --shadow-2: 0 4px 12px rgba(20, 20, 40, 0.1);
+  --shadow-3: 0 12px 32px rgba(20, 20, 40, 0.14);
+
+  color-scheme: light;
+}
