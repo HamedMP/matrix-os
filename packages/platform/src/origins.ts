@@ -8,14 +8,26 @@ const DEFAULT_APP_ORIGIN = 'https://app.matrix-os.com';
 const DEFAULT_API_ORIGIN = 'https://api.matrix-os.com';
 const DEFAULT_WWW_ORIGIN = 'https://matrix-os.com';
 
-function normalizeOrigin(value: string): string {
+// Returns the URL origin, or null if `value` isn't a parseable absolute URL or
+// yields an opaque origin (the string "null") — e.g. a schemeless `localhost:3000`.
+function tryOrigin(value: string): string | null {
   try {
-    return new URL(value).origin;
+    const { origin } = new URL(value);
+    return origin && origin !== 'null' ? origin : null;
   } catch (err: unknown) {
-    // Value isn't a full URL (e.g. a bare host) — strip a trailing slash and use
-    // it as-is rather than throwing; configuration errors surface in logs upstream.
-    return value.replace(/\/+$/, '');
+    return null;
   }
+}
+
+function normalizeOrigin(value: string): string {
+  const direct = tryOrigin(value);
+  if (direct) return direct;
+  // Repair common misconfigs (bare host / schemeless `localhost:3000`) by
+  // assuming https rather than letting an opaque "null" origin poison every
+  // redirect URL silently.
+  const prefixed = tryOrigin(`https://${value.replace(/^\/+/, '')}`);
+  if (prefixed) return prefixed;
+  return value.replace(/\/+$/, '');
 }
 
 /** The app shell / auth door origin (e.g. https://app.matrix-os.com). */

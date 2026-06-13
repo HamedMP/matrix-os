@@ -20,6 +20,12 @@ describe('platform/origins', () => {
       expect(apiOrigin({} as NodeJS.ProcessEnv)).toBe('https://api.matrix-os.com');
       expect(wwwOrigin({} as NodeJS.ProcessEnv)).toBe('https://matrix-os.com');
     });
+
+    it('repairs schemeless/bare-host misconfigs instead of emitting an opaque "null" origin', () => {
+      // new URL('localhost:3000').origin === 'null' — must never reach a redirect.
+      expect(appOrigin({ MATRIX_APP_ORIGIN: 'localhost:3000' } as NodeJS.ProcessEnv)).toBe('https://localhost:3000');
+      expect(appOrigin({ MATRIX_APP_ORIGIN: 'app.example.com' } as NodeJS.ProcessEnv)).toBe('https://app.example.com');
+    });
   });
 
   describe('resolveReturnPath', () => {
