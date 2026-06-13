@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/landing/SiteHeader";
 import { Hero } from "@/components/landing/Hero";
 import { AgentMarquee } from "@/components/landing/AgentMarquee";
 import { PlatformGrid } from "@/components/landing/PlatformGrid";
+import { SurfacesSection } from "@/components/landing/SurfacesSection";
 import { SymphonySection } from "@/components/landing/SymphonySection";
 import { QuoteStats } from "@/components/landing/QuoteStats";
 import { HermesSection } from "@/components/landing/HermesSection";
@@ -55,6 +56,7 @@ export default function LandingPage() {
         <Hero />
         <AgentMarquee />
         <PlatformGrid />
+        <SurfacesSection />
         <SymphonySection />
         <QuoteStats />
         <HermesSection />
