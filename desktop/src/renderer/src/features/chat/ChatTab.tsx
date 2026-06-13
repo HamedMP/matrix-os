@@ -5,7 +5,6 @@ import { groupMessages } from "../../lib/chat";
 import { useBoard } from "../../stores/board";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { useThreads, type ThreadStatus } from "../../stores/threads";
-import { useUi } from "../../stores/ui";
 import ThreadView from "../threads/ThreadView";
 import { Conversation, ConversationContent } from "./elements/conversation";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
@@ -146,7 +145,6 @@ export default function ChatTab() {
   const threads = useThreads((s) => s.threads);
   const activeThreadId = useThreads((s) => s.activeThreadId);
   const setActiveThread = useThreads((s) => s.setActiveThread);
-  const setComposerOpen = useUi((s) => s.setComposerOpen);
 
   // activeThreadId is the single source of truth: null → Hermes, otherwise the
   // selected agent run (the composer and sidebar Chat both drive it).
@@ -177,8 +175,8 @@ export default function ChatTab() {
             type="button"
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-[var(--bg-hover)]"
             style={{ color: "var(--text-secondary)" }}
-            onClick={() => setComposerOpen(true)}
-            title="New agent run (⌘J)"
+            onClick={() => setActiveThread(null)}
+            title="New chat with Hermes"
           >
             <MessageSquarePlus size={13} />
             New
