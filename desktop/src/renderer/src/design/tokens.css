@@ -1,0 +1,130 @@
+/*
+ * Operator design tokens — Matrix OS brand (light-first, forest + cream).
+ * Palette mirrors www landing globals.css so the app and site feel like one product.
+ */
+
+:root {
+  /* ── Background layers (low → high) ─────────────────────────── */
+  --bg-app: #fcfcfb;
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-sunken: #f7f6f1;
+  --bg-hover: rgba(67, 78, 63, 0.055);
+  --bg-active: rgba(67, 78, 63, 0.1);
+  --bg-selected: rgba(67, 78, 63, 0.08);
+
+  /* ── Brand surfaces (the dark forest panel) ─────────────────── */
+  --forest: #434e3f;
+  --forest-deep: #32352e;
+  --forest-foreground: #fafaf5;
+  --forest-muted: rgba(250, 250, 245, 0.62);
+
+  /* ── Hairlines & borders ────────────────────────────────────── */
+  --border-subtle: #ebe9e1;
+  --border-default: #d6d3c8;
+  --border-strong: #c4c0b2;
+
+  /* ── Text ───────────────────────────────────────────────────── */
+  --text-primary: #282c25;
+  --text-secondary: #5b5f53;
+  --text-tertiary: #8a8576;
+  --text-disabled: #b5b1a3;
+  --text-on-accent: #fafaf5;
+
+  /* ── Brand & semantic ───────────────────────────────────────── */
+  --accent: #434e3f;
+  --accent-hover: #353e31;
+  --accent-muted: rgba(67, 78, 63, 0.1);
+  --highlight: #d06f25;
+  --highlight-muted: rgba(208, 111, 37, 0.12);
+  --success: #4f9d69;
+  --success-muted: rgba(79, 157, 105, 0.14);
+  --warning: #c08a2e;
+  --warning-muted: rgba(192, 138, 46, 0.14);
+  --danger: #c8553d;
+  --danger-muted: rgba(200, 85, 61, 0.12);
+  --info: #4a7c92;
+  --info-muted: rgba(74, 124, 146, 0.12);
+
+  /* ── Status (tasks / threads / sessions) ────────────────────── */
+  --status-todo: #8a8576;
+  --status-running: #4a7c92;
+  --status-waiting: #c08a2e;
+  --status-blocked: #c8553d;
+  --status-complete: #4f9d69;
+  --status-attention: #d06f25;
+  --status-failed: #c8553d;
+
+  /* ── Typography ─────────────────────────────────────────────── */
+  --font-ui: "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "MesloLGS NF", "SF Mono", ui-monospace, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 28px;
+
+  /* ── Geometry ───────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --titlebar-height: 40px;
+  --tabbar-height: 38px;
+
+  /* ── Elevation ──────────────────────────────────────────────── */
+  --shadow-1: 0 1px 2px rgba(40, 44, 37, 0.06);
+  --shadow-2: 0 6px 20px rgba(40, 44, 37, 0.1);
+  --shadow-3: 0 18px 48px rgba(40, 44, 37, 0.16);
+
+  /* ── Focus & motion ─────────────────────────────────────────── */
+  --focus-ring: 0 0 0 3px rgba(67, 78, 63, 0.22);
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg-app: #141614;
+  --bg-surface: #181c18;
+  --bg-raised: #1a1e1a;
+  --bg-overlay: #1e221e;
+  --bg-sunken: #121412;
+  --bg-hover: rgba(140, 199, 190, 0.07);
+  --bg-active: rgba(140, 199, 190, 0.12);
+  --bg-selected: rgba(140, 199, 190, 0.12);
+
+  --forest: #1a1e1a;
+  --forest-deep: #101210;
+  --forest-foreground: #eaeceA;
+  --forest-muted: rgba(234, 236, 234, 0.6);
+
+  --border-subtle: rgba(140, 199, 190, 0.1);
+  --border-default: rgba(140, 199, 190, 0.16);
+  --border-strong: rgba(140, 199, 190, 0.24);
+
+  --text-primary: #eaeceA;
+  --text-secondary: #aab4ac;
+  --text-tertiary: #7a8a80;
+  --text-disabled: #55605a;
+  --text-on-accent: #141614;
+
+  --accent: #8cc7be;
+  --accent-hover: #9dd3cb;
+  --accent-muted: rgba(140, 199, 190, 0.16);
+  --highlight: #d8853f;
+  --highlight-muted: rgba(216, 133, 63, 0.18);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.6);
+
+  --focus-ring: 0 0 0 3px rgba(140, 199, 190, 0.32);
+
+  color-scheme: dark;
+}

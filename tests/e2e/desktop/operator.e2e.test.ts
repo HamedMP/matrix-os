@@ -1,0 +1,131 @@
+// US1/US2 end-to-end: sign-in → board → terminal echo → agent thread.
+// Drives the BUILT Electron app (desktop/out) with Playwright against the
+// stub gateway — no VPS, no credentials, screenshots saved as evidence
+// (lesson L12: the agent can finally verify the running app).
+import { mkdtempSync, existsSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { _electron, type ElectronApplication, type Page } from "playwright";
+import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
+
+const DESKTOP_MAIN = resolve(__dirname, "../../../desktop/out/main/index.js");
+const SCREENSHOT_DIR = resolve(__dirname, "../../../desktop/screenshots");
+const hasBuild = existsSync(DESKTOP_MAIN);
+
+const suite = hasBuild ? describe : describe.skip;
+
+suite("operator desktop e2e", () => {
+  let gateway: StubGateway;
+  let app: ElectronApplication;
+  let page: Page;
+
+  async function attachedNativeViewCount(): Promise<number> {
+    return app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return window?.contentView.children.length ?? 0;
+    });
+  }
+
+  beforeAll(async () => {
+    mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    gateway = await startStubGateway();
+    app = await _electron.launch({
+      args: [DESKTOP_MAIN],
+      env: {
+        ...process.env,
+        OPERATOR_GATEWAY_URL: gateway.url,
+        OPERATOR_USER_DATA_DIR: mkdtempSync(join(tmpdir(), "operator-e2e-")),
+      },
+    });
+    page = await app.firstWindow();
+  }, 60_000);
+
+  afterAll(async () => {
+    try {
+      await app?.close();
+    } catch (err: unknown) {
+      console.warn("[e2e] app close failed:", err instanceof Error ? err.message : String(err));
+    }
+    await gateway?.close();
+  });
+
+  it("signs in via the device flow and reaches Home, then opens a project board", async () => {
+    // "Continue with GitHub" unambiguously starts the device flow (the browser
+    // would present the provider). The stub approves instantly.
+    await page.getByRole("button", { name: /continue with github/i }).click();
+    // Poll loop approves; the signed-in shell (sidebar nav) renders.
+    await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
+    expect(gateway.state.tokenRequests).toBeGreaterThan(0);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "01-home.png") });
+
+    // Open the project board from the sidebar; tasks render.
+    await page.locator("aside button", { hasText: "Matrix OS" }).last().click();
+    await page.getByText("Fix the failing auth tests").waitFor({ timeout: 10_000 });
+    await page.getByText("Polish the board design").waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "02-board.png") });
+  }, 40_000);
+
+  it("opens a task as a cached tab with a live terminal", async () => {
+    await page.getByText("Fix the failing auth tests").click();
+    // The task opens as a tab; the terminal panel attaches and prints the prompt.
+    await page.getByText("stub-shell$").first().waitFor({ timeout: 10_000 });
+    await page.keyboard.type("ls");
+    await page.keyboard.press("Enter");
+    await page.getByText("ran!").first().waitFor({ timeout: 10_000 });
+    expect(gateway.state.terminalInputs.join("")).toContain("ls");
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "03-task-tab.png") });
+  }, 30_000);
+
+  it("starts an agent thread from the composer and streams it in the Agents tab", async () => {
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+j" : "Control+j");
+    await page.getByPlaceholder(/ask hermes/i).fill("fix the failing auth tests");
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
+    await page.getByText("Done — all tests pass.").waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents.png") });
+  }, 30_000);
+
+  it("opens the Terminal workspace with a session sidebar", async () => {
+    await page.locator("aside button", { hasText: "Terminal" }).first().click();
+    // Inner sessions sidebar lists the VPS session as a clickable button
+    // (the hidden task-tab chip with the same name is a span, not matched here).
+    await page.getByText("Sessions").first().waitFor({ timeout: 10_000 });
+    await page.locator("button", { hasText: "matrix-task-1" }).first().waitFor({ state: "visible", timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05-terminal-workspace.png") });
+  }, 30_000);
+
+  it("lists apps and opens one as a tab", async () => {
+    await page.locator("aside button", { hasText: "Apps" }).first().click();
+    await page.getByText("Notes").first().waitFor({ timeout: 10_000 });
+    await page.getByText("Pomodoro").first().waitFor();
+    await page.getByText("Notes").first().click();
+    // The app opens in its own tab (tab chip with the app name).
+    await page.locator('[role="tab"]', { hasText: "Notes" }).first().waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "06-apps.png") });
+  }, 30_000);
+
+  it("detaches the hosted shell while non-Home tabs are active", async () => {
+    await page.locator("aside button", { hasText: "Home" }).first().click();
+    await expect.poll(attachedNativeViewCount).toBe(1);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "07-home-shell-active.png") });
+
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await expect.poll(attachedNativeViewCount).toBe(0);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "08-settings-no-shell-overlay.png") });
+
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
+    await page.getByRole("heading", { name: /What should we build/i }).waitFor({ timeout: 10_000 });
+    await expect.poll(attachedNativeViewCount).toBe(0);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09-chat-no-shell-overlay.png") });
+
+    await page.locator("aside button", { hasText: "Apps" }).first().click();
+    await page.getByText("Notes").first().waitFor({ timeout: 10_000 });
+    await expect.poll(attachedNativeViewCount).toBe(0);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "10-apps-no-shell-overlay.png") });
+
+    await page.locator("aside button", { hasText: "Home" }).first().click();
+    await expect.poll(attachedNativeViewCount).toBe(1);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "11-home-shell-restored.png") });
+  }, 40_000);
+});

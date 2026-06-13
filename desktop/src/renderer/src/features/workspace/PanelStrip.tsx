@@ -1,0 +1,98 @@
+import { useMemo } from "react";
+import { Group, Panel, Separator } from "react-resizable-panels";
+import {
+  useWorkspace,
+  defaultLayout,
+  normalizeLayout,
+  PANEL_MIN_PCT,
+  type PanelKind,
+  type PanelLayout,
+} from "../../stores/workspace";
+
+export const PANEL_TITLES: Record<PanelKind, string> = {
+  terminal: "Terminal",
+  editor: "Editor",
+  git: "Git",
+  browser: "Files",
+  artifacts: "Preview",
+  processes: "Processes",
+  timeline: "Timeline",
+};
+
+interface PanelStripProps {
+  taskId: string;
+  renderPanel: (panel: PanelKind) => React.ReactNode;
+}
+
+export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
+  const layouts = useWorkspace((s) => s.layouts);
+  const setPanelSizes = useWorkspace((s) => s.setPanelSizes);
+
+  const layout: PanelLayout = useMemo(() => normalizeLayout(layouts[taskId] ?? defaultLayout()), [layouts, taskId]);
+  const visiblePanels = useMemo(() => layout.order.filter((panel) => layout.visible[panel]), [layout]);
+
+  // Remount the group when the visible set changes so default sizes re-apply.
+  const groupKey = visiblePanels.join("-");
+
+  // Library layouts are percentages (0..100), keyed by panel id — same unit as
+  // our persisted sizes.
+  const defaultGroupLayout = useMemo(() => {
+    const out: Record<string, number> = {};
+    const even = visiblePanels.length ? 100 / visiblePanels.length : 0;
+    for (const panel of visiblePanels) out[panel] = layout.sizes[panel] || even;
+    return out;
+  }, [visiblePanels, layout.sizes]);
+
+  if (visiblePanels.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <span className="text-sm" style={{ color: "var(--text-tertiary)" }}>
+          All panels hidden. Toggle one from the toolbar (⌘1–⌘7).
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <Group
+      key={groupKey}
+      orientation="horizontal"
+      defaultLayout={defaultGroupLayout}
+      onLayoutChanged={(next) => setPanelSizes(taskId, next as Record<PanelKind, number>)}
+      className="flex min-h-0 min-w-0 flex-1"
+    >
+      {visiblePanels.map((panel, index) => (
+        <PanelHost key={panel} panel={panel} showSeparator={index > 0} renderPanel={renderPanel} />
+      ))}
+    </Group>
+  );
+}
+
+function PanelHost({
+  panel,
+  showSeparator,
+  renderPanel,
+}: {
+  panel: PanelKind;
+  showSeparator: boolean;
+  renderPanel: (panel: PanelKind) => React.ReactNode;
+}) {
+  return (
+    <>
+      {showSeparator ? (
+        <Separator className="group/sep relative w-px shrink-0 cursor-col-resize outline-none" style={{ background: "var(--border-subtle)" }}>
+          <span className="absolute inset-y-0 -left-1 -right-1 transition-colors duration-100 group-hover/sep:bg-[var(--accent-muted)]" />
+        </Separator>
+      ) : null}
+      <Panel id={panel} minSize={PANEL_MIN_PCT[panel]} className="flex min-h-0 min-w-0 flex-col">
+        <header
+          className="flex h-7 shrink-0 items-center border-b px-2.5 text-xs font-semibold tracking-wide uppercase"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)", background: "var(--bg-surface)" }}
+        >
+          {PANEL_TITLES[panel]}
+        </header>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{renderPanel(panel)}</div>
+      </Panel>
+    </>
+  );
+}
