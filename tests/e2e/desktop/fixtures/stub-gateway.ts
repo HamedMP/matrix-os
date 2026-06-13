@@ -114,6 +114,7 @@ export async function startStubGateway(): Promise<StubGateway> {
         expiresAt: Date.now() + 3_600_000,
         userId: "user-1",
         handle: "neo",
+        displayName: "Thomas Anderson",
       });
       return;
     }

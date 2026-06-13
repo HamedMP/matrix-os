@@ -81,6 +81,8 @@ export const INVOKE_CHANNELS = {
       .object({
         signedIn: z.boolean(),
         handle: z.string().max(64).optional(),
+        displayName: z.string().max(256).optional(),
+        imageUrl: z.string().url().max(2048).optional(),
         runtimeSlot: z.string().max(64),
         platformHost: z.string().max(256),
       })
@@ -177,7 +179,12 @@ export const INVOKE_CHANNELS = {
 
 export const EVENT_CHANNELS = {
   "auth:changed": z
-    .object({ signedIn: z.boolean(), handle: z.string().max(64).optional() })
+    .object({
+      signedIn: z.boolean(),
+      handle: z.string().max(64).optional(),
+      displayName: z.string().max(256).optional(),
+      imageUrl: z.string().url().max(2048).optional(),
+    })
     .strict(),
   "runtime:changed": z.object({ slot: z.string().min(1).max(64) }).strict(),
   "embed:state": z

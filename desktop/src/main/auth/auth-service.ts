@@ -13,6 +13,9 @@ export interface ConnectionProfile {
   userId: string;
   platformHost: string;
   runtimeSlot: string;
+  displayName?: string;
+  imageUrl?: string;
+  email?: string;
 }
 
 export interface AuthStatus {
@@ -20,6 +23,8 @@ export interface AuthStatus {
   handle?: string;
   runtimeSlot: string;
   platformHost: string;
+  displayName?: string;
+  imageUrl?: string;
 }
 
 export type PollResult = {
@@ -96,6 +101,8 @@ export class AuthService {
     return {
       signedIn,
       ...(signedIn && this.profile ? { handle: this.profile.handle } : {}),
+      ...(signedIn && this.profile?.displayName ? { displayName: this.profile.displayName } : {}),
+      ...(signedIn && this.profile?.imageUrl ? { imageUrl: this.profile.imageUrl } : {}),
       runtimeSlot: this.profile?.runtimeSlot ?? "primary",
       platformHost: this.getGatewayOrigin(),
     };
@@ -135,17 +142,28 @@ export class AuthService {
     })
       .then(async (token) => {
         if (nonce !== this.flowNonce) return;
-        const profile = {
+        // The encrypted credential holds only the secret token + identity; the
+        // non-secret display profile lives in the plain profile store.
+        const credential: StoredCredential = {
+          accessToken: token.accessToken,
+          expiresAt: token.expiresAt,
+          userId: token.userId,
+          handle: token.handle,
+        };
+        this.credential = credential;
+        const profile: ConnectionProfile = {
           handle: token.handle,
           userId: token.userId,
           platformHost: baseUrl,
           runtimeSlot: this.profile?.runtimeSlot ?? "primary",
+          ...(token.displayName ? { displayName: token.displayName } : {}),
+          ...(token.imageUrl ? { imageUrl: token.imageUrl } : {}),
+          ...(token.email ? { email: token.email } : {}),
         };
-        this.credential = token;
         this.profile = profile;
         try {
           if (nonce !== this.flowNonce) return;
-          await this.deps.credentialStore.save(token);
+          await this.deps.credentialStore.save(credential);
           if (nonce !== this.flowNonce) {
             await this.clearStaleFlowPersistence();
             return;

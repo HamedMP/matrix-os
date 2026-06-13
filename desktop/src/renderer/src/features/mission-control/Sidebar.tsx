@@ -8,7 +8,7 @@ import {
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MatrixMark } from "../../design/BrandPanel";
 import { IconButton } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
@@ -68,14 +68,31 @@ export default function Sidebar() {
   const projects = useBoard((s) => s.projects);
   const signOut = useConnection((s) => s.signOut);
   const handle = useConnection((s) => s.handle);
+  const profileName = useConnection((s) => s.displayName);
+  const imageUrl = useConnection((s) => s.imageUrl);
   const platformHost = useConnection((s) => s.platformHost);
   const unread = useThreads((s) => s.threads.filter((t) => t.unread || t.status === "needs-attention").length);
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const [projectsOpen, setProjectsOpen] = useState(true);
 
+  // Reset the avatar fallback whenever the URL changes so a new image gets a
+  // fresh load attempt (lesson: track prev URL, reset imgFailed on differ).
+  const [imgFailed, setImgFailed] = useState(false);
+  const prevImg = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevImg.current !== imageUrl) {
+      prevImg.current = imageUrl;
+      setImgFailed(false);
+    }
+  }, [imageUrl]);
+
+  const primaryLabel = profileName ?? (handle ? `@${handle}` : "Signed in");
+  const secondaryLabel = profileName && handle ? `@${handle}` : null;
+  const avatarInitial = (profileName ?? handle ?? "?").charAt(0).toUpperCase();
+  const showAvatar = Boolean(imageUrl) && !imgFailed;
+
   const activeTab = tabs.find((t) => t.id === activeTabId);
-  const displayName = handle ? `@${handle}` : "Signed in";
   const width = collapsed ? 56 : 240;
 
   return (
@@ -143,15 +160,30 @@ export default function Sidebar() {
           <button
             type="button"
             title="Manage account"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+            className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold"
             style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
             onClick={() => void invoke("shell:open-external", { url: platformHost.startsWith("https://") ? platformHost : "https://app.matrix-os.com" })}
           >
-            {(handle ?? "?").charAt(0).toUpperCase()}
+            {showAvatar && imageUrl ? (
+              <img
+                src={imageUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={() => setImgFailed(true)}
+              />
+            ) : (
+              avatarInitial
+            )}
           </button>
           {!collapsed ? (
             <>
-              <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)" }}>{displayName}</span>
+              <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
+                {secondaryLabel ? (
+                  <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span>
+                ) : null}
+              </div>
               <IconButton label="Collapse sidebar" onClick={toggleSidebar}>
                 <PanelLeftClose size={15} />
               </IconButton>
