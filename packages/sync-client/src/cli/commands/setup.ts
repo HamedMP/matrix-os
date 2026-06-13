@@ -6,6 +6,10 @@ import { fetchJourney, journeyGuidance, describeProgress } from "../journey.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 const MAX_POLLS = 180; // ~15 min ceiling at the default interval
+// fetchJourney collapses every non-200 (including a 401 auth expiry) to null.
+// Bail after this many consecutive failures instead of sleeping the full ceiling
+// in silence — a mid-provision token expiry otherwise looks like a 15-min hang.
+const MAX_CONSECUTIVE_FAILURES = 5;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -74,36 +78,52 @@ export const setupCommand = defineCommand({
 
       if (!json) console.log("Building your Matrix computer…");
       let lastStage = "";
+      let consecutiveFailures = 0;
       for (let i = 0; i < MAX_POLLS; i += 1) {
         const journey = await fetchJourney(platformUrl, token);
-        if (journey) {
-          if (journey.phase === "first_run" || journey.phase === "ready") {
-            if (json) console.log(formatCliSuccess({ phase: journey.phase, connected: false }));
-            else console.log("Your Matrix computer is ready. Run `mos login` to connect.");
-            return;
-          }
-          if (journey.phase === "provisioning_failed") {
-            console.error(journey.failure?.retryable
-              ? "Setup hit a problem — run `mos setup` again to retry."
-              : "Setup failed after several attempts. Contact support@matrix-os.com.");
+        if (!journey) {
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            console.error(json
+              ? formatCliError("platform_unreachable")
+              : "Lost contact with Matrix (your session may have expired). Run `mos login`, then `mos setup` again.");
             process.exitCode = 1;
             return;
           }
-          if (journey.phase === "provisioning") {
-            const stage = describeProgress(journey);
-            if (stage !== lastStage) {
-              lastStage = stage;
-              if (!json) console.log(`… ${stage}`);
-            }
-          } else {
-            // plan_required / payment_settling — provisioning can't proceed yet.
-            const guidance = journeyGuidance(journey);
-            if (!json) for (const line of guidance.lines) console.log(line);
-            process.exitCode = 1;
-            return;
-          }
+          if (!json && consecutiveFailures === 1) console.log("… waiting for status…");
+          await sleep(pollIntervalMs);
+          continue;
         }
-        await sleep(pollIntervalMs);
+        consecutiveFailures = 0;
+        if (journey.phase === "first_run" || journey.phase === "ready") {
+          if (json) console.log(formatCliSuccess({ phase: journey.phase, connected: false }));
+          else console.log("Your Matrix computer is ready. Run `mos login` to connect.");
+          return;
+        }
+        if (journey.phase === "provisioning_failed") {
+          console.error(journey.failure?.retryable
+            ? "Setup hit a problem — run `mos setup` again to retry."
+            : "Setup failed after several attempts. Contact support@matrix-os.com.");
+          process.exitCode = 1;
+          return;
+        }
+        if (journey.phase === "provisioning" || journey.phase === "payment_settling") {
+          // Both are "keep waiting" states; payment_settling rolls into
+          // provisioning, so don't dead-end the user mid-setup.
+          const stage = journey.phase === "provisioning" ? describeProgress(journey) : "confirming your payment";
+          if (stage !== lastStage) {
+            lastStage = stage;
+            if (!json) console.log(`… ${stage}`);
+          }
+          await sleep(pollIntervalMs);
+          continue;
+        }
+        // plan_required / account_required — can't proceed without the user, so
+        // guide and exit rather than poll indefinitely.
+        const guidance = journeyGuidance(journey);
+        if (!json) for (const line of guidance.lines) console.log(line);
+        process.exitCode = 1;
+        return;
       }
       console.error(json ? formatCliError("setup_timeout") : "Setup is taking longer than expected. Re-run `mos login` shortly to check.");
       process.exitCode = 1;
