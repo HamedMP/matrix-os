@@ -1,16 +1,18 @@
 import { Command } from "cmdk";
-import { Kanban, MessageSquarePlus, Plus, Settings, SquareTerminal } from "lucide-react";
+import { Home, Kanban, MessageSquarePlus, Plus, Settings, SquareTerminal } from "lucide-react";
 import { useBoard } from "../../stores/board";
 import { useSessions } from "../../stores/sessions";
+import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 
 export default function CommandPalette() {
   const open = useUi((s) => s.paletteOpen);
   const setOpen = useUi((s) => s.setPaletteOpen);
-  const navigate = useUi((s) => s.navigate);
+  const openTab = useTabs((s) => s.openTab);
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const setComposerOpen = useUi((s) => s.setComposerOpen);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
+  const projects = useBoard((s) => s.projects);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessions = useSessions((s) => s.sessions);
 
@@ -64,10 +66,23 @@ export default function CommandPalette() {
           >
             <PaletteItem icon={<Plus size={14} />} label="New task" shortcut="C" onSelect={() => run(() => setCreateTaskOpen(true))} />
             <PaletteItem icon={<MessageSquarePlus size={14} />} label="New agent thread" shortcut="⌘J" onSelect={() => run(() => setComposerOpen(true))} />
-            <PaletteItem icon={<Kanban size={14} />} label="Go to board" onSelect={() => run(() => navigate({ kind: "board" }))} />
-            <PaletteItem icon={<SquareTerminal size={14} />} label="Go to sessions" onSelect={() => run(() => navigate({ kind: "sessions" }))} />
-            <PaletteItem icon={<Settings size={14} />} label="Open settings" onSelect={() => run(() => navigate({ kind: "settings" }))} />
+            <PaletteItem icon={<Home size={14} />} label="Go to Home" onSelect={() => run(() => openTab({ kind: "home", title: "Home", closable: false }))} />
+            <PaletteItem icon={<MessageSquarePlus size={14} />} label="Open Agents" onSelect={() => run(() => openTab({ kind: "agents", title: "Agents" }))} />
+            <PaletteItem icon={<Settings size={14} />} label="Open settings" onSelect={() => run(() => openTab({ kind: "settings", title: "Settings" }))} />
           </Command.Group>
+
+          {projects.length > 0 ? (
+            <Command.Group heading="Projects" style={{ color: "var(--text-tertiary)" }}>
+              {projects.slice(0, 20).map((p) => (
+                <PaletteItem
+                  key={p.slug}
+                  icon={<Kanban size={14} />}
+                  label={p.name || p.slug}
+                  onSelect={() => run(() => openTab({ kind: "board", projectSlug: p.slug, title: p.name || p.slug }))}
+                />
+              ))}
+            </Command.Group>
+          ) : null}
 
           {cards.length > 0 ? (
             <Command.Group heading="Tasks" style={{ color: "var(--text-tertiary)" }}>
@@ -76,7 +91,7 @@ export default function CommandPalette() {
                   key={card.id}
                   icon={<Kanban size={14} />}
                   label={card.title}
-                  onSelect={() => run(() => navigate({ kind: "task", taskId: card.id }))}
+                  onSelect={() => run(() => openTab({ kind: "task", taskId: card.id, projectSlug: card.projectSlug, title: card.title }))}
                 />
               ))}
             </Command.Group>
@@ -90,7 +105,7 @@ export default function CommandPalette() {
                   icon={<SquareTerminal size={14} />}
                   label={session.name}
                   onSelect={() =>
-                    run(() => navigate({ kind: "session", sessionName: session.attachName }))
+                    run(() => openTab({ kind: "terminal", sessionName: session.attachName, title: session.name }))
                   }
                 />
               ))}

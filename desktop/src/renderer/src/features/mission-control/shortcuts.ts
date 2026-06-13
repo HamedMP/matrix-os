@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { onEvent } from "../../lib/operator";
+import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -44,7 +45,8 @@ export function useGlobalShortcuts(): void {
       if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
     });
     const offNavigate = onEvent("menu:navigate", ({ kind }) => {
-      useUi.getState().navigate({ kind });
+      if (kind === "settings") useTabs.getState().openTab({ kind: "settings", title: "Settings" });
+      else useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown);

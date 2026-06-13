@@ -181,7 +181,7 @@ interface BoardState {
   projects: Project[];
   activeProjectSlug: string | null;
   cardsByProject: Record<string, Card[]>;
-  firstLoadPending: boolean;
+  firstLoadByProject: Record<string, boolean>;
   refreshing: boolean;
   error: AppErrorCategory | null;
   loadProjects(api: ApiClient): Promise<void>;
@@ -256,7 +256,7 @@ export const useBoard = create<BoardState>()((set, get) => {
     projects: [],
     activeProjectSlug: null,
     cardsByProject: {},
-    firstLoadPending: false,
+    firstLoadByProject: {},
     refreshing: false,
     error: null,
 
@@ -279,11 +279,14 @@ export const useBoard = create<BoardState>()((set, get) => {
       const hasCache = get().cardsByProject[slug] !== undefined;
       // L11: the skeleton shows only when this project has never loaded;
       // otherwise cached cards stay visible while we revalidate.
-      set({ activeProjectSlug: slug, firstLoadPending: !hasCache });
+      set((state) => ({
+        activeProjectSlug: slug,
+        firstLoadByProject: { ...state.firstLoadByProject, [slug]: !hasCache },
+      }));
       try {
         await refreshInto(api, slug);
       } finally {
-        if (get().activeProjectSlug === slug) set({ firstLoadPending: false });
+        set((state) => ({ firstLoadByProject: { ...state.firstLoadByProject, [slug]: false } }));
       }
     },
 

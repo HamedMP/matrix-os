@@ -1,11 +1,11 @@
 // Wires the singleton kernel socket into the stores: thread routing, board
 // task events, native notifications, dock badge.
-import { invoke } from "./operator";
+import { invoke, onEvent } from "./operator";
 import { KernelSocket } from "./kernel-socket";
 import { useBoard } from "../stores/board";
 import { useConnection } from "../stores/connection";
+import { useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
-import { useUi } from "../stores/ui";
 
 let socket: KernelSocket | null = null;
 
@@ -34,8 +34,11 @@ export function wireKernel(): () => void {
   socket = new KernelSocket({ baseUrl: platformHost, runtimeSlot });
 
   const unsubscribeMessages = socket.subscribe((msg) => {
-    const ui = useUi.getState();
-    const focusedThreadId = ui.view.kind === "thread" ? ui.view.threadId : null;
+    // A thread is "focused" only when the Agents tab is active and it's the
+    // selected thread; otherwise completions raise a notification.
+    const tabsState = useTabs.getState();
+    const agentsActive = tabsState.tabs.find((t) => t.id === tabsState.activeTabId)?.kind === "agents";
+    const focusedThreadId = agentsActive ? useThreads.getState().activeThreadId : null;
     const { notification } = useThreads
       .getState()
       .handleKernelMessage(msg, { focusedThreadId });
@@ -74,11 +77,18 @@ export function wireKernel(): () => void {
     }
   });
 
+  // Clicking a native notification focuses the thread in the Agents tab.
+  const offNotificationClick = onEvent("notification:clicked", ({ threadId }) => {
+    useThreads.getState().setActiveThread(threadId);
+    useTabs.getState().openTab({ kind: "agents", title: "Agents" });
+  });
+
   socket.connect();
 
   return () => {
     unsubscribeMessages();
     unsubscribeBadge();
+    offNotificationClick();
     socket?.dispose();
     socket = null;
   };

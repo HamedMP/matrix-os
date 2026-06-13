@@ -1,20 +1,15 @@
 import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
+import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useWorkspace } from "../../stores/workspace";
 import Sidebar from "./Sidebar";
-import Titlebar from "./Titlebar";
-import Board from "../board/Board";
-import TaskWorkspace from "../workspace/TaskWorkspace";
-import ThreadView from "../threads/ThreadView";
-import SessionsView from "../sessions/SessionsView";
-import SettingsView from "../settings/SettingsView";
-import StandaloneSession from "../sessions/StandaloneSession";
-import { AppLauncher, EmbedHost } from "../embeds";
-import QuickOpen from "../files/QuickOpen";
+import TabBar from "./TabBar";
+import TabContent from "./TabContent";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
+import QuickOpen from "../files/QuickOpen";
 import { useGlobalShortcuts } from "./shortcuts";
 import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
@@ -22,12 +17,12 @@ import { wireKernel } from "../../lib/kernel-wiring";
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
   const loadProjects = useBoard((s) => s.loadProjects);
-  const view = useUi((s) => s.view);
+  const openTab = useTabs((s) => s.openTab);
+  const tabCount = useTabs((s) => s.tabs.length);
 
   useGlobalShortcuts();
 
   useEffect(() => {
-    // Wire workspace layout persistence through the trusted core once.
     const { configure, hydrate } = useWorkspace.getState();
     configure({
       loadLayouts: async () => {
@@ -37,55 +32,31 @@ export default function MissionControl() {
       saveLayout: async (taskKey, layout) => {
         const current = await invoke("state:get", { key: "panelLayouts" });
         const layouts = (current.value as Record<string, unknown> | null) ?? {};
-        await invoke("state:set", {
-          key: "panelLayouts",
-          value: { ...layouts, [taskKey]: layout },
-        });
+        await invoke("state:set", { key: "panelLayouts", value: { ...layouts, [taskKey]: layout } });
       },
     });
     void hydrate();
   }, []);
 
   useEffect(() => {
+    // Open the Home tab on first mount so the workspace is never empty.
+    if (tabCount === 0) openTab({ kind: "home", title: "Home", closable: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     if (!api) return;
-    let cancelled = false;
-    void (async () => {
-      await loadProjects(api);
-      if (cancelled) return;
-      // Boot to the last-used project (FR-013/SC-001); fall back to the first.
-      const { projects, activeProjectSlug, selectProject } = useBoard.getState();
-      if (activeProjectSlug || projects.length === 0) return;
-      const saved = (await invoke("state:get", { key: "lastProjectSlug" })).value;
-      const target = projects.find((p) => p.slug === saved) ?? projects[0];
-      if (target && !cancelled) void selectProject(api, target.slug);
-    })();
+    void loadProjects(api);
     const dispose = wireKernel();
-    return () => {
-      cancelled = true;
-      dispose();
-    };
+    return dispose;
   }, [api, loadProjects]);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <Titlebar />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar />
-        <main
-          className="flex min-w-0 flex-1 flex-col border-l"
-          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-app)" }}
-        >
-          {view.kind === "board" ? <Board /> : null}
-          {view.kind === "task" ? <TaskWorkspace key={view.taskId} taskId={view.taskId} /> : null}
-          {view.kind === "thread" ? <ThreadView key={view.threadId} threadId={view.threadId} /> : null}
-          {view.kind === "sessions" ? <SessionsView /> : null}
-          {view.kind === "session" ? (
-            <StandaloneSession key={view.sessionName} sessionName={view.sessionName} />
-          ) : null}
-          {view.kind === "canvas" ? <EmbedHost kind="hosted-shell" /> : null}
-          {view.kind === "apps" ? <AppLauncher /> : null}
-          {view.kind === "settings" ? <SettingsView /> : null}
-        </main>
+    <div className="flex flex-1 overflow-hidden">
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col" style={{ background: "var(--bg-app)" }}>
+        <TabBar />
+        <TabContent />
       </div>
       <Composer />
       <CommandPalette />

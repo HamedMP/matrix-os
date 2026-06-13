@@ -126,13 +126,13 @@ describe("selectProject (stale-while-revalidate)", () => {
     const pending = useBoard.getState().selectProject(api, "proj");
 
     expect(useBoard.getState().activeProjectSlug).toBe("proj");
-    expect(useBoard.getState().firstLoadPending).toBe(true);
+    expect(useBoard.getState().firstLoadByProject["proj"]).toBe(true);
     expect(useBoard.getState().refreshing).toBe(true);
 
     d.resolve({ tasks: [wireTask()], nextCursor: null });
     await pending;
 
-    expect(useBoard.getState().firstLoadPending).toBe(false);
+    expect(useBoard.getState().firstLoadByProject["proj"]).toBe(false);
     expect(useBoard.getState().refreshing).toBe(false);
     expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
   });
@@ -147,7 +147,7 @@ describe("selectProject (stale-while-revalidate)", () => {
     const second = makeApi({ get: vi.fn().mockReturnValue(d.promise) });
     const pending = useBoard.getState().selectProject(second, "proj");
 
-    expect(useBoard.getState().firstLoadPending).toBe(false);
+    expect(useBoard.getState().firstLoadByProject["proj"]).toBe(false);
     expect(useBoard.getState().refreshing).toBe(true);
     expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
 
@@ -159,7 +159,7 @@ describe("selectProject (stale-while-revalidate)", () => {
   it("clears the skeleton and sets an error category when the first load fails", async () => {
     const api = makeApi({ get: vi.fn().mockRejectedValue(new AppError("timeout")) });
     await useBoard.getState().selectProject(api, "proj");
-    expect(useBoard.getState().firstLoadPending).toBe(false);
+    expect(useBoard.getState().firstLoadByProject["proj"]).toBe(false);
     expect(useBoard.getState().refreshing).toBe(false);
     expect(useBoard.getState().error).toBe("timeout");
   });
