@@ -5,15 +5,24 @@ import { invoke, onEvent } from "../../lib/operator";
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access; this
 // component only reports bounds and surfaces the inline re-auth prompt.
+// Off-screen rect used to hide the native view while its tab is inactive
+// (a WebContentsView is an OS overlay and would otherwise paint over the active
+// tab — lesson L14).
+const HIDDEN_BOUNDS = { x: -20000, y: 0, width: 800, height: 600 };
+
 export default function EmbedHost({
   kind,
   slug,
+  active = true,
 }: {
   kind: "hosted-shell" | "app";
   slug?: string;
+  active?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
 
   useEffect(() => {
@@ -48,6 +57,10 @@ export default function EmbedHost({
     const reportBounds = () => {
       const id = embedIdRef.current;
       if (!id) return;
+      if (!activeRef.current) {
+        void invoke("embed:set-bounds", { embedId: id, bounds: HIDDEN_BOUNDS });
+        return;
+      }
       const r = host.getBoundingClientRect();
       void invoke("embed:set-bounds", {
         embedId: id,
@@ -74,6 +87,22 @@ export default function EmbedHost({
       if (id) void invoke("embed:close", { embedId: id });
     };
   }, [kind, slug]);
+
+  // Show/hide the native view as the hosting tab activates/deactivates.
+  useEffect(() => {
+    const id = embedIdRef.current;
+    const host = hostRef.current;
+    if (!id) return;
+    if (active && host) {
+      const r = host.getBoundingClientRect();
+      void invoke("embed:set-bounds", {
+        embedId: id,
+        bounds: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) },
+      });
+    } else {
+      void invoke("embed:set-bounds", { embedId: id, bounds: HIDDEN_BOUNDS });
+    }
+  }, [active]);
 
   return (
     <div ref={hostRef} className="relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
