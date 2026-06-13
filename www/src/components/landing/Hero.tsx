@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { ArrowRightIcon } from "lucide-react";
 import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { palette as c, cardShadow, fonts } from "./theme";
@@ -43,17 +44,13 @@ export function Hero() {
         className="mx-auto mt-12 max-w-[1200px] overflow-hidden rounded-2xl md:mt-16"
         style={{ backgroundColor: c.card, boxShadow: cardShadow }}
       >
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          aria-hidden="true"
-          tabIndex={-1}
-          preload="metadata"
-          controls={false}
-          src="/hero-loop.mp4"
-          className="block aspect-[16/9] w-full object-cover object-center md:aspect-[21/10]"
+        <Image
+          src="/images/app-screenshot.jpg"
+          alt="The Matrix OS workspace with terminals, apps, and agent sessions"
+          width={1920}
+          height={1080}
+          priority
+          className="block h-auto w-full"
         />
       </div>
     </SectionShell>
