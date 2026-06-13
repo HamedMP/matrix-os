@@ -1,10 +1,12 @@
 import {
   Activity,
+  CircleStop,
   FileCode2,
   FolderTree,
   GitBranch,
   Globe,
   ListTree,
+  Sparkles,
   SquareTerminal,
 } from "lucide-react";
 import { useEffect, useMemo } from "react";
@@ -45,10 +47,32 @@ const PANEL_SHORTCUT_ORDER: PanelKind[] = [
   "timeline",
 ];
 
+// Map an agent session's runtime status to a label/color and whether it can
+// still be stopped (running/waiting are abortable; exited/failed are terminal).
+function describeAgentRun(
+  agent: string | undefined,
+  runtimeStatus: string | undefined,
+): { label: string; color: string; stoppable: boolean } {
+  const name = agent ? agent[0]!.toUpperCase() + agent.slice(1) : "Agent";
+  switch (runtimeStatus) {
+    case "waiting":
+      return { label: `${name} · needs input`, color: "var(--warning)", stoppable: true };
+    case "failed":
+      return { label: `${name} · failed`, color: "var(--danger)", stoppable: false };
+    case "exited":
+      return { label: `${name} · done`, color: "var(--text-tertiary)", stoppable: false };
+    case "idle":
+      return { label: `${name} · idle`, color: "var(--text-secondary)", stoppable: true };
+    default:
+      return { label: `${name} · running`, color: "var(--success)", stoppable: true };
+  }
+}
+
 export default function TaskWorkspace({ taskId, active = true }: { taskId: string; active?: boolean }) {
   const api = useConnection((s) => s.api);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessionsLoad = useSessions((s) => s.load);
+  const killSession = useSessions((s) => s.kill);
   const aliasMap = useSessions((s) => s.aliasMap);
   const sessionList = useSessions((s) => s.sessions);
   const worktrees = useGit((s) => s.worktrees);
@@ -116,10 +140,13 @@ export default function TaskWorkspace({ taskId, active = true }: { taskId: strin
   const attachName = card?.linkedSessionId ? (aliasMap[card.linkedSessionId] ?? null) : null;
   const layout = layouts[taskId] ?? layoutFor(taskId);
 
-  // Header chips: live session, worktree branch/dirty, preview health.
-  const sessionLive = attachName
-    ? sessionList.some((s) => s.attachName === attachName && s.status === "active")
-    : false;
+  // Header chips: live session, agent run, worktree branch/dirty, preview health.
+  const liveSession = useMemo(
+    () => (attachName ? sessionList.find((s) => s.attachName === attachName) ?? null : null),
+    [attachName, sessionList],
+  );
+  const sessionLive = liveSession?.status === "active";
+  const agentRun = liveSession?.kind === "agent" ? describeAgentRun(liveSession.agent, liveSession.runtimeStatus) : null;
   const worktree = useMemo(
     () => (card?.linkedWorktreeId ? worktrees.find((w) => w.id === card.linkedWorktreeId) ?? null : null),
     [worktrees, card?.linkedWorktreeId],
@@ -201,6 +228,29 @@ export default function TaskWorkspace({ taskId, active = true }: { taskId: strin
             >
               <StatusDot color={sessionLive ? "var(--success)" : "var(--text-tertiary)"} pulse={sessionLive} />
               <span className="font-mono">{attachName}</span>
+            </span>
+          ) : null}
+          {agentRun ? (
+            <span
+              className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
+              style={{ borderColor: "var(--border-default)", color: agentRun.color }}
+            >
+              <Sparkles size={11} />
+              {agentRun.label}
+              {agentRun.stoppable && attachName ? (
+                <button
+                  type="button"
+                  aria-label="Stop agent"
+                  title="Stop agent"
+                  className="ml-0.5 flex h-4 w-4 items-center justify-center rounded"
+                  style={{ color: "var(--danger)" }}
+                  onClick={() => {
+                    if (api && attachName) void killSession(api, attachName);
+                  }}
+                >
+                  <CircleStop size={12} />
+                </button>
+              ) : null}
             </span>
           ) : null}
           {worktree ? (

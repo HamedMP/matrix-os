@@ -124,6 +124,28 @@ describe("mergeAttachableSessions", () => {
     expect(aliasMap["sess_abc123"]).toBe("matrix-sess-abc");
   });
 
+  it("carries agent/kind/runtime status from a workspace record", () => {
+    const { sessions } = mergeAttachableSessions(
+      [],
+      [{ id: "sess_a", kind: "agent", agent: "claude", runtime: { zellijSession: "z1", status: "waiting" } }],
+    );
+    expect(sessions[0]).toMatchObject({ attachName: "z1", kind: "agent", agent: "claude", runtimeStatus: "waiting" });
+  });
+
+  it("enriches a zellij-sourced session with workspace agent metadata (zellij status still wins)", () => {
+    const { sessions } = mergeAttachableSessions(
+      [{ name: "z1", status: "active" }],
+      [{ id: "sess_a", kind: "agent", agent: "codex", runtime: { zellijSession: "z1", status: "running" } }],
+    );
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ attachName: "z1", source: "zellij", status: "active", kind: "agent", agent: "codex", runtimeStatus: "running" });
+  });
+
+  it("omits metadata for a plain workspace shell (minimal shape preserved)", () => {
+    const { sessions } = mergeAttachableSessions([], [{ id: "sess_s", runtime: { zellijSession: "z2" } }]);
+    expect(sessions[0]).toEqual({ name: "z2", attachName: "z2", status: "active", source: "workspace" });
+  });
+
   it("dedupes two workspace records sharing one zellij session, keeping all aliases", () => {
     const workspace: WorkspaceSessionDTO[] = [
       { id: "sess_first", runtime: { zellijSession: "shared" } },
