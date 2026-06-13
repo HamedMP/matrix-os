@@ -101,9 +101,13 @@ export const setupCommand = defineCommand({
           return;
         }
         if (journey.phase === "provisioning_failed") {
-          console.error(journey.failure?.retryable
-            ? "Setup hit a problem — run `mos setup` again to retry."
-            : "Setup failed after several attempts. Contact support@matrix-os.com.");
+          if (json) {
+            console.error(formatCliError(journey.failure?.retryable ? "setup_failed" : "retry_exhausted"));
+          } else {
+            console.error(journey.failure?.retryable
+              ? "Setup hit a problem — run `mos setup` again to retry."
+              : "Setup failed after several attempts. Contact support@matrix-os.com.");
+          }
           process.exitCode = 1;
           return;
         }
@@ -120,8 +124,12 @@ export const setupCommand = defineCommand({
         }
         // plan_required / account_required — can't proceed without the user, so
         // guide and exit rather than poll indefinitely.
-        const guidance = journeyGuidance(journey);
-        if (!json) for (const line of guidance.lines) console.log(line);
+        if (json) {
+          console.error(formatCliError(journey.phase === "plan_required" ? "billing_required" : "auth_expired"));
+        } else {
+          const guidance = journeyGuidance(journey);
+          for (const line of guidance.lines) console.log(line);
+        }
         process.exitCode = 1;
         return;
       }
