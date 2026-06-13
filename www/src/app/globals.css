@@ -370,6 +370,15 @@ code, pre { font-family: var(--font-mono); }
   }
 }
 
+/* Reveal animation is wired up in a client effect; without JavaScript the
+   IntersectionObserver never runs, so show the content unconditionally. */
+@media (scripting: none) {
+  .landing-reveal {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Typing cursor */
 .typing-cursor::after {
   content: "";

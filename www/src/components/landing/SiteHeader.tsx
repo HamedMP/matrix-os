@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRightIcon, ChevronDownIcon } from "lucide-react";
 import { SignedIn, SignedOut } from "@clerk/nextjs";
@@ -98,6 +98,8 @@ function FeaturedArt({ art }: { art: FeaturedCard["art"] }) {
 export function SiteHeader() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!sheetOpen && openMenu === null) return;
@@ -111,12 +113,50 @@ export function SiteHeader() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [sheetOpen, openMenu]);
 
+  // The sheet is hidden by CSS above 880px. If the viewport crosses that
+  // breakpoint while the sheet is open, close it so body scroll is restored
+  // and focus is not trapped behind an invisible overlay.
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const desktop = window.matchMedia("(min-width: 880px)");
+    const onChange = () => {
+      if (desktop.matches) setSheetOpen(false);
+    };
+    desktop.addEventListener("change", onChange);
+    return () => desktop.removeEventListener("change", onChange);
+  }, [sheetOpen]);
+
+  // Lock body scroll, move focus into the dialog, and trap Tab within it.
   useEffect(() => {
     if (!sheetOpen) return;
     const previousOverflow = document.body.style.overflow;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const sheet = sheetRef.current;
+      if (!sheet) return;
+      const focusable = sheet.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      previouslyFocused?.focus?.();
     };
   }, [sheetOpen]);
 
@@ -390,6 +430,7 @@ export function SiteHeader() {
                   data-active={openMenu === item.label}
                   aria-expanded={openMenu === item.label}
                   aria-haspopup="true"
+                  aria-controls="site-header-mega-panel"
                   onMouseEnter={() => setOpenMenu(item.label)}
                   onClick={() => setOpenMenu((open) => (open === item.label ? null : item.label))}
                 >
@@ -410,7 +451,7 @@ export function SiteHeader() {
           </nav>
 
           {activeMenu ? (
-            <div className="site-header-panel-anchor">
+            <div id="site-header-mega-panel" className="site-header-panel-anchor">
               <div className="site-header-panel" key={activeMenu.label}>
                 <div>
                   {activeMenu.menu.links.map((link, index) => (
@@ -497,7 +538,7 @@ export function SiteHeader() {
       </div>
 
       {sheetOpen ? (
-        <div id="site-header-sheet" className="site-header-sheet" role="dialog" aria-modal="true" aria-label="Menu">
+        <div ref={sheetRef} id="site-header-sheet" className="site-header-sheet" role="dialog" aria-modal="true" aria-label="Menu">
           <div className="site-header-sheet-top">
             <Link href="/" aria-label="Matrix OS home" className="inline-flex items-center gap-2" onClick={() => setSheetOpen(false)}>
               <Logo className="h-7 w-auto" style={{ color: c.deep }} />
@@ -509,6 +550,7 @@ export function SiteHeader() {
               </span>
             </Link>
             <button
+              ref={closeButtonRef}
               type="button"
               className="site-header-button site-header-button-dark"
               onClick={() => setSheetOpen(false)}
