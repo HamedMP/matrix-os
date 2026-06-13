@@ -28,6 +28,7 @@ export interface ApiClient {
   getText(path: string): Promise<string>;
   post<T>(path: string, body: unknown): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
+  put<T>(path: string, body: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
   putText<T>(path: string, body: string): Promise<T>;
   baseUrl: string;
@@ -85,6 +86,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     patch: (path, body) =>
       request(path, {
         method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    put: (path, body) =>
+      request(path, {
+        method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
