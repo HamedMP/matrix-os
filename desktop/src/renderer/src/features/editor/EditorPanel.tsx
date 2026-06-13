@@ -1,14 +1,17 @@
-import { FileCode2, X } from "lucide-react";
+import { Code2, Eye, FileCode2, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useEditorTabs } from "./editor-tabs-store";
 
 const CodeMirrorHost = lazy(() => import("./CodeMirrorHost"));
+const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
 
 // Stable empty reference: a selector returning a fresh [] every render would
 // fail the Object.is check and loop forever (React #185, CLAUDE.md rule).
 const EMPTY_TABS: string[] = [];
+
+const isMarkdown = (path: string): boolean => /\.mdx?$/i.test(path);
 
 export default function EditorPanel({ taskId }: { taskId: string }) {
   const api = useConnection((s) => s.api);
@@ -17,6 +20,8 @@ export default function EditorPanel({ taskId }: { taskId: string }) {
   const setActive = useEditorTabs((s) => s.setActive);
   const closeTab = useEditorTabs((s) => s.closeTab);
   const dirtyPaths = useEditorTabs((s) => s.dirtyPaths);
+  // Per-path "edit this markdown as code" overrides; markdown previews by default.
+  const [editPaths, setEditPaths] = useState<Record<string, boolean>>({});
 
   if (tabs.length === 0) {
     return (
@@ -70,18 +75,34 @@ export default function EditorPanel({ taskId }: { taskId: string }) {
             </div>
           );
         })}
+        {activePath && isMarkdown(activePath) ? (
+          <button
+            type="button"
+            className="no-drag ml-auto mr-1 mb-1 flex items-center gap-1.5 self-center rounded-md border px-2 py-1 text-xs"
+            style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}
+            onClick={() => setEditPaths((m) => ({ ...m, [activePath]: !m[activePath] }))}
+            title={editPaths[activePath] ? "Preview rendered markdown" : "Edit as code"}
+          >
+            {editPaths[activePath] ? <Eye size={12} /> : <Code2 size={12} />}
+            {editPaths[activePath] ? "Preview" : "Edit"}
+          </button>
+        ) : null}
       </div>
       {activePath && api ? (
         <Suspense
           fallback={
             <div className="flex flex-1 items-center justify-center">
               <span className="status-pulse text-xs" style={{ color: "var(--text-tertiary)" }}>
-                Loading editor…
+                Loading…
               </span>
             </div>
           }
         >
-          <CodeMirrorHost key={activePath} taskId={taskId} path={activePath} />
+          {isMarkdown(activePath) && !editPaths[activePath] ? (
+            <MarkdownPreview key={`md:${activePath}`} path={activePath} />
+          ) : (
+            <CodeMirrorHost key={activePath} taskId={taskId} path={activePath} />
+          )}
         </Suspense>
       ) : null}
     </div>
