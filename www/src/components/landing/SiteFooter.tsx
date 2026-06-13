@@ -79,7 +79,7 @@ export function SiteFooter() {
   const year = new Date().getFullYear();
 
   return (
-    <footer aria-label="Footer navigation" className="mx-auto w-full max-w-[1400px] px-5 pb-6 md:px-10 md:pb-10">
+    <footer aria-label="Footer navigation" className="mx-auto w-full max-w-[1400px] px-5 pt-12 pb-6 md:px-10 md:pt-20 md:pb-10">
       <style>{`
         .landing-footer-link {
           position: relative;
