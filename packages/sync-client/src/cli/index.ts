@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { defineCommand, runMain } from "citty";
 import { loginCommand } from "./commands/login.js";
+import { setupCommand } from "./commands/setup.js";
 import { logoutCommand } from "./commands/logout.js";
 import { syncCommand } from "./commands/sync.js";
 import { peersCommand } from "./commands/peers.js";
@@ -29,6 +30,7 @@ const main = defineCommand({
   },
   subCommands: {
     login: loginCommand,
+    setup: setupCommand,
     logout: logoutCommand,
     sync: syncCommand,
     peers: peersCommand,

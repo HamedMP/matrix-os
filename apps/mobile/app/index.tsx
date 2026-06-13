@@ -1,25 +1,79 @@
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Linking } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useAuth } from "@clerk/clerk-expo";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { colors, fonts, spacing, radius } from "@/lib/theme";
+import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { JourneyGate } from "@/components/JourneyGate";
+import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
+
+// Signed-in users are routed through the journey gate: only a connectable phase
+// (first_run/ready) enters the shell tabs; otherwise the user sees their
+// onboarding phase (plan / settling / building / retry) instead of a broken shell.
+function SignedInJourneyGate() {
+  const router = useRouter();
+  const { getToken } = useAuth();
+  const [result, setResult] = useState<JourneyFetchResult | null>(null);
+  const [working, setWorking] = useState(false);
+  const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const token = await getToken();
+      const next = await fetchMobileJourney(HOSTED_GATEWAY_URL, token);
+      if (!active) return;
+      if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
+        router.replace("/(tabs)/apps" as any);
+        return;
+      }
+      setResult(next);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [getToken, router, nonce]);
+
+  async function handleRetry() {
+    setWorking(true);
+    try {
+      const token = await getToken();
+      if (token) {
+        await fetch(`${HOSTED_GATEWAY_URL.replace(/\/+$/, "")}/api/journey/retry-provision`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: "{}",
+          signal: AbortSignal.timeout(10_000),
+        });
+      }
+    } catch (err: unknown) {
+      // Best-effort trigger; the refetch below reflects the real state.
+      console.warn("[mobile] retry-provision failed", err instanceof Error ? err.name : typeof err);
+    } finally {
+      setWorking(false);
+      setResult(null);
+      setNonce((n) => n + 1);
+    }
+  }
+
+  return (
+    <JourneyGate
+      result={result}
+      working={working}
+      onRetry={handleRetry}
+      onOpenUrl={(url) => { void Linking.openURL(url); }}
+    />
+  );
+}
 
 export default function Index() {
   const { isSignedIn } = useAuth();
   const router = useRouter();
-  const redirectedRef = useRef(false);
-
-  useEffect(() => {
-    if (isSignedIn && !redirectedRef.current) {
-      redirectedRef.current = true;
-      router.replace("/(tabs)/apps" as any);
-    }
-  }, [isSignedIn, router]);
 
   if (isSignedIn) {
-    return null;
+    return <SignedInJourneyGate />;
   }
 
   return (
