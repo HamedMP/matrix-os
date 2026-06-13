@@ -81,7 +81,7 @@
   --shadow-3: 0 18px 48px rgba(40, 44, 37, 0.16);
 
   /* ── Focus & motion ─────────────────────────────────────────── */
-  --focus-ring: 0 0 0 2px rgba(208, 111, 37, 0.4);
+  --focus-ring: 0 0 0 3px rgba(67, 78, 63, 0.22);
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --duration-fast: 120ms;
   --duration-base: 160ms;
@@ -124,7 +124,7 @@
   --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.5);
   --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.6);
 
-  --focus-ring: 0 0 0 2px rgba(140, 199, 190, 0.5);
+  --focus-ring: 0 0 0 3px rgba(140, 199, 190, 0.32);
 
   color-scheme: dark;
 }

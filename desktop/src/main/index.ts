@@ -99,7 +99,6 @@ app.whenReady().then(async () => {
   const auth = new AuthService({
     credentialStore,
     platformHost,
-    openExternal: openExternalHttps,
     loadProfile: () => store.get("profile"),
     saveProfile: (profile) => store.set("profile", profile),
     clearProfile: () => store.delete("profile"),

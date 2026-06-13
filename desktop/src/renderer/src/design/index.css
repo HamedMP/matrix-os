@@ -74,6 +74,24 @@ textarea,
   border-radius: var(--radius-sm);
 }
 
+/* ── Composer card: brand focus-within, no inner ring ─────────── */
+.prompt-card {
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-2);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+.prompt-card:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-muted),
+    var(--shadow-2);
+}
+.prompt-card textarea:focus-visible {
+  box-shadow: none;
+}
+
 /* ── Scrollbars ───────────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 10px;

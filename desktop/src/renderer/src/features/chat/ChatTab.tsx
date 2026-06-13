@@ -46,7 +46,7 @@ export default function ChatTab() {
   const projects = useBoard((s) => s.projects);
   const [draft, setDraft] = useState("");
 
-  const projectName = projects[0]?.name ?? projects[0]?.slug ?? "matrix-os";
+  const projectName = projects[0]?.name ?? projects[0]?.slug ?? "Matrix OS";
   const groups = groupMessages(messages);
   const empty = messages.length === 0;
 
