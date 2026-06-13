@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { tryCreateBrowserServer } from "../../packages/kernel/src/options.js";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadKernelConfigFile, tryCreateBrowserServer } from "../../packages/kernel/src/options.js";
 
 const browserServerMocks = vi.hoisted(() => ({
   createBrowserMcpServer: vi.fn((config: unknown) => ({
@@ -34,5 +37,49 @@ describe("kernel options", () => {
       },
     });
     expect(browserServerMocks.createBrowserMcpServer).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("loadKernelConfigFile", () => {
+  let homePath: string;
+  beforeEach(() => {
+    homePath = mkdtempSync(join(tmpdir(), "kernel-cfg-"));
+    mkdirSync(join(homePath, "system"), { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(homePath, { recursive: true, force: true });
+  });
+
+  function writeConfig(obj: unknown) {
+    writeFileSync(join(homePath, "system", "config.json"), JSON.stringify(obj));
+  }
+
+  it("returns empty when config.json is missing", () => {
+    expect(loadKernelConfigFile(homePath)).toEqual({});
+  });
+
+  it("reads a valid model + effort from the kernel section", () => {
+    writeConfig({ kernel: { model: "claude-sonnet-4-5", effort: "high" } });
+    expect(loadKernelConfigFile(homePath)).toEqual({ model: "claude-sonnet-4-5", effort: "high" });
+  });
+
+  it("ignores an invalid effort value", () => {
+    writeConfig({ kernel: { model: "claude-opus-4-6", effort: "ludicrous" } });
+    expect(loadKernelConfigFile(homePath)).toEqual({ model: "claude-opus-4-6" });
+  });
+
+  it("ignores an empty/non-string model", () => {
+    writeConfig({ kernel: { model: "", effort: "max" } });
+    expect(loadKernelConfigFile(homePath)).toEqual({ effort: "max" });
+  });
+
+  it("returns empty when there is no kernel section", () => {
+    writeConfig({ channels: { telegram: { enabled: true } } });
+    expect(loadKernelConfigFile(homePath)).toEqual({});
+  });
+
+  it("does not throw on malformed JSON", () => {
+    writeFileSync(join(homePath, "system", "config.json"), "{not json");
+    expect(loadKernelConfigFile(homePath)).toEqual({});
   });
 });
