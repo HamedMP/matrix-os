@@ -12,6 +12,8 @@ interface JourneyGateProps {
   onOpenUrl: (url: string) => void;
   /** Re-fetch the journey (no side effects) — used as a manual poll fallback. */
   onRefresh?: () => void;
+  /** Clear the local Clerk session so the user can sign in again. */
+  onSignOut?: () => void;
   working?: boolean;
 }
 
@@ -48,7 +50,7 @@ function PrimaryButton({ label, onPress, testID }: { label: string; onPress: () 
  * screens for plan selection, payment settling, machine build, and retry —
  * `first_run`/`ready` are handled by the caller (it hands off to the shell).
  */
-export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, working = false }: JourneyGateProps) {
+export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, onSignOut = () => {}, working = false }: JourneyGateProps) {
   if (!result) {
     return (
       <Centered>
@@ -63,6 +65,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
       <Centered>
         <Title>Please sign in again</Title>
         <Body>Your session expired.</Body>
+        <PrimaryButton label="Sign in again" testID="journey-sign-in" onPress={onSignOut} />
       </Centered>
     );
   }
@@ -86,6 +89,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
         <Centered>
           <Title>Please sign in again</Title>
           <Body>{journey.detail || "Your session needs to be refreshed to continue."}</Body>
+          <PrimaryButton label="Sign in again" testID="journey-sign-in" onPress={onSignOut} />
         </Centered>
       );
     case "plan_required":
