@@ -1,7 +1,7 @@
 import { Bot, SquareTerminal, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { toUserMessage } from "../../lib/errors";
-import { useBoard } from "../../stores/board";
+import { startTaskSession } from "../../lib/task-sessions";
 import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
 
@@ -42,9 +42,7 @@ export default function StartSessionControls({
   compact?: boolean;
 }) {
   const api = useConnection((s) => s.api);
-  const createSession = useSessions((s) => s.create);
   const creating = useSessions((s) => s.creating);
-  const linkSession = useBoard((s) => s.linkSession);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
 
@@ -53,27 +51,16 @@ export default function StartSessionControls({
     setPending(l.label);
     setError(null);
     try {
-      const prompt =
-        l.kind === "agent"
-          ? [title, description].filter((s) => s.trim().length > 0).join("\n\n")
-          : undefined;
-      const created = await createSession(api, {
-        kind: l.kind,
-        ...(l.kind === "agent" ? { agent: l.agent } : {}),
+      const ok = await startTaskSession(api, {
         projectSlug,
         taskId,
-        ...(worktreeId ? { worktreeId } : {}),
-        ...(prompt ? { prompt } : {}),
+        worktreeId,
+        title,
+        description,
+        kind: l.kind,
+        ...(l.kind === "agent" ? { agent: l.agent } : {}),
       });
-      if (!created) {
-        setError("Couldn't start the session. Check that the agent is connected.");
-        return;
-      }
-      await linkSession(api, projectSlug, taskId, {
-        linkedSessionId: created.sessionId,
-        ...(worktreeId ? { linkedWorktreeId: worktreeId } : {}),
-        status: "running",
-      });
+      if (!ok) setError("Couldn't start the session. Check that the agent is connected.");
     } catch (err: unknown) {
       setError(toUserMessage(err));
     } finally {
