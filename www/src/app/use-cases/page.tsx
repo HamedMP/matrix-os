@@ -5,7 +5,9 @@ import {
   BotIcon,
   BriefcaseBusinessIcon,
   CloudIcon,
+  EyeIcon,
   GraduationCapIcon,
+  LaptopIcon,
   ShieldCheckIcon,
   SparklesIcon,
   TerminalIcon,
@@ -99,6 +101,83 @@ const broaderUseCases = [
   },
 ] as const;
 
+const governedRows = [
+  { Icon: LaptopIcon, label: "Move agents off developer laptops", href: "/symphony" },
+  { Icon: ShieldCheckIcon, label: "Keep code and data on your own computer", href: "/whitepaper" },
+  { Icon: EyeIcon, label: "Watch, steer, and stop any session", href: "/docs/guide/agents" },
+] as const;
+
+function GovernedSection() {
+  return (
+    <SectionShell className="pt-16 md:pt-24">
+      <Reveal>
+        <div className="mb-8 max-w-[44rem] md:mb-10">
+          <SectionTitle
+            title="Put agents to work across your stack."
+            continuation="With every session under your control."
+          />
+        </div>
+      </Reveal>
+      <Reveal>
+        <SectionCard>
+          <div className="grid md:grid-cols-2">
+            <div className="flex items-center px-7 py-9 md:border-r md:px-12 md:py-14" style={{ borderColor: c.border }}>
+              <div className="w-full rounded-xl p-5 md:p-7" style={{ backgroundColor: "rgba(67,78,63,0.04)" }} aria-hidden="true">
+                <div className="flex items-center gap-3.5 rounded-xl px-4 py-3.5" style={{ backgroundColor: c.card, boxShadow: cardShadowSmall }}>
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ backgroundColor: "rgba(208,111,37,0.12)" }}>
+                    <span className="size-2 rounded-full" style={{ backgroundColor: c.ember }} />
+                  </span>
+                  <div>
+                    <p className="text-[0.9375rem] font-medium" style={{ color: c.deep }}>Fix pending state issue</p>
+                    <p className="mt-0.5 text-[0.8125rem]" style={{ color: c.subtle }}>7 seconds ago · Linear</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-3.5 rounded-xl px-4 py-3.5 opacity-45" style={{ backgroundColor: c.card }}>
+                  <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ backgroundColor: "rgba(67,78,63,0.08)" }}>
+                    <span className="size-2 rounded-full" style={{ backgroundColor: c.forest }} />
+                  </span>
+                  <div>
+                    <p className="text-[0.9375rem] font-medium" style={{ color: c.deep }}>Refactor blog item page</p>
+                    <p className="mt-0.5 text-[0.8125rem]" style={{ color: c.subtle }}>17 seconds ago · Intercom</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-7 py-9 md:px-12 md:py-14">
+              <h2 className="text-[1.375rem] font-medium leading-[1.25] md:text-[1.625rem]" style={{ color: c.deep }}>
+                Give every agent a secure workspace
+              </h2>
+              <p className="mt-3 max-w-[26rem] text-[0.9375rem] leading-[1.6]" style={{ color: c.mutedFg }}>
+                A safe way to delegate background work to agents on their own machines, away from
+                laptops and production credentials.
+              </p>
+              <ul className="mt-7">
+                {governedRows.map((row, index) => (
+                  <li key={row.label} className={index < governedRows.length - 1 ? "border-b" : ""} style={{ borderColor: c.border }}>
+                    <Link
+                      href={row.href}
+                      className="group flex items-center gap-3.5 py-4 transition-opacity hover:opacity-70"
+                    >
+                      <row.Icon className="size-4 shrink-0" style={{ color: c.forest }} aria-hidden="true" />
+                      <span className="text-[0.9375rem] font-medium" style={{ color: c.deep }}>{row.label}</span>
+                      <ArrowRightIcon
+                        className="ml-auto size-4 shrink-0 transition-transform group-hover:translate-x-0.5"
+                        style={{ color: c.forest }}
+                        aria-hidden="true"
+                      />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </SectionCard>
+      </Reveal>
+    </SectionShell>
+  );
+}
+
 export default function UseCasesPage() {
   return (
     <div style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: fonts.sans }}>
@@ -122,6 +201,8 @@ export default function UseCasesPage() {
             Talk to Matrix
           </CtaButton>
         </PageHero>
+
+        <GovernedSection />
 
         <SectionShell className="pt-16 md:pt-24">
           <Reveal>

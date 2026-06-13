@@ -14,16 +14,16 @@ export function Hero() {
           className="text-[2.75rem] leading-[1.05] tracking-[-0.01em] md:text-[4.25rem]"
           style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
         >
-          Give your background agents
+          A computer in the cloud
           <br />
-          their own computer
+          for your AI agents
         </h1>
         <p
           className="mt-5 max-w-[36rem] text-[1rem] leading-[1.6] md:text-[1.0625rem]"
           style={{ color: c.subtle, fontFamily: fonts.sans }}
         >
-          Matrix is a private cloud computer where Claude, Codex, Cursor, and Hermes keep
-          working after your laptop closes. Terminals, repos, previews, and workflows included.
+          Run Claude, Codex, Cursor, and Hermes as background agents on one private hosted
+          computer. Terminals, repos, previews, and workflows that keep going after your laptop closes.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
           <SignedOut>
