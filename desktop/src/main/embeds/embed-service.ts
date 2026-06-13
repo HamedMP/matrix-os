@@ -78,6 +78,10 @@ export class EmbedService {
     return this.manager.setBounds(embedId, bounds);
   }
 
+  setActive(embedId: string, active: boolean): boolean {
+    return this.manager.setActive(embedId, active);
+  }
+
   close(embedId: string): boolean {
     const wasPending = this.pendingHostedShells.delete(embedId);
     const wasPendingApp = this.pendingApps.delete(embedId);

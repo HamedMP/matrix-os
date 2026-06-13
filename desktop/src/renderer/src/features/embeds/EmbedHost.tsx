@@ -3,13 +3,10 @@ import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
-// The remote content renders in an isolated partition with no IPC access; this
-// component only reports bounds and surfaces the inline re-auth prompt.
-// Off-screen rect used to hide the native view while its tab is inactive
-// (a WebContentsView is an OS overlay and would otherwise paint over the active
-// tab — lesson L14).
-const HIDDEN_BOUNDS = { x: -20000, y: 0, width: 800, height: 600 };
-
+// The remote content renders in an isolated partition with no IPC access.
+// A WebContentsView is a native overlay that always paints above the renderer,
+// so when this host's tab is inactive the view is DETACHED from the window
+// (embed:set-active false) rather than moved off-screen (lesson L14).
 export default function EmbedHost({
   kind,
   slug,
@@ -28,11 +25,7 @@ export default function EmbedHost({
   function reportBounds(): void {
     const id = embedIdRef.current;
     const host = hostRef.current;
-    if (!id || !host) return;
-    if (!activeRef.current) {
-      void invoke("embed:set-bounds", { embedId: id, bounds: HIDDEN_BOUNDS });
-      return;
-    }
+    if (!id || !host || !activeRef.current) return;
     const r = host.getBoundingClientRect();
     void invoke("embed:set-bounds", {
       embedId: id,
@@ -61,15 +54,15 @@ export default function EmbedHost({
       pendingStates.set(payload.embedId, payload.state);
     });
 
-    const rect = host.getBoundingClientRect();
+    const r = host.getBoundingClientRect();
     const bounds = {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
+      x: Math.round(r.left),
+      y: Math.round(r.top),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
     };
 
-    void invoke("embed:open", { kind, ...(slug ? { slug } : {}), bounds })
+    void invoke("embed:open", { kind, ...(slug ? { slug } : {}), bounds, active: activeRef.current })
       .then(({ embedId, state: initialState }) => {
         if (disposed) {
           void invoke("embed:close", { embedId });
@@ -78,7 +71,9 @@ export default function EmbedHost({
         embedIdRef.current = embedId;
         setState(pendingStates.get(embedId) ?? initialState);
         pendingStates.delete(embedId);
-        reportBounds();
+        // Apply the current active state (handles a tab switch mid-open).
+        void invoke("embed:set-active", { embedId, active: activeRef.current });
+        if (activeRef.current) reportBounds();
       })
       .catch(() => {
         if (!disposed) setState("failed");
@@ -102,9 +97,14 @@ export default function EmbedHost({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, slug]);
 
-  // Show/hide the native view as the hosting tab activates/deactivates.
+  // Attach/detach the native view as the hosting tab activates/deactivates.
   useEffect(() => {
-    reportBounds();
+    const id = embedIdRef.current;
+    // While embed:open is pending there is no native view to attach yet. The
+    // open resolution path applies activeRef.current before reporting bounds.
+    if (!id) return;
+    void invoke("embed:set-active", { embedId: id, active });
+    if (active) reportBounds();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
