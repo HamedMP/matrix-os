@@ -13,6 +13,7 @@ const GENERIC_MESSAGES: Record<string, string> = {
   unknown_command: "Request failed",
   unsupported_version: "Request failed",
   auth_expired: "Matrix CLI auth expired. Run `mos login` to refresh your session.",
+  payment_delayed: "Payment is taking longer than expected to confirm. Contact support@matrix-os.com if it persists.",
 };
 
 export function formatCliSuccess(data: Record<string, unknown>): string {

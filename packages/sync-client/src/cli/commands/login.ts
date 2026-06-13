@@ -2,7 +2,6 @@ import { defineCommand } from "citty";
 import { login } from "../../auth/oauth.js";
 import {
   authFilePathForProfile,
-  clearProfileAuth,
   saveProfileAuth,
 } from "../../auth/token-store.js";
 import {
@@ -21,6 +20,7 @@ import {
   formatCliErrorMessage,
   formatCliSuccess,
 } from "../output.js";
+import { fetchJourney, journeyGuidance } from "../journey.js";
 
 function localProfileFromArgs(args: Record<string, unknown>) {
   return {
@@ -180,26 +180,24 @@ export const loginCommand = defineCommand({
     }
 
     if (meRes.status === 404) {
-      // User signed in but no Matrix container exists. Wipe the just-written
-      // auth.json (pollForToken persisted it inside `login()`) — otherwise
-      // `matrix sync` would appear to work while every gateway call 404s.
-      await clearProfileAuth(profileName);
+      // Signed in but no machine yet. KEEP the valid auth token (the journey +
+      // `mos setup` both need it; deleting it forces a needless re-login) and
+      // consult the journey to tell the user exactly what to do next instead of
+      // dead-ending at "sign up on the website". We still skip writing config.json
+      // (no gateway yet), so `mos sync` won't point at a guessed gateway.
+      const journey = await fetchJourney(platformUrl, auth.accessToken);
+      const guidance = journeyGuidance(journey);
       if (json) {
-        console.error(formatCliError(
-          "instance_not_found",
-          "Matrix instance not found. Sign up at https://app.matrix-os.com, then rerun `mos login`.",
-        ));
-        process.exitCode = 1;
-        return;
+        console.log(formatCliSuccess({
+          authenticated: true,
+          connected: false,
+          journey: journey ?? null,
+          suggestedCommand: guidance.suggestedCommand ?? null,
+        }));
+      } else {
+        for (const line of guidance.lines) console.log(line);
       }
-      console.log(
-        "You're signed in, but there's no Matrix instance for this account yet.",
-      );
-      console.log("");
-      console.log(
-        "Sign up at https://app.matrix-os.com first, then re-run `mos login`.",
-      );
-      process.exitCode = 1;
+      process.exitCode = guidance.exitCode;
       return;
     }
 
