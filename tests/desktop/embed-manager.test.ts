@@ -185,6 +185,30 @@ describe("EmbedManager", () => {
     expect(manager.has("nope")).toBe(false);
   });
 
+  it("setActive(false) detaches the native view so it can't overlay other tabs", () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    expect(views[0]?.view.events).toContain("attach");
+    expect(manager.setActive(id, false)).toBe(true);
+    expect(views[0]?.view.events).toContain("detach");
+    expect(manager.liveCount).toBe(0);
+  });
+
+  it("setActive(true) re-attaches a detached embed without reloading", () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    manager.setActive(id, false);
+    manager.setActive(id, true);
+    expect(views[0]?.view.events.filter((e) => e === "attach")).toHaveLength(2);
+    expect(views[0]?.view.loadedUrls).toHaveLength(1);
+    expect(manager.liveCount).toBe(1);
+  });
+
+  it("setActive returns false for unknown ids", () => {
+    const { manager } = makeManager();
+    expect(manager.setActive("nope", false)).toBe(false);
+  });
+
   it("closeAll destroys every embed including suspended ones", () => {
     const { manager, views } = makeManager(1);
     manager.open("app", "a", BOUNDS, "https://gw.test/a");

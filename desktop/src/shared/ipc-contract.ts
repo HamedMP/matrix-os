@@ -107,6 +107,10 @@ export const INVOKE_CHANNELS = {
       .strict(),
     response: Ok,
   },
+  "embed:set-active": {
+    request: z.object({ embedId: z.string().min(1).max(64), active: z.boolean() }).strict(),
+    response: Ok,
+  },
   "embed:close": {
     request: z.object({ embedId: z.string().min(1).max(64) }).strict(),
     response: Ok,

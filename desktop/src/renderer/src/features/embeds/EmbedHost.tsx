@@ -3,13 +3,10 @@ import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
-// The remote content renders in an isolated partition with no IPC access; this
-// component only reports bounds and surfaces the inline re-auth prompt.
-// Off-screen rect used to hide the native view while its tab is inactive
-// (a WebContentsView is an OS overlay and would otherwise paint over the active
-// tab — lesson L14).
-const HIDDEN_BOUNDS = { x: -20000, y: 0, width: 800, height: 600 };
-
+// The remote content renders in an isolated partition with no IPC access.
+// A WebContentsView is a native overlay that always paints above the renderer,
+// so when this host's tab is inactive the view is DETACHED from the window
+// (embed:set-active false) rather than moved off-screen (lesson L14).
 export default function EmbedHost({
   kind,
   slug,
@@ -25,19 +22,30 @@ export default function EmbedHost({
   activeRef.current = active;
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
 
+  function reportBounds(): void {
+    const id = embedIdRef.current;
+    const host = hostRef.current;
+    if (!id || !host || !activeRef.current) return;
+    const r = host.getBoundingClientRect();
+    void invoke("embed:set-bounds", {
+      embedId: id,
+      bounds: {
+        x: Math.round(r.left),
+        y: Math.round(r.top),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      },
+    });
+  }
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     let disposed = false;
     let offState: (() => void) | null = null;
 
-    const rect = host.getBoundingClientRect();
-    const bounds = {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-    };
+    const r = host.getBoundingClientRect();
+    const bounds = { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
 
     void invoke("embed:open", { kind, ...(slug ? { slug } : {}), bounds })
       .then(({ embedId }) => {
@@ -49,59 +57,37 @@ export default function EmbedHost({
         offState = onEvent("embed:state", (payload) => {
           if (payload.embedId === embedId) setState(payload.state);
         });
+        // Apply the current active state (handles a tab switch mid-open).
+        void invoke("embed:set-active", { embedId, active: activeRef.current });
+        if (activeRef.current) reportBounds();
       })
       .catch(() => {
         if (!disposed) setState("failed");
       });
 
-    const reportBounds = () => {
-      const id = embedIdRef.current;
-      if (!id) return;
-      if (!activeRef.current) {
-        void invoke("embed:set-bounds", { embedId: id, bounds: HIDDEN_BOUNDS });
-        return;
-      }
-      const r = host.getBoundingClientRect();
-      void invoke("embed:set-bounds", {
-        embedId: id,
-        bounds: {
-          x: Math.round(r.left),
-          y: Math.round(r.top),
-          width: Math.round(r.width),
-          height: Math.round(r.height),
-        },
-      });
-    };
-    // ResizeObserver catches size changes; window resize catches position
-    // shifts that don't change this element's own box.
-    const observer = new ResizeObserver(reportBounds);
+    const observer = new ResizeObserver(() => reportBounds());
     observer.observe(host);
-    window.addEventListener("resize", reportBounds);
+    const onWindowResize = () => reportBounds();
+    window.addEventListener("resize", onWindowResize);
 
     return () => {
       disposed = true;
       observer.disconnect();
-      window.removeEventListener("resize", reportBounds);
+      window.removeEventListener("resize", onWindowResize);
       offState?.();
       const id = embedIdRef.current;
       if (id) void invoke("embed:close", { embedId: id });
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, slug]);
 
-  // Show/hide the native view as the hosting tab activates/deactivates.
+  // Attach/detach the native view as the hosting tab activates/deactivates.
   useEffect(() => {
     const id = embedIdRef.current;
-    const host = hostRef.current;
     if (!id) return;
-    if (active && host) {
-      const r = host.getBoundingClientRect();
-      void invoke("embed:set-bounds", {
-        embedId: id,
-        bounds: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) },
-      });
-    } else {
-      void invoke("embed:set-bounds", { embedId: id, bounds: HIDDEN_BOUNDS });
-    }
+    void invoke("embed:set-active", { embedId: id, active });
+    if (active) reportBounds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
   return (

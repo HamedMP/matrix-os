@@ -83,6 +83,30 @@ export class EmbedManager {
     return true;
   }
 
+  // Show or hide an embed by attaching/detaching its native view from the
+  // window. Detaching is what actually removes the overlay — a WebContentsView
+  // always paints above the renderer, so bounds tricks can't hide it.
+  setActive(embedId: string, active: boolean): boolean {
+    const record = this.records.get(embedId);
+    if (!record) return false;
+    if (active) {
+      if (!record.live) {
+        record.view.attach();
+        record.live = true;
+      }
+      record.lastUsed = ++this.tick;
+      if (record.loadFailed) {
+        record.loadFailed = false;
+        this.loadInto(record);
+      }
+      this.enforceMaxLive();
+    } else if (record.live) {
+      record.view.detach();
+      record.live = false;
+    }
+    return true;
+  }
+
   focus(embedId: string): boolean {
     const record = this.records.get(embedId);
     if (!record) return false;

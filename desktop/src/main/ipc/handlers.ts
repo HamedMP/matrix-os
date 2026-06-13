@@ -105,6 +105,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("embed:set-bounds", ({ embedId, bounds }) => ({
     ok: ctx.embeds.setBounds(embedId, bounds),
   }));
+  handle("embed:set-active", ({ embedId, active }) => ({
+    ok: ctx.embeds.setActive(embedId, active),
+  }));
   handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));
   handle("embed:retry-auth", async ({ embedId }) => ({
     ok: await ctx.embeds.retryAuth(embedId),

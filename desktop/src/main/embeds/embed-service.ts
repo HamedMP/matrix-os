@@ -60,6 +60,10 @@ export class EmbedService {
     return this.manager.setBounds(embedId, bounds);
   }
 
+  setActive(embedId: string, active: boolean): boolean {
+    return this.manager.setActive(embedId, active);
+  }
+
   close(embedId: string): boolean {
     return this.manager.close(embedId);
   }
