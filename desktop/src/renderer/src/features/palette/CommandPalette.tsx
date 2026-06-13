@@ -17,6 +17,7 @@ export default function CommandPalette() {
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
+  const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const setComposerOpen = useUi((s) => s.setComposerOpen);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const projects = useBoard((s) => s.projects);
@@ -82,6 +83,7 @@ export default function CommandPalette() {
             style={{ color: "var(--text-tertiary)" }}
           >
             <PaletteItem icon={<Plus size={14} />} label="New task" shortcut="C" onSelect={() => run(() => setCreateTaskOpen(true))} />
+            <PaletteItem icon={<Kanban size={14} />} label="New project" onSelect={() => run(() => setCreateProjectOpen(true))} />
             <PaletteItem icon={<Sparkles size={14} />} label="Open chat" onSelect={() => run(() => openTab({ kind: "chat", title: "Hermes", closable: false }))} />
             <PaletteItem icon={<MessageSquarePlus size={14} />} label="New agent run" shortcut="⌘J" onSelect={() => run(() => setComposerOpen(true))} />
             <PaletteItem icon={<Home size={14} />} label="Go to Home" onSelect={() => run(() => openTab({ kind: "home", title: "Home", closable: false }))} />

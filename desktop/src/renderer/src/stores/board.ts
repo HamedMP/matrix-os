@@ -185,6 +185,7 @@ interface BoardState {
   refreshing: boolean;
   error: AppErrorCategory | null;
   loadProjects(api: ApiClient): Promise<void>;
+  createProject(api: ApiClient, input: { name: string; mode: "scratch" | "github"; url?: string }): Promise<Project | null>;
   selectProject(api: ApiClient, slug: string): Promise<void>;
   refreshTasks(api: ApiClient, slug: string): Promise<void>;
   createTask(api: ApiClient, slug: string, input: CreateTaskInput): Promise<Card | null>;
@@ -278,6 +279,27 @@ export const useBoard = create<BoardState>()((set, get) => {
       } catch (err: unknown) {
         console.error("[board] Failed to load projects:", err);
         set({ error: categoryOf(err) });
+      }
+    },
+
+    createProject: async (api, input) => {
+      try {
+        const body = input.mode === "github" ? { name: input.name, mode: "github", url: input.url } : { name: input.name, mode: "scratch" };
+        const res = await api.post<{ project: unknown }>("/api/projects", body);
+        const parsed = WireProjectSchema.safeParse(res.project);
+        if (!parsed.success) {
+          set({ error: "server" });
+          return null;
+        }
+        const project: Project = { slug: parsed.data.slug, name: parsed.data.name };
+        // Refresh the list so the sidebar shows it immediately.
+        await get().loadProjects(api);
+        set({ error: null });
+        return project;
+      } catch (err: unknown) {
+        console.error("[board] Create project failed:", err);
+        set({ error: categoryOf(err) });
+        return null;
       }
     },
 

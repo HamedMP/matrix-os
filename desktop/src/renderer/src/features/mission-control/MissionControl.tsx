@@ -9,6 +9,7 @@ import TabBar from "./TabBar";
 import TabContent from "./TabContent";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
+import CreateProjectDialog from "../board/CreateProjectDialog";
 import QuickOpen from "../files/QuickOpen";
 import { useGlobalShortcuts } from "./shortcuts";
 import { invoke } from "../../lib/operator";
@@ -19,6 +20,8 @@ export default function MissionControl() {
   const loadProjects = useBoard((s) => s.loadProjects);
   const openTab = useTabs((s) => s.openTab);
   const tabCount = useTabs((s) => s.tabs.length);
+  const createProjectOpen = useUi((s) => s.createProjectOpen);
+  const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
 
   useGlobalShortcuts();
 
@@ -61,6 +64,7 @@ export default function MissionControl() {
       <Composer />
       <CommandPalette />
       <QuickOpen />
+      <CreateProjectDialog open={createProjectOpen} onClose={() => setCreateProjectOpen(false)} />
     </div>
   );
 }
