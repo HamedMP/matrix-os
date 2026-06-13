@@ -1,5 +1,19 @@
 import type { CustomerVpsConfig } from './customer-vps-config.js';
-import { CustomerVpsError } from './customer-vps-errors.js';
+import { CustomerVpsError, logCustomerVpsError } from './customer-vps-errors.js';
+
+const HETZNER_USER_DATA_LIMIT_BYTES = 32 * 1024;
+
+// Server-side only: the provider's error detail never reaches clients, but
+// losing it entirely makes a provider-side rejection impossible to diagnose.
+async function logProviderRejection(context: string, res: Response): Promise<void> {
+  let detail = '';
+  try {
+    detail = (await res.text()).slice(0, 500);
+  } catch (err: unknown) {
+    detail = err instanceof Error ? `<unreadable body: ${err.name}>` : '<unreadable body>';
+  }
+  logCustomerVpsError(`hetzner ${context}`, new Error(`HTTP ${res.status}: ${detail}`));
+}
 
 const HETZNER_API_BASE = 'https://api.hetzner.cloud/v1';
 const HETZNER_TIMEOUT_MS = 10_000;
@@ -102,6 +116,17 @@ export function createHetznerClient(
 
   return {
     async createServer(input) {
+      // Hetzner rejects user_data over 32KiB with a generic 422
+      // invalid_input; fail with a distinct code before calling out so the
+      // failure is attributable rather than an opaque provider error.
+      const userDataBytes = Buffer.byteLength(input.userData, 'utf8');
+      if (userDataBytes > HETZNER_USER_DATA_LIMIT_BYTES) {
+        logCustomerVpsError(
+          'hetzner createServer preflight',
+          new Error(`user_data is ${userDataBytes} bytes (limit ${HETZNER_USER_DATA_LIMIT_BYTES})`),
+        );
+        throw new CustomerVpsError(500, 'user_data_too_large', 'Provisioning provider unavailable');
+      }
       const res = await request('/servers', {
         method: 'POST',
         body: JSON.stringify({
@@ -118,6 +143,7 @@ export function createHetznerClient(
         throw new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable');
       }
       if (!res.ok) {
+        await logProviderRejection('createServer', res);
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       return parseServer(await parseJson(res));

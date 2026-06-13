@@ -29,13 +29,20 @@ describe("www legal pages", () => {
   });
 
   it("links terms and privacy from the landing page footer and keeps license copy accurate", async () => {
-    const landing = await readRepoFile("www/src/app/page.tsx");
+    const [landing, footer, finalCta] = await Promise.all([
+      readRepoFile("www/src/app/page.tsx"),
+      readRepoFile("www/src/components/landing/SiteFooter.tsx"),
+      readRepoFile("www/src/components/landing/FinalCtaSection.tsx"),
+    ]);
 
-    expect(landing).toContain('href="/terms"');
-    expect(landing).toContain('href="/privacy"');
-    expect(landing).toContain('href: "/terms"');
-    expect(landing).toContain('href: "/privacy"');
-    expect(landing).toMatch(/AGPL-3\.0-or-later|GNU Affero General Public License/i);
+    expect(landing).toContain("<SiteFooter />");
+    expect(landing).toContain("<FinalCtaSection />");
+    expect(footer).toContain('href: "/terms"');
+    expect(footer).toContain('href: "/privacy"');
+    expect(finalCta).toContain('href="/terms"');
+    expect(finalCta).toContain('href="/privacy"');
+    expect(footer).toMatch(/AGPL-3\.0-or-later|GNU Affero General Public License/i);
+    expect(footer).not.toContain("MIT licensed");
     expect(landing).not.toContain("MIT licensed");
   });
 });

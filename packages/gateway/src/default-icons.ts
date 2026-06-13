@@ -1,10 +1,10 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 const SAFE_ICON_FILE = /^([a-zA-Z0-9_-]+)\.(png|svg)$/;
 const SKIP_APP_DIRS = new Set(["node_modules"]);
 
-export async function resolveSystemIconUrl(homePath: string, requestedFile: string): Promise<string | null> {
+export async function resolveSystemIconPath(homePath: string, requestedFile: string): Promise<string | null> {
   const match = requestedFile.match(SAFE_ICON_FILE);
   if (!match) return null;
   const [, stem, requestedExt] = match;
@@ -18,9 +18,10 @@ export async function resolveSystemIconUrl(homePath: string, requestedFile: stri
     ]),
   );
   for (const candidate of candidates) {
+    const fullPath = join(homePath, "system/icons", candidate);
     try {
-      const iconStat = await lstat(join(homePath, "system/icons", candidate));
-      if (iconStat.isFile()) return `/files/system/icons/${candidate}`;
+      const iconStat = await lstat(fullPath);
+      if (iconStat.isFile()) return fullPath;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         console.warn("[icons] failed to stat system icon:", err instanceof Error ? err.message : String(err));
@@ -28,6 +29,11 @@ export async function resolveSystemIconUrl(homePath: string, requestedFile: stri
     }
   }
   return null;
+}
+
+export async function resolveSystemIconUrl(homePath: string, requestedFile: string): Promise<string | null> {
+  const fullPath = await resolveSystemIconPath(homePath, requestedFile);
+  return fullPath ? `/files/system/icons/${basename(fullPath)}` : null;
 }
 
 export async function resolveDefaultAppIconUrl(homePath: string, slug: string): Promise<string | null> {

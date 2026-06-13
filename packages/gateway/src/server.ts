@@ -104,7 +104,8 @@ import { createDraftActionReadinessService } from "./onboarding/draft-action-rea
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
-import { resolveBundledSystemIconPath, resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
+import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
+import { registerIconRoutes } from "./icon-routes.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { collectSystemActivity } from "./system-activity/collector.js";
@@ -3788,37 +3789,7 @@ export async function createGateway(config: GatewayConfig) {
     return c.json(await listApps(homePath));
   });
 
-  const redirectIconRequest = async (c: Context) => {
-    const file = c.req.param("file");
-    if (!file) return c.text("Icon not found", 404);
-    const target = await resolveSystemIconUrl(homePath, file);
-    if (!target) return c.text("Icon not found", 404);
-    return c.redirect(target, 307);
-  };
-
-  app.on("HEAD", "/icons/:file", redirectIconRequest);
-  app.get("/icons/:file", redirectIconRequest);
-
-  const serveBundledSystemIcon = async (c: Context) => {
-    const file = c.req.param("file");
-    if (!file) return c.text("Icon not found", 404);
-    const target = await resolveBundledSystemIconPath(homePath, file);
-    if (!target) return c.text("Icon not found", 404);
-    const stat = await statAsync(target);
-    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
-    const headers = {
-      "Content-Type": getMimeType(extname(target)),
-      "Cache-Control": "public, max-age=86400, immutable",
-      "CDN-Cache-Control": "public, max-age=86400",
-      "ETag": etag,
-    };
-    if (c.req.header("if-none-match") === etag) return c.body(null, 304, headers);
-    if (c.req.method === "HEAD") return c.body(null, 200, headers);
-    return c.body(await readFileAsync(target), 200, headers);
-  };
-
-  app.on("HEAD", "/system-icons/:file", serveBundledSystemIcon);
-  app.get("/system-icons/:file", serveBundledSystemIcon);
+  registerIconRoutes(app, homePath);
 
   app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
     const slug = c.req.param("slug");
