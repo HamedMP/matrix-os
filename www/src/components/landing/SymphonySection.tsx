@@ -1,4 +1,5 @@
-import { WorkflowIcon } from "lucide-react";
+import Link from "next/link";
+import { ArrowRightIcon, WorkflowIcon } from "lucide-react";
 import { palette as c, fonts } from "./theme";
 import { SectionCard, SectionShell, SectionTitle } from "./primitives";
 import { Reveal } from "./Reveal";
@@ -15,16 +16,31 @@ const symphonyPoints = [
   { title: "Merge what survives review", desc: "Keep human control over branches, diffs, checks, browser previews, and PRs." },
 ] as const;
 
-export function SymphonySection() {
+export function SymphonySection({ exploreHref }: { exploreHref?: string }) {
   return (
     <SectionShell id="symphony" className="pt-16 md:pt-28">
       <Reveal>
         <SectionCard>
-          <div className="px-7 pt-9 pb-8 md:px-12 md:pt-12 md:pb-10" style={{ borderBottom: `1px solid ${c.border}` }}>
-            <SectionTitle
-              title="Symphony orchestrates the work."
-              continuation="Assign tasks, run agents in parallel, review only what survives."
-            />
+          <div
+            className="flex flex-wrap items-end justify-between gap-4 px-7 pt-9 pb-8 md:px-12 md:pt-12 md:pb-10"
+            style={{ borderBottom: `1px solid ${c.border}` }}
+          >
+            <div className="max-w-[44rem]">
+              <SectionTitle
+                title="Symphony orchestrates the work."
+                continuation="Assign tasks, run agents in parallel, review only what survives."
+              />
+            </div>
+            {exploreHref ? (
+              <Link
+                href={exploreHref}
+                className="group inline-flex shrink-0 items-center gap-1.5 text-[0.9375rem] font-medium transition-opacity hover:opacity-70"
+                style={{ color: c.forest }}
+              >
+                Explore Symphony
+                <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            ) : null}
           </div>
 
           <div className="grid md:grid-cols-[1fr_1.1fr]">

@@ -11,13 +11,7 @@ import { SurfacesSection } from "@/components/landing/SurfacesSection";
 import { SymphonySection } from "@/components/landing/SymphonySection";
 import { QuoteStats } from "@/components/landing/QuoteStats";
 import { HermesSection } from "@/components/landing/HermesSection";
-import { WorkflowsSection } from "@/components/landing/WorkflowsSection";
-import { AgentSetupSection } from "@/components/landing/AgentSetupSection";
-import { SolutionsSection } from "@/components/landing/SolutionsSection";
-import { AudienceSection } from "@/components/landing/AudienceSection";
-import { HowItWorksSection } from "@/components/landing/HowItWorksSection";
-import { BeyondDevelopersSection } from "@/components/landing/BeyondDevelopersSection";
-import { DeploymentSection } from "@/components/landing/DeploymentSection";
+import { PilotBand } from "@/components/landing/PilotBand";
 import { FaqSection } from "@/components/landing/FaqSection";
 import { FinalCtaSection } from "@/components/landing/FinalCtaSection";
 import { SiteFooter } from "@/components/landing/SiteFooter";
@@ -38,9 +32,9 @@ const jsonLd = JSON.stringify({
 });
 
 export const metadata: Metadata = {
-  title: "Matrix OS - A cloud computer for AI coding agents",
+  title: "Matrix OS - A cloud computer for background AI agents",
   description:
-    "Matrix gives developers a hosted cloud computer for Claude, Codex, Cursor, OpenCode, Hermes, OpenClaw-style agents, persistent terminals, previews, workflows, and connected tools.",
+    "Matrix gives background agents their own computer. Run Claude, Codex, Cursor, OpenCode, and Hermes in a private hosted workspace with persistent terminals, repos, previews, and workflows that keep going after your laptop closes.",
 };
 
 export default function LandingPage() {
@@ -57,17 +51,11 @@ export default function LandingPage() {
         <AgentMarquee />
         <PlatformGrid />
         <SurfacesSection />
-        <SymphonySection />
+        <SymphonySection exploreHref="/symphony" />
         <QuoteStats />
-        <HermesSection />
-        <WorkflowsSection />
-        <AgentSetupSection />
-        <SolutionsSection />
-        <AudienceSection />
-        <HowItWorksSection />
-        <BeyondDevelopersSection />
-        <DeploymentSection />
+        <HermesSection exploreHref="/hermes" />
         <LandingBilling />
+        <PilotBand />
         <FaqSection />
         <FinalCtaSection />
       </main>

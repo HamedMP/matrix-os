@@ -9,10 +9,10 @@ import { palette as c, fonts } from "./theme";
 type NavLinkConfig = { label: string; href: string };
 
 const navLinks: NavLinkConfig[] = [
-  { label: "Solutions", href: "/solutions" },
-  { label: "Symphony", href: "/#symphony" },
-  { label: "Teams", href: "/#teams" },
+  { label: "Symphony", href: "/symphony" },
+  { label: "Hermes", href: "/hermes" },
   { label: "Use cases", href: "/use-cases" },
+  { label: "Pricing", href: "/#pricing" },
   { label: "Docs", href: "/docs" },
 ];
 

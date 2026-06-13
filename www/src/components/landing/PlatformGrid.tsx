@@ -4,53 +4,87 @@ import { palette as c, fonts } from "./theme";
 import { SectionCard, SectionShell, SectionTitle } from "./primitives";
 import { Reveal } from "./Reveal";
 
-const DOT_COLS = 10;
-const DOT_ROWS = 8;
-const DOT_GAP = 16;
+const ISO_GRID = 4;
+const ISO_T = 13;
+const ISO_TH = 7;
+const ISO_ORIGIN_X = 85;
+const ISO_ORIGIN_Y = 48;
 
-function dotTone(col: number, row: number, seed: number): string {
-  const hash = (col * 7 + row * 13 + seed * 31 + col * row * 3) % 19;
-  if (hash < 5) return c.deep;
-  if (hash === 5) return c.ember;
-  return "rgba(67, 78, 63, 0.16)";
+type CubeTone = { top: string; right: string; left: string };
+
+const forestTone: CubeTone = {
+  top: "#EFEEE2",
+  right: "rgba(67, 78, 63, 0.55)",
+  left: "rgba(50, 53, 46, 0.72)",
+};
+
+const emberTone: CubeTone = {
+  top: "#F4DCC4",
+  right: "#D06F25",
+  left: "#A85A1E",
+};
+
+function isoHash(i: number, j: number, seed: number): number {
+  return (i * 11 + j * 17 + seed * 29 + i * j * 7) % 23;
 }
 
-function DotMatrix({ seed }: { seed: number }) {
-  const width = (DOT_COLS - 1) * DOT_GAP + 6;
-  const height = (DOT_ROWS - 1) * DOT_GAP + 6;
+function IsoCube({ i, j, seed }: { i: number; j: number; seed: number }) {
+  const hash = isoHash(i, j, seed);
+  if (hash % 5 === 0) return null;
+
+  const cx = ISO_ORIGIN_X + (i - j) * ISO_T;
+  const ground = ISO_ORIGIN_Y + (i + j) * ISO_TH;
+  const height = 6 + (hash % 4) * 6;
+  const tone = hash % 7 === 1 ? emberTone : forestTone;
+  const topY = ground - height;
+
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className="h-auto w-full max-w-[170px]"
-      aria-hidden="true"
-    >
-      {Array.from({ length: DOT_ROWS }, (_, row) =>
-        Array.from({ length: DOT_COLS }, (_, col) => (
-          <circle
-            key={`${row}-${col}`}
-            cx={col * DOT_GAP + 3}
-            cy={row * DOT_GAP + 3}
-            r={3}
-            fill={dotTone(col, row, seed)}
-          />
-        )),
-      )}
+    <g>
+      <polygon
+        points={`${cx},${topY + ISO_TH} ${cx + ISO_T},${topY} ${cx + ISO_T},${ground} ${cx},${ground + ISO_TH}`}
+        fill={tone.right}
+      />
+      <polygon
+        points={`${cx - ISO_T},${topY} ${cx},${topY + ISO_TH} ${cx},${ground + ISO_TH} ${cx - ISO_T},${ground}`}
+        fill={tone.left}
+      />
+      <polygon
+        points={`${cx},${topY - ISO_TH} ${cx + ISO_T},${topY} ${cx},${topY + ISO_TH} ${cx - ISO_T},${topY}`}
+        fill={tone.top}
+      />
+    </g>
+  );
+}
+
+function IsoArt({ seed }: { seed: number }) {
+  const cells: Array<{ i: number; j: number }> = [];
+  for (let depth = 0; depth <= (ISO_GRID - 1) * 2; depth++) {
+    for (let i = 0; i < ISO_GRID; i++) {
+      const j = depth - i;
+      if (j >= 0 && j < ISO_GRID) cells.push({ i, j });
+    }
+  }
+  return (
+    <svg viewBox="0 0 170 110" className="h-auto w-full max-w-[180px]" aria-hidden="true">
+      {cells.map(({ i, j }) => (
+        <IsoCube key={`${i}-${j}`} i={i} j={j} seed={seed} />
+      ))}
     </svg>
   );
 }
 
 const platformFeatures = [
   {
-    title: "Your agent gets a computer",
-    desc: "Not a dashboard. A private hosted machine with files, shells, apps, previews, workflows, and memory.",
-    linkLabel: "See how it works",
-    href: "/docs/users/quickstart",
+    title: "Background agents",
+    desc: "Task in, reviewed change out. Agents keep coding on their own computer long after you close the laptop.",
+    linkLabel: "Explore Symphony",
+    href: "/symphony",
     seed: 1,
   },
   {
-    title: "Run every coding agent",
-    desc: "Claude, Codex, Cursor, OpenCode, Pi, and Gemini CLI in persistent sessions that outlive your laptop.",
-    linkLabel: "Explore agents",
+    title: "Every coding agent, one computer",
+    desc: "Claude, Codex, Cursor, OpenCode, Pi, and Gemini CLI in persistent sessions with repos, tests, and previews.",
+    linkLabel: "See supported agents",
     href: "/docs/guide/agents",
     seed: 2,
   },
@@ -58,7 +92,7 @@ const platformFeatures = [
     title: "Hermes, the resident agent",
     desc: "A Matrix-native agent for connected tools, scheduled workflows, notifications, and approvals.",
     linkLabel: "Meet Hermes",
-    href: "/#hermes",
+    href: "/hermes",
     seed: 3,
   },
   {
@@ -77,7 +111,7 @@ export function PlatformGrid() {
         <SectionCard>
           <div className="px-7 pt-9 pb-8 md:px-12 md:pt-12 md:pb-10" style={{ borderBottom: `1px solid ${c.border}` }}>
             <SectionTitle
-              title="The always-on agent computer."
+              title="The always-on computer for background agents."
               continuation="You set the direction. Agents keep working while your devices sleep."
             />
           </div>
@@ -106,8 +140,8 @@ export function PlatformGrid() {
                     <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
                   </Link>
                 </div>
-                <div className="hidden w-[150px] shrink-0 sm:block">
-                  <DotMatrix seed={feature.seed} />
+                <div className="hidden w-[160px] shrink-0 sm:block">
+                  <IsoArt seed={feature.seed} />
                 </div>
               </div>
             ))}

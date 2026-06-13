@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
-import { AgentSetupCopyButton } from "./AgentSetupCopyButton";
+import { CopyPromptButton } from "./CopyPromptButton";
 import { COPYABLE_AGENT_SETUP_PROMPT } from "./content";
 import { palette as c, fonts } from "./theme";
 import { SectionCard, SectionShell, SectionTitle } from "./primitives";
@@ -76,7 +76,7 @@ export function AgentSetupSection() {
             <div className="px-7 py-9 md:px-12 md:py-12">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <p className="text-[0.8125rem] font-medium" style={{ color: c.subtle }}>Copy for your agent</p>
-                <AgentSetupCopyButton text={COPYABLE_AGENT_SETUP_PROMPT} />
+                <CopyPromptButton text={COPYABLE_AGENT_SETUP_PROMPT} label="Copy" compact />
               </div>
               <pre
                 className="max-h-[340px] overflow-auto rounded-xl p-5 text-left text-[0.8125rem] leading-[1.7] whitespace-pre-wrap"

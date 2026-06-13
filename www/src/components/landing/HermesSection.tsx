@@ -1,4 +1,5 @@
-import { Layers3Icon, RocketIcon, WorkflowIcon } from "lucide-react";
+import Link from "next/link";
+import { ArrowRightIcon, Layers3Icon, RocketIcon, WorkflowIcon } from "lucide-react";
 import { palette as c, fonts } from "./theme";
 import { SectionShell } from "./primitives";
 import { Reveal } from "./Reveal";
@@ -9,7 +10,7 @@ const hermesCards = [
   { Icon: RocketIcon, title: "Ship apps and automations", desc: "Create internal tools, dashboards, trackers, reports, and app workflows in the same Matrix workspace." },
 ] as const;
 
-export function HermesSection() {
+export function HermesSection({ exploreHref }: { exploreHref?: string }) {
   return (
     <SectionShell id="hermes" className="pt-16 md:pt-28">
       <Reveal>
@@ -29,6 +30,16 @@ export function HermesSection() {
                 Coding agents build software. Hermes runs the operating system around them: tool
                 connections, scheduled workflows, notifications, approvals, memory, and everyday actions.
               </p>
+              {exploreHref ? (
+                <Link
+                  href={exploreHref}
+                  className="group mt-6 inline-flex items-center gap-1.5 text-[0.9375rem] font-medium transition-opacity hover:opacity-75"
+                  style={{ color: "#F4F2E6" }}
+                >
+                  Explore Hermes
+                  <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              ) : null}
             </div>
             <div className="grid gap-3">
               {hermesCards.map((card) => (

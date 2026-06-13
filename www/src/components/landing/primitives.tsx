@@ -91,3 +91,29 @@ export function SectionShell({ children, id, className = "" }: { children: React
     </section>
   );
 }
+
+export function PageHero({ eyebrow, title, sub, children }: { eyebrow?: string; title: ReactNode; sub?: string; children?: ReactNode }) {
+  return (
+    <SectionShell className="pt-10 md:pt-16">
+      <div className="mx-auto flex max-w-[52rem] flex-col items-center text-center">
+        {eyebrow ? (
+          <p className="mb-5 text-[0.9375rem]" style={{ fontFamily: fonts.display, color: c.subtle }}>
+            {eyebrow}
+          </p>
+        ) : null}
+        <h1
+          className="text-[2.5rem] leading-[1.08] tracking-[-0.01em] md:text-[3.5rem]"
+          style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
+        >
+          {title}
+        </h1>
+        {sub ? (
+          <p className="mt-5 max-w-[34rem] text-[1rem] leading-[1.6] md:text-[1.0625rem]" style={{ color: c.subtle, fontFamily: fonts.sans }}>
+            {sub}
+          </p>
+        ) : null}
+        {children ? <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">{children}</div> : null}
+      </div>
+    </SectionShell>
+  );
+}

@@ -3,6 +3,8 @@ import { ArrowRightIcon } from "lucide-react";
 import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { palette as c, cardShadow, fonts } from "./theme";
 import { CtaButton, SectionShell } from "./primitives";
+import { CopyPromptButton } from "./CopyPromptButton";
+import { COPYABLE_AGENT_SETUP_PROMPT } from "./content";
 
 export function Hero() {
   return (
@@ -12,16 +14,16 @@ export function Hero() {
           className="text-[2.75rem] leading-[1.05] tracking-[-0.01em] md:text-[4.25rem]"
           style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
         >
-          A computer in the cloud
+          Give your background agents
           <br />
-          for your AI agents
+          their own computer
         </h1>
         <p
-          className="mt-5 max-w-[34rem] text-[1rem] leading-[1.6] md:text-[1.0625rem]"
+          className="mt-5 max-w-[36rem] text-[1rem] leading-[1.6] md:text-[1.0625rem]"
           style={{ color: c.subtle, fontFamily: fonts.sans }}
         >
-          Run Claude, Codex, Cursor, and Hermes in one private hosted computer.
-          Terminals, repos, previews, and workflows that keep going after your laptop closes.
+          Matrix is a private cloud computer where Claude, Codex, Cursor, and Hermes keep
+          working after your laptop closes. Terminals, repos, previews, and workflows included.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
           <SignedOut>
@@ -34,10 +36,12 @@ export function Hero() {
               Open Matrix OS <ArrowRightIcon className="size-4" />
             </CtaButton>
           </SignedIn>
-          <CtaButton href="/docs/users/quickstart" variant="outline">
-            Read quickstart
-          </CtaButton>
+          <CopyPromptButton text={COPYABLE_AGENT_SETUP_PROMPT} />
         </div>
+        <p className="mt-4 text-[0.8125rem]" style={{ color: c.subtle, fontFamily: fonts.sans }}>
+          Free to sign up. Or copy the prompt into Claude Code, Codex, or Cursor and your agent
+          sets Matrix up for you.
+        </p>
       </div>
 
       <div

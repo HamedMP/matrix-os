@@ -10,8 +10,9 @@ const footerColumns: ReadonlyArray<{ title: string; links: readonly FooterLinkIt
     title: "Platform",
     links: [
       { label: "Docs", href: "/docs" },
-      { label: "Symphony", href: "/#symphony" },
-      { label: "Hermes", href: "/#hermes" },
+      { label: "Symphony", href: "/symphony" },
+      { label: "Hermes", href: "/hermes" },
+      { label: "Pricing", href: "/#pricing" },
       { label: "Releases", href: "/releases" },
       { label: "Whitepaper", href: "/whitepaper" },
     ],
