@@ -71,6 +71,40 @@ describe("mos setup poll loop", () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it("emits a structured error in --json mode when provisioning fails", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/api/journey/retry-provision")) return new Response("{}", { status: 200 });
+      return new Response(
+        JSON.stringify({ phase: "provisioning_failed", detail: "d", nextAction: { kind: "contact_support" }, failure: { retryable: false, attempt: 3 } }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runSetup({ json: true, "poll-interval-ms": "1" });
+
+    expect(process.exitCode).toBe(1);
+    const errArg = (console.error as unknown as { mock: { calls: string[][] } }).mock.calls.at(-1)?.[0];
+    expect(JSON.parse(errArg as string).error.code).toBe("retry_exhausted");
+  });
+
+  it("emits a structured error in --json mode when a plan is still required", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/api/journey/retry-provision")) return new Response("{}", { status: 200 });
+      return new Response(
+        JSON.stringify({ phase: "plan_required", detail: "d", nextAction: { kind: "open_plans" } }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runSetup({ json: true, "poll-interval-ms": "1" });
+
+    expect(process.exitCode).toBe(1);
+    const errArg = (console.error as unknown as { mock: { calls: string[][] } }).mock.calls.at(-1)?.[0];
+    expect(JSON.parse(errArg as string).error.code).toBe("billing_required");
+  });
+
   it("rejects a non-finite --poll-interval-ms instead of hanging", async () => {
     // Reaching `ready` immediately proves the loop ran with a sane interval and
     // did not hang on setTimeout(Infinity).
