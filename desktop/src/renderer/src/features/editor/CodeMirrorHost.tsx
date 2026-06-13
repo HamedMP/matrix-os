@@ -1,22 +1,53 @@
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
+import { markdown } from "@codemirror/lang-markdown";
+import { python } from "@codemirror/lang-python";
+import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
+import { EditorState } from "@codemirror/state";
+import { oneDark } from "@codemirror/theme-one-dark";
+import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { useEffect, useRef, useState } from "react";
 import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import { ConflictBar } from "./EditorPanel";
 import { useEditorTabs } from "./editor-tabs-store";
 import { createFilesApi, openFile, saveFile, saveFileOverwrite, type OpenedFile } from "./editor-save";
-import { getFileBaseline, rememberFileBaseline } from "./editor-baselines";
-import { getOrCreateModel, markModelBaseline, monaco } from "./monaco-setup";
 
-function fileBaselineKey(taskId: string, path: string): string {
-  return `${taskId}\u0000${path}`;
+function languageExtension(filename: string) {
+  const ext = filename.includes(".") ? `.${filename.split(".").pop()!.toLowerCase()}` : "";
+  switch (ext) {
+    case ".js":
+    case ".jsx":
+      return javascript({ jsx: true });
+    case ".ts":
+    case ".tsx":
+      return javascript({ jsx: true, typescript: true });
+    case ".json":
+      return json();
+    case ".md":
+    case ".mdx":
+      return markdown();
+    case ".html":
+      return html();
+    case ".css":
+    case ".scss":
+      return css();
+    case ".py":
+      return python();
+    default:
+      return [];
+  }
 }
 
-export default function MonacoHost({ taskId, path }: { taskId: string; path: string }) {
+export default function CodeMirrorHost({ taskId, path }: { taskId: string; path: string }) {
   const api = useConnection((s) => s.api);
   const setDirty = useEditorTabs((s) => s.setDirty);
   const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
   const fileRef = useRef<OpenedFile | null>(null);
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [conflict, setConflict] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -27,42 +58,35 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   useEffect(() => {
     if (!api || !hostRef.current) return;
     const files = createFilesApi(api);
-    let disposed = false;
     const host = hostRef.current;
-    let contentSubscription: { dispose(): void } | null = null;
-
-    const editor = monaco.editor.create(host, {
-      theme: "operator-dark",
-      fontSize: 13,
-      fontFamily: 'JetBrains Mono, "SF Mono", Menlo, monospace',
-      minimap: { enabled: false },
-      automaticLayout: true,
-      scrollBeyondLastLine: false,
-      padding: { top: 8 },
-    });
-    editorRef.current = editor;
+    let disposed = false;
 
     void openFile(files, path)
       .then((file) => {
         if (disposed) return;
-        const baselineKey = fileBaselineKey(taskId, path);
-        const model = getOrCreateModel(taskId, path, file.content);
-        const hasUnsavedModel = model.getValue() !== file.content;
-        const previousBaseline = getFileBaseline(baselineKey);
-        const baseline = hasUnsavedModel ? (previousBaseline ?? { ...file, loadedMtime: null }) : file;
-        fileRef.current = baseline;
-        if (!hasUnsavedModel) {
-          rememberFileBaseline(baselineKey, file);
-          setConflict(false);
-        } else if (previousBaseline && previousBaseline.loadedMtime !== file.loadedMtime) {
-          setConflict(true);
-          setSaveError(null);
-        }
-        editor.setModel(model);
-        setDirty(taskId, path, model.getValue() !== baseline.content);
-        contentSubscription = model.onDidChangeContent(() => {
-          setDirty(taskId, path, model.getValue() !== fileRef.current?.content);
+        fileRef.current = file;
+        const state = EditorState.create({
+          doc: file.content,
+          extensions: [
+            lineNumbers(),
+            highlightActiveLine(),
+            highlightSelectionMatches(),
+            history(),
+            keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+            languageExtension(path),
+            oneDark,
+            EditorView.updateListener.of((update) => {
+              if (update.docChanged) {
+                setDirty(taskId, path, update.state.doc.toString() !== fileRef.current?.content);
+              }
+            }),
+            EditorView.theme({
+              "&": { height: "100%", fontSize: "13px" },
+              ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono)" },
+            }),
+          ],
         });
+        viewRef.current = new EditorView({ state, parent: host });
       })
       .catch((err: unknown) => {
         if (!disposed) setLoadError(toUserMessage(err));
@@ -70,10 +94,8 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
 
     return () => {
       disposed = true;
-      contentSubscription?.dispose();
-      contentSubscription = null;
-      editorRef.current = null;
-      editor.dispose();
+      viewRef.current?.destroy();
+      viewRef.current = null;
     };
   }, [api, path, setDirty, taskId]);
 
@@ -89,19 +111,16 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   }, []);
 
   async function doSave(): Promise<void> {
-    const editor = editorRef.current;
+    const view = viewRef.current;
     const file = fileRef.current;
-    if (!api || !editor || !file || saveInFlightRef.current) return;
-    const content = editor.getValue();
+    if (!api || !view || !file || saveInFlightRef.current) return;
+    const content = view.state.doc.toString();
     saveInFlightRef.current = true;
     setSaving(true);
     try {
       const result = await saveFile(createFilesApi(api), file, content);
       if (result.ok) {
-        const saved = { ...file, content, loadedMtime: result.newMtime };
-        fileRef.current = saved;
-        rememberFileBaseline(fileBaselineKey(taskId, path), saved);
-        markModelBaseline(taskId, path, content);
+        fileRef.current = { ...file, content, loadedMtime: result.newMtime };
         setDirty(taskId, path, false);
         setConflict(false);
         setSaveError(null);
@@ -121,17 +140,14 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   doSaveRef.current = doSave;
 
   async function overwrite(): Promise<void> {
-    const editor = editorRef.current;
-    if (!api || !editor || saveInFlightRef.current) return;
-    const content = editor.getValue();
+    const view = viewRef.current;
+    if (!api || !view || saveInFlightRef.current) return;
+    const content = view.state.doc.toString();
     saveInFlightRef.current = true;
     setSaving(true);
     try {
       const newMtime = await saveFileOverwrite(createFilesApi(api), path, content);
-      const overwritten = { path, content, loadedMtime: newMtime };
-      fileRef.current = overwritten;
-      rememberFileBaseline(fileBaselineKey(taskId, path), overwritten);
-      markModelBaseline(taskId, path, content);
+      fileRef.current = { path, content, loadedMtime: newMtime };
       setDirty(taskId, path, false);
       setConflict(false);
       setSaveError(null);
@@ -145,15 +161,14 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   }
 
   async function reload(): Promise<void> {
-    if (!api || !editorRef.current || saveInFlightRef.current) return;
+    const view = viewRef.current;
+    if (!api || !view || saveInFlightRef.current) return;
     saveInFlightRef.current = true;
     setSaving(true);
     try {
       const file = await openFile(createFilesApi(api), path);
       fileRef.current = file;
-      rememberFileBaseline(fileBaselineKey(taskId, path), file);
-      editorRef.current.getModel()?.setValue(file.content);
-      markModelBaseline(taskId, path, file.content);
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: file.content } });
       setDirty(taskId, path, false);
       setConflict(false);
       setSaveError(null);
@@ -169,16 +184,14 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   if (loadError) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          {loadError}
-        </span>
+        <span className="text-sm" style={{ color: "var(--text-secondary)" }}>{loadError}</span>
       </div>
     );
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={hostRef} className="min-h-0 flex-1" data-selectable />
+      <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden" data-selectable />
       {saveError ? (
         <div
           className="border-t px-3 py-2 text-xs"
