@@ -28,7 +28,9 @@
     "react-dom": "19.2.6",
     "react-markdown": "^10.1.0",
     "zod": "^4.4.3",
-    "zustand": "^5.0.13"
+    "zustand": "^5.0.13",
+    "@fontsource/instrument-sans": "^5.2.5",
+    "@fontsource/jetbrains-mono": "^5.2.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",

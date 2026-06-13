@@ -1,4 +1,9 @@
 @import "tailwindcss";
+@import "@fontsource/instrument-sans/400.css";
+@import "@fontsource/instrument-sans/500.css";
+@import "@fontsource/instrument-sans/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
 
 /* Map tokens into Tailwind v4 theme so utilities like bg-surface work. */
@@ -75,13 +80,13 @@ textarea,
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(40, 44, 37, 0.18);
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(40, 44, 37, 0.3);
   background-clip: padding-box;
   border: 2px solid transparent;
 }
