@@ -1,0 +1,83 @@
+---
+title: Desktop App (Operator)
+description: The native macOS desktop app for Matrix OS — board, terminals, agent threads, and your apps in one window.
+---
+
+# Desktop App (Operator)
+
+Operator is the Matrix OS desktop app for macOS: a keyboard-first mission control where
+your projects, tasks, agent runs, terminals, files, and Matrix OS apps live in one window,
+connected as a thin client to your personal VPS. Nothing runs locally except the app itself —
+sign in on a new machine and everything is restored from your computer in the cloud.
+
+## Install and sign in
+
+1. Download the signed app and drag it to Applications.
+2. Launch it and click **Sign in with Matrix OS**. A browser opens to approve the device; no
+   tokens to copy by hand.
+3. Once approved, your board renders automatically. The credential is stored in the macOS
+   Keychain and never leaves the app's trusted process.
+
+Signing out clears the local credential and any embedded web sessions, but never touches data
+on your VPS.
+
+## Board
+
+Your projects appear in the title bar's project switcher. Each project is a kanban board with
+**Todo, Running, Waiting, Blocked, Complete** columns. Drag cards between columns, right-click a
+card for status/priority/archive/delete, and press **C** (or **⌘N**) to create a task. Create
+dialogs offer both **Create** (⌘↵) and **Create + open** (⌘⇧↵). Changes made on the web shell,
+CLI, or by agents appear in the app automatically.
+
+## Terminals
+
+Click a task with a linked session to attach its terminal — the live shell on your VPS, with
+scrollback intact. Terminals reconnect automatically after a network drop or sleep/wake without
+duplicating output. If a session has ended on the server, the terminal shows a clear "session
+ended" state with a one-click recreate action rather than retrying forever. Standalone sessions
+are listed under **Sessions**.
+
+## Agent threads (Hermes)
+
+Press **⌘J** anywhere to open the composer and start an agent run. Each run is a thread with
+live status (running, needs attention, done, failed). Run several at once and switch freely
+between them; the sidebar shows status dots and unread markers. When a thread finishes or needs
+input while the app is in the background, you get a native notification — click it to jump
+straight to that thread.
+
+## Task workspace
+
+Opening a task reveals a resizable panel strip — terminal, editor, git, files, artifacts,
+processes. Toggle panels with **⌘1–⌘6**, drag the dividers to resize, and the layout persists
+per task. The editor is VS Code-class (Monaco) with multiple files, find/replace, and
+conflict-safe saves (it warns if a file changed on the server since you opened it). Switching
+between open tasks is instant — terminals keep their buffers and editors keep their open files.
+Press **⌘P** to quick-open a file by name.
+
+## Apps and Canvas
+
+Open your hosted Matrix OS shell as the **Canvas** tab — no second login. Launch your installed
+Matrix OS apps from the **Apps** tab; they run with the same data and bridge you get on the web,
+in an isolated browser context with no access to the app's privileged APIs.
+
+## Keyboard-first
+
+- **⌘K** — command palette (tasks, projects, apps, files, actions)
+- **⌘J** — new agent thread
+- **⌘P** — go to file
+- **C / ⌘N** — new task
+- **⌘1–⌘6** — toggle workspace panels
+- Standard macOS menus, shortcuts, full-screen, and window controls.
+
+## Settings
+
+Native settings cover account, runtime/VM selection, appearance (dark/light/system), and system
+info, with channels, integrations, billing, and cron read at parity with the web shell.
+Switching runtime re-targets every surface — board, terminals, chat, and apps.
+
+## Privacy and updates
+
+The app holds no durable workspace data locally: only the credential, your connection profile,
+window and layout state, and bounded caches. Losing the machine loses no work. The app ships
+signed and notarized, and self-updates over your release channel in the background, applying on
+the next relaunch — it never force-restarts an attached terminal.
