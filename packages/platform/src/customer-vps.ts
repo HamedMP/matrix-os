@@ -15,6 +15,7 @@ import {
   listRunningUserMachines,
   listStaleUserMachines,
   lockUserMachineProvisioning,
+  retireUserMachine,
   markProviderDeletionCompleted,
   markProviderDeletionFailed,
   runInPlatformTransaction,
@@ -386,6 +387,34 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
+  // Enqueues a provider-server deletion on the given transaction-or-db handle.
+  // Unlike queueProviderDeletion, this propagates insert failures so a caller
+  // can keep the status change and the deletion enqueue in one atomic unit —
+  // if the enqueue fails the whole transaction rolls back and the machine is
+  // retried on the next reconciler pass instead of orphaning its server.
+  async function enqueueProviderDeletionTx(
+    handle: PlatformDB,
+    input: {
+      providerServerId: number;
+      reason: string;
+      machineId?: string | null;
+      handle?: string | null;
+      detail: string;
+    },
+  ): Promise<void> {
+    const currentTime = now().toISOString();
+    await insertProviderDeletion(handle, {
+      id: randomUUID(),
+      providerServerId: input.providerServerId,
+      reason: input.reason,
+      machineId: input.machineId ?? null,
+      handle: input.handle ?? null,
+      nextAttemptAt: currentTime,
+      createdAt: currentTime,
+      lastError: input.detail,
+    });
+  }
+
   async function retryProviderDeletions(): Promise<void> {
     const pending = await listPendingProviderDeletions(
       deps.db,
@@ -468,12 +497,15 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const postgresPassword = postgresPasswordFactory();
       const billingContext = await resolveBillingProvisionContext(deps, request, currentTime);
 
+      // A non-failed active machine (provisioning/running converge; recovering
+      // is rejected by activeProvisionResponse). A `failed` row is retryable, so
+      // it must NOT short-circuit here — it is retired inside the transaction.
       const existingBeforeBundleResolve = await getActiveUserMachineByClerkId(
         deps.db,
         request.clerkUserId,
         request.runtimeSlot,
       );
-      if (existingBeforeBundleResolve) {
+      if (existingBeforeBundleResolve && existingBeforeBundleResolve.status !== 'failed') {
         return activeProvisionResponse(existingBeforeBundleResolve, deps.config.provisionEtaSeconds);
       }
 
@@ -492,8 +524,30 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           await lockUserMachineProvisioning(trx, request.clerkUserId);
         }
         const existing = await getActiveUserMachineByClerkId(trx, request.clerkUserId, request.runtimeSlot);
+        let attempt = 1;
         if (existing) {
-          return { existing };
+          if (existing.status !== 'failed') {
+            return { existing };
+          }
+          // The active slot is held by a failed attempt. Retire it, enqueue its
+          // server for reaping, and provision a fresh one — all in one
+          // transaction so the unique (clerk, slot) slot is satisfied at every
+          // instant, the user is never blocked, and the retired server is never
+          // orphaned (a failed enqueue rolls back the whole retry).
+          attempt = existing.attempt + 1;
+          if (attempt > deps.config.maxProvisionAttempts) {
+            throw new CustomerVpsError(409, 'retry_exhausted', 'Provisioning retry limit reached');
+          }
+          await retireUserMachine(trx, existing.machineId, currentTime.toISOString());
+          if (existing.hetznerServerId !== null) {
+            await enqueueProviderDeletionTx(trx, {
+              providerServerId: existing.hetznerServerId,
+              reason: 'failed_retry_retire',
+              machineId: existing.machineId,
+              handle: request.handle,
+              detail: 'retiring failed machine before retry',
+            });
+          }
         }
         if (billingContext) {
           const activeMachines = await listActiveUserMachinesByClerkId(trx, request.clerkUserId);
@@ -512,6 +566,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           registrationTokenHash: registration.hash,
           registrationTokenExpiresAt: registration.expiresAt,
           provisionedAt: currentTime.toISOString(),
+          attempt,
         });
         return { existing: null };
       });
@@ -882,6 +937,35 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             status: 'failed',
             failureCode: 'not_found',
             failureAt: now().toISOString(),
+          });
+          failed += 1;
+          continue;
+        }
+        // The server booted but the host never called register() before its
+        // registration token expired. It can never become routable, so fail it
+        // (freeing the slot for retry) and reap the abandoned server.
+        if (
+          row.registrationTokenExpiresAt &&
+          new Date(row.registrationTokenExpiresAt).getTime() < now().getTime()
+        ) {
+          // Mark failed and enqueue the server for reaping atomically: once the
+          // row is `failed` it leaves listStaleUserMachines, so if the enqueue
+          // were a separate write that failed, the server would be orphaned
+          // forever. Rolling back keeps the row reconcilable next pass.
+          const serverId = row.hetznerServerId;
+          await runInPlatformTransaction(deps.db, async (trx) => {
+            await updateUserMachine(trx, row.machineId, {
+              status: 'failed',
+              failureCode: 'registration_timeout',
+              failureAt: now().toISOString(),
+            });
+            await enqueueProviderDeletionTx(trx, {
+              providerServerId: serverId,
+              reason: 'registration_timeout',
+              machineId: row.machineId,
+              handle: row.handle,
+              detail: 'registration token expired before register()',
+            });
           });
           failed += 1;
           continue;
