@@ -105,6 +105,25 @@ describe("mos setup poll loop", () => {
     expect(JSON.parse(errArg as string).error.code).toBe("retry_exhausted");
   });
 
+  it("breaks out with support guidance when payment settling is delayed", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/api/journey/retry-provision")) return new Response("{}", { status: 200 });
+      return new Response(
+        JSON.stringify({ phase: "payment_settling", detail: "d", nextAction: { kind: "wait" }, settling: { since: "x", delayed: true } }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runSetup({ json: true, "poll-interval-ms": "1" });
+
+    expect(process.exitCode).toBe(1);
+    // retry-provision + a single journey poll — does NOT loop to the ceiling.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const errArg = (console.error as unknown as { mock: { calls: string[][] } }).mock.calls.at(-1)?.[0];
+    expect(JSON.parse(errArg as string).error.code).toBe("payment_delayed");
+  });
+
   it("emits a structured error in --json mode when a plan is still required", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (url.includes("/api/journey/retry-provision")) return new Response("{}", { status: 200 });

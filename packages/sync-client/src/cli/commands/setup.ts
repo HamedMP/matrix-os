@@ -111,6 +111,18 @@ export const setupCommand = defineCommand({
           process.exitCode = 1;
           return;
         }
+        if (journey.phase === "payment_settling" && journey.settling?.delayed) {
+          // Abnormally long settle — stop watching and point the user at support
+          // instead of spinning silently until the poll ceiling.
+          if (json) {
+            console.error(formatCliError("payment_delayed"));
+          } else {
+            const guidance = journeyGuidance(journey);
+            for (const line of guidance.lines) console.log(line);
+          }
+          process.exitCode = 1;
+          return;
+        }
         if (journey.phase === "provisioning" || journey.phase === "payment_settling") {
           // Both are "keep waiting" states; payment_settling rolls into
           // provisioning, so don't dead-end the user mid-setup.
