@@ -35,6 +35,16 @@ describe("JourneyGate", () => {
     expect(queryByTestId("journey-loading")).toBeNull();
   });
 
+  it("plan_required always offers a Check again CTA, even without a URL", () => {
+    const onRefresh = jest.fn();
+    const { getByTestId, queryByTestId } = render(
+      <JourneyGate result={ok({ phase: "plan_required", nextAction: { kind: "open_plans" } })} onRetry={noop} onOpenUrl={noop} onRefresh={onRefresh} />,
+    );
+    expect(queryByTestId("journey-open-plans")).toBeNull();
+    fireEvent.press(getByTestId("journey-refresh"));
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
   it("shows a calm settling state within the window", () => {
     const { getByText, getByTestId } = render(
       <JourneyGate result={ok({ phase: "payment_settling", detail: "Activating…", settling: { since: "x", delayed: false } })} onRetry={noop} onOpenUrl={noop} />,
