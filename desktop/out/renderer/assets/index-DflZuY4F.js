@@ -18733,6 +18733,14 @@ function Titlebar() {
               onSelect: () => {
                 if (api) {
                   void selectProject(api, p2.slug);
+                  void invoke("state:set", { key: "lastProjectSlug", value: p2.slug }).catch(
+                    (err) => {
+                      console.warn(
+                        "[titlebar] persist project failed:",
+                        err instanceof Error ? err.message : String(err)
+                      );
+                    }
+                  );
                   navigate({ kind: "board" });
                 }
               }
@@ -35277,6 +35285,8 @@ function TerminalView({ sessionName, onRecreate }) {
     const terminal = new Dl({
       allowProposedApi: true,
       cursorBlink: true,
+      // Accessibility buffer (also lets e2e assert rendered output under webgl).
+      screenReaderMode: true,
       fontSize: 13,
       fontFamily: buildTerminalFontStack("JetBrains Mono"),
       lineHeight: 1.25,
@@ -35393,7 +35403,7 @@ function TaskWorkspace({ taskId }) {
   const activeSlug = useBoard((s15) => s15.activeProjectSlug);
   const cardsByProject = useBoard((s15) => s15.cardsByProject);
   const sessionsLoad = useSessions((s15) => s15.load);
-  const resolveAttachName = useSessions((s15) => s15.resolveAttachName);
+  const aliasMap = useSessions((s15) => s15.aliasMap);
   const navigate = useUi((s15) => s15.navigate);
   const card = reactExports.useMemo(() => {
     for (const cards of Object.values(cardsByProject)) {
@@ -35405,7 +35415,7 @@ function TaskWorkspace({ taskId }) {
   reactExports.useEffect(() => {
     if (api) void sessionsLoad(api);
   }, [api, sessionsLoad]);
-  const attachName = resolveAttachName(card?.linkedSessionId ?? null);
+  const attachName = card?.linkedSessionId ? aliasMap[card.linkedSessionId] ?? null : null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 flex-1 flex-col", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
@@ -48074,9 +48084,21 @@ function MissionControl() {
   useGlobalShortcuts();
   reactExports.useEffect(() => {
     if (!api) return;
-    void loadProjects(api);
+    let cancelled = false;
+    void (async () => {
+      await loadProjects(api);
+      if (cancelled) return;
+      const { projects, activeProjectSlug, selectProject } = useBoard.getState();
+      if (activeProjectSlug || projects.length === 0) return;
+      const saved = (await invoke("state:get", { key: "lastProjectSlug" })).value;
+      const target = projects.find((p2) => p2.slug === saved) ?? projects[0];
+      if (target && !cancelled) void selectProject(api, target.slug);
+    })();
     const dispose = wireKernel();
-    return dispose;
+    return () => {
+      cancelled = true;
+      dispose();
+    };
   }, [api, loadProjects]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-1 flex-col overflow-hidden", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(Titlebar, {}),

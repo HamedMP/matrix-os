@@ -1,6 +1,7 @@
 import { ChevronDown, Plus } from "lucide-react";
 import { useState } from "react";
 import { Button, ContextMenu } from "../../design/primitives";
+import { invoke } from "../../lib/operator";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
@@ -49,6 +50,14 @@ export default function Titlebar() {
           onSelect: () => {
             if (api) {
               void selectProject(api, p.slug);
+              void invoke("state:set", { key: "lastProjectSlug", value: p.slug }).catch(
+                (err: unknown) => {
+                  console.warn(
+                    "[titlebar] persist project failed:",
+                    err instanceof Error ? err.message : String(err),
+                  );
+                },
+              );
               navigate({ kind: "board" });
             }
           },

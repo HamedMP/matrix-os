@@ -13,6 +13,7 @@ import StandaloneSession from "../sessions/StandaloneSession";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
 import { useGlobalShortcuts } from "./shortcuts";
+import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
 
 export default function MissionControl() {
@@ -24,9 +25,22 @@ export default function MissionControl() {
 
   useEffect(() => {
     if (!api) return;
-    void loadProjects(api);
+    let cancelled = false;
+    void (async () => {
+      await loadProjects(api);
+      if (cancelled) return;
+      // Boot to the last-used project (FR-013/SC-001); fall back to the first.
+      const { projects, activeProjectSlug, selectProject } = useBoard.getState();
+      if (activeProjectSlug || projects.length === 0) return;
+      const saved = (await invoke("state:get", { key: "lastProjectSlug" })).value;
+      const target = projects.find((p) => p.slug === saved) ?? projects[0];
+      if (target && !cancelled) void selectProject(api, target.slug);
+    })();
     const dispose = wireKernel();
-    return dispose;
+    return () => {
+      cancelled = true;
+      dispose();
+    };
   }, [api, loadProjects]);
 
   return (
