@@ -10,9 +10,12 @@ describe('platform/origins', () => {
       expect(wwwOrigin(env)).toBe('https://staging.matrix-os.com');
     });
 
-    it('falls back through NEXT_PUBLIC_MATRIX_APP_URL then PLATFORM_PUBLIC_URL then the production default', () => {
+    it('resolves app and api origins from their own fallback chains (no cross-leak)', () => {
       expect(appOrigin({ NEXT_PUBLIC_MATRIX_APP_URL: 'https://app.x.com' } as NodeJS.ProcessEnv)).toBe('https://app.x.com');
-      expect(appOrigin({ PLATFORM_PUBLIC_URL: 'https://api.x.com' } as NodeJS.ProcessEnv)).toBe('https://api.x.com');
+      // PLATFORM_PUBLIC_URL (the API URL) must NOT become the app origin.
+      expect(appOrigin({ PLATFORM_PUBLIC_URL: 'https://api.x.com' } as NodeJS.ProcessEnv)).toBe('https://app.matrix-os.com');
+      // It IS the correct fallback for apiOrigin.
+      expect(apiOrigin({ PLATFORM_PUBLIC_URL: 'https://api.x.com' } as NodeJS.ProcessEnv)).toBe('https://api.x.com');
       expect(appOrigin({} as NodeJS.ProcessEnv)).toBe('https://app.matrix-os.com');
       expect(apiOrigin({} as NodeJS.ProcessEnv)).toBe('https://api.matrix-os.com');
       expect(wwwOrigin({} as NodeJS.ProcessEnv)).toBe('https://matrix-os.com');

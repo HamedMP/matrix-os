@@ -20,12 +20,16 @@ function normalizeOrigin(value: string): string {
 
 /** The app shell / auth door origin (e.g. https://app.matrix-os.com). */
 export function appOrigin(env: NodeJS.ProcessEnv = process.env): string {
+  // PLATFORM_PUBLIC_URL is the platform/API URL — NOT an app-origin fallback
+  // (using it here would aim the app door at the API host). It belongs to
+  // apiOrigin only.
   return normalizeOrigin(
-    env.MATRIX_APP_ORIGIN ?? env.NEXT_PUBLIC_MATRIX_APP_URL ?? env.PLATFORM_PUBLIC_URL ?? DEFAULT_APP_ORIGIN,
+    env.MATRIX_APP_ORIGIN ?? env.NEXT_PUBLIC_MATRIX_APP_URL ?? DEFAULT_APP_ORIGIN,
   );
 }
 
-/** The platform API origin (e.g. https://api.matrix-os.com). */
+/** The platform API origin (e.g. https://api.matrix-os.com). PLATFORM_PUBLIC_URL
+ *  is the platform's public (API) URL, so it is the correct fallback here. */
 export function apiOrigin(env: NodeJS.ProcessEnv = process.env): string {
   return normalizeOrigin(env.MATRIX_API_ORIGIN ?? env.PLATFORM_PUBLIC_URL ?? DEFAULT_API_ORIGIN);
 }
