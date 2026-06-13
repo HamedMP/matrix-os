@@ -4,7 +4,18 @@
 // instead of duplicating it.
 import { create } from "zustand";
 
-export type TabKind = "home" | "chat" | "board" | "task" | "terminal" | "agents" | "thread" | "apps" | "settings";
+export type TabKind =
+  | "home"
+  | "chat"
+  | "board"
+  | "task"
+  | "terminal"
+  | "terminals"
+  | "agents"
+  | "thread"
+  | "apps"
+  | "app"
+  | "settings";
 
 export interface Tab {
   id: string;
@@ -16,13 +27,23 @@ export interface Tab {
   taskId?: string;
   sessionName?: string;
   threadId?: string;
+  slug?: string;
   closable: boolean;
 }
 
 const MAX_TABS = 24;
 
-function identityKey(spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "threadId">): string {
-  return [spec.kind, spec.projectSlug ?? "", spec.taskId ?? "", spec.sessionName ?? "", spec.threadId ?? ""].join("|");
+function identityKey(
+  spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "threadId" | "slug">,
+): string {
+  return [
+    spec.kind,
+    spec.projectSlug ?? "",
+    spec.taskId ?? "",
+    spec.sessionName ?? "",
+    spec.threadId ?? "",
+    spec.slug ?? "",
+  ].join("|");
 }
 
 interface TabsState {

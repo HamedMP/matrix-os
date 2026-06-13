@@ -1,8 +1,8 @@
 import { LayoutGrid } from "lucide-react";
 import { useEffect, useState } from "react";
-import { EmbedHost } from "./index";
 import { EmptyState } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
+import { useTabs } from "../../stores/tabs";
 
 interface MatrixApp {
   slug: string;
@@ -29,8 +29,8 @@ function parseApps(value: unknown): MatrixApp[] {
 
 export default function AppLauncher() {
   const api = useConnection((s) => s.api);
+  const openTab = useTabs((s) => s.openTab);
   const [apps, setApps] = useState<MatrixApp[] | null>(null);
-  const [activeSlug, setActiveSlug] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -48,30 +48,6 @@ export default function AppLauncher() {
     };
   }, [api]);
 
-  if (activeSlug) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div
-          className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5"
-          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-        >
-          <button
-            type="button"
-            className="text-sm hover:underline"
-            style={{ color: "var(--accent)" }}
-            onClick={() => setActiveSlug(null)}
-          >
-            ← Apps
-          </button>
-          <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-            {apps?.find((a) => a.slug === activeSlug)?.name ?? activeSlug}
-          </span>
-        </div>
-        <EmbedHost kind="app" slug={activeSlug} />
-      </div>
-    );
-  }
-
   if (apps && apps.length === 0) {
     return (
       <EmptyState
@@ -83,18 +59,16 @@ export default function AppLauncher() {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-5">
-      <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
-        Apps
-      </h2>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-3">
+    <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
+      <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>Apps</h2>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3">
         {(apps ?? []).map((app) => (
           <button
             key={app.slug}
             type="button"
             className="flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors duration-100 hover:border-[var(--border-strong)]"
-            style={{ background: "var(--bg-raised)", borderColor: "var(--border-subtle)" }}
-            onClick={() => setActiveSlug(app.slug)}
+            style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
+            onClick={() => openTab({ kind: "app", slug: app.slug, title: app.name })}
           >
             <div
               className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-semibold"
@@ -102,7 +76,7 @@ export default function AppLauncher() {
             >
               {app.name.charAt(0).toUpperCase()}
             </div>
-            <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>
+            <span className="w-full truncate text-center text-sm" style={{ color: "var(--text-primary)" }}>
               {app.name}
             </span>
           </button>

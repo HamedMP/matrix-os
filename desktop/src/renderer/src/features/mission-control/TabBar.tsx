@@ -18,9 +18,11 @@ const TAB_ICON: Record<TabKind, LucideIcon> = {
   board: Kanban,
   task: FileCode2,
   terminal: SquareTerminal,
+  terminals: SquareTerminal,
   agents: MessageSquare,
   thread: MessageSquare,
   apps: LayoutGrid,
+  app: LayoutGrid,
   settings: Settings,
 };
 
