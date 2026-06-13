@@ -1,7 +1,7 @@
-import { app, shell, Menu, BrowserWindow, session, safeStorage, Notification, ipcMain } from "electron";
+import { WebContentsView, shell, session, net, app, Menu, BrowserWindow, safeStorage, Notification, ipcMain } from "electron";
 import { join } from "node:path";
 import { rm, readFile, mkdir, writeFile, rename } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
@@ -276,6 +276,505 @@ function installHeaderInjection(rendererSession, getToken, getGatewayOrigin) {
     callback({ requestHeaders: details.requestHeaders });
   });
 }
+const MAX_TOTAL_EMBEDS = 12;
+const DEFAULT_MAX_LIVE = 3;
+const SAFE_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+class EmbedManager {
+  records = /* @__PURE__ */ new Map();
+  createView;
+  maxLive;
+  tick = 0;
+  constructor(options) {
+    this.createView = options.createView;
+    this.maxLive = options.maxLive ?? DEFAULT_MAX_LIVE;
+  }
+  open(kind, slug, bounds, url) {
+    const partition = kind === "hosted-shell" ? "persist:hosted-shell" : this.appPartition(slug);
+    const id = randomUUID();
+    const view = this.createView({ partition });
+    const record = {
+      id,
+      url,
+      view,
+      live: true,
+      loadFailed: false,
+      lastUsed: ++this.tick
+    };
+    view.attach();
+    view.setBounds(bounds);
+    this.loadInto(record);
+    this.records.set(id, record);
+    this.enforceMaxLive();
+    this.enforceTotalCap();
+    return id;
+  }
+  setBounds(embedId, bounds) {
+    const record = this.records.get(embedId);
+    if (!record) return false;
+    record.view.setBounds(bounds);
+    return true;
+  }
+  focus(embedId) {
+    const record = this.records.get(embedId);
+    if (!record) return false;
+    record.lastUsed = ++this.tick;
+    if (!record.live) {
+      record.view.attach();
+      record.live = true;
+    }
+    if (record.loadFailed) {
+      record.loadFailed = false;
+      this.loadInto(record);
+    }
+    this.enforceMaxLive();
+    return true;
+  }
+  close(embedId) {
+    const record = this.records.get(embedId);
+    if (!record) return false;
+    record.view.destroy();
+    this.records.delete(embedId);
+    return true;
+  }
+  closeAll() {
+    for (const record of this.records.values()) record.view.destroy();
+    this.records.clear();
+  }
+  has(embedId) {
+    return this.records.has(embedId);
+  }
+  get liveCount() {
+    let count = 0;
+    for (const record of this.records.values()) if (record.live) count += 1;
+    return count;
+  }
+  appPartition(slug) {
+    if (!slug || !SAFE_SLUG.test(slug)) {
+      throw new Error("invalid app slug for embed partition");
+    }
+    return `persist:app-${slug}`;
+  }
+  loadInto(record) {
+    void record.view.loadUrl(record.url).catch((err) => {
+      console.warn(
+        "[embed-manager] embed load failed:",
+        err instanceof Error ? err.message : String(err)
+      );
+      record.loadFailed = true;
+    });
+  }
+  enforceMaxLive() {
+    while (this.liveCount > this.maxLive) {
+      const victim = this.leastRecentlyUsed((r) => r.live);
+      if (!victim) break;
+      victim.view.detach();
+      victim.live = false;
+    }
+  }
+  enforceTotalCap() {
+    while (this.records.size > MAX_TOTAL_EMBEDS) {
+      const victim = this.leastRecentlyUsed((r) => !r.live) ?? this.leastRecentlyUsed(() => true);
+      if (!victim) break;
+      victim.view.destroy();
+      this.records.delete(victim.id);
+    }
+  }
+  leastRecentlyUsed(predicate) {
+    let chosen = null;
+    for (const record of this.records.values()) {
+      if (!predicate(record)) continue;
+      if (!chosen || record.lastUsed < chosen.lastUsed) chosen = record;
+    }
+    return chosen;
+  }
+}
+const TTL_MARGIN_MS = 3e4;
+const DEFAULT_CAP = 32;
+class LaunchTokenCache {
+  entries = /* @__PURE__ */ new Map();
+  cap;
+  clock;
+  constructor(options) {
+    this.cap = options?.cap ?? DEFAULT_CAP;
+    this.clock = options?.clock ?? Date.now;
+  }
+  get(slug) {
+    const token = this.entries.get(slug);
+    if (!token) return null;
+    if (this.clock() > token.expiresAt - TTL_MARGIN_MS) return null;
+    this.entries.delete(slug);
+    this.entries.set(slug, token);
+    return token;
+  }
+  set(slug, token) {
+    if (this.entries.has(slug)) this.entries.delete(slug);
+    this.entries.set(slug, token);
+    while (this.entries.size > this.cap) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === void 0) break;
+      this.entries.delete(oldest);
+    }
+  }
+  clear() {
+    this.entries.clear();
+  }
+}
+const REQUIRED_COOKIES = ["matrix_app_session", "matrix_native_app_session"];
+function mapSameSite(value) {
+  switch (value.toLowerCase()) {
+    case "lax":
+      return "lax";
+    case "strict":
+      return "strict";
+    case "none":
+      return "no_restriction";
+    default:
+      return "unspecified";
+  }
+}
+function parseOne(header) {
+  const parts = header.split(";");
+  const first = (parts[0] ?? "").trim();
+  const eq = first.indexOf("=");
+  if (eq <= 0) return null;
+  const name = first.slice(0, eq).trim();
+  if (name.length === 0) return null;
+  const value = first.slice(eq + 1);
+  const cookie = { name, value };
+  let maxAgeSeconds = null;
+  for (let i = 1; i < parts.length; i += 1) {
+    const attr = parts[i].trim();
+    if (attr.length === 0) continue;
+    const aeq = attr.indexOf("=");
+    const key = (aeq === -1 ? attr : attr.slice(0, aeq)).trim().toLowerCase();
+    const val = aeq === -1 ? "" : attr.slice(aeq + 1).trim();
+    switch (key) {
+      case "path":
+        cookie.path = val;
+        break;
+      case "domain":
+        cookie.domain = val;
+        break;
+      case "secure":
+        cookie.secure = true;
+        break;
+      case "httponly":
+        cookie.httpOnly = true;
+        break;
+      case "samesite":
+        cookie.sameSite = mapSameSite(val);
+        break;
+      case "expires": {
+        const ts = Date.parse(val);
+        if (!Number.isNaN(ts)) cookie.expires = ts;
+        break;
+      }
+      case "max-age": {
+        const n = Number(val);
+        if (Number.isFinite(n)) maxAgeSeconds = n;
+        break;
+      }
+    }
+  }
+  if (maxAgeSeconds !== null) cookie.expires = Date.now() + maxAgeSeconds * 1e3;
+  return cookie;
+}
+function parseSetCookieHeaders(headers) {
+  const cookies = [];
+  for (const header of headers) {
+    const cookie = parseOne(header);
+    if (cookie) cookies.push(cookie);
+    else console.warn("[app-session] skipping malformed Set-Cookie header");
+  }
+  return cookies;
+}
+function verifyCookiePair(cookies) {
+  return REQUIRED_COOKIES.every(
+    (name) => cookies.some((cookie) => cookie.name === name && cookie.value.length > 0)
+  );
+}
+function isStaleClerkCookie(cookie) {
+  if (cookie.name.startsWith("__client") || cookie.name.startsWith("__session")) return true;
+  if (cookie.domain && cookie.domain.toLowerCase().includes("clerk")) return true;
+  return false;
+}
+async function performAppSessionHandoff(deps, redirectTo) {
+  let response;
+  try {
+    response = await deps.request(`${deps.gatewayOrigin}/api/auth/app-session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ redirectTo })
+    });
+  } catch (err) {
+    console.warn(
+      "[app-session] handoff request failed:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return { ok: false, reason: "unavailable" };
+  }
+  if (response.status === 401 || response.status === 403) return { ok: false, reason: "auth" };
+  if (response.status < 200 || response.status >= 300) return { ok: false, reason: "unavailable" };
+  const cookies = parseSetCookieHeaders(response.setCookieHeaders);
+  if (!verifyCookiePair(cookies)) return { ok: false, reason: "auth" };
+  try {
+    const existing = await deps.cookieJar.get({});
+    for (const cookie of existing) {
+      if (isStaleClerkCookie(cookie)) await deps.cookieJar.remove(deps.gatewayOrigin, cookie.name);
+    }
+    for (const name of REQUIRED_COOKIES) {
+      const cookie = cookies.find((c) => c.name === name);
+      if (cookie) await deps.cookieJar.set({ ...cookie, url: deps.gatewayOrigin });
+    }
+  } catch (err) {
+    console.warn(
+      "[app-session] cookie installation failed:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return { ok: false, reason: "unavailable" };
+  }
+  return { ok: true };
+}
+async function handoffWithRetry(deps, redirectTo) {
+  const first = await performAppSessionHandoff(deps, redirectTo);
+  if (first.ok || first.reason === "auth") return first;
+  return performAppSessionHandoff(deps, redirectTo);
+}
+function resolveLaunchUrl(launchUrl, gatewayOrigin) {
+  if (!launchUrl.startsWith("/") || launchUrl.startsWith("//")) return null;
+  let gateway;
+  try {
+    gateway = new URL(gatewayOrigin);
+  } catch {
+    return null;
+  }
+  let resolved;
+  try {
+    resolved = new URL(launchUrl, gateway);
+  } catch {
+    return null;
+  }
+  if (resolved.origin !== gateway.origin) return null;
+  return resolved.toString();
+}
+function isNavigationAllowed(targetUrl, allowedOrigins) {
+  let target;
+  try {
+    target = new URL(targetUrl);
+  } catch {
+    return false;
+  }
+  if (target.protocol !== "https:" && target.protocol !== "http:") return false;
+  for (const origin of allowedOrigins) {
+    let allowed;
+    try {
+      allowed = new URL(origin);
+    } catch {
+      continue;
+    }
+    if (target.origin === allowed.origin) return true;
+  }
+  return false;
+}
+function createWebContentsView(options) {
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: options.partition,
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false
+    }
+  });
+  const contents = view.webContents;
+  contents.on("will-navigate", (event, url) => {
+    if (!isNavigationAllowed(url, options.allowedOrigins)) {
+      event.preventDefault();
+      if (url.startsWith("https://")) void shell.openExternal(url);
+    }
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https://")) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  contents.on("did-start-loading", () => options.onState("loading"));
+  contents.on("did-finish-load", () => options.onState("ready"));
+  contents.on("did-fail-load", (_e, errorCode) => {
+    if (errorCode !== -3) options.onState("failed");
+  });
+  let attached = false;
+  return {
+    setBounds(bounds) {
+      view.setBounds(bounds);
+    },
+    async loadUrl(url) {
+      await contents.loadURL(url);
+    },
+    attach() {
+      if (attached) return;
+      options.window.contentView.addChildView(view);
+      attached = true;
+    },
+    detach() {
+      if (!attached) return;
+      options.window.contentView.removeChildView(view);
+      attached = false;
+    },
+    destroy() {
+      if (attached) {
+        options.window.contentView.removeChildView(view);
+        attached = false;
+      }
+      if (!contents.isDestroyed()) contents.close();
+    }
+  };
+}
+class EmbedService {
+  manager;
+  tokenCache = new LaunchTokenCache();
+  deps;
+  constructor(deps) {
+    this.deps = deps;
+    this.manager = new EmbedManager({
+      maxLive: 3,
+      createView: ({ partition }) => {
+        const window = this.deps.getWindow();
+        if (!window) throw new Error("no window for embed");
+        return createWebContentsView({
+          window,
+          partition,
+          allowedOrigins: [this.deps.getGatewayOrigin()],
+          onState: () => void 0
+        });
+      }
+    });
+  }
+  async open(request) {
+    const gatewayOrigin = this.deps.getGatewayOrigin();
+    if (request.kind === "hosted-shell") {
+      return this.openHostedShell(gatewayOrigin, request.bounds);
+    }
+    return this.openApp(gatewayOrigin, request.slug ?? "", request.bounds);
+  }
+  setBounds(embedId, bounds) {
+    return this.manager.setBounds(embedId, bounds);
+  }
+  close(embedId) {
+    return this.manager.close(embedId);
+  }
+  closeAll() {
+    this.manager.closeAll();
+  }
+  async retryAuth(embedId) {
+    if (!this.manager.has(embedId)) return false;
+    return this.manager.focus(embedId);
+  }
+  cookieJarFor(partition) {
+    const jar = session.fromPartition(partition).cookies;
+    return {
+      get: async () => {
+        const cookies = await jar.get({});
+        return cookies.map((c) => ({ name: c.name, domain: c.domain, path: c.path }));
+      },
+      set: async (cookie) => {
+        await jar.set({
+          url: cookie.url,
+          name: cookie.name,
+          value: cookie.value,
+          ...cookie.domain ? { domain: cookie.domain } : {},
+          ...cookie.path ? { path: cookie.path } : {},
+          ...cookie.secure !== void 0 ? { secure: cookie.secure } : {},
+          ...cookie.httpOnly !== void 0 ? { httpOnly: cookie.httpOnly } : {},
+          ...cookie.expires !== void 0 ? { expirationDate: cookie.expires / 1e3 } : {}
+        });
+      },
+      remove: async (url, name) => {
+        await jar.remove(url, name);
+      }
+    };
+  }
+  async openHostedShell(gatewayOrigin, bounds) {
+    const handoff = await handoffWithRetry(
+      {
+        gatewayOrigin,
+        cookieJar: this.cookieJarFor("persist:hosted-shell"),
+        request: (url2, init) => this.gatewayRequest(url2, init)
+      },
+      "/"
+    );
+    const url = `${gatewayOrigin}/`;
+    const embedId = this.manager.open("hosted-shell", null, bounds, url);
+    if (!handoff.ok) {
+      this.deps.emitState(embedId, "auth-required");
+    }
+    return embedId;
+  }
+  async openApp(gatewayOrigin, slug, bounds) {
+    let cached = this.tokenCache.get(slug);
+    if (!cached) {
+      const token = await this.fetchLaunchToken(gatewayOrigin, slug);
+      if (token) {
+        this.tokenCache.set(slug, token);
+        cached = token;
+      }
+    }
+    if (!cached) throw new Error("could not obtain app launch token");
+    const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
+    if (!resolved) throw new Error("app launch url failed origin check");
+    return this.manager.open("app", slug, bounds, resolved);
+  }
+  async fetchLaunchToken(gatewayOrigin, slug) {
+    try {
+      const response = await this.gatewayRequest(
+        `${gatewayOrigin}/api/apps/${encodeURIComponent(slug)}/session-token`,
+        { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }
+      );
+      if (response.status < 200 || response.status >= 300) return null;
+      const parsed = JSON.parse(response.body);
+      if (parsed && typeof parsed === "object" && typeof parsed.launchUrl === "string" && typeof parsed.expiresAt === "number") {
+        const { launchUrl, expiresAt } = parsed;
+        return { launchUrl, expiresAt };
+      }
+      return null;
+    } catch (err) {
+      console.warn(
+        "[embed-service] launch token fetch failed:",
+        err instanceof Error ? err.message : String(err)
+      );
+      return null;
+    }
+  }
+  gatewayRequest(url, init) {
+    return new Promise((resolve, reject) => {
+      const token = this.deps.getToken();
+      const request = net.request({ method: init.method, url });
+      for (const [key, value] of Object.entries(init.headers)) request.setHeader(key, value);
+      if (token) request.setHeader("Authorization", `Bearer ${token}`);
+      const timeout = setTimeout(() => {
+        request.abort();
+        reject(new Error("gateway request timed out"));
+      }, 1e4);
+      request.on("response", (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          clearTimeout(timeout);
+          const rawSetCookie = response.headers["set-cookie"];
+          const setCookieHeaders = Array.isArray(rawSetCookie) ? rawSetCookie : typeof rawSetCookie === "string" ? [rawSetCookie] : [];
+          resolve({
+            status: response.statusCode,
+            setCookieHeaders,
+            body: Buffer.concat(chunks).toString("utf8")
+          });
+        });
+      });
+      request.on("error", (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+      request.end(init.body);
+    });
+  }
+}
 const Empty = z.object({}).strict();
 const Ok = z.object({ ok: z.boolean() }).strict();
 const ProfileSchema$1 = z.object({
@@ -464,12 +963,25 @@ function registerIpcHandlers(ipcMain2, ctx) {
     ctx.notify(payload);
     return { ok: true };
   });
-  handle("embed:open", () => {
-    throw new Error("not available");
+  handle("embed:open", async ({ kind, slug, bounds }) => {
+    try {
+      const embedId = await ctx.embeds.open({ kind, slug, bounds });
+      return { embedId };
+    } catch (err) {
+      console.warn(
+        "[ipc] embed:open failed:",
+        err instanceof Error ? err.message : String(err)
+      );
+      throw new Error("embed unavailable");
+    }
   });
-  handle("embed:set-bounds", () => ({ ok: false }));
-  handle("embed:close", () => ({ ok: false }));
-  handle("embed:retry-auth", () => ({ ok: false }));
+  handle("embed:set-bounds", ({ embedId, bounds }) => ({
+    ok: ctx.embeds.setBounds(embedId, bounds)
+  }));
+  handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));
+  handle("embed:retry-auth", async ({ embedId }) => ({
+    ok: await ctx.embeds.retryAuth(embedId)
+  }));
   handle("update:check", () => ({ status: "disabled" }));
 }
 const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1e3;
@@ -744,9 +1256,16 @@ app.whenReady().then(async () => {
     () => auth.getToken(),
     () => auth.getGatewayOrigin()
   );
+  const embeds = new EmbedService({
+    getWindow: () => mainWindow,
+    getGatewayOrigin: () => auth.getGatewayOrigin(),
+    getToken: () => auth.getToken(),
+    emitState: (embedId, state) => sendEvent("embed:state", { embedId, state })
+  });
   registerIpcHandlers(ipcMain, {
     auth,
     store,
+    embeds,
     openExternal: openExternalHttps,
     setBadgeCount: (count) => {
       app.setBadgeCount(count);
@@ -761,7 +1280,10 @@ app.whenReady().then(async () => {
       });
       notification.show();
     },
-    onRuntimeChanged: (slot) => sendEvent("runtime:changed", { slot })
+    onRuntimeChanged: (slot) => {
+      embeds.closeAll();
+      sendEvent("runtime:changed", { slot });
+    }
   });
   const savedBounds = await store.get("windowBounds");
   mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });

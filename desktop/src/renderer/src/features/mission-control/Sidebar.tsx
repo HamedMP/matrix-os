@@ -1,4 +1,4 @@
-import { Kanban, LogOut, Plus, Settings, SquareTerminal } from "lucide-react";
+import { Kanban, LayoutGrid, LogOut, Plus, Settings, SquareTerminal, Sparkles } from "lucide-react";
 import { IconButton, StatusDot } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useThreads, type ThreadStatus } from "../../stores/threads";
@@ -72,6 +72,18 @@ export default function Sidebar() {
           label="Sessions"
           active={isView("sessions")}
           onClick={() => navigate({ kind: "sessions" })}
+        />
+        <NavRow
+          icon={<Sparkles size={15} />}
+          label="Canvas"
+          active={isView("canvas")}
+          onClick={() => navigate({ kind: "canvas" })}
+        />
+        <NavRow
+          icon={<LayoutGrid size={15} />}
+          label="Apps"
+          active={isView("apps")}
+          onClick={() => navigate({ kind: "apps" })}
         />
       </nav>
 

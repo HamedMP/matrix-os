@@ -6,9 +6,13 @@ import { useEditorTabs } from "./editor-tabs-store";
 
 const MonacoHost = lazy(() => import("./MonacoHost"));
 
+// Stable empty reference: a selector returning a fresh [] every render would
+// fail the Object.is check and loop forever (React #185, CLAUDE.md rule).
+const EMPTY_TABS: string[] = [];
+
 export default function EditorPanel({ taskId }: { taskId: string }) {
   const api = useConnection((s) => s.api);
-  const tabs = useEditorTabs((s) => s.tabsByTask[taskId] ?? []);
+  const tabs = useEditorTabs((s) => s.tabsByTask[taskId] ?? EMPTY_TABS);
   const activePath = useEditorTabs((s) => s.activePathByTask[taskId] ?? null);
   const setActive = useEditorTabs((s) => s.setActive);
   const closeTab = useEditorTabs((s) => s.closeTab);

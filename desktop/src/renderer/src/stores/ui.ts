@@ -7,6 +7,8 @@ export type MainView =
   | { kind: "thread"; threadId: string }
   | { kind: "sessions" }
   | { kind: "session"; sessionName: string }
+  | { kind: "canvas" }
+  | { kind: "apps" }
   | { kind: "settings" };
 
 interface UiState {

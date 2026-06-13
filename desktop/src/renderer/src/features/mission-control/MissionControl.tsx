@@ -11,6 +11,7 @@ import ThreadView from "../threads/ThreadView";
 import SessionsView from "../sessions/SessionsView";
 import SettingsView from "../settings/SettingsView";
 import StandaloneSession from "../sessions/StandaloneSession";
+import { AppLauncher, EmbedHost } from "../embeds";
 import QuickOpen from "../files/QuickOpen";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
@@ -81,6 +82,8 @@ export default function MissionControl() {
           {view.kind === "session" ? (
             <StandaloneSession key={view.sessionName} sessionName={view.sessionName} />
           ) : null}
+          {view.kind === "canvas" ? <EmbedHost kind="hosted-shell" /> : null}
+          {view.kind === "apps" ? <AppLauncher /> : null}
           {view.kind === "settings" ? <SettingsView /> : null}
         </main>
       </div>
