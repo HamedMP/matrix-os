@@ -577,6 +577,9 @@ function createLocalStore(options) {
   };
 }
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
+if (process.env.OPERATOR_USER_DATA_DIR) {
+  app.setPath("userData", process.env.OPERATOR_USER_DATA_DIR);
+}
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
