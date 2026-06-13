@@ -10,7 +10,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { Kanban } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { AppError } from "../../../../shared/app-error";
@@ -94,18 +94,28 @@ function DraggableCard({ card, dragging }: { card: Card; dragging: boolean }) {
   );
 }
 
-export default function Board() {
+export default function Board({ projectSlug }: { projectSlug?: string }) {
   const api = useConnection((s) => s.api);
-  const activeSlug = useBoard((s) => s.activeProjectSlug);
+  const fallbackSlug = useBoard((s) => s.activeProjectSlug);
+  const activeSlug = projectSlug ?? fallbackSlug;
   const cards = useBoard((s) =>
     activeSlug ? (s.cardsByProject[activeSlug] ?? EMPTY_CARDS) : EMPTY_CARDS,
   );
-  const firstLoadPending = useBoard((s) => s.firstLoadPending);
+  const firstLoadByProject = useBoard((s) => s.firstLoadByProject);
   const error = useBoard((s) => s.error);
   const moveTask = useBoard((s) => s.moveTask);
+  const selectProject = useBoard((s) => s.selectProject);
   const createTaskOpen = useUi((s) => s.createTaskOpen);
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+
+  const firstLoadPending = activeSlug ? (firstLoadByProject[activeSlug] ?? true) : false;
+
+  // Each board tab loads its own project's tasks and becomes the create-dialog
+  // context while mounted.
+  useEffect(() => {
+    if (api && activeSlug) void selectProject(api, activeSlug);
+  }, [api, activeSlug, selectProject]);
 
   const columns = useMemo(() => groupCardsByColumn(cards), [cards]);
 

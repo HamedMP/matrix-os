@@ -1,6 +1,6 @@
 // Wires the singleton kernel socket into the stores: thread routing, board
 // task events, native notifications, dock badge.
-import { invoke } from "./operator";
+import { invoke, onEvent } from "./operator";
 import { KernelSocket, type KernelServerMessage } from "./kernel-socket";
 import {
   useBoard,
@@ -8,8 +8,8 @@ import {
   type TaskEventUpdated,
 } from "../stores/board";
 import { useConnection } from "../stores/connection";
+import { useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
-import { useUi } from "../stores/ui";
 
 let socket: KernelSocket | null = null;
 let cleanupKernel: (() => void) | null = null;
@@ -54,8 +54,11 @@ export function wireKernel(): () => void {
   const activeSocket = socket;
 
   const unsubscribeMessages = activeSocket.subscribe((msg) => {
-    const ui = useUi.getState();
-    const focusedThreadId = ui.view.kind === "thread" ? ui.view.threadId : null;
+    // A thread is "focused" only when the Agents tab is active and it's the
+    // selected thread; otherwise completions raise a notification.
+    const tabsState = useTabs.getState();
+    const agentsActive = tabsState.tabs.find((t) => t.id === tabsState.activeTabId)?.kind === "agents";
+    const focusedThreadId = agentsActive ? useThreads.getState().activeThreadId : null;
     const { notification } = useThreads
       .getState()
       .handleKernelMessage(msg, { focusedThreadId });
@@ -94,6 +97,12 @@ export function wireKernel(): () => void {
     }
   });
 
+  // Clicking a native notification focuses the thread in the Agents tab.
+  const offNotificationClick = onEvent("notification:clicked", ({ threadId }) => {
+    useThreads.getState().setActiveThread(threadId);
+    useTabs.getState().openTab({ kind: "agents", title: "Agents" });
+  });
+
   activeSocket.connect();
 
   let cleaned = false;
@@ -102,6 +111,7 @@ export function wireKernel(): () => void {
     cleaned = true;
     unsubscribeMessages();
     unsubscribeBadge();
+    offNotificationClick();
     activeSocket.dispose();
     if (socket === activeSocket) socket = null;
     if (cleanupKernel === cleanup) cleanupKernel = null;

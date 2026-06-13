@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ContextMenu, type MenuItem } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type Card } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
-import { useUi } from "../../stores/ui";
+import { useTabs } from "../../stores/tabs";
 
 const PRIORITY_STYLE: Record<Card["priority"], { label: string; color: string } | null> = {
   low: { label: "Low", color: "var(--text-tertiary)" },
@@ -13,7 +13,9 @@ const PRIORITY_STYLE: Record<Card["priority"], { label: string; color: string } 
 };
 
 export default function BoardCard({ card, overlay = false }: { card: Card; overlay?: boolean }) {
-  const navigate = useUi((s) => s.navigate);
+  const openTab = useTabs((s) => s.openTab);
+  const openCard = () =>
+    openTab({ kind: "task", taskId: card.id, projectSlug: card.projectSlug, title: card.title });
   const api = useConnection((s) => s.api);
   const updateTask = useBoard((s) => s.updateTask);
   const archiveTask = useBoard((s) => s.archiveTask);
@@ -23,7 +25,7 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
   const priority = PRIORITY_STYLE[card.priority];
 
   const menuItems: MenuItem[] = [
-    { label: "Open", onSelect: () => navigate({ kind: "task", taskId: card.id }) },
+    { label: "Open", onSelect: openCard },
     ...BOARD_COLUMNS.filter((s) => s !== card.status).map((status) => ({
       label: `Move to ${status[0]?.toUpperCase()}${status.slice(1)}`,
       onSelect: () => {
@@ -58,9 +60,9 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
         }}
         onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--border-strong)")}
         onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border-subtle)")}
-        onClick={() => navigate({ kind: "task", taskId: card.id })}
+        onClick={openCard}
         onKeyDown={(e) => {
-          if (e.key === "Enter") navigate({ kind: "task", taskId: card.id });
+          if (e.key === "Enter") openCard();
         }}
         onContextMenu={(e) => {
           e.preventDefault();

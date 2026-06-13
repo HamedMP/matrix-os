@@ -1,20 +1,14 @@
 import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
-import { useUi } from "../../stores/ui";
+import { useTabs } from "../../stores/tabs";
 import { useWorkspace, type PanelLayout } from "../../stores/workspace";
 import Sidebar from "./Sidebar";
-import Titlebar from "./Titlebar";
-import Board from "../board/Board";
-import TaskWorkspace from "../workspace/TaskWorkspace";
-import ThreadView from "../threads/ThreadView";
-import SessionsView from "../sessions/SessionsView";
-import SettingsView from "../settings/SettingsView";
-import StandaloneSession from "../sessions/StandaloneSession";
-import { AppLauncher, EmbedHost } from "../embeds";
-import QuickOpen from "../files/QuickOpen";
+import TabBar from "./TabBar";
+import TabContent from "./TabContent";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
+import QuickOpen from "../files/QuickOpen";
 import { useGlobalShortcuts } from "./shortcuts";
 import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
@@ -24,12 +18,12 @@ export default function MissionControl() {
   const platformHost = useConnection((s) => s.platformHost);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const loadProjects = useBoard((s) => s.loadProjects);
-  const view = useUi((s) => s.view);
+  const openTab = useTabs((s) => s.openTab);
+  const tabCount = useTabs((s) => s.tabs.length);
 
   useGlobalShortcuts();
 
   useEffect(() => {
-    // Wire workspace layout persistence through the trusted core once.
     const { configure, hydrate } = useWorkspace.getState();
     configure({
       loadLayouts: async () => {
@@ -41,6 +35,12 @@ export default function MissionControl() {
       },
     });
     void hydrate();
+  }, []);
+
+  useEffect(() => {
+    // Open the Home tab on first mount so the workspace is never empty.
+    if (tabCount === 0) openTab({ kind: "home", title: "Home", closable: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -92,25 +92,11 @@ export default function MissionControl() {
   }, [api, platformHost, runtimeSlot]);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <Titlebar />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar />
-        <main
-          className="flex min-w-0 flex-1 flex-col border-l"
-          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-app)" }}
-        >
-          {view.kind === "board" ? <Board /> : null}
-          {view.kind === "task" ? <TaskWorkspace key={view.taskId} taskId={view.taskId} /> : null}
-          {view.kind === "thread" ? <ThreadView key={view.threadId} threadId={view.threadId} /> : null}
-          {view.kind === "sessions" ? <SessionsView /> : null}
-          {view.kind === "session" ? (
-            <StandaloneSession key={view.sessionName} sessionName={view.sessionName} />
-          ) : null}
-          {view.kind === "canvas" ? <EmbedHost kind="hosted-shell" /> : null}
-          {view.kind === "apps" ? <AppLauncher /> : null}
-          {view.kind === "settings" ? <SettingsView /> : null}
-        </main>
+    <div className="flex flex-1 overflow-hidden">
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col" style={{ background: "var(--bg-app)" }}>
+        <TabBar />
+        <TabContent />
       </div>
       <Composer />
       <CommandPalette />

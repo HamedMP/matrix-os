@@ -1,12 +1,7 @@
 import { useEffect } from "react";
 import { onEvent } from "../../lib/operator";
-import { useUi, type MainView } from "../../stores/ui";
-
-type MenuNavigateKind = Extract<MainView, { kind: "board" | "settings" }>["kind"];
-
-function isMenuNavigateKind(kind: string): kind is MenuNavigateKind {
-  return kind === "board" || kind === "settings";
-}
+import { useTabs } from "../../stores/tabs";
+import { useUi } from "../../stores/ui";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -50,9 +45,8 @@ export function useGlobalShortcuts(): void {
       if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
     });
     const offNavigate = onEvent("menu:navigate", ({ kind }) => {
-      if (isMenuNavigateKind(kind)) {
-        useUi.getState().navigate({ kind });
-      }
+      if (kind === "settings") useTabs.getState().openTab({ kind: "settings", title: "Settings" });
+      if (kind === "board") useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown);

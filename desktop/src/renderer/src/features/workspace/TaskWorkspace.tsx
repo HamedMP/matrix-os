@@ -1,6 +1,5 @@
 import {
   Activity,
-  ArrowLeft,
   FileCode2,
   FolderTree,
   GitBranch,
@@ -12,7 +11,6 @@ import { Button, EmptyState, IconButton } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
-import { useUi } from "../../stores/ui";
 import { useWorkspace, type PanelKind } from "../../stores/workspace";
 import EditorPanel from "../editor/EditorPanel";
 import FilesPanel from "../files/FilesPanel";
@@ -45,13 +43,11 @@ function warnSessionLoadFailure(err: unknown): void {
   console.warn("[task-workspace] load sessions failed:", err instanceof Error ? err.message : String(err));
 }
 
-export default function TaskWorkspace({ taskId }: { taskId: string }) {
+export default function TaskWorkspace({ taskId, active = true }: { taskId: string; active?: boolean }) {
   const api = useConnection((s) => s.api);
-  const activeSlug = useBoard((s) => s.activeProjectSlug);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessionsLoad = useSessions((s) => s.load);
   const aliasMap = useSessions((s) => s.aliasMap);
-  const navigate = useUi((s) => s.navigate);
   const openTask = useWorkspace((s) => s.openTask);
   const focusTask = useWorkspace((s) => s.focusTask);
   const togglePanel = useWorkspace((s) => s.togglePanel);
@@ -65,6 +61,8 @@ export default function TaskWorkspace({ taskId }: { taskId: string }) {
     }
     return null;
   }, [cardsByProject, taskId]);
+
+  const projectSlug = card?.projectSlug ?? null;
 
   useEffect(() => {
     if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
@@ -107,7 +105,7 @@ export default function TaskWorkspace({ taskId }: { taskId: string }) {
     switch (panel) {
       case "terminal":
         return attachName ? (
-          <TerminalView sessionName={attachName} />
+          <TerminalView sessionName={attachName} active={active} />
         ) : (
           <EmptyState
             icon={<SquareTerminal size={22} />}
@@ -132,11 +130,11 @@ export default function TaskWorkspace({ taskId }: { taskId: string }) {
       case "editor":
         return <EditorPanel taskId={taskId} />;
       case "git":
-        return activeSlug ? <GitPanel projectSlug={activeSlug} /> : null;
+        return projectSlug ? <GitPanel projectSlug={projectSlug} /> : null;
       case "browser":
         return <FilesPanel taskId={taskId} />;
       case "artifacts":
-        return activeSlug ? <ArtifactsPanel projectSlug={activeSlug} taskId={taskId} /> : null;
+        return projectSlug ? <ArtifactsPanel projectSlug={projectSlug} taskId={taskId} /> : null;
       case "processes":
         return <ProcessesPanel />;
     }
@@ -148,9 +146,6 @@ export default function TaskWorkspace({ taskId }: { taskId: string }) {
         className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
-        <IconButton label="Back to board" onClick={() => navigate({ kind: "board" })}>
-          <ArrowLeft size={15} />
-        </IconButton>
         <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
           {card?.title ?? "Task"}
         </span>

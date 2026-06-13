@@ -52,35 +52,39 @@ suite("operator desktop e2e", () => {
     }
   });
 
-  it("signs in via the device flow and reaches the board", async () => {
-    await page.getByRole("button", { name: /sign in with matrix os/i }).click();
-    await page.getByText("STUB-1234").waitFor({ timeout: 5000 });
-    // Poll loop approves instantly; board renders.
-    await page.getByText("Fix the failing auth tests").waitFor({ timeout: 15_000 });
-    await page.getByText("Polish the board design").waitFor();
+  it("signs in via the device flow and reaches Home, then opens a project board", async () => {
+    // "Continue with GitHub" unambiguously starts the device flow (the browser
+    // would present the provider). The stub approves instantly.
+    await page.getByRole("button", { name: /continue with github/i }).click();
+    // Poll loop approves; Home renders with the welcome heading.
+    await page.getByText(/Welcome/i).first().waitFor({ timeout: 15_000 });
     expect(gateway.state.tokenRequests).toBeGreaterThan(0);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "01-board.png") });
-  }, 30_000);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "01-home.png") });
 
-  it("opens a task and reaches a live terminal with echo", async () => {
+    // Open the project board from the sidebar; tasks render.
+    await page.locator("aside button", { hasText: "Matrix OS" }).last().click();
+    await page.getByText("Fix the failing auth tests").waitFor({ timeout: 10_000 });
+    await page.getByText("Polish the board design").waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "02-board.png") });
+  }, 40_000);
+
+  it("opens a task as a cached tab with a live terminal", async () => {
     await page.getByText("Fix the failing auth tests").click();
-    await page.getByText("matrix-task-1").first().waitFor({ timeout: 10_000 });
-    // Terminal attached and printed the stub prompt.
+    // The task opens as a tab; the terminal panel attaches and prints the prompt.
     await page.getByText("stub-shell$").first().waitFor({ timeout: 10_000 });
     await page.keyboard.type("ls");
     await page.keyboard.press("Enter");
     await page.getByText("ran!").first().waitFor({ timeout: 10_000 });
     expect(gateway.state.terminalInputs.join("")).toContain("ls");
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "02-terminal.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "03-task-tab.png") });
   }, 30_000);
 
-  it("starts an agent thread from the composer and streams a transcript", async () => {
+  it("starts an agent thread from the composer and streams it in the Agents tab", async () => {
     await page.keyboard.press(process.platform === "darwin" ? "Meta+j" : "Control+j");
     await page.getByPlaceholder(/ask hermes/i).fill("fix the failing auth tests");
     await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
     await page.getByText("Done — all tests pass.").waitFor({ timeout: 10_000 });
-    await page.getByText(/^Done$/).first().waitFor({ timeout: 5_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "03-thread.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents.png") });
   }, 30_000);
 
   it("renders the app launcher from the gateway catalog", async () => {

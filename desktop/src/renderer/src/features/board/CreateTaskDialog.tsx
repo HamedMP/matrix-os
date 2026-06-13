@@ -9,7 +9,7 @@ import {
 import { Button, Dialog } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type CardPriority, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
-import { useUi } from "../../stores/ui";
+import { useTabs } from "../../stores/tabs";
 
 const PRIORITIES: CardPriority[] = ["low", "normal", "high", "urgent"];
 const SELECT_STYLE: CSSProperties = {
@@ -36,7 +36,7 @@ function CreateTaskForm({
   const api = useConnection((s) => s.api);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const createTask = useBoard((s) => s.createTask);
-  const navigate = useUi((s) => s.navigate);
+  const openTab = useTabs((s) => s.openTab);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<CardStatus>("todo");
@@ -92,7 +92,7 @@ function CreateTaskForm({
       return;
     }
     onClose();
-    if (openAfter) navigate({ kind: "task", taskId: card.id });
+    if (openAfter) openTab({ kind: "task", taskId: card.id, projectSlug: card.projectSlug, title: card.title });
   };
 
   return (

@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import { Button } from "../../design/primitives";
 import { getTerminalThemePreset } from "../../lib/terminal/terminal-themes";
 import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
+import type { ActiveAttachment } from "./attach-manager";
 import type { ShellSocketState } from "../../lib/shell-socket";
 import { getAttachManager } from "./terminal-runtime";
 
@@ -14,12 +15,19 @@ const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
 interface TerminalViewProps {
   sessionName: string;
+  // When false, the xterm stays mounted (buffer preserved) but the live socket
+  // is released so only the focused terminal holds a VPS attachment.
+  active?: boolean;
   onRecreate?: () => void;
 }
 
-export default function TerminalView({ sessionName, onRecreate }: TerminalViewProps) {
+export default function TerminalView({ sessionName, active = true, onRecreate }: TerminalViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [stateSessionName, setStateSessionName] = useState(sessionName);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const serializeRef = useRef<SerializeAddon | null>(null);
+  const attachmentRef = useRef<ActiveAttachment | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
 
@@ -29,11 +37,10 @@ export default function TerminalView({ sessionName, onRecreate }: TerminalViewPr
     setExitCode(null);
   }
 
+  // xterm lifecycle — mount once, dispose only on real unmount (tab close).
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-
-    const manager = getAttachManager();
     const theme = getTerminalThemePreset("one-dark");
     const screenReaderMode = navigator.webdriver === true;
     const terminal = new Terminal({
@@ -55,16 +62,51 @@ export default function TerminalView({ sessionName, onRecreate }: TerminalViewPr
     try {
       terminal.loadAddon(new WebglAddon());
     } catch (err: unknown) {
-      console.warn(
-        "[terminal] webgl renderer unavailable, falling back to canvas:",
-        err instanceof Error ? err.message : String(err),
-      );
+      console.warn("[terminal] webgl unavailable:", err instanceof Error ? err.message : String(err));
     }
     fit.fit();
-
-    const cached = manager.getCachedBuffer(sessionName);
+    const cached = getAttachManager().getCachedBuffer(sessionName);
     if (cached) terminal.write(cached);
+    termRef.current = terminal;
+    fitRef.current = fit;
+    serializeRef.current = serialize;
 
+    let rafId: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        fit.fit();
+        attachmentRef.current?.resize(terminal.cols, terminal.rows);
+      });
+    });
+    observer.observe(host);
+
+    return () => {
+      observer.disconnect();
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      const manager = getAttachManager();
+      try {
+        manager.cacheBuffer(sessionName, serialize.serialize());
+      } catch (err: unknown) {
+        console.warn("[terminal] buffer snapshot failed:", err instanceof Error ? err.message : String(err));
+      }
+      if (manager.activeSessionName === sessionName) manager.detachActive();
+      terminal.dispose();
+      termRef.current = null;
+    };
+  }, [sessionName]);
+
+  // Attach lifecycle — only the active tab holds the live socket (L4).
+  useEffect(() => {
+    const terminal = termRef.current;
+    const fit = fitRef.current;
+    if (!terminal || !active) return;
+
+    const manager = getAttachManager();
     const attachment = manager.attach(sessionName, {
       onState: (state) => setSocketState(state),
       onOutput: (data) => terminal.write(data),
@@ -77,92 +119,43 @@ export default function TerminalView({ sessionName, onRecreate }: TerminalViewPr
         setSocketState("ended");
       },
     });
-
+    attachmentRef.current = attachment;
     const dataDisposable = terminal.onData((data) => attachment.write(data));
-
-    const sendDims = () => {
-      fit.fit();
-      attachment.resize(terminal.cols, terminal.rows);
-    };
-    sendDims();
-    let rafId: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      rafId = window.requestAnimationFrame(() => {
-        rafId = null;
-        sendDims();
-      });
-    });
-    observer.observe(host);
-
+    fit?.fit();
+    attachment.resize(terminal.cols, terminal.rows);
     terminal.focus();
 
     return () => {
-      observer.disconnect();
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
       dataDisposable.dispose();
-      try {
-        manager.cacheBuffer(sessionName, serialize.serialize());
-      } catch (err: unknown) {
-        console.warn(
-          "[terminal] buffer snapshot failed:",
-          err instanceof Error ? err.message : String(err),
-        );
-      }
+      attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
-      terminal.dispose();
     };
-  }, [sessionName]);
+  }, [sessionName, active]);
 
   const banner = (() => {
     if (socketState === "fatal") {
-      return {
-        text: "This session has ended on your computer.",
-        action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null,
-      };
+      return { text: "This session has ended on your computer.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }
     if (socketState === "ended") {
-      return {
-        text: exitCode !== null ? `Session exited (code ${exitCode}).` : "Session ended.",
-        action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null,
-      };
+      return { text: exitCode !== null ? `Session exited (code ${exitCode}).` : "Session ended.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }
-    if (socketState === "connection-lost") {
-      return { text: "Connection lost. Reconnecting…", action: null };
-    }
+    if (socketState === "connection-lost") return { text: "Connection lost. Reconnecting…", action: null };
     return null;
   })();
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col" style={{ background: "#0d1017" }}>
       <div ref={hostRef} className="min-h-0 flex-1 px-2 pt-1.5" data-selectable />
-      {socketState === "connecting" || socketState === "reconnecting" ? (
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-2"
-          aria-live="polite"
-        >
-          <span
-            className="status-pulse rounded-full px-3 py-1 text-xs"
-            style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}
-          >
+      {active && (socketState === "connecting" || socketState === "reconnecting") ? (
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-2" aria-live="polite">
+          <span className="status-pulse rounded-full px-3 py-1 text-xs" style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}>
             {socketState === "connecting" ? "Connecting…" : "Reconnecting…"}
           </span>
         </div>
       ) : null}
       {banner ? (
-        <div
-          className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t px-4 py-2.5"
-          style={{
-            background: "var(--bg-overlay)",
-            borderColor: "var(--border-default)",
-          }}
-        >
-          <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            {banner.text}
-          </span>
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t px-4 py-2.5" style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)" }}>
+          <span className="text-sm" style={{ color: "var(--text-secondary)" }}>{banner.text}</span>
           {banner.action}
         </div>
       ) : null}
