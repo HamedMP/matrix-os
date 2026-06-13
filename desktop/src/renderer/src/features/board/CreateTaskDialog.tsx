@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type CardPriority, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -6,7 +6,10 @@ import { useUi } from "../../stores/ui";
 
 const PRIORITIES: CardPriority[] = ["low", "normal", "high", "urgent"];
 
-export default function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+// Inner form is mounted only while the dialog is open, so its state starts
+// fresh on each open without a reset-on-prop effect (react-doctor: no
+// state-synced-to-prop). autoFocus replaces a focus setTimeout.
+function CreateTaskForm({ onClose }: { onClose: () => void }) {
   const api = useConnection((s) => s.api);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const createTask = useBoard((s) => s.createTask);
@@ -17,18 +20,6 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
   const [priority, setPriority] = useState<CardPriority>("normal");
   const [submitting, setSubmitting] = useState(false);
   const [failed, setFailed] = useState(false);
-  const titleRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (open) {
-      setTitle("");
-      setDescription("");
-      setStatus("todo");
-      setPriority("normal");
-      setFailed(false);
-      setTimeout(() => titleRef.current?.focus(), 0);
-    }
-  }, [open]);
 
   const submit = async (openAfter: boolean) => {
     if (!api || !activeSlug || title.trim().length === 0 || submitting) return;
@@ -59,89 +50,95 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
   };
 
   return (
-    <Dialog open={open} onClose={onClose} width={520}>
-      <form
-        className="flex flex-col gap-3 p-4"
-        onSubmit={(e) => {
+    <form
+      className="flex flex-col gap-3 p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit(false);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
-          void submit(false);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            void submit(e.shiftKey);
-          }
-        }}
-      >
-        <input
-          ref={titleRef}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Task title"
-          maxLength={200}
-          className="w-full bg-transparent text-lg font-medium outline-none"
-          style={{ color: "var(--text-primary)" }}
-        />
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Description (optional)"
-          rows={3}
-          className="w-full resize-none bg-transparent text-sm outline-none"
-          style={{ color: "var(--text-secondary)" }}
-        />
-        <div className="flex items-center gap-2">
-          <select value={status} onChange={(e) => setStatus(e.target.value as CardStatus)} style={selectStyle}>
-            {BOARD_COLUMNS.map((s) => (
-              <option key={s} value={s}>
-                {s[0]?.toUpperCase()}
-                {s.slice(1)}
-              </option>
-            ))}
-          </select>
-          <select
-            value={priority}
-            onChange={(e) => setPriority(e.target.value as CardPriority)}
-            style={selectStyle}
-          >
-            {PRIORITIES.map((p) => (
-              <option key={p} value={p}>
-                {p[0]?.toUpperCase()}
-                {p.slice(1)}
-              </option>
-            ))}
-          </select>
-        </div>
-        {failed ? (
-          <p className="text-sm" style={{ color: "var(--danger)" }}>
-            Couldn't create the task. Please try again.
-          </p>
-        ) : null}
-        <div
-          className="flex items-center justify-end gap-2 border-t pt-3"
-          style={{ borderColor: "var(--border-subtle)" }}
+          void submit(e.shiftKey);
+        }
+      }}
+    >
+      <input
+        autoFocus
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Task title"
+        maxLength={200}
+        className="w-full bg-transparent text-lg font-medium outline-none"
+        style={{ color: "var(--text-primary)" }}
+      />
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder="Description (optional)"
+        rows={3}
+        className="w-full resize-none bg-transparent text-sm outline-none"
+        style={{ color: "var(--text-secondary)" }}
+      />
+      <div className="flex items-center gap-2">
+        <select value={status} onChange={(e) => setStatus(e.target.value as CardStatus)} style={selectStyle}>
+          {BOARD_COLUMNS.map((s) => (
+            <option key={s} value={s}>
+              {s[0]?.toUpperCase()}
+              {s.slice(1)}
+            </option>
+          ))}
+        </select>
+        <select
+          value={priority}
+          onChange={(e) => setPriority(e.target.value as CardPriority)}
+          style={selectStyle}
         >
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="subtle"
-            disabled={submitting || title.trim().length === 0}
-            onClick={() => void submit(true)}
-            title="Create and open (Cmd+Shift+Enter)"
-          >
-            Create + open
-          </Button>
-          <Button
-            variant="primary"
-            disabled={submitting || title.trim().length === 0}
-            onClick={() => void submit(false)}
-            title="Create (Cmd+Enter)"
-          >
-            {submitting ? "Creating…" : "Create"}
-          </Button>
-        </div>
-      </form>
+          {PRIORITIES.map((p) => (
+            <option key={p} value={p}>
+              {p[0]?.toUpperCase()}
+              {p.slice(1)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {failed ? (
+        <p className="text-sm" style={{ color: "var(--danger)" }}>
+          Couldn't create the task. Please try again.
+        </p>
+      ) : null}
+      <div
+        className="flex items-center justify-end gap-2 border-t pt-3"
+        style={{ borderColor: "var(--border-subtle)" }}
+      >
+        <Button variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          variant="subtle"
+          disabled={submitting || title.trim().length === 0}
+          onClick={() => void submit(true)}
+          title="Create and open (Cmd+Shift+Enter)"
+        >
+          Create + open
+        </Button>
+        <Button
+          variant="primary"
+          disabled={submitting || title.trim().length === 0}
+          onClick={() => void submit(false)}
+          title="Create (Cmd+Enter)"
+        >
+          {submitting ? "Creating…" : "Create"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+export default function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Dialog open={open} onClose={onClose} width={520}>
+      <CreateTaskForm onClose={onClose} />
     </Dialog>
   );
 }

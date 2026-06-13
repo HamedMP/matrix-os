@@ -8,9 +8,9 @@ import { useWorkspace } from "../../stores/workspace";
 const SEARCH_DEBOUNCE_MS = 150;
 const MAX_RESULTS = 30;
 
-export default function QuickOpen() {
-  const open = useUi((s) => s.quickOpenOpen);
-  const setOpen = useUi((s) => s.setQuickOpenOpen);
+// Mounted only while open (fresh state per open, autoFocus instead of a focus
+// timeout). The search debounce timer is cleared on each change and unmount.
+function QuickOpenInner({ onClose }: { onClose: () => void }) {
   const view = useUi((s) => s.view);
   const navigate = useUi((s) => s.navigate);
   const api = useConnection((s) => s.api);
@@ -20,25 +20,13 @@ export default function QuickOpen() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<string[]>([]);
   const [selected, setSelected] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setQuery("");
-      setResults([]);
-      setSelected(0);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || !api || query.trim().length === 0) {
+    if (!api || query.trim().length === 0) {
       setResults([]);
       return;
     }
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
+    const timer = setTimeout(() => {
       api
         .get<{ results?: unknown; entries?: unknown }>(
           `/api/files/search?q=${encodeURIComponent(query.trim())}&limit=${MAX_RESULTS}`,
@@ -64,15 +52,11 @@ export default function QuickOpen() {
           setResults([]);
         });
     }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [api, open, query]);
-
-  if (!open) return null;
+    return () => clearTimeout(timer);
+  }, [api, query]);
 
   const openPath = (path: string) => {
-    setOpen(false);
+    onClose();
     if (view.kind !== "task") return;
     openTab(view.taskId, path);
     if (!layoutFor(view.taskId).visible.editor) togglePanel(view.taskId, "editor");
@@ -84,7 +68,7 @@ export default function QuickOpen() {
       className="fixed inset-0 z-50 flex items-start justify-center pt-[16vh]"
       style={{ background: "rgba(0,0,0,0.45)" }}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) setOpen(false);
+        if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
@@ -96,14 +80,14 @@ export default function QuickOpen() {
         }}
       >
         <input
-          ref={inputRef}
+          autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Go to file…"
           className="w-full border-b bg-transparent px-4 py-3 text-md outline-none"
           style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
           onKeyDown={(e) => {
-            if (e.key === "Escape") setOpen(false);
+            if (e.key === "Escape") onClose();
             if (e.key === "ArrowDown") {
               e.preventDefault();
               setSelected((s) => Math.min(s + 1, results.length - 1));
@@ -143,4 +127,11 @@ export default function QuickOpen() {
       </div>
     </div>
   );
+}
+
+export default function QuickOpen() {
+  const open = useUi((s) => s.quickOpenOpen);
+  const setOpen = useUi((s) => s.setQuickOpenOpen);
+  if (!open) return null;
+  return <QuickOpenInner onClose={() => setOpen(false)} />;
 }

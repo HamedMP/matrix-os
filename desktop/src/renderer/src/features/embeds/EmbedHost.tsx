@@ -45,7 +45,7 @@ export default function EmbedHost({
         if (!disposed) setState("failed");
       });
 
-    const observer = new ResizeObserver(() => {
+    const reportBounds = () => {
       const id = embedIdRef.current;
       if (!id) return;
       const r = host.getBoundingClientRect();
@@ -58,13 +58,17 @@ export default function EmbedHost({
           height: Math.round(r.height),
         },
       });
-    });
+    };
+    // ResizeObserver catches size changes; window resize catches position
+    // shifts that don't change this element's own box.
+    const observer = new ResizeObserver(reportBounds);
     observer.observe(host);
-    window.addEventListener("resize", () => observer.disconnect());
+    window.addEventListener("resize", reportBounds);
 
     return () => {
       disposed = true;
       observer.disconnect();
+      window.removeEventListener("resize", reportBounds);
       offState?.();
       const id = embedIdRef.current;
       if (id) void invoke("embed:close", { embedId: id });
