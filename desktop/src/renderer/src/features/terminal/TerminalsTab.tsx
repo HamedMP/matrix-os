@@ -2,6 +2,7 @@ import { Plus, RefreshCw, RotateCcw, SquareTerminal, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import type { AttachableSession } from "../../lib/session-merge";
+import { friendlySessionName } from "../../lib/session-name";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
@@ -78,7 +79,9 @@ export default function TerminalsTab() {
     return out;
   }, [sessions, taskByAttach, projectName]);
 
-  const labelFor = (s: AttachableSession) => taskByAttach[s.attachName]?.title ?? s.name;
+  // Task-linked sessions read as their task; the rest get a friendly two-word
+  // name instead of the opaque zellij name (still shown as the mono sub-label).
+  const labelFor = (s: AttachableSession) => taskByAttach[s.attachName]?.title ?? friendlySessionName(s.attachName);
 
   const newSession = async () => {
     if (!api || creating) return;
