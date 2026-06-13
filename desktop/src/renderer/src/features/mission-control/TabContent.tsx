@@ -1,6 +1,7 @@
 import { Sparkles } from "lucide-react";
 import { EmptyState } from "../../design/primitives";
 import { useTabs, type Tab } from "../../stores/tabs";
+import { useUi } from "../../stores/ui";
 import Board from "../board/Board";
 import TaskWorkspace from "../workspace/TaskWorkspace";
 import TerminalView from "../terminal/TerminalView";
@@ -45,6 +46,12 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
 export default function TabContent() {
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
+  // A native embed paints above the renderer, so while a modal overlay is open
+  // we treat embeds as inactive (detached) — otherwise the palette/composer/
+  // dialogs would render behind the embed.
+  const overlayOpen = useUi(
+    (s) => s.paletteOpen || s.composerOpen || s.quickOpenOpen || s.createTaskOpen,
+  );
 
   if (tabs.length === 0) {
     return (
@@ -62,6 +69,9 @@ export default function TabContent() {
     <div className="relative min-h-0 flex-1">
       {tabs.map((tab) => {
         const active = tab.id === activeTabId;
+        // Embeds also detach while a modal overlay is open so it isn't obscured.
+        const isEmbed = tab.kind === "home" || tab.kind === "app";
+        const paneActive = active && !(isEmbed && overlayOpen);
         return (
           <div
             key={tab.id}
@@ -70,7 +80,7 @@ export default function TabContent() {
             aria-hidden={!active}
             inert={!active}
           >
-            <TabPane tab={tab} active={active} />
+            <TabPane tab={tab} active={paneActive} />
           </div>
         );
       })}
