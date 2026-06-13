@@ -49,6 +49,7 @@ import { createSocialFeedApi } from './social-api.js';
 import { createClerkAuth, createClerkSessionRevoker, type ClerkAuth } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import { createAuthRoutes } from './auth-routes.js';
+import type { DeviceProfile } from './device-flow.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
 import {
   getSessionRoutedWebSocketHost,
@@ -260,6 +261,7 @@ const ClerkUserProfileSchema = z.object({
   username: z.string().nullable().optional(),
   first_name: z.string().nullable().optional(),
   last_name: z.string().nullable().optional(),
+  image_url: z.string().url().nullable().optional(),
   primary_email_address_id: z.string().nullable().optional(),
   email_addresses: z.array(z.object({
     id: z.string().optional(),
@@ -774,6 +776,54 @@ async function fetchClerkProvisionProfile(
     throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
   }
   return { secretKey, profile: profile.data };
+}
+
+// Best-effort, non-secret display profile (name/avatar/email) for the device
+// flow's signing-in client. Returns null on any failure or when Clerk is not
+// configured — the caller MUST treat the avatar as optional and never block
+// token issuance on it.
+async function fetchDeviceDisplayProfile(
+  clerkUserId: string,
+  env: NodeJS.ProcessEnv,
+): Promise<DeviceProfile | null> {
+  const secretKey = env.CLERK_SECRET_KEY;
+  if (!secretKey) return null;
+
+  let response: Response;
+  try {
+    response = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(clerkUserId)}`, {
+      headers: { authorization: `Bearer ${secretKey}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(CLERK_USER_LOOKUP_TIMEOUT_MS),
+      redirect: 'error',
+    });
+  } catch (err: unknown) {
+    logPlatformRouteError('device display profile clerk lookup', err);
+    return null;
+  }
+  if (!response.ok) {
+    logPlatformRouteError(
+      'device display profile clerk lookup',
+      new Error(`Clerk user lookup failed with status ${response.status}`),
+    );
+    return null;
+  }
+
+  const parsed = ClerkUserProfileSchema.safeParse(await response.json());
+  if (!parsed.success) return null;
+  const profile = parsed.data;
+
+  const displayName =
+    [profile.first_name, profile.last_name].filter(Boolean).join(' ') ||
+    profile.username ||
+    undefined;
+  const imageUrl = typeof profile.image_url === 'string' ? profile.image_url : undefined;
+  const email = getPrimaryClerkEmail(profile);
+  if (!displayName && !imageUrl && !email) return null;
+  return {
+    ...(displayName ? { displayName } : {}),
+    ...(imageUrl ? { imageUrl } : {}),
+    ...(email ? { email } : {}),
+  };
 }
 
 function resolveProvisionHandleCandidatesFromClerkProfile(
@@ -2356,6 +2406,7 @@ export function createApp(deps: {
         jwtSecret: platformJwtSecret,
         platformUrl: deviceAuthPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
+        fetchUserProfile: (clerkUserId) => fetchDeviceDisplayProfile(clerkUserId, process.env),
         captureEvent: (event, properties) => {
           capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN, {
             auth_event: event,

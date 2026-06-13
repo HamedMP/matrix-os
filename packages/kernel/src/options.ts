@@ -69,6 +69,28 @@ function loadBrowserConfig(homePath: string): {
   }
 }
 
+const KERNEL_EFFORT_VALUES = ["low", "medium", "high", "max"] as const;
+type KernelEffort = (typeof KERNEL_EFFORT_VALUES)[number];
+
+// User-tunable kernel settings persisted by the gateway settings UI under the
+// `kernel` key of ~/system/config.json (Everything Is a File). Read at spawn so
+// changes take effect on the next kernel turn without a code change.
+export function loadKernelConfigFile(homePath: string): { model?: string; effort?: KernelEffort } {
+  try {
+    const configPath = join(homePath, "system", "config.json");
+    if (!existsSync(configPath)) return {};
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    const kernel = config.kernel;
+    if (!kernel || typeof kernel !== "object") return {};
+    const model = typeof kernel.model === "string" && kernel.model.length > 0 ? kernel.model : undefined;
+    const effort = KERNEL_EFFORT_VALUES.includes(kernel.effort) ? (kernel.effort as KernelEffort) : undefined;
+    return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+  } catch (err: unknown) {
+    console.warn("[kernel-options] Could not load kernel config:", err instanceof Error ? err.message : String(err));
+    return {};
+  }
+}
+
 export async function tryCreateBrowserServer(
   homePath: string,
   browserConfig: { headless: boolean; timeout: number; idleTimeout: number; defaultProfile: string },
@@ -100,6 +122,12 @@ export async function kernelOptions(config: KernelConfig) {
   // One source of truth (.agents/skills), two discovery paths (SDK + IPC).
   ensureSdkSkillsMirror(homePath);
 
+  // Explicit per-call config wins; otherwise fall back to the persisted
+  // ~/system/config.json kernel settings, then hardcoded defaults.
+  const fileKernel = loadKernelConfigFile(homePath);
+  const effort = (config.effort ?? fileKernel.effort) as KernelEffort | undefined;
+  const resolvedEffort = effort && KERNEL_EFFORT_VALUES.includes(effort) ? effort : undefined;
+
   const ipcServer = await createIpcServer(db, homePath);
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
@@ -123,7 +151,8 @@ export async function kernelOptions(config: KernelConfig) {
   }
 
   return {
-    model: config.model ?? "claude-opus-4-6",
+    model: config.model ?? fileKernel.model ?? "claude-opus-4-6",
+    ...(resolvedEffort ? { effort: resolvedEffort } : {}),
     systemPrompt,
     cwd: homePath,
     ...(config.env ? { env: config.env } : {}),
