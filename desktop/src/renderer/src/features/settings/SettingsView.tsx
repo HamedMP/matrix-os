@@ -1,68 +1,64 @@
+import {
+  Blocks,
+  Clock,
+  Cpu,
+  MonitorCog,
+  Palette,
+  Server,
+  Sparkles,
+  UserRound,
+} from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button } from "../../design/primitives";
+import AccountSection from "./sections/AccountSection";
+import AppearanceSection from "./sections/AppearanceSection";
+import RuntimeSection from "./sections/RuntimeSection";
+import AgentSection from "./sections/AgentSection";
+import ChannelsSection from "./sections/ChannelsSection";
+import IntegrationsSection from "./sections/IntegrationsSection";
+import CronSection from "./sections/CronSection";
+import SystemSection from "./sections/SystemSection";
 import { invoke } from "../../lib/operator";
-import { useConnection } from "../../stores/connection";
 
-interface SystemInfoSummary {
-  version?: string;
-  uptime?: number;
-  runtime?: { handle?: string; runtimeSlot?: string };
-  resources?: { cpuCount?: number; memoryTotal?: number; memoryFree?: number; diskTotal?: number; diskFree?: number };
-  release?: { version?: string; channel?: string };
-}
+type SectionId =
+  | "account"
+  | "appearance"
+  | "runtime"
+  | "agent"
+  | "channels"
+  | "integrations"
+  | "cron"
+  | "system";
 
-function formatBytes(bytes: number | undefined): string {
-  if (typeof bytes !== "number" || !Number.isFinite(bytes)) return "–";
-  const gb = bytes / 1024 ** 3;
-  return `${gb.toFixed(1)} GB`;
-}
+const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: string }[] = [
+  { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
+  { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
+  { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
+  { id: "runtime", label: "Runtime", icon: <Server size={15} />, group: "Machine" },
+  { id: "channels", label: "Channels", icon: <MonitorCog size={15} />, group: "Machine" },
+  { id: "integrations", label: "Integrations", icon: <Blocks size={15} />, group: "Machine" },
+  { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },
+  { id: "system", label: "System", icon: <Cpu size={15} />, group: "Machine" },
+];
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section
-      className="flex flex-col gap-3 rounded-xl border p-4"
-      style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
-    >
-      <h3 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-        {title}
-      </h3>
-      {children}
-    </section>
-  );
-}
-
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 text-sm">
-      <span style={{ color: "var(--text-secondary)" }}>{label}</span>
-      <span style={{ color: "var(--text-primary)" }} data-selectable>
-        {value}
-      </span>
-    </div>
-  );
+function applyDocumentTheme(next: "dark" | "light" | "system") {
+  const resolved =
+    next === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : next;
+  document.documentElement.setAttribute("data-theme", resolved);
 }
 
 export default function SettingsView() {
-  const handle = useConnection((s) => s.handle);
-  const platformHost = useConnection((s) => s.platformHost);
-  const runtimeSlot = useConnection((s) => s.runtimeSlot);
-  const selectRuntime = useConnection((s) => s.selectRuntime);
-  const api = useConnection((s) => s.api);
-  const [slotInput, setSlotInput] = useState(runtimeSlot);
-  const [theme, setTheme] = useState<"dark" | "light" | "system">("dark");
-  const [info, setInfo] = useState<SystemInfoSummary | null>(null);
-  const [infoError, setInfoError] = useState(false);
-
-  useEffect(() => {
-    setSlotInput(runtimeSlot);
-  }, [runtimeSlot]);
+  const [section, setSection] = useState<SectionId>("account");
 
   useEffect(() => {
     void invoke("state:get", { key: "appearance" })
       .then((result) => {
         const value = result.value as { theme?: string } | null;
         if (value?.theme === "light" || value?.theme === "system" || value?.theme === "dark") {
-          applyTheme(value.theme);
+          applyDocumentTheme(value.theme);
         }
       })
       .catch((err: unknown) => {
@@ -72,120 +68,55 @@ export default function SettingsView() {
         );
       });
   }, []);
-
-  useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
-    api
-      .get<SystemInfoSummary>("/api/system/info")
-      .then((data) => {
-        if (!cancelled) setInfo(data);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          console.warn(
-            "[settings] load system info failed:",
-            err instanceof Error ? err.message : String(err),
-          );
-          setInfoError(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api]);
-
-  const applyTheme = (next: "dark" | "light" | "system") => {
-    setTheme(next);
-    const resolved =
-      next === "system"
-        ? window.matchMedia("(prefers-color-scheme: light)").matches
-          ? "light"
-          : "dark"
-        : next;
-    document.documentElement.setAttribute("data-theme", resolved);
-    void invoke("state:set", { key: "appearance", value: { theme: next } }).catch((err: unknown) => {
-      console.warn(
-        "[settings] persist appearance failed:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
-  };
+  const groups = Array.from(new Set(SECTIONS.map((s) => s.group)));
 
   return (
-    <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
-      <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
-        Settings
-      </h2>
+    <div className="flex min-h-0 flex-1">
+      <nav
+        className="flex w-[208px] shrink-0 flex-col gap-0.5 overflow-y-auto border-r p-2"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      >
+        <h2 className="px-2.5 py-2 text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
+          Settings
+        </h2>
+        {groups.map((group) => (
+          <div key={group} className="mb-1 flex flex-col gap-0.5">
+            <span className="px-2.5 pt-2 pb-1 text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>
+              {group}
+            </span>
+            {SECTIONS.filter((s) => s.group === group).map((s) => {
+              const active = s.id === section;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setSection(s.id)}
+                  className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-medium transition-colors duration-100"
+                  style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)", background: active ? "var(--bg-selected)" : "transparent" }}
+                  onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                  onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }}>{s.icon}</span>
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
 
-      <Section title="Account">
-        <Row label="Handle" value={handle ? `@${handle}` : "–"} />
-        <Row label="Platform" value={platformHost} />
-      </Section>
-
-      <Section title="Runtime">
-        <Row label="Active runtime" value={runtimeSlot} />
-        <div className="flex items-center gap-2">
-          <input
-            value={slotInput}
-            onChange={(e) => setSlotInput(e.target.value)}
-            maxLength={64}
-            className="h-7 flex-1 rounded-md border bg-transparent px-2 text-sm outline-none"
-            style={{ borderColor: "var(--border-default)", color: "var(--text-primary)" }}
-            placeholder="primary"
-          />
-          <Button
-            variant="primary"
-            disabled={slotInput.trim().length === 0 || slotInput === runtimeSlot}
-            onClick={() => {
-              void selectRuntime(slotInput.trim()).catch((err: unknown) => {
-                console.warn(
-                  "[settings] runtime switch failed:",
-                  err instanceof Error ? err.message : String(err),
-                );
-              });
-            }}
-          >
-            Switch
-          </Button>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[720px] px-8 py-8">
+          {section === "account" ? <AccountSection /> : null}
+          {section === "appearance" ? <AppearanceSection /> : null}
+          {section === "runtime" ? <RuntimeSection /> : null}
+          {section === "agent" ? <AgentSection /> : null}
+          {section === "channels" ? <ChannelsSection /> : null}
+          {section === "integrations" ? <IntegrationsSection /> : null}
+          {section === "cron" ? <CronSection /> : null}
+          {section === "system" ? <SystemSection /> : null}
         </div>
-      </Section>
-
-      <Section title="Appearance">
-        <div className="flex gap-2">
-          {(["dark", "light", "system"] as const).map((option) => (
-            <Button
-              key={option}
-              variant={theme === option ? "primary" : "subtle"}
-              onClick={() => applyTheme(option)}
-            >
-              {option[0]?.toUpperCase()}
-              {option.slice(1)}
-            </Button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="System">
-        {infoError ? (
-          <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>
-            System info unavailable.
-          </p>
-        ) : (
-          <>
-            <Row label="OS version" value={info?.version ?? "–"} />
-            <Row label="Release channel" value={info?.release?.channel ?? "–"} />
-            <Row
-              label="Memory free"
-              value={`${formatBytes(info?.resources?.memoryFree)} of ${formatBytes(info?.resources?.memoryTotal)}`}
-            />
-            <Row
-              label="Disk free"
-              value={`${formatBytes(info?.resources?.diskFree)} of ${formatBytes(info?.resources?.diskTotal)}`}
-            />
-          </>
-        )}
-      </Section>
+      </div>
     </div>
   );
 }

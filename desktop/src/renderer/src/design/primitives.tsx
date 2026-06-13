@@ -1,13 +1,9 @@
-// Lean UI primitives on the token system. Hand-rolled (no heavy deps):
-// consistent focus rings, light dismiss, Escape handling per the UX guide.
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  type CSSProperties,
-  type ReactNode,
-  type ButtonHTMLAttributes,
-} from "react";
+// UI primitives on the token system, built on Radix for focus management,
+// dismissal, and accessibility.
+import * as RadixContextMenu from "@radix-ui/react-context-menu";
+import * as RadixDialog from "@radix-ui/react-dialog";
+import * as RadixTooltip from "@radix-ui/react-tooltip";
+import type { CSSProperties, ReactNode, ButtonHTMLAttributes } from "react";
 
 type ButtonVariant = "primary" | "ghost" | "danger" | "subtle";
 
@@ -27,7 +23,7 @@ export function Button({
   return (
     <button
       type="button"
-      className={`no-drag inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors duration-100 hover:brightness-110 disabled:opacity-50 ${className}`}
+      className={`no-drag inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors duration-100 hover:brightness-105 disabled:opacity-50 ${className}`}
       style={{ ...BUTTON_STYLES[variant], ...style }}
       {...props}
     />
@@ -40,11 +36,10 @@ export function IconButton({
   active = false,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean }) {
-  return (
+  const button = (
     <button
       type="button"
       aria-label={label}
-      title={label}
       className={`no-drag inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-100 ${className}`}
       style={{
         color: active ? "var(--accent)" : "var(--text-tertiary)",
@@ -59,6 +54,20 @@ export function IconButton({
       {...props}
     />
   );
+  return (
+    <RadixTooltip.Root>
+      <RadixTooltip.Trigger asChild>{button}</RadixTooltip.Trigger>
+      <RadixTooltip.Portal>
+        <RadixTooltip.Content
+          sideOffset={6}
+          className="z-[100] rounded-md px-2 py-1 text-xs"
+          style={{ background: "var(--forest-deep)", color: "var(--forest-foreground)", boxShadow: "var(--shadow-2)" }}
+        >
+          {label}
+        </RadixTooltip.Content>
+      </RadixTooltip.Portal>
+    </RadixTooltip.Root>
+  );
 }
 
 export function Dialog({
@@ -72,49 +81,20 @@ export function Dialog({
   children: ReactNode;
   width?: number;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, onClose]);
-
-  const onBackdrop = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
-  if (!open) return null;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[18vh]"
-      style={{ background: "rgba(0,0,0,0.45)" }}
-      onMouseDown={onBackdrop}
-    >
-      <div
-        ref={ref}
-        role="dialog"
-        aria-modal="true"
-        className="fade-in rounded-xl border"
-        style={{
-          width,
-          background: "var(--bg-overlay)",
-          borderColor: "var(--border-default)",
-          boxShadow: "var(--shadow-3)",
-        }}
-      >
-        {children}
-      </div>
-    </div>
+    <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className="fixed inset-0 z-50" style={{ background: "rgba(40,44,37,0.35)" }} />
+        <RadixDialog.Content
+          aria-describedby={undefined}
+          className="fade-in fixed top-[18vh] left-1/2 z-50 -translate-x-1/2 rounded-xl border focus:outline-none"
+          style={{ width, background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-3)" }}
+        >
+          <RadixDialog.Title className="sr-only">Dialog</RadixDialog.Title>
+          {children}
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
   );
 }
 
@@ -125,60 +105,30 @@ export interface MenuItem {
   onSelect: () => void;
 }
 
-export function ContextMenu({
-  position,
-  items,
-  onClose,
-}: {
-  position: { x: number; y: number } | null;
-  items: MenuItem[];
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    if (!position) return;
-    const close = () => onClose();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [position, onClose]);
-
-  if (!position) return null;
+// Right-click context menu: wrap the trigger content; pass the items.
+export function ContextMenu({ items, children }: { items: MenuItem[]; children: ReactNode }) {
   return (
-    <div
-      className="fade-in fixed z-50 min-w-[180px] rounded-lg border p-1"
-      style={{
-        left: Math.min(position.x, window.innerWidth - 200),
-        top: Math.min(position.y, window.innerHeight - items.length * 30 - 16),
-        background: "var(--bg-overlay)",
-        borderColor: "var(--border-default)",
-        boxShadow: "var(--shadow-2)",
-      }}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      {items.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          disabled={item.disabled}
-          className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-sm transition-colors duration-75 disabled:opacity-40"
-          style={{ color: item.danger ? "var(--danger)" : "var(--text-primary)" }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-          onClick={() => {
-            onClose();
-            item.onSelect();
-          }}
+    <RadixContextMenu.Root>
+      <RadixContextMenu.Trigger asChild>{children}</RadixContextMenu.Trigger>
+      <RadixContextMenu.Portal>
+        <RadixContextMenu.Content
+          className="fade-in z-[100] min-w-[180px] rounded-lg border p-1"
+          style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
         >
-          {item.label}
-        </button>
-      ))}
-    </div>
+          {items.map((item) => (
+            <RadixContextMenu.Item
+              key={item.label}
+              disabled={item.disabled}
+              onSelect={item.onSelect}
+              className="flex cursor-default items-center rounded-md px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-[var(--bg-hover)] data-[disabled]:opacity-40"
+              style={{ color: item.danger ? "var(--danger)" : "var(--text-primary)" }}
+            >
+              {item.label}
+            </RadixContextMenu.Item>
+          ))}
+        </RadixContextMenu.Content>
+      </RadixContextMenu.Portal>
+    </RadixContextMenu.Root>
   );
 }
 
@@ -205,12 +155,8 @@ export function EmptyState({
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8">
       <div style={{ color: "var(--text-tertiary)" }}>{icon}</div>
-      <h2 className="text-md font-semibold" style={{ color: "var(--text-primary)" }}>
-        {headline}
-      </h2>
-      <p className="max-w-[320px] text-center text-sm" style={{ color: "var(--text-secondary)" }}>
-        {description}
-      </p>
+      <h2 className="text-md font-semibold" style={{ color: "var(--text-primary)" }}>{headline}</h2>
+      <p className="max-w-[320px] text-center text-sm" style={{ color: "var(--text-secondary)" }}>{description}</p>
       {action ? <div className="mt-2">{action}</div> : null}
     </div>
   );
