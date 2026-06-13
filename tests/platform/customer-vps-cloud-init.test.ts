@@ -12,6 +12,38 @@ import {
 } from '../../packages/platform/src/customer-vps-cloud-init.js';
 
 describe('platform/customer-vps-cloud-init', () => {
+  it('rendered user_data stays under the Hetzner 32KiB limit with headroom', async () => {
+    // Hetzner rejects servers whose user_data exceeds 32768 bytes with a
+    // generic 422 invalid_input; the platform surfaces it as
+    // provider_unavailable. Render with realistically long values and
+    // require headroom below the hard cap so template growth fails CI
+    // before it can fail provisioning.
+    const HETZNER_USER_DATA_LIMIT = 32_768;
+    const HEADROOM = 1_024;
+    const longInput: CustomerHostConfig = {
+      ...input,
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      clerkUserId: 'user_2abcdefghijklmnopqrstuvwxyz012345',
+      handle: 'a-sixty-three-character-handle-padded-to-the-validation-maxim',
+      runtimeSlot: 'preview-runtime-slot-max-32-chars',
+      imageVersion: '0.0.0-pr10000.abcdef012345',
+      updateChannel: 'canary',
+      hostBundleUrl:
+        'https://app.matrix-os.com/system-bundles/0.0.0-pr10000.abcdef012345/matrix-host-bundle.tar.gz',
+      registrationToken: 'r'.repeat(64),
+      platformVerificationToken: 'v'.repeat(64),
+      r2AccessKeyId: 'k'.repeat(32),
+      r2SecretAccessKey: 's'.repeat(64),
+      r2Prefix: 'matrixos-sync/user_2abcdefghijklmnopqrstuvwxyz012345/',
+      postgresPassword: 'p'.repeat(48),
+    };
+    const template = await loadCustomerVpsCloudInitTemplate();
+    const rendered = renderCloudInitTemplate(template, longInput);
+    expect(Buffer.byteLength(rendered, 'utf8')).toBeLessThanOrEqual(
+      HETZNER_USER_DATA_LIMIT - HEADROOM,
+    );
+  });
+
   const input: CustomerHostConfig = {
     machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
     clerkUserId: 'user_123',
@@ -482,9 +514,10 @@ exit 99
   it('only skips restore on confirmed missing R2 backup markers', () => {
     const root = process.cwd();
     const restore = readFileSync(join(root, 'distro/customer-vps/matrix-restore.sh'), 'utf8');
-    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    // bundled copy replaces the former cloud-init write_files entry
+    const bundled = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-restore.sh'), 'utf8');
 
-    for (const script of [restore, cloudInit]) {
+    for (const script of [restore, bundled]) {
       expect(script).toContain('check_r2_exists_or_skip_restore()');
       expect(script).toContain('local status');
       expect(script).toMatch(/else\n\s+status="\$[?]"/);
@@ -522,15 +555,17 @@ exit 99
     expect(timer).toContain('Persistent=true');
   });
 
-  it('installs backup artifacts into cloud-init with restrictive modes', () => {
+  it('installs backup artifacts with restrictive modes', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
-    expect(cloudInit).toContain('path: /opt/matrix/bin/matrixctl');
-    expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-db-backup.sh');
-    expect(cloudInit).toContain('path: /opt/matrix/bin/matrix-restore.sh');
+    // matrixctl/restore/backup ship in the host bundle (32KiB user_data
+    // limit); cloud-init validates and chmods them after bundle extraction.
+    for (const bin of ['matrixctl', 'matrix-db-backup.sh', 'matrix-restore.sh']) {
+      expect(existsSync(join(root, 'distro/customer-vps/host-bin', bin))).toBe(true);
+    }
+    expect(cloudInit).toMatch(/for required_bin in matrixctl matrix-db-backup\.sh matrix-restore\.sh /);
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-db-backup.timer');
-    expect(cloudInit).toContain('permissions: "0750"');
     expect(cloudInit).toContain('docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
@@ -541,7 +576,9 @@ exit 99
   it('includes a bounded matrixctl recovery wrapper', () => {
     const root = process.cwd();
     const matrixctl = readFileSync(join(root, 'distro/customer-vps/matrixctl'), 'utf8');
-    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    // matrixctl ships in the host bundle (host-bin/), not cloud-init:
+    // Hetzner rejects user_data over 32KiB.
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/host-bin/matrixctl'), 'utf8');
 
     expect(matrixctl).toContain('matrixctl recover <clerk-user-id> [--slot <runtime-slot>] [--allow-empty]');
     expect(matrixctl).toContain('local runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"');
@@ -562,7 +599,8 @@ exit 99
   it('bounds matrixctl R2 aws operations in host scripts and cloud-init', () => {
     const root = process.cwd();
     const matrixctl = readFileSync(join(root, 'distro/customer-vps/matrixctl'), 'utf8');
-    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    // bundled copy replaces the former cloud-init write_files entry
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/host-bin/matrixctl'), 'utf8');
 
     for (const script of [matrixctl, cloudInit]) {
       expect(script).toContain('MATRIX_R2_OPERATION_TIMEOUT_SECONDS="${MATRIX_R2_OPERATION_TIMEOUT_SECONDS:-300}"');

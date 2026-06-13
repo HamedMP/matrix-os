@@ -2,6 +2,7 @@ export type CustomerVpsFailureCode =
   | 'quota_exceeded'
   | 'provider_unavailable'
   | 'provider_timeout'
+  | 'user_data_too_large'
   | 'r2_unavailable'
   | 'invalid_state'
   | 'billing_required'
