@@ -7,13 +7,13 @@ import { Reveal } from "./Reveal";
 const queueRows = [
   ["Codex", "Refactor billing checkout", "running tests", "+82 -19"],
   ["Claude Code", "Add CLI quickstart", "ready for review", "+54 -8"],
-  ["Hermes", "Turn Discord feedback into Linear tasks", "waiting on approval", "+0 -0"],
+  ["Hermes", "Prepare release follow-ups", "waiting on approval", "+0 -0"],
 ] as const;
 
 const symphonyPoints = [
-  { title: "Run agents in parallel", desc: "Split work across Claude, Codex, Cursor, OpenCode, or Gemini CLI sessions without blocking your laptop." },
-  { title: "See status at a glance", desc: "Track what each agent is reading, editing, testing, previewing, and waiting on before you review." },
-  { title: "Merge what survives review", desc: "Keep human control over branches, diffs, checks, browser previews, and PRs." },
+  { title: "Start from the task", desc: "Create the task, attach the repo and worktree, then launch the terminal sessions and agent CLIs in the right context." },
+  { title: "Keep every session visible", desc: "Track what each terminal is running, which agent is active, what preview is live, and what needs human input." },
+  { title: "Ship only reviewed changes", desc: "Keep human control over branches, diffs, checks, browser previews, commits, and PRs." },
 ] as const;
 
 export function SymphonySection({ exploreHref }: { exploreHref?: string }) {
@@ -27,8 +27,8 @@ export function SymphonySection({ exploreHref }: { exploreHref?: string }) {
           >
             <div className="max-w-[44rem]">
               <SectionTitle
-                title="Symphony orchestrates the work."
-                continuation="Assign tasks, run agents in parallel, review only what survives."
+                title="Symphony turns tasks into cloud workspaces."
+                continuation="Assign work, run agents in terminals, review only what survives."
               />
             </div>
             {exploreHref ? (

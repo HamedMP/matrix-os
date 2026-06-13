@@ -13,7 +13,7 @@ export function PilotBand() {
           style={{ backgroundColor: c.forestDeep, color: "#F4F2E6" }}
         >
           <p className="max-w-2xl text-[0.9375rem] leading-[1.6]" style={{ color: "rgba(244,242,230,0.78)", fontFamily: fonts.sans }}>
-            Running an enterprise evaluation, university pilot, or Hermes hosting rollout?
+            Running a team rollout, workshop, hackathon, university lab, or Hermes hosting pilot?
           </p>
           <Link
             href="/contact?audience=enterprise"

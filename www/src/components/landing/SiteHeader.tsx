@@ -26,13 +26,13 @@ const navItems: NavItem[] = [
     label: "Platform",
     menu: {
       links: [
-        { label: "Symphony", desc: "Background coding agents, orchestrated", href: "/symphony" },
-        { label: "Hermes", desc: "The resident agent for everything else", href: "/hermes" },
+        { label: "Symphony", desc: "Task-first cloud coding workspaces", href: "/symphony" },
+        { label: "Hermes", desc: "Background agents for company workflows", href: "/hermes" },
         { label: "Every screen", desc: "Web, CLI, mobile, and desktop", href: "/#surfaces" },
         { label: "Whitepaper", desc: "How Matrix works under the hood", href: "/whitepaper" },
       ],
       featured: {
-        title: "Agents that keep working after your laptop closes",
+        title: "Tasks, terminals, agents, and previews that stay alive",
         linkLabel: "Explore Symphony",
         href: "/symphony",
         art: "iso",
@@ -43,14 +43,14 @@ const navItems: NavItem[] = [
     label: "Use cases",
     menu: {
       links: [
-        { label: "All use cases", desc: "Where background agents go to work", href: "/use-cases" },
-        { label: "Developers", desc: "Coding agents with a real computer", href: "/solutions/ai-coding-agents-cloud-workspace" },
+        { label: "All use cases", desc: "Where task-first cloud work starts", href: "/use-cases" },
+        { label: "Developers", desc: "Agent CLIs with a real cloud computer", href: "/solutions/ai-coding-agents-cloud-workspace" },
         { label: "Enterprise", desc: "AI experiments off managed laptops", href: "/solutions/enterprise-ai-coding-lab" },
-        { label: "Universities", desc: "Repeatable labs for AI-native courses", href: "/solutions/university-ai-development-lab" },
+        { label: "Universities", desc: "Repeatable labs, workshops, and hackathons", href: "/solutions/university-ai-development-lab" },
         { label: "Hermes hosting", desc: "An always-on home for your agent", href: "/solutions/hermes-ai-agent-hosting" },
       ],
       featured: {
-        title: "What you can hand to your agents today",
+        title: "What your cloud task workspace should include",
         linkLabel: "See use cases",
         href: "/use-cases",
         art: "terminal",
@@ -86,7 +86,7 @@ function FeaturedArt({ art }: { art: FeaturedCard["art"] }) {
   return (
     <div className="space-y-1 rounded-lg p-3.5 text-[10px] leading-relaxed" style={{ backgroundColor: c.deep, fontFamily: "var(--font-jetbrains), monospace" }}>
       <p style={{ color: "#F4F2E6" }}>$ matrix run -it -- claude</p>
-      <p style={{ color: "rgba(244,242,230,0.55)" }}>fix bugs from Linear</p>
+      <p style={{ color: "rgba(244,242,230,0.55)" }}>work on task checkout-117</p>
       <p className="flex items-center gap-1.5" style={{ color: "rgba(244,242,230,0.55)" }}>
         <span className="size-1.5 rounded-full" style={{ backgroundColor: c.ember }} />
         running in the background

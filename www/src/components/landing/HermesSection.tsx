@@ -5,9 +5,9 @@ import { SectionShell } from "./primitives";
 import { Reveal } from "./Reveal";
 
 const hermesCards = [
-  { Icon: WorkflowIcon, title: "Build workflows", desc: "Turn recurring product, support, finance, and engineering work into Matrix workflows that run on schedule." },
-  { Icon: Layers3Icon, title: "Connect every tool", desc: "Work across GitHub, Linear, Slack, Discord, Gmail, Calendar, Drive, Sentry, Datadog, billing, and Matrix apps." },
-  { Icon: RocketIcon, title: "Ship apps and automations", desc: "Create internal tools, dashboards, trackers, reports, and app workflows in the same Matrix workspace." },
+  { Icon: WorkflowIcon, title: "Run background jobs", desc: "Turn recurring product, support, finance, and engineering work into scheduled Matrix workflows with logs and approvals." },
+  { Icon: Layers3Icon, title: "Connect the company brain", desc: "Work across GitHub, Linear, Slack, Gmail, Calendar, Drive, Sentry, Datadog, billing, and Matrix apps." },
+  { Icon: RocketIcon, title: "Operate through UI, CLI, and RPC", desc: "Give teams a real control surface for agents, jobs, schedules, tool permissions, run history, and handoffs." },
 ] as const;
 
 export function HermesSection({ exploreHref }: { exploreHref?: string }) {
@@ -24,11 +24,11 @@ export function HermesSection({ exploreHref }: { exploreHref?: string }) {
                 className="max-w-[22rem] text-[2rem] leading-[1.1] md:text-[2.75rem]"
                 style={{ fontFamily: fonts.display, fontWeight: 400 }}
               >
-                The resident agent for everything around the code
+                The resident agent for company workflows
               </h2>
               <p className="mt-6 max-w-[26rem] text-[0.9375rem] leading-[1.7]" style={{ color: "rgba(244,242,230,0.72)", fontFamily: fonts.sans }}>
-                Coding agents build software. Hermes runs the operating system around them: tool
-                connections, scheduled workflows, notifications, approvals, memory, and everyday actions.
+                Coding is the first wedge. Hermes is the broader operating layer: connected
+                tools, scheduled workflows, notifications, approvals, memory, and everyday business actions.
               </p>
               {exploreHref ? (
                 <Link
