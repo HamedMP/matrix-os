@@ -29,7 +29,7 @@ describe("fetchMobileJourney", () => {
   it("maps a 5xx / network failure to unreachable", async () => {
     global.fetch = (async () => new Response("", { status: 503 })) as unknown as typeof fetch;
     expect((await fetchMobileJourney("https://app.matrix-os.com", "tok")).status).toBe("unreachable");
-    global.fetch = (async () => { throw new Error("network"); }) as unknown as typeof fetch;
+    global.fetch = (async () => { throw new TypeError("network"); }) as unknown as typeof fetch;
     expect((await fetchMobileJourney("https://app.matrix-os.com", "tok")).status).toBe("unreachable");
   });
 });
