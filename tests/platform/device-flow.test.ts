@@ -123,6 +123,42 @@ describe("device flow: polling", () => {
     expect(result.token).toBe("jwt-for-user_alice");
   });
 
+  it("passes through an optional display profile from issueToken", async () => {
+    flow = createDeviceFlow({
+      db,
+      now: () => now,
+      verificationBase: VERIFY_BASE,
+      issueToken: async ({ clerkUserId }) => ({
+        token: `jwt-for-${clerkUserId}`,
+        expiresAt: now + 24 * 3_600_000,
+        handle: "neo",
+        profile: { displayName: "Thomas Anderson", imageUrl: "https://img.clerk.com/neo.png" },
+      }),
+    });
+    const issued = await flow.createDeviceCode();
+    await flow.approveDeviceCode(issued.userCode, "user_neo");
+    now += 5_000;
+    const result = await flow.pollDeviceCode(issued.deviceCode);
+
+    expect(result.status).toBe("approved");
+    if (result.status !== "approved") throw new Error("unreachable");
+    expect(result.profile).toEqual({
+      displayName: "Thomas Anderson",
+      imageUrl: "https://img.clerk.com/neo.png",
+    });
+  });
+
+  it("omits the profile when issueToken provides none", async () => {
+    const issued = await flow.createDeviceCode();
+    await flow.approveDeviceCode(issued.userCode, "user_alice");
+    now += 5_000;
+    const result = await flow.pollDeviceCode(issued.deviceCode);
+
+    expect(result.status).toBe("approved");
+    if (result.status !== "approved") throw new Error("unreachable");
+    expect(result.profile).toBeUndefined();
+  });
+
   it("consumes the approved device code before token issuance succeeds", async () => {
     let resolveIssue: (() => void) | null = null;
     flow = createDeviceFlow({

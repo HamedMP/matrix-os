@@ -13,6 +13,9 @@ export interface ConnectionProfile {
   userId: string;
   platformHost: string;
   runtimeSlot: string;
+  displayName?: string;
+  imageUrl?: string;
+  email?: string;
 }
 
 export interface AuthStatus {
@@ -20,6 +23,8 @@ export interface AuthStatus {
   handle?: string;
   runtimeSlot: string;
   platformHost: string;
+  displayName?: string;
+  imageUrl?: string;
 }
 
 export type PollResult = {
@@ -67,6 +72,8 @@ export class AuthService {
     return {
       signedIn,
       ...(signedIn && this.profile ? { handle: this.profile.handle } : {}),
+      ...(signedIn && this.profile?.displayName ? { displayName: this.profile.displayName } : {}),
+      ...(signedIn && this.profile?.imageUrl ? { imageUrl: this.profile.imageUrl } : {}),
       runtimeSlot: this.profile?.runtimeSlot ?? "primary",
       platformHost: this.getGatewayOrigin(),
     };
@@ -88,14 +95,25 @@ export class AuthService {
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     })
       .then(async (token) => {
-        this.credential = token;
+        // The encrypted credential holds only the secret token + identity; the
+        // non-secret display profile lives in the plain profile store.
+        const credential: StoredCredential = {
+          accessToken: token.accessToken,
+          expiresAt: token.expiresAt,
+          userId: token.userId,
+          handle: token.handle,
+        };
+        this.credential = credential;
         this.profile = {
           handle: token.handle,
           userId: token.userId,
           platformHost: baseUrl,
           runtimeSlot: this.profile?.runtimeSlot ?? "primary",
+          ...(token.displayName ? { displayName: token.displayName } : {}),
+          ...(token.imageUrl ? { imageUrl: token.imageUrl } : {}),
+          ...(token.email ? { email: token.email } : {}),
         };
-        await this.deps.credentialStore.save(token);
+        await this.deps.credentialStore.save(credential);
         await this.deps.saveProfile(this.profile);
         this.flowState = "authorized";
         this.deps.onAuthChanged(this.getStatus());

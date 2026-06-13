@@ -106,6 +106,8 @@ app.whenReady().then(async () => {
       sendEvent("auth:changed", {
         signedIn: status.signedIn,
         ...(status.handle ? { handle: status.handle } : {}),
+        ...(status.displayName ? { displayName: status.displayName } : {}),
+        ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
       });
     },
   });

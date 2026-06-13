@@ -9,6 +9,8 @@ export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 interface ConnectionState {
   status: ConnectionStatus;
   handle: string | null;
+  displayName: string | null;
+  imageUrl: string | null;
   platformHost: string;
   runtimeSlot: string;
   api: ApiClient | null;
@@ -20,6 +22,8 @@ interface ConnectionState {
 export const useConnection = create<ConnectionState>()((set, get) => ({
   status: "loading",
   handle: null,
+  displayName: null,
+  imageUrl: null,
   platformHost: "",
   runtimeSlot: "primary",
   api: null,
@@ -35,6 +39,8 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     set({
       status: status.signedIn ? "signed-in" : "signed-out",
       handle: status.handle ?? null,
+      displayName: status.displayName ?? null,
+      imageUrl: status.imageUrl ?? null,
       platformHost: status.platformHost,
       runtimeSlot: status.runtimeSlot,
       api,
@@ -48,7 +54,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
 
   signOut: async () => {
     await invoke("auth:sign-out", {});
-    set({ status: "signed-out", handle: null, api: null });
+    set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
   },
 }));
 

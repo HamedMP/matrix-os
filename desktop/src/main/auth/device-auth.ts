@@ -21,6 +21,12 @@ export interface DeviceTokenResponse {
   expiresAt: number;
   userId: string;
   handle: string;
+  // Optional, non-secret display profile (sidebar avatar/name). The platform
+  // fills these from Clerk; absent for older gateways or when the profile
+  // lookup degraded, so every consumer must treat them as optional.
+  displayName?: string;
+  imageUrl?: string;
+  email?: string;
 }
 
 export class DeviceFlowError extends Error {
@@ -112,7 +118,17 @@ export async function pollForToken(options: {
       ) {
         throw new AppError("server");
       }
-      return { accessToken, expiresAt, userId, handle };
+      const optionalString = (value: unknown): string | undefined =>
+        typeof value === "string" && value.length > 0 ? value : undefined;
+      return {
+        accessToken,
+        expiresAt,
+        userId,
+        handle,
+        ...(optionalString(data.displayName) ? { displayName: optionalString(data.displayName) } : {}),
+        ...(optionalString(data.imageUrl) ? { imageUrl: optionalString(data.imageUrl) } : {}),
+        ...(optionalString(data.email) ? { email: optionalString(data.email) } : {}),
+      };
     }
 
     if (response.status === 410) throw new DeviceFlowError("expired");
