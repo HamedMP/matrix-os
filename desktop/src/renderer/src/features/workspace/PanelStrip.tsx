@@ -14,7 +14,7 @@ export const PANEL_TITLES: Record<PanelKind, string> = {
   editor: "Editor",
   git: "Git",
   browser: "Files",
-  artifacts: "Artifacts",
+  artifacts: "Preview",
   processes: "Processes",
   timeline: "Timeline",
 };
