@@ -361,8 +361,12 @@ jobs:
             --header "x-forwarded-host: ${app_domain_host}" \
             --header "x-matrix-edge-secret: ${edge_router_secret}" \
             "$CANDIDATE_URL/?billing=setup")"
-          if ! printf '%s\n' "$billing_shell_html" | grep -Fq 'data-matrix-billing-gate="true"'; then
-            echo "Candidate pre-VPS billing shell did not serve the settings billing gate." >&2
+          # Spec 092 Phase C: the journey-driven BootSequence replaces the billing
+          # gate on the web path, so accept either marker (the old billing gate or
+          # the new boot sequence) — both prove the shell gate rendered, not the
+          # platform fallback auth page.
+          if ! printf '%s\n' "$billing_shell_html" | grep -Eq 'data-matrix-(billing-gate|boot-sequence)="true"'; then
+            echo "Candidate pre-VPS billing shell did not serve the billing gate or boot sequence." >&2
             exit 1
           fi
           if printf '%s\n' "$billing_shell_html" | grep -Fq 'data-matrix-platform-fallback-auth="true"'; then
