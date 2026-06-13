@@ -32,10 +32,36 @@ interface SessionsState {
   loading: boolean;
   creating: boolean;
   error: AppErrorCategory | null;
+  // A specific, user-facing reason the last create() failed (null when fine).
+  createError: string | null;
   load(api: ApiClient): Promise<void>;
   create(api: ApiClient, input: SessionCreateInput): Promise<CreatedSession | null>;
   kill(api: ApiClient, attachName: string): Promise<boolean>;
   resolveAttachName(linkedSessionId: string | null): string | null;
+}
+
+// Map the gateway's safe error code (AppError.detail) to a specific reason so
+// the user sees WHY a session couldn't start, not just a generic failure.
+function describeSessionError(err: unknown): string {
+  const detail = err instanceof AppError ? err.detail : undefined;
+  switch (detail) {
+    case "invalid_session_request":
+      return "Your computer rejected the session request.";
+    case "not_found":
+      return "The project or worktree wasn't found on your computer.";
+    case "worktree_locked":
+      return "That worktree is already in use by another session.";
+    case "sandbox_unavailable":
+      return "The coding agent's sandbox isn't available. Check that the agent is connected.";
+    case "runtime_unavailable":
+      return "The session runtime (zellij) isn't available right now.";
+    case "server_misconfigured":
+      return "Your computer isn't fully set up for cloud sessions yet.";
+    default:
+      if (err instanceof AppError && err.category === "unauthorized") return "Your session expired. Sign in again.";
+      if (err instanceof AppError && err.category === "offline") return "Can't reach your computer. Check your connection.";
+      return "Couldn't start the session. Check that your computer and agent are connected.";
+  }
 }
 
 function asArray<T>(value: unknown): T[] {
@@ -48,6 +74,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   loading: false,
   creating: false,
   error: null,
+  createError: null,
 
   load: async (api) => {
     set({ loading: true });
@@ -76,19 +103,23 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   },
 
   create: async (api, input) => {
-    set({ creating: true });
+    set({ creating: true, createError: null });
     try {
       const res = await api.post<{ session?: { id?: unknown } }>("/api/sessions", input);
       const sessionId = typeof res.session?.id === "string" ? res.session.id : null;
       // Reload so the merged aliasMap resolves the new session's zellij name
       // (the attach target). load() clears `loading`; restore `creating`.
       await get().load(api);
-      set({ creating: false, error: null });
+      set({ creating: false, error: null, createError: null });
       if (!sessionId) return null;
       return { sessionId, attachName: get().aliasMap[sessionId] ?? null };
     } catch (err: unknown) {
       console.error("[sessions] Failed to create session:", err);
-      set({ creating: false, error: err instanceof AppError ? err.category : "server" });
+      set({
+        creating: false,
+        error: err instanceof AppError ? err.category : "server",
+        createError: describeSessionError(err),
+      });
       return null;
     }
   },

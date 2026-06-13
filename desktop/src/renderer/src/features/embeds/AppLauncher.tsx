@@ -1,12 +1,41 @@
 import { LayoutGrid, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "../../design/primitives";
-import { useApps } from "../../stores/apps";
+import { appIconUrl, useApps } from "../../stores/apps";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 
+function AppIcon({ url, name }: { url: string | null; name: string }) {
+  const [failed, setFailed] = useState(false);
+  const prev = useRef<string | null>(null);
+  if (prev.current !== url) {
+    prev.current = url;
+    if (failed) setFailed(false);
+  }
+  if (url && !failed) {
+    return (
+      <img
+        src={url}
+        alt=""
+        className="h-11 w-11 rounded-xl object-cover"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <div
+      className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-semibold"
+      style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+    >
+      {name.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
 export default function AppLauncher() {
   const api = useConnection((s) => s.api);
+  const platformHost = useConnection((s) => s.platformHost);
   const openTab = useTabs((s) => s.openTab);
   const apps = useApps((s) => s.apps);
   const loaded = useApps((s) => s.loaded);
@@ -35,7 +64,8 @@ export default function AppLauncher() {
     setActive((i) => (i >= filtered.length ? 0 : i));
   }, [filtered.length]);
 
-  const open = (slug: string, name: string) => openTab({ kind: "app", slug, title: name });
+  const open = (slug: string, name: string) =>
+    openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug) ? { icon: appIconUrl(platformHost, slug)! } : {}) });
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (filtered.length === 0) return;
@@ -101,12 +131,7 @@ export default function AppLauncher() {
                   onMouseEnter={() => setActive(i)}
                   onClick={() => open(app.slug, app.name)}
                 >
-                  <div
-                    className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-semibold"
-                    style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
-                  >
-                    {app.name.charAt(0).toUpperCase()}
-                  </div>
+                  <AppIcon url={appIconUrl(platformHost, app.slug)} name={app.name} />
                   <span className="w-full truncate text-center text-sm" style={{ color: "var(--text-primary)" }}>
                     {app.name}
                   </span>

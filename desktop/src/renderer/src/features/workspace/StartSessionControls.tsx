@@ -43,6 +43,7 @@ export default function StartSessionControls({
 }) {
   const api = useConnection((s) => s.api);
   const creating = useSessions((s) => s.creating);
+  const createError = useSessions((s) => s.createError);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
 
@@ -51,6 +52,8 @@ export default function StartSessionControls({
     setPending(l.label);
     setError(null);
     try {
+      // The sessions store sets a specific `createError` on failure (mapped
+      // from the gateway's reason code); fall back to a generic line.
       const ok = await startTaskSession(api, {
         projectSlug,
         taskId,
@@ -60,13 +63,15 @@ export default function StartSessionControls({
         kind: l.kind,
         ...(l.kind === "agent" ? { agent: l.agent } : {}),
       });
-      if (!ok) setError("Couldn't start the session. Check that the agent is connected.");
+      if (!ok) setError(useSessions.getState().createError ?? "Couldn't start the session.");
     } catch (err: unknown) {
       setError(toUserMessage(err));
     } finally {
       setPending(null);
     }
   };
+
+  const shownError = error ?? createError;
 
   return (
     <div className={compact ? "flex items-center gap-1.5" : "flex flex-col items-center gap-2"}>
@@ -87,8 +92,8 @@ export default function StartSessionControls({
           </button>
         ))}
       </div>
-      {error && !compact ? (
-        <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span>
+      {shownError && !compact ? (
+        <span className="text-xs" style={{ color: "var(--danger)" }}>{shownError}</span>
       ) : null}
     </div>
   );

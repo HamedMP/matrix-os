@@ -76,7 +76,10 @@ export default function TabContent() {
             key={tab.id}
             className="absolute inset-0 flex min-h-0 flex-col"
             style={{ visibility: active ? "visible" : "hidden", zIndex: active ? 1 : 0 }}
-            aria-hidden={!active}
+            // `inert` (not aria-hidden) on cached-but-hidden tabs: it drops the
+            // subtree from focus + the a11y tree, so a focused element inside a
+            // hidden tab can't trigger the aria-hidden-on-focused-ancestor warning.
+            inert={!active}
           >
             <TabPane tab={tab} active={paneActive} />
           </div>
