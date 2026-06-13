@@ -228,6 +228,12 @@ importers:
       '@dnd-kit/sortable':
         specifier: ^10.0.0
         version: 10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react@19.2.6)
+      '@fontsource/instrument-sans':
+        specifier: ^5.2.5
+        version: 5.2.8
+      '@fontsource/jetbrains-mono':
+        specifier: ^5.2.5
+        version: 5.2.8
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -3274,6 +3280,9 @@ packages:
 
   '@fontsource/fira-code@5.2.7':
     resolution: {integrity: sha512-tnB9NNund9TwIym8/7DMJe573nlPEQb+fKUV5GL8TBYXjIhDvL0D7mgmNVNQUPhXp+R7RylQeiBdkA4EbOHPGQ==}
+
+  '@fontsource/instrument-sans@5.2.8':
+    resolution: {integrity: sha512-TJRYVbjZPx4DGMMU5lb5eFKrP3iLe9h7rz8Pk+dP958IZKiyHjYGXXwQZapVbBXcQN+YOiviVhAWxrjv8g6Z6g==}
 
   '@fontsource/jetbrains-mono@5.2.8':
     resolution: {integrity: sha512-6w8/SG4kqvIMu7xd7wt6x3idn1Qux3p9N62s6G3rfldOUYHpWcc2FKrqf+Vo44jRvqWj2oAtTHrZXEP23oSKwQ==}
@@ -18698,6 +18707,8 @@ snapshots:
   '@floating-ui/utils@0.2.11': {}
 
   '@fontsource/fira-code@5.2.7': {}
+
+  '@fontsource/instrument-sans@5.2.8': {}
 
   '@fontsource/jetbrains-mono@5.2.8': {}
 
