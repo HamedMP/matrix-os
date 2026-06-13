@@ -1,6 +1,9 @@
 import { Command } from "cmdk";
-import { Home, Kanban, MessageSquarePlus, Plus, Settings, SquareTerminal } from "lucide-react";
+import { useEffect } from "react";
+import { Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, SquareTerminal } from "lucide-react";
+import { useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
+import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
@@ -9,16 +12,28 @@ export default function CommandPalette() {
   const open = useUi((s) => s.paletteOpen);
   const setOpen = useUi((s) => s.setPaletteOpen);
   const openTab = useTabs((s) => s.openTab);
+  const focusTab = useTabs((s) => s.focusTab);
+  const tabs = useTabs((s) => s.tabs);
+  const activeTabId = useTabs((s) => s.activeTabId);
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const setComposerOpen = useUi((s) => s.setComposerOpen);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const projects = useBoard((s) => s.projects);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessions = useSessions((s) => s.sessions);
+  const apps = useApps((s) => s.apps);
+  const loadApps = useApps((s) => s.load);
+  const api = useConnection((s) => s.api);
+
+  // Make sure apps are available the first time the palette opens.
+  useEffect(() => {
+    if (open && api) void loadApps(api);
+  }, [open, api, loadApps]);
 
   if (!open) return null;
 
   const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
+  const otherTabs = tabs.filter((t) => t.id !== activeTabId);
 
   const run = (fn: () => void) => {
     setOpen(false);
@@ -107,6 +122,32 @@ export default function CommandPalette() {
                   onSelect={() =>
                     run(() => openTab({ kind: "terminal", sessionName: session.attachName, title: session.name }))
                   }
+                />
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {apps.length > 0 ? (
+            <Command.Group heading="Apps" style={{ color: "var(--text-tertiary)" }}>
+              {apps.slice(0, 30).map((app) => (
+                <PaletteItem
+                  key={app.slug}
+                  icon={<LayoutGrid size={14} />}
+                  label={app.name}
+                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name }))}
+                />
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {otherTabs.length > 0 ? (
+            <Command.Group heading="Open tabs" style={{ color: "var(--text-tertiary)" }}>
+              {otherTabs.map((tab) => (
+                <PaletteItem
+                  key={tab.id}
+                  icon={<PanelsTopLeft size={14} />}
+                  label={tab.title}
+                  onSelect={() => run(() => focusTab(tab.id))}
                 />
               ))}
             </Command.Group>
