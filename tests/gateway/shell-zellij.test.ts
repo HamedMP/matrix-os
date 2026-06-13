@@ -341,8 +341,9 @@ describe("zellij adapter", () => {
       ],
       expect.objectContaining({ cwd: "/home/alice/projects" }),
     );
-    expect(layoutText).toContain('plugin location="zellij:compact-bar"');
-    expect(layoutText.indexOf("children")).toBeLessThan(layoutText.indexOf('plugin location="zellij:compact-bar"'));
+    expect(layoutText).toContain('plugin location="compact-bar"');
+    expect(layoutText).not.toContain('plugin location="zellij:compact-bar"');
+    expect(layoutText).not.toContain("default_tab_template");
     expect(layoutText).toContain('pane cwd="/home/alice/projects" borderless=true');
     expect(layoutText).not.toContain("pane_frames");
     expect(layoutPath).toEqual(expect.any(String));
