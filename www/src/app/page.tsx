@@ -33,9 +33,9 @@ const jsonLd = JSON.stringify({
 });
 
 export const metadata: Metadata = {
-  title: "Matrix OS - Task-first cloud coding for AI agents",
+  title: "Matrix OS - A cloud computer for background AI agents",
   description:
-    "Matrix gives developers and teams a private cloud computer for task-first coding with AI agents, persistent terminals, repos, previews, workflows, and sessions that keep going after your laptop closes.",
+    "Matrix gives background agents their own computer. Run Claude, Codex, Cursor, OpenCode, and Hermes in a private hosted workspace with persistent terminals, repos, previews, and workflows that keep going after your laptop closes.",
 };
 
 export default function LandingPage() {

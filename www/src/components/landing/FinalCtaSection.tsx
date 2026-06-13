@@ -14,11 +14,10 @@ export function FinalCtaSection() {
             className="text-[2.25rem] leading-[1.08] md:text-[3.25rem]"
             style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
           >
-            Start with one task in the cloud
+            Move your agents off your laptop
           </h2>
           <p className="mt-4 max-w-[30rem] text-[1rem] leading-[1.6]" style={{ color: c.subtle, fontFamily: fonts.sans }}>
-            Create a private Matrix computer, attach a repo, launch your agent in a terminal,
-            and keep the whole task alive across every screen.
+            Start with one cloud workspace. Add agents, tools, workflows, and teammates as the work grows.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
             <SignedOut>

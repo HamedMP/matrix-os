@@ -7,22 +7,22 @@ import { IsoArt } from "./IsoArt";
 
 const platformFeatures = [
   {
-    title: "Tasks own the workspace",
-    desc: "Each task carries the repo, worktree, terminal sessions, previews, logs, diffs, and agent runs needed to finish it.",
+    title: "Background agents",
+    desc: "Task in, reviewed change out. Agents keep coding on their own computer long after you close the laptop.",
     linkLabel: "Explore Symphony",
     href: "/symphony",
     seed: 1,
   },
   {
-    title: "Every coding agent, one cloud computer",
-    desc: "Bring terminal-first coding agents into persistent cloud sessions with repos, tests, credentials, and previews.",
+    title: "Every coding agent, one computer",
+    desc: "Claude, Codex, Cursor, OpenCode, Pi, and Gemini CLI in persistent sessions with repos, tests, and previews.",
     linkLabel: "See supported agents",
     href: "/docs/guide/agents",
     seed: 2,
   },
   {
     title: "Hermes, the resident agent",
-    desc: "The expansion path: background business agents connected to tools, schedules, approvals, logs, and company context.",
+    desc: "A Matrix-native agent for connected tools, scheduled workflows, notifications, and approvals.",
     linkLabel: "Meet Hermes",
     href: "/hermes",
     seed: 3,
@@ -43,8 +43,8 @@ export function PlatformGrid() {
         <SectionCard>
           <div className="px-7 pt-9 pb-8 md:px-12 md:pt-12 md:pb-10" style={{ borderBottom: `1px solid ${c.border}` }}>
             <SectionTitle
-              title="The cloud computer behind the task."
-              continuation="You set the direction. Matrix keeps the terminals, previews, files, and agents alive."
+              title="The always-on computer for background agents."
+              continuation="You set the direction. Agents keep working while your devices sleep."
             />
           </div>
           <div className="grid md:grid-cols-2">

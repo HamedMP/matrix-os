@@ -45,6 +45,149 @@ Rules for references:
 - If a PR needs to explain provenance, say "private reference review" or "desktop coding app interaction review" without naming the products.
 - Keep implementation names Matrix-native: task workspace, terminal session, command palette, cloud worktree, agent run, preview, diff, job, schedule.
 
+## Reference-Derived UX and Architecture Patterns
+
+After pulling the latest private reference repositories, use these patterns as inspiration. Do not copy code. Re-implement in Matrix's existing Electron, IPC, gateway, and renderer architecture.
+
+### Workspace Model
+
+- Use a registry-driven workspace where each pane type owns its icon, title, title renderer, body renderer, header extras, context actions, and close guards.
+- Represent tabs and panes as durable task-scoped state, not transient component state.
+- Support tab reorder, tab rename, close tab, close other tabs, close all tabs, and moving a pane into a new tab.
+- Keep an active tab and active pane identity so keyboard focus, context menus, and restore behavior are deterministic.
+- Let repeated open actions focus or update an existing pane when that is the user's likely intent; open a new tab only when requested.
+
+### Tab Bar
+
+- Top tab bar should support fixed, stable tab widths with horizontal overflow handling.
+- Include an add-tab menu near the tab strip, not buried in a separate screen.
+- Support tab accessories for dirty state, attention state, agent-running state, and terminal status.
+- Show a trailing tab-bar area for global task controls such as background terminals, preview health, or run status.
+- Allow drag/reorder later if low risk, but do not block P0 on drag-and-drop.
+
+### Pane Registry and Lifecycle
+
+- Pane definitions should support:
+  - `getIcon`
+  - `getTitle`
+  - custom title rendering
+  - body rendering
+  - header extras
+  - `onBeforeClose`
+  - `onAfterClose`
+  - context menu actions
+- File panes must block close when dirty unless the user saves, discards, or cancels.
+- Terminal panes must decide whether closing a pane kills the remote process, detaches it to background, or asks the user.
+- Native embeds must detach or hide through the main process and must never rely on invalid off-screen bounds.
+
+### Keyboard System
+
+- Define shortcuts as named action IDs, not scattered string literals.
+- Keep display labels and execution behavior derived from the same shortcut registry.
+- Add action groups:
+  - tab creation
+  - tab switching
+  - tab close/reopen
+  - pane focus
+  - pane splitting
+  - pane equalize
+  - sidebar toggle
+  - agent preset launch
+  - terminal create/split/detach/kill
+- Support spatial pane focus: left, right, up, down based on the layout tree, not DOM order.
+- Support split actions:
+  - auto split based on parent direction
+  - split right
+  - split down
+  - split with chat
+  - split with browser/preview
+- Global shortcuts must yield to focused terminal/editor input except for deliberately reserved app shortcuts.
+
+### Terminal Creation and Restore
+
+- Backend session creation must complete before a terminal pane is written into renderer workspace state. This prevents the WebSocket attach path from racing ahead of session creation.
+- Session creation should be idempotent:
+  - existing in-memory session: no-op and attach
+  - daemon/remote session survived restart: adopt
+  - missing session: spawn fresh if the user requested recovery
+- Persist terminal identity separately from pane identity so the same session can be detached, restored, or moved between panes.
+- Track `terminalId`, `taskId`, `projectId`, `worktreeId`, `cwd`, `mode`, `label`, `createdAt`, `state`, and `lastActivity`.
+
+### Background Terminal Handling
+
+- A terminal closed from the visible layout can become a background terminal instead of being killed.
+- The task tab bar should surface a compact background-terminal control when unattached sessions exist.
+- The dropdown should list background sessions with label, mode, state, age, and actions:
+  - reattach/focus
+  - kill
+  - copy session id
+- Use both optimistic local markers and server session listing so the UI feels immediate but eventually reconciles.
+- Clear stale optimistic markers when the server proves the session no longer exists.
+
+### Terminal Status and Attention
+
+- Add a global or task-local active-terminal status button when active sessions exist.
+- Status UI should show:
+  - running/idle/needs-input/exited/failed
+  - owning task
+  - age
+  - CPU and memory when available
+  - terminate action
+- Subscribe to terminal state events and use bounded polling as a fallback.
+- Needs-input state should be visible on the task card, task header, terminal tab, and sidebar badge.
+
+### Agent CLI Adapters
+
+- Treat each supported terminal agent as an adapter with:
+  - validation checks
+  - launch command construction
+  - prompt submission encoding
+  - prompt/permission detection
+  - recoverable error detection
+  - session/conversation id detection
+  - activity-state mapping
+- Prefer official hooks or structured events when an agent provides them.
+- Avoid silence-timer fallbacks for hook-driven agents when they create false idle/running transitions.
+- Keep approval-modal detection as a needs-input signal.
+- Bound filesystem reads when detecting local agent session IDs; read only the minimal metadata needed to disambiguate concurrent sessions.
+
+### Browser and Preview Embeds
+
+- Native/web embeds should have a typed host abstraction:
+  - create view
+  - destroy view
+  - attach view
+  - set bounds
+  - set visible or detach
+  - navigate
+  - reload
+  - back/forward
+  - state subscription
+- For `target=_blank` or `window.open`, adopt the existing native view into a task tab instead of creating a duplicate browser session.
+- Browser state should track URL, title, loading state, navigation availability, and DOM-ready status.
+- Native overlays or modal surfaces must render above live embeds. If a native overlay is unavailable, detach the embed while the modal is active.
+- Preview/browser panels need profile/runtime identity in their creation options so task-specific auth contexts can be isolated later.
+
+### CLI and Skills Surface
+
+Matrix skills for coding agents should expose official CLI/API commands for:
+
+- task read/update/create/close
+- browser/preview navigate, list, screenshot, content, click, type, eval
+- terminal list, create, split, buffer, send input, wait, kill
+- process list/logs/kill
+- custom panels list/create/enable/disable/delete
+- jobs list/create/edit/pause/resume/delete/logs
+
+Inside a Matrix task terminal, expose safe task context through environment variables:
+
+- `MATRIX_TASK_ID`
+- `MATRIX_PROJECT_ID`
+- `MATRIX_WORKTREE_ID`
+- `MATRIX_SESSION_ID`
+
+Commands that mutate production state, schedules, credentials, permissions, or jobs must require explicit confirmation unless the caller has a scoped non-interactive token for that operation.
+
 ## P0 UX Fixes
 
 ### 1. Resizable Task Panes

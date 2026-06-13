@@ -52,7 +52,7 @@ export function TemplatesShowcase() {
             >
               What you can hand to your agents.{" "}
               <span style={{ color: "rgba(248,247,238,0.55)", fontWeight: 500 }}>
-                Coding tasks, review chores, incidents, and business workflows running on your Matrix computer.
+                Real tasks, running in the background on your Matrix computer.
               </span>
             </h2>
 

@@ -14,16 +14,16 @@ export function Hero() {
           className="text-[2.75rem] leading-[1.05] tracking-[-0.01em] md:text-[4.25rem]"
           style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
         >
-          Task-first cloud coding
+          A computer in the cloud
           <br />
-          for AI agents
+          for your AI agents
         </h1>
         <p
           className="mt-5 max-w-[36rem] text-[1rem] leading-[1.6] md:text-[1.0625rem]"
           style={{ color: c.subtle, fontFamily: fonts.sans }}
         >
-          Give every task its own cloud worktree, terminal sessions, previews, files, logs,
-          and agent runs. Your laptop becomes a viewer; the coding work keeps going in Matrix.
+          Run Claude, Codex, Cursor, and Hermes as background agents on one private hosted
+          computer. Terminals, repos, previews, and workflows that keep going after your laptop closes.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
           <SignedOut>
@@ -39,8 +39,8 @@ export function Hero() {
           <CopyPromptButton text={COPYABLE_AGENT_SETUP_PROMPT} />
         </div>
         <p className="mt-4 text-[0.8125rem]" style={{ color: c.subtle, fontFamily: fonts.sans }}>
-          Free to sign up. Or copy the prompt into your coding agent and let it set up your
-          Matrix cloud computer for you.
+          Free to sign up. Or copy the prompt into Claude Code, Codex, or Cursor and your agent
+          sets Matrix up for you.
         </p>
       </div>
 
