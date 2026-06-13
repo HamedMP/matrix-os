@@ -227,6 +227,9 @@ deploy() {
   failed="$(printf '%s' "$response" | python3 -c "import json,sys; print(json.load(sys.stdin).get('failed',0))" 2>/dev/null || echo '?')"
 
   echo "matrixctl: deploy complete — $triggered triggered, $failed failed"
+  # Any failed target (or an unparseable response, "?") must exit non-zero so
+  # operators and automation never read a partial/failed fleet deploy as
+  # success.
   if [ "$failed" != "0" ]; then
     printf '%s\n' "$response" | python3 -c "
 import json,sys
@@ -235,6 +238,7 @@ for r in d.get('results',[]):
   if r.get('status')=='failed':
     print(f\"  FAILED {r['handle']}: {r.get('error','unknown')}\")
 " 2>/dev/null || true
+    fail "deploy reported ${failed} failed target(s)"
   fi
 }
 
