@@ -64,6 +64,13 @@ export function journeyGuidance(journey: CliJourneyState | null): JourneyGuidanc
     };
   }
   switch (journey.phase) {
+    case "account_required":
+      // The token no longer maps to a platform account; `mos setup` can't help.
+      return {
+        lines: ["Your session is no longer valid for this account. Run `mos login` to sign in again."],
+        suggestedCommand: "login",
+        exitCode: 1,
+      };
     case "plan_required":
       return {
         lines: [
