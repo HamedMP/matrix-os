@@ -114,8 +114,8 @@ export function useGlobalShortcuts(): void {
         handleCloseTabShortcut(e, tabs);
         return;
       }
-      // Toggle sidebar.
-      if (meta && e.key === "\\") {
+      // Toggle sidebar (⌘B, like Codex; ⌘\ also works).
+      if (meta && (key === "b" || e.key === "\\")) {
         e.preventDefault();
         ui.toggleSidebar();
         return;
