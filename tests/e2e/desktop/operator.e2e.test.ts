@@ -77,4 +77,23 @@ suite("operator desktop e2e", () => {
     await page.getByText("Done — all tests pass.").waitFor({ timeout: 10_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents.png") });
   }, 30_000);
+
+  it("opens the Terminal workspace with a session sidebar", async () => {
+    await page.locator("aside button", { hasText: "Terminal" }).first().click();
+    // Inner sessions sidebar lists the VPS session as a clickable button
+    // (the hidden task-tab chip with the same name is a span, not matched here).
+    await page.getByText("Sessions").first().waitFor({ timeout: 10_000 });
+    await page.locator("button", { hasText: "matrix-task-1" }).first().waitFor({ state: "visible", timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05-terminal-workspace.png") });
+  }, 30_000);
+
+  it("lists apps and opens one as a tab", async () => {
+    await page.locator("aside button", { hasText: "Apps" }).first().click();
+    await page.getByText("Notes").first().waitFor({ timeout: 10_000 });
+    await page.getByText("Pomodoro").first().waitFor();
+    await page.getByText("Notes").first().click();
+    // The app opens in its own tab (tab chip with the app name).
+    await page.locator('[role="tab"]', { hasText: "Notes" }).first().waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "06-apps.png") });
+  }, 30_000);
 });
