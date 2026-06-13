@@ -5,6 +5,8 @@ import {
   type JourneyFetchResult,
 } from "@/lib/journey";
 
+const SUPPORT_URL = "mailto:support@matrix-os.com";
+
 interface JourneyGateProps {
   /** null while the first fetch is in flight. */
   result: JourneyFetchResult | null;
@@ -111,6 +113,9 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
           {journey.settling?.delayed ? null : <ActivityIndicator color={colors.light.primary} testID="journey-loading" />}
           <Title>{journey.settling?.delayed ? "Taking longer than expected" : "Activating your subscription"}</Title>
           <Body>{journey.detail}</Body>
+          {journey.settling?.delayed ? (
+            <PrimaryButton label="Contact support" testID="journey-support" onPress={() => onOpenUrl(SUPPORT_URL)} />
+          ) : null}
         </Centered>
       );
     case "provisioning":
@@ -128,7 +133,9 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
           <Body>{journey.detail}</Body>
           {journey.failure?.retryable ? (
             <PrimaryButton label={working ? "Retrying…" : "Retry setup"} testID="journey-retry" onPress={onRetry} />
-          ) : null}
+          ) : (
+            <PrimaryButton label="Contact support" testID="journey-support" onPress={() => onOpenUrl(SUPPORT_URL)} />
+          )}
         </Centered>
       );
     default:
