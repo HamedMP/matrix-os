@@ -17,10 +17,20 @@ export interface DeviceCodeIssue {
   interval: number;
 }
 
+// Non-secret display data surfaced to the signing-in client (e.g. the desktop
+// app's sidebar). Never includes anything sensitive — just what we'd show on a
+// profile chip.
+export interface DeviceProfile {
+  displayName?: string;
+  imageUrl?: string;
+  email?: string;
+}
+
 export interface IssuedToken {
   token: string;
   expiresAt: number; // epoch ms
   handle: string;
+  profile?: DeviceProfile;
 }
 
 export interface IssueTokenInput {
@@ -31,7 +41,14 @@ export type DevicePollResult =
   | { status: 'pending' }
   | { status: 'slow_down' }
   | { status: 'expired' }
-  | { status: 'approved'; token: string; expiresAt: number; handle: string; clerkUserId: string };
+  | {
+      status: 'approved';
+      token: string;
+      expiresAt: number;
+      handle: string;
+      clerkUserId: string;
+      profile?: DeviceProfile;
+    };
 
 export interface DeviceFlowConfig {
   db: PlatformDB;
@@ -278,6 +295,7 @@ export function createDeviceFlow(config: DeviceFlowConfig): DeviceFlow {
             expiresAt: issued.expiresAt,
             handle: issued.handle,
             clerkUserId: claimed.clerkUserId,
+            ...(issued.profile ? { profile: issued.profile } : {}),
           });
         } catch (err: unknown) {
           rejectIssue(err);

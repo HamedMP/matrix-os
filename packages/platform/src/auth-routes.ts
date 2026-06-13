@@ -4,6 +4,7 @@ import { bodyLimit } from 'hono/body-limit';
 import {
   createDeviceFlow,
   type DeviceFlow,
+  type DeviceProfile,
   normalizeUserCode,
 } from './device-flow.js';
 import {
@@ -33,6 +34,10 @@ export interface AuthRoutesConfig {
   jwtSecret: string;
   platformUrl: string; // e.g. https://platform.matrix-os.com
   gatewayUrlForHandle: (handle: string) => string;
+  // Optional non-secret display profile (name/avatar) for the signing-in
+  // client. Must NEVER throw or block token issuance — return null on any
+  // failure (the avatar is a nice-to-have, the token is not).
+  fetchUserProfile?: (clerkUserId: string) => Promise<DeviceProfile | null>;
   captureEvent?: (
     event: string,
     properties: Record<string, string | number | boolean | null | undefined>,
@@ -723,10 +728,23 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         handle,
         gatewayUrl,
       });
+      // Best-effort display profile; never let it break sign-in.
+      let profile: DeviceProfile | null = null;
+      if (config.fetchUserProfile) {
+        try {
+          profile = await config.fetchUserProfile(clerkUserId);
+        } catch (err: unknown) {
+          console.error(
+            '[device/token] profile lookup failed:',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
       return {
         token: issued.token,
         expiresAt: issued.expiresAt,
         handle,
+        ...(profile ? { profile } : {}),
       };
     },
   });
@@ -823,6 +841,9 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
               expiresAt: result.expiresAt,
               userId: result.clerkUserId,
               handle: result.handle,
+              ...(result.profile?.displayName ? { displayName: result.profile.displayName } : {}),
+              ...(result.profile?.imageUrl ? { imageUrl: result.profile.imageUrl } : {}),
+              ...(result.profile?.email ? { email: result.profile.email } : {}),
             });
         }
       } catch (err) {
