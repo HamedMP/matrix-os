@@ -421,8 +421,8 @@ function requireReact_production() {
   react_production.useDeferredValue = function(value, initialValue) {
     return ReactSharedInternals.H.useDeferredValue(value, initialValue);
   };
-  react_production.useEffect = function(create, deps) {
-    return ReactSharedInternals.H.useEffect(create, deps);
+  react_production.useEffect = function(create2, deps) {
+    return ReactSharedInternals.H.useEffect(create2, deps);
   };
   react_production.useEffectEvent = function(callback) {
     return ReactSharedInternals.H.useEffectEvent(callback);
@@ -430,17 +430,17 @@ function requireReact_production() {
   react_production.useId = function() {
     return ReactSharedInternals.H.useId();
   };
-  react_production.useImperativeHandle = function(ref, create, deps) {
-    return ReactSharedInternals.H.useImperativeHandle(ref, create, deps);
+  react_production.useImperativeHandle = function(ref, create2, deps) {
+    return ReactSharedInternals.H.useImperativeHandle(ref, create2, deps);
   };
-  react_production.useInsertionEffect = function(create, deps) {
-    return ReactSharedInternals.H.useInsertionEffect(create, deps);
+  react_production.useInsertionEffect = function(create2, deps) {
+    return ReactSharedInternals.H.useInsertionEffect(create2, deps);
   };
-  react_production.useLayoutEffect = function(create, deps) {
-    return ReactSharedInternals.H.useLayoutEffect(create, deps);
+  react_production.useLayoutEffect = function(create2, deps) {
+    return ReactSharedInternals.H.useLayoutEffect(create2, deps);
   };
-  react_production.useMemo = function(create, deps) {
-    return ReactSharedInternals.H.useMemo(create, deps);
+  react_production.useMemo = function(create2, deps) {
+    return ReactSharedInternals.H.useMemo(create2, deps);
   };
   react_production.useOptimistic = function(passthrough, reducer) {
     return ReactSharedInternals.H.useOptimistic(passthrough, reducer);
@@ -4532,43 +4532,43 @@ function requireReactDomClient_production() {
     currentStateHook.memoizedState = action;
     return [stateHook, dispatch, false];
   }
-  function pushSimpleEffect(tag, inst, create, deps) {
-    tag = { tag, create, deps, inst, next: null };
+  function pushSimpleEffect(tag, inst, create2, deps) {
+    tag = { tag, create: create2, deps, inst, next: null };
     inst = currentlyRenderingFiber.updateQueue;
     null === inst && (inst = createFunctionComponentUpdateQueue(), currentlyRenderingFiber.updateQueue = inst);
-    create = inst.lastEffect;
-    null === create ? inst.lastEffect = tag.next = tag : (deps = create.next, create.next = tag, tag.next = deps, inst.lastEffect = tag);
+    create2 = inst.lastEffect;
+    null === create2 ? inst.lastEffect = tag.next = tag : (deps = create2.next, create2.next = tag, tag.next = deps, inst.lastEffect = tag);
     return tag;
   }
   function updateRef() {
     return updateWorkInProgressHook().memoizedState;
   }
-  function mountEffectImpl(fiberFlags, hookFlags, create, deps) {
+  function mountEffectImpl(fiberFlags, hookFlags, create2, deps) {
     var hook = mountWorkInProgressHook();
     currentlyRenderingFiber.flags |= fiberFlags;
     hook.memoizedState = pushSimpleEffect(
       1 | hookFlags,
       { destroy: void 0 },
-      create,
+      create2,
       void 0 === deps ? null : deps
     );
   }
-  function updateEffectImpl(fiberFlags, hookFlags, create, deps) {
+  function updateEffectImpl(fiberFlags, hookFlags, create2, deps) {
     var hook = updateWorkInProgressHook();
     deps = void 0 === deps ? null : deps;
     var inst = hook.memoizedState.inst;
-    null !== currentHook && null !== deps && areHookInputsEqual(deps, currentHook.memoizedState.deps) ? hook.memoizedState = pushSimpleEffect(hookFlags, inst, create, deps) : (currentlyRenderingFiber.flags |= fiberFlags, hook.memoizedState = pushSimpleEffect(
+    null !== currentHook && null !== deps && areHookInputsEqual(deps, currentHook.memoizedState.deps) ? hook.memoizedState = pushSimpleEffect(hookFlags, inst, create2, deps) : (currentlyRenderingFiber.flags |= fiberFlags, hook.memoizedState = pushSimpleEffect(
       1 | hookFlags,
       inst,
-      create,
+      create2,
       deps
     ));
   }
-  function mountEffect(create, deps) {
-    mountEffectImpl(8390656, 8, create, deps);
+  function mountEffect(create2, deps) {
+    mountEffectImpl(8390656, 8, create2, deps);
   }
-  function updateEffect(create, deps) {
-    updateEffectImpl(2048, 8, create, deps);
+  function updateEffect(create2, deps) {
+    updateEffectImpl(2048, 8, create2, deps);
   }
   function useEffectEventImpl(payload) {
     currentlyRenderingFiber.flags |= 4;
@@ -4588,28 +4588,28 @@ function requireReactDomClient_production() {
       return ref.impl.apply(void 0, arguments);
     };
   }
-  function updateInsertionEffect(create, deps) {
-    return updateEffectImpl(4, 2, create, deps);
+  function updateInsertionEffect(create2, deps) {
+    return updateEffectImpl(4, 2, create2, deps);
   }
-  function updateLayoutEffect(create, deps) {
-    return updateEffectImpl(4, 4, create, deps);
+  function updateLayoutEffect(create2, deps) {
+    return updateEffectImpl(4, 4, create2, deps);
   }
-  function imperativeHandleEffect(create, ref) {
+  function imperativeHandleEffect(create2, ref) {
     if ("function" === typeof ref) {
-      create = create();
-      var refCleanup = ref(create);
+      create2 = create2();
+      var refCleanup = ref(create2);
       return function() {
         "function" === typeof refCleanup ? refCleanup() : ref(null);
       };
     }
     if (null !== ref && void 0 !== ref)
-      return create = create(), ref.current = create, function() {
+      return create2 = create2(), ref.current = create2, function() {
         ref.current = null;
       };
   }
-  function updateImperativeHandle(ref, create, deps) {
+  function updateImperativeHandle(ref, create2, deps) {
     deps = null !== deps && void 0 !== deps ? deps.concat([ref]) : null;
-    updateEffectImpl(4, 4, imperativeHandleEffect.bind(null, create, ref), deps);
+    updateEffectImpl(4, 4, imperativeHandleEffect.bind(null, create2, ref), deps);
   }
   function mountDebugValue() {
   }
@@ -4908,20 +4908,20 @@ function requireReactDomClient_production() {
     },
     useContext: readContext,
     useEffect: mountEffect,
-    useImperativeHandle: function(ref, create, deps) {
+    useImperativeHandle: function(ref, create2, deps) {
       deps = null !== deps && void 0 !== deps ? deps.concat([ref]) : null;
       mountEffectImpl(
         4194308,
         4,
-        imperativeHandleEffect.bind(null, create, ref),
+        imperativeHandleEffect.bind(null, create2, ref),
         deps
       );
     },
-    useLayoutEffect: function(create, deps) {
-      return mountEffectImpl(4194308, 4, create, deps);
+    useLayoutEffect: function(create2, deps) {
+      return mountEffectImpl(4194308, 4, create2, deps);
     },
-    useInsertionEffect: function(create, deps) {
-      mountEffectImpl(4, 2, create, deps);
+    useInsertionEffect: function(create2, deps) {
+      mountEffectImpl(4, 2, create2, deps);
     },
     useMemo: function(nextCreate, deps) {
       var hook = mountWorkInProgressHook();
@@ -6947,8 +6947,8 @@ function requireReactDomClient_production() {
         do {
           if ((updateQueue.tag & flags) === flags) {
             lastEffect = void 0;
-            var create = updateQueue.create, inst = updateQueue.inst;
-            lastEffect = create();
+            var create2 = updateQueue.create, inst = updateQueue.inst;
+            lastEffect = create2();
             inst.destroy = lastEffect;
           }
           updateQueue = updateQueue.next;
@@ -12454,18 +12454,294 @@ function requireClient() {
 }
 var clientExports = requireClient();
 const ReactDOM = /* @__PURE__ */ getDefaultExportFromCjs(clientExports);
-function App() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-full flex-col", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "header",
-      {
-        className: "titlebar-drag flex items-center justify-center border-b",
-        style: { height: "var(--titlebar-height)", borderColor: "var(--border-subtle)" },
-        children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm", style: { color: "var(--text-tertiary)" }, children: "Matrix OS" })
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "flex flex-1 items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-secondary)" }, children: "Operator scaffold — Phase 1" }) })
+function invoke(channel, payload) {
+  return window.operator.invoke(channel, payload);
+}
+function onEvent(channel, callback) {
+  return window.operator.on(channel, callback);
+}
+const createStoreImpl = (createState) => {
+  let state;
+  const listeners = /* @__PURE__ */ new Set();
+  const setState = (partial, replace) => {
+    const nextState = typeof partial === "function" ? partial(state) : partial;
+    if (!Object.is(nextState, state)) {
+      const previousState = state;
+      state = (replace != null ? replace : typeof nextState !== "object" || nextState === null) ? nextState : Object.assign({}, state, nextState);
+      listeners.forEach((listener) => listener(state, previousState));
+    }
+  };
+  const getState = () => state;
+  const getInitialState = () => initialState;
+  const subscribe = (listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const api = { setState, getState, getInitialState, subscribe };
+  const initialState = state = createState(setState, getState, api);
+  return api;
+};
+const createStore = ((createState) => createState ? createStoreImpl(createState) : createStoreImpl);
+const identity = (arg) => arg;
+function useStore(api, selector = identity) {
+  const slice = React.useSyncExternalStore(
+    api.subscribe,
+    React.useCallback(() => selector(api.getState()), [api, selector]),
+    React.useCallback(() => selector(api.getInitialState()), [api, selector])
+  );
+  React.useDebugValue(slice);
+  return slice;
+}
+const createImpl = (createState) => {
+  const api = createStore(createState);
+  const useBoundStore = (selector) => useStore(api, selector);
+  Object.assign(useBoundStore, api);
+  return useBoundStore;
+};
+const create = ((createState) => createImpl);
+const CATEGORY_MESSAGES = {
+  unauthorized: "Your session has expired. Please sign in again.",
+  offline: "Can't reach Matrix OS. Check your connection.",
+  timeout: "The request timed out. Please try again.",
+  notFound: "That item could not be found.",
+  server: "Something went wrong. Please try again.",
+  misconfigured: "No computer is connected. Select a runtime to continue.",
+  fatalSession: "This session has ended."
+};
+class AppError extends Error {
+  category;
+  constructor(category, options) {
+    super(CATEGORY_MESSAGES[category], options);
+    this.name = "AppError";
+    this.category = category;
+  }
+}
+function classifyHttpStatus(status) {
+  if (status === 401 || status === 403) return "unauthorized";
+  if (status === 404) return "notFound";
+  return "server";
+}
+function classifyTransportError(err) {
+  if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError")) {
+    return "timeout";
+  }
+  if (err instanceof TypeError) return "offline";
+  return "server";
+}
+const API_TIMEOUT_MS = 1e4;
+function buildGatewayUrl(baseUrl, path, runtimeSlot) {
+  const base = baseUrl.replace(/\/$/, "");
+  if (runtimeSlot === "primary") return `${base}${path}`;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${base}${path}${sep}runtime=${encodeURIComponent(runtimeSlot)}`;
+}
+function createApiClient(options) {
+  const fetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
+  async function request(path, init) {
+    const url = buildGatewayUrl(options.baseUrl, path, options.getRuntimeSlot());
+    let response;
+    try {
+      response = await fetchFn(url, {
+        ...init,
+        signal: AbortSignal.timeout(API_TIMEOUT_MS)
+      });
+    } catch (err) {
+      throw new AppError(classifyTransportError(err), { cause: err });
+    }
+    if (!response.ok) {
+      throw new AppError(classifyHttpStatus(response.status));
+    }
+    try {
+      return await response.json();
+    } catch (err) {
+      throw new AppError("server", { cause: err });
+    }
+  }
+  return {
+    baseUrl: options.baseUrl,
+    get: (path) => request(path, { method: "GET" }),
+    post: (path, body) => request(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    }),
+    patch: (path, body) => request(path, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    }),
+    delete: (path) => request(path, { method: "DELETE" }),
+    putText: (path, body) => request(path, {
+      method: "PUT",
+      headers: { "content-type": "text/plain" },
+      body
+    })
+  };
+}
+const useConnection = create()((set, get) => ({
+  status: "loading",
+  handle: null,
+  platformHost: "",
+  runtimeSlot: "primary",
+  api: null,
+  refresh: async () => {
+    const status = await invoke("auth:status", {});
+    const api = status.signedIn ? createApiClient({
+      baseUrl: status.platformHost,
+      getRuntimeSlot: () => get().runtimeSlot
+    }) : null;
+    set({
+      status: status.signedIn ? "signed-in" : "signed-out",
+      handle: status.handle ?? null,
+      platformHost: status.platformHost,
+      runtimeSlot: status.runtimeSlot,
+      api
+    });
+  },
+  selectRuntime: async (slot) => {
+    await invoke("runtime:select", { slot });
+    set({ runtimeSlot: slot });
+  },
+  signOut: async () => {
+    await invoke("auth:sign-out", {});
+    set({ status: "signed-out", handle: null, api: null });
+  }
+}));
+let wired = false;
+function wireConnectionEvents() {
+  if (wired) return;
+  wired = true;
+  onEvent("auth:changed", () => {
+    void useConnection.getState().refresh();
+  });
+  onEvent("runtime:changed", () => {
+    void useConnection.getState().refresh();
+  });
+}
+const POLL_INTERVAL_MS = 2e3;
+function SignIn() {
+  const refresh = useConnection((s) => s.refresh);
+  const [phase, setPhase] = reactExports.useState("idle");
+  const [userCode, setUserCode] = reactExports.useState(null);
+  const [verificationUri, setVerificationUri] = reactExports.useState(null);
+  const pollTimer = reactExports.useRef(null);
+  const stopPolling = reactExports.useCallback(() => {
+    if (pollTimer.current) {
+      clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
+  }, []);
+  reactExports.useEffect(() => stopPolling, [stopPolling]);
+  const start = reactExports.useCallback(async () => {
+    setPhase("starting");
+    try {
+      const code = await invoke("auth:start-device-flow", {});
+      setUserCode(code.userCode);
+      setVerificationUri(code.verificationUri);
+      setPhase("waiting");
+      stopPolling();
+      pollTimer.current = setInterval(() => {
+        void invoke("auth:poll", {}).then((result) => {
+          if (result.status === "authorized") {
+            stopPolling();
+            void refresh();
+          } else if (result.status === "expired") {
+            stopPolling();
+            setPhase("expired");
+          }
+        });
+      }, POLL_INTERVAL_MS);
+    } catch {
+      setPhase("error");
+    }
+  }, [refresh, stopPolling]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-1 items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: "fade-in flex w-[380px] flex-col items-center gap-6 rounded-xl border p-10",
+      style: {
+        background: "var(--bg-surface)",
+        borderColor: "var(--border-subtle)",
+        boxShadow: "var(--shadow-2)"
+      },
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center gap-1.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "div",
+            {
+              className: "flex h-12 w-12 items-center justify-center rounded-xl text-lg font-semibold",
+              style: { background: "var(--accent-muted)", color: "var(--accent)" },
+              children: "M"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-lg font-semibold", style: { color: "var(--text-primary)" }, children: "Matrix OS" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm", style: { color: "var(--text-secondary)" }, children: "Sign in to connect to your computer" })
+        ] }),
+        phase === "waiting" && userCode ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center gap-4", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "div",
+            {
+              className: "rounded-lg border px-5 py-3 font-mono text-xl tracking-[0.2em]",
+              style: {
+                borderColor: "var(--border-default)",
+                background: "var(--bg-raised)",
+                color: "var(--text-primary)"
+              },
+              "data-selectable": true,
+              children: userCode
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "max-w-[280px] text-center text-sm", style: { color: "var(--text-secondary)" }, children: "Approve this code in the browser window that just opened." }),
+          verificationUri ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              className: "text-sm underline-offset-2 hover:underline",
+              style: { color: "var(--accent)" },
+              onClick: () => void invoke("shell:open-external", { url: verificationUri }),
+              children: "Open approval page again"
+            }
+          ) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pulse text-xs", style: { color: "var(--text-tertiary)" }, children: "Waiting for approval…" })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center gap-3", children: [
+          phase === "expired" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm", style: { color: "var(--warning)" }, children: "Sign-in request expired. Start again." }) : null,
+          phase === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm", style: { color: "var(--danger)" }, children: "Can't reach Matrix OS. Check your connection." }) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              autoFocus: true,
+              disabled: phase === "starting",
+              onClick: () => void start(),
+              className: "rounded-md px-5 py-2 text-sm font-medium transition-colors disabled:opacity-60",
+              style: { background: "var(--accent)", color: "var(--text-on-accent)" },
+              onMouseEnter: (e) => e.currentTarget.style.background = "var(--accent-hover)",
+              onMouseLeave: (e) => e.currentTarget.style.background = "var(--accent)",
+              children: phase === "starting" ? "Starting…" : "Sign in with Matrix OS"
+            }
+          )
+        ] })
+      ]
+    }
+  ) });
+}
+function MissionControl() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-1 flex-col", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("header", { className: "titlebar-drag", style: { height: "var(--titlebar-height)" } }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-1 items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "var(--text-tertiary)" }, children: "Mission control — Phase 3" }) })
   ] });
+}
+function App() {
+  const status = useConnection((s) => s.status);
+  const refresh = useConnection((s) => s.refresh);
+  reactExports.useEffect(() => {
+    wireConnectionEvents();
+    void refresh();
+  }, [refresh]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-full flex-col", style: { background: "var(--bg-app)" }, children: status === "loading" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-1 items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "status-pulse text-sm", style: { color: "var(--text-tertiary)" }, children: "Connecting…" }) }) : status === "signed-out" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("header", { className: "titlebar-drag", style: { height: "var(--titlebar-height)" } }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SignIn, {})
+  ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(MissionControl, {}) });
 }
 ReactDOM.createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(React.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
