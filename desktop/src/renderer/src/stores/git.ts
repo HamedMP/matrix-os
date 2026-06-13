@@ -36,6 +36,7 @@ const WorktreeSchema = z.object({
   sourceBranch: z.string().optional(),
   currentBranch: z.string().optional(),
   dirtyState: z.string().optional(),
+  dirtyCount: z.number().optional(),
   createdAt: z.string().optional(),
   pr: WorktreePrSchema.optional(),
 });

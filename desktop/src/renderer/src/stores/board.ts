@@ -189,6 +189,12 @@ interface BoardState {
   refreshTasks(api: ApiClient, slug: string): Promise<void>;
   createTask(api: ApiClient, slug: string, input: CreateTaskInput): Promise<Card | null>;
   updateTask(api: ApiClient, slug: string, taskId: string, patch: CardPatch): Promise<void>;
+  linkSession(
+    api: ApiClient,
+    slug: string,
+    taskId: string,
+    fields: { linkedSessionId?: string; linkedWorktreeId?: string; status?: CardStatus },
+  ): Promise<void>;
   moveTask(api: ApiClient, slug: string, taskId: string, status: CardStatus, order: number): Promise<void>;
   archiveTask(api: ApiClient, slug: string, taskId: string): Promise<void>;
   deleteTask(api: ApiClient, slug: string, taskId: string): Promise<void>;
@@ -318,6 +324,30 @@ export const useBoard = create<BoardState>()((set, get) => {
     },
 
     updateTask: (api, slug, taskId, patch) => mutateTask(api, slug, taskId, patch),
+
+    linkSession: (api, slug, taskId, fields) => {
+      const before = get().cardsByProject[slug]?.find((card) => card.id === taskId);
+      if (!before) return Promise.resolve();
+      patchCard(slug, taskId, (card) => ({
+        ...card,
+        ...(fields.linkedSessionId !== undefined ? { linkedSessionId: fields.linkedSessionId } : {}),
+        ...(fields.linkedWorktreeId !== undefined ? { linkedWorktreeId: fields.linkedWorktreeId } : {}),
+        ...(fields.status !== undefined ? { status: fields.status } : {}),
+      }));
+      return enqueueTaskMutation(taskId, async () => {
+        try {
+          const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), fields);
+          const card = toCard(response.task);
+          if (card) patchCard(slug, taskId, () => card);
+          set({ error: null });
+        } catch (err: unknown) {
+          console.error("[board] Link session failed:", err);
+          patchCard(slug, taskId, () => before);
+          await refreshInto(api, slug);
+          set({ error: categoryOf(err) });
+        }
+      });
+    },
 
     moveTask: (api, slug, taskId, status, order) =>
       mutateTask(api, slug, taskId, { status, order }),

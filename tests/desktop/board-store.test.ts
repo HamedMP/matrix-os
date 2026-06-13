@@ -93,6 +93,40 @@ describe("groupCardsByColumn", () => {
   });
 });
 
+describe("linkSession", () => {
+  it("optimistically links a session and persists the patch", async () => {
+    const patched = wireTask({ linkedSessionId: "sess_1", status: "running" });
+    const patch = vi.fn().mockResolvedValue({ task: patched });
+    const api = makeApi({ patch });
+    useBoard.setState({ cardsByProject: { proj: [card({ id: "task_a" })] } });
+
+    await useBoard.getState().linkSession(api, "proj", "task_a", {
+      linkedSessionId: "sess_1",
+      status: "running",
+    });
+
+    expect(patch).toHaveBeenCalledWith(
+      "/api/projects/proj/tasks/task_a",
+      { linkedSessionId: "sess_1", status: "running" },
+    );
+    const updated = useBoard.getState().cardsByProject["proj"]![0]!;
+    expect(updated.linkedSessionId).toBe("sess_1");
+    expect(updated.status).toBe("running");
+    expect(useBoard.getState().error).toBeNull();
+  });
+
+  it("rolls back and surfaces an error category on failure", async () => {
+    const api = makeApi({
+      patch: vi.fn().mockRejectedValue(new AppError("server")),
+      get: vi.fn().mockResolvedValue({ tasks: [], nextCursor: null }),
+    });
+    useBoard.setState({ cardsByProject: { proj: [card({ id: "task_a", linkedSessionId: null })] } });
+
+    await useBoard.getState().linkSession(api, "proj", "task_a", { linkedSessionId: "sess_1" });
+    expect(useBoard.getState().error).toBe("server");
+  });
+});
+
 describe("loadProjects", () => {
   it("loads the project list from /api/workspace/projects", async () => {
     const api = makeApi({
