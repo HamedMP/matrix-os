@@ -66,6 +66,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     await ctx.auth.signOut();
     return { ok: true };
   });
+  handle("auth:session-expired", async () => {
+    await ctx.auth.expireSession();
+    return { ok: true };
+  });
 
   handle("runtime:select", async ({ slot }) => {
     await ctx.auth.selectRuntime(slot);

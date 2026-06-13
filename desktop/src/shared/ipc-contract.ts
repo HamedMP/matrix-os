@@ -89,6 +89,7 @@ export const INVOKE_CHANNELS = {
       .strict(),
   },
   "auth:sign-out": { request: Empty, response: Ok },
+  "auth:session-expired": { request: Empty, response: Ok },
   "runtime:select": {
     request: z.object({ slot: z.string().min(1).max(64) }).strict(),
     response: Ok,

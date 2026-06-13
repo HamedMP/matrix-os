@@ -1,25 +1,49 @@
 import { describe, expect, it, vi } from "vitest";
-import { AuthService, type ConnectionProfile } from "@desktop/main/auth/auth-service";
+import { AuthService, type AuthStatus, type ConnectionProfile } from "@desktop/main/auth/auth-service";
 import type { CredentialStore, StoredCredential } from "@desktop/main/auth/credential-store";
 
-function makeCredential(overrides: Partial<StoredCredential> = {}): StoredCredential {
-  return {
-    accessToken: "token-1",
-    expiresAt: Date.now() + 60_000,
-    userId: "user-1",
-    handle: "neo",
-    ...overrides,
+const HOUR_MS = 3_600_000;
+
+function makeCredentialStore(initial: StoredCredential | null = null) {
+  let stored = initial;
+  const store: CredentialStore = {
+    save: vi.fn(async (credential: StoredCredential) => {
+      stored = credential;
+    }),
+    load: vi.fn(async () => stored),
+    clear: vi.fn(async () => {
+      stored = null;
+    }),
   };
+  return { store, peek: () => stored };
 }
 
-function makeProfile(overrides: Partial<ConnectionProfile> = {}): ConnectionProfile {
-  return {
-    handle: "neo",
-    userId: "user-1",
+function makeService(opts: {
+  credential?: StoredCredential | null;
+  profile?: ConnectionProfile | null;
+  now: number | (() => number);
+  fetchFn?: (input: string, init?: RequestInit) => Promise<Response>;
+  saveProfile?: (profile: ConnectionProfile) => Promise<void>;
+}) {
+  const { store, peek } = makeCredentialStore(opts.credential ?? null);
+  let profile = opts.profile ?? null;
+  const changes: AuthStatus[] = [];
+  const auth = new AuthService({
+    credentialStore: store,
     platformHost: "https://app.matrix-os.com",
-    runtimeSlot: "primary",
-    ...overrides,
-  };
+    ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
+    now: () => (typeof opts.now === "function" ? opts.now() : opts.now),
+    loadProfile: async () => profile,
+    saveProfile: async (nextProfile) => {
+      if (opts.saveProfile) await opts.saveProfile(nextProfile);
+      profile = nextProfile;
+    },
+    clearProfile: async () => {
+      profile = null;
+    },
+    onAuthChanged: (status) => changes.push(status),
+  });
+  return { auth, store, changes, getProfile: () => profile, peekCredential: peek };
 }
 
 function deferred<T = void>() {
@@ -30,25 +54,6 @@ function deferred<T = void>() {
     reject = rej;
   });
   return { promise, resolve, reject };
-}
-
-function makeCredentialStore(initial: StoredCredential | null): CredentialStore & {
-  saved: StoredCredential | null;
-  cleared: boolean;
-} {
-  return {
-    saved: null,
-    cleared: false,
-    async load() {
-      return initial;
-    },
-    async save(credential) {
-      this.saved = credential;
-    },
-    async clear() {
-      this.cleared = true;
-    },
-  };
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -65,99 +70,108 @@ async function flushAuthFlow(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-describe("AuthService", () => {
-  it("treats expired persisted credentials as signed out", async () => {
-    const credentialStore = makeCredentialStore(makeCredential({ expiresAt: Date.now() - 1000 }));
-    const clearProfile = vi.fn(async () => undefined);
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      openExternal: vi.fn(async () => undefined),
-      loadProfile: async () => makeProfile(),
-      saveProfile: vi.fn(async () => undefined),
-      clearProfile,
-      onAuthChanged: vi.fn(),
-    });
+const VALID: StoredCredential = {
+  accessToken: "tok",
+  expiresAt: 10_000 + HOUR_MS,
+  userId: "user-1",
+  handle: "neo",
+};
 
+const PROFILE: ConnectionProfile = {
+  handle: "neo",
+  userId: "user-1",
+  platformHost: "https://app.matrix-os.com",
+  runtimeSlot: "primary",
+  displayName: "Thomas Anderson",
+};
+
+describe("AuthService token expiry", () => {
+  it("reports signed-in and returns the token while the credential is valid", async () => {
+    const { auth } = makeService({ credential: VALID, profile: PROFILE, now: 10_000 });
     await auth.init();
-
-    expect(auth.getStatus().signedIn).toBe(false);
-    expect(auth.getToken()).toBeNull();
-    expect(credentialStore.cleared).toBe(true);
-    expect(clearProfile).toHaveBeenCalledOnce();
+    expect(auth.getStatus().signedIn).toBe(true);
+    expect(auth.getStatus().displayName).toBe("Thomas Anderson");
+    expect(auth.getToken()).toBe("tok");
   });
 
   it("does not throw when expired credential cleanup fails during init", async () => {
-    const credentialStore = makeCredentialStore(makeCredential({ expiresAt: Date.now() - 1000 }));
-    credentialStore.clear = vi.fn(async () => {
-      throw new Error("credential clear failed");
+    const { auth, store, getProfile } = makeService({
+      credential: { ...VALID, expiresAt: 9_000 },
+      profile: PROFILE,
+      now: 10_000,
     });
-    const clearProfile = vi.fn(async () => {
-      throw new Error("profile clear failed");
-    });
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      openExternal: vi.fn(async () => undefined),
-      loadProfile: async () => makeProfile(),
-      saveProfile: vi.fn(async () => undefined),
-      clearProfile,
-      onAuthChanged: vi.fn(),
-    });
+    vi.mocked(store.clear).mockRejectedValueOnce(new Error("credential clear failed"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(auth.init()).resolves.toBeUndefined();
 
-    await expect(auth.init()).resolves.toBeUndefined();
-
-    expect(auth.getStatus().signedIn).toBe(false);
-    expect(auth.getToken()).toBeNull();
-    expect(credentialStore.clear).toHaveBeenCalledOnce();
-    expect(clearProfile).toHaveBeenCalledOnce();
-    expect(console.warn).toHaveBeenCalledWith("[auth] failed to clear expired credential:", "credential clear failed");
-    expect(console.warn).toHaveBeenCalledWith("[auth] failed to clear expired profile:", "profile clear failed");
+      expect(auth.getStatus().signedIn).toBe(false);
+      expect(auth.getToken()).toBeNull();
+      expect(store.clear).toHaveBeenCalledOnce();
+      expect(getProfile()).toEqual(PROFILE);
+      expect(console.warn).toHaveBeenCalledWith("[auth] failed to clear expired credential:", "credential clear failed");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("emits signed-out status when an in-memory credential expires mid-session", async () => {
-    const now = Date.now();
-    const dateNow = vi.spyOn(Date, "now").mockReturnValue(now);
-    const credentialStore = makeCredentialStore(makeCredential({ expiresAt: now + 1000 }));
-    const clearProfile = vi.fn(async () => undefined);
-    const onAuthChanged = vi.fn();
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      openExternal: vi.fn(async () => undefined),
-      loadProfile: async () => makeProfile(),
-      saveProfile: vi.fn(async () => undefined),
-      clearProfile,
-      onAuthChanged,
+    let now = 10_000;
+    const { auth, store, changes, getProfile } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: () => now,
     });
     await auth.init();
     expect(auth.getStatus().signedIn).toBe(true);
 
-    dateNow.mockReturnValue(now + 2000);
+    now = 10_000 + HOUR_MS;
 
-    expect(auth.getStatus()).toEqual({
+    expect(auth.getStatus()).toMatchObject({
       signedIn: false,
       runtimeSlot: "primary",
       platformHost: "https://app.matrix-os.com",
     });
     expect(auth.getToken()).toBeNull();
-    expect(onAuthChanged).toHaveBeenCalledTimes(1);
-    expect(onAuthChanged).toHaveBeenCalledWith({
+    expect(changes).toHaveLength(1);
+    expect(changes.at(-1)).toMatchObject({
       signedIn: false,
       runtimeSlot: "primary",
       platformHost: "https://app.matrix-os.com",
     });
     await Promise.resolve();
     await Promise.resolve();
-    expect(credentialStore.cleared).toBe(true);
-    expect(clearProfile).toHaveBeenCalledOnce();
-
-    dateNow.mockRestore();
+    expect(store.clear).toHaveBeenCalledOnce();
+    expect(getProfile()).toEqual(PROFILE);
   });
 
+  it("treats an expired credential as signed-out and withholds the token", async () => {
+    const { auth, store, getProfile } = makeService({
+      credential: { ...VALID, expiresAt: 9_000 },
+      profile: PROFILE,
+      now: 10_000,
+    });
+    await auth.init();
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(auth.getToken()).toBeNull();
+    expect(store.clear).toHaveBeenCalledOnce();
+    expect(getProfile()).toEqual(PROFILE);
+  });
+
+  it("withholds the token within the refresh skew window before exact expiry", async () => {
+    const { auth } = makeService({
+      credential: { ...VALID, expiresAt: 15_000 },
+      profile: PROFILE,
+      now: 10_000,
+    });
+    await auth.init();
+    expect(auth.getToken()).toBeNull();
+    expect(auth.getStatus().signedIn).toBe(false);
+  });
+});
+
+describe("AuthService device flow", () => {
   it("reuses a pending device flow instead of launching parallel poll loops", async () => {
-    const credentialStore = makeCredentialStore(null);
     let codeRequests = 0;
     const tokenPromise = new Promise<Response>(() => undefined);
     const fetchFn = vi.fn(async (url: string) => {
@@ -173,16 +187,7 @@ describe("AuthService", () => {
       }
       return tokenPromise;
     });
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      fetchFn,
-      openExternal: vi.fn(async () => undefined),
-      loadProfile: async () => null,
-      saveProfile: vi.fn(async () => undefined),
-      clearProfile: vi.fn(async () => undefined),
-      onAuthChanged: vi.fn(),
-    });
+    const { auth } = makeService({ now: 10_000, fetchFn });
 
     const first = await auth.startDeviceFlow();
     const second = await auth.startDeviceFlow();
@@ -192,9 +197,6 @@ describe("AuthService", () => {
   });
 
   it("does not restore credentials when an in-flight poll resolves after sign-out", async () => {
-    const credentialStore = makeCredentialStore(null);
-    const saveProfile = vi.fn(async () => undefined);
-    const onAuthChanged = vi.fn();
     let resolveToken!: (response: Response) => void;
     const tokenPromise = new Promise<Response>((resolve) => {
       resolveToken = resolve;
@@ -211,23 +213,14 @@ describe("AuthService", () => {
       }
       return tokenPromise;
     });
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      fetchFn,
-      openExternal: vi.fn(async () => undefined),
-      loadProfile: async () => null,
-      saveProfile,
-      clearProfile: vi.fn(async () => undefined),
-      onAuthChanged,
-    });
+    const { auth, changes, getProfile, peekCredential } = makeService({ now: 10_000, fetchFn });
 
     await auth.startDeviceFlow();
     await auth.signOut();
     resolveToken(
       jsonResponse({
         accessToken: "late-token",
-        expiresAt: Date.now() + 60_000,
+        expiresAt: 10_000 + HOUR_MS,
         userId: "user-1",
         handle: "neo",
       }),
@@ -236,26 +229,34 @@ describe("AuthService", () => {
     await Promise.resolve();
 
     expect(auth.getStatus().signedIn).toBe(false);
-    expect(credentialStore.saved).toBeNull();
-    expect(saveProfile).not.toHaveBeenCalled();
-    expect(onAuthChanged).toHaveBeenCalledTimes(1);
+    expect(peekCredential()).toBeNull();
+    expect(getProfile()).toBeNull();
+    expect(changes).toHaveLength(1);
   });
 
   it("clears a credential save that completes after sign-out invalidates the device flow", async () => {
-    const credentialStore = makeCredentialStore(null);
+    let stored: StoredCredential | null = null;
+    let profile: ConnectionProfile | null = null;
     const saveStarted = deferred<void>();
     const finishSave = deferred<void>();
-    credentialStore.save = vi.fn(async (credential) => {
-      saveStarted.resolve();
-      await finishSave.promise;
-      credentialStore.saved = credential;
+    const credentialStore: CredentialStore = {
+      load: vi.fn(async () => stored),
+      save: vi.fn(async (credential) => {
+        saveStarted.resolve();
+        await finishSave.promise;
+        stored = credential;
+      }),
+      clear: vi.fn(async () => {
+        stored = null;
+      }),
+    };
+    const saveProfile = vi.fn(async (nextProfile: ConnectionProfile) => {
+      profile = nextProfile;
     });
-    credentialStore.clear = vi.fn(async () => {
-      credentialStore.cleared = true;
-      credentialStore.saved = null;
+    const clearProfile = vi.fn(async () => {
+      profile = null;
     });
-    const saveProfile = vi.fn(async () => undefined);
-    const onAuthChanged = vi.fn();
+    const changes: AuthStatus[] = [];
     const fetchFn = vi.fn(async (url: string) => {
       if (url.endsWith("/api/auth/device/code")) {
         return jsonResponse({
@@ -268,7 +269,7 @@ describe("AuthService", () => {
       }
       return jsonResponse({
         accessToken: "late-token",
-        expiresAt: Date.now() + 60_000,
+        expiresAt: 10_000 + HOUR_MS,
         userId: "user-1",
         handle: "neo",
       });
@@ -277,11 +278,11 @@ describe("AuthService", () => {
       credentialStore,
       platformHost: "https://app.matrix-os.com",
       fetchFn,
-      openExternal: vi.fn(async () => undefined),
-      loadProfile: async () => null,
+      now: () => 10_000,
+      loadProfile: async () => profile,
       saveProfile,
-      clearProfile: vi.fn(async () => undefined),
-      onAuthChanged,
+      clearProfile,
+      onAuthChanged: (status) => changes.push(status),
     });
 
     await auth.startDeviceFlow();
@@ -291,50 +292,16 @@ describe("AuthService", () => {
     await flushAuthFlow();
 
     expect(auth.getStatus().signedIn).toBe(false);
-    expect(credentialStore.saved).toBeNull();
+    expect(stored).toBeNull();
+    expect(profile).toBeNull();
     expect(saveProfile).not.toHaveBeenCalled();
-    expect(onAuthChanged).toHaveBeenCalledTimes(1);
-  });
-
-  it("emits signed-out status before persistent sign-out cleanup can fail", async () => {
-    const credentialStore = makeCredentialStore(makeCredential());
-    const onAuthChanged = vi.fn();
-    const cleanupError = new Error("credential clear failed");
-    credentialStore.clear = vi.fn(async () => {
-      throw cleanupError;
-    });
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      openExternal: vi.fn(async () => undefined),
-      loadProfile: async () => makeProfile(),
-      saveProfile: vi.fn(async () => undefined),
-      clearProfile: vi.fn(async () => undefined),
-      onAuthChanged,
-    });
-    await auth.init();
-
-    await expect(auth.signOut()).rejects.toThrow(cleanupError);
-
-    expect(auth.getStatus().signedIn).toBe(false);
-    expect(onAuthChanged).toHaveBeenCalledWith({
-      signedIn: false,
-      runtimeSlot: "primary",
-      platformHost: "https://app.matrix-os.com",
-    });
+    expect(changes).toHaveLength(1);
   });
 
   it("emits signed-in status even when persistence fails after device authorization", async () => {
-    const credentialStore = makeCredentialStore(null);
-    credentialStore.save = vi.fn(async () => {
-      throw new Error("credential save failed");
-    });
     const saveProfile = vi.fn(async () => {
       throw new Error("profile save failed");
     });
-    const onAuthChanged = vi.fn();
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const fetchFn = vi.fn(async (url: string) => {
       if (url.endsWith("/api/auth/device/code")) {
         return jsonResponse({
@@ -347,46 +314,92 @@ describe("AuthService", () => {
       }
       return jsonResponse({
         accessToken: "token-1",
-        expiresAt: Date.now() + 60_000,
+        expiresAt: 10_000 + HOUR_MS,
         userId: "user-1",
         handle: "neo",
+        displayName: "Thomas Anderson",
       });
     });
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      fetchFn,
-      openExternal: vi.fn(async () => undefined),
-      loadProfile: async () => null,
-      saveProfile,
-      clearProfile: vi.fn(async () => undefined),
-      onAuthChanged,
-    });
+    const { auth, store, changes } = makeService({ now: 10_000, fetchFn, saveProfile });
+    vi.mocked(store.save).mockRejectedValueOnce(new Error("credential save failed"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await auth.startDeviceFlow();
+      await flushAuthFlow();
 
-    await auth.startDeviceFlow();
-    await flushAuthFlow();
+      expect(auth.getStatus()).toEqual({
+        signedIn: true,
+        handle: "neo",
+        displayName: "Thomas Anderson",
+        runtimeSlot: "primary",
+        platformHost: "https://app.matrix-os.com",
+      });
+      expect(auth.poll()).toEqual({ status: "authorized", profile: { handle: "neo", userId: "user-1" } });
+      expect(changes.at(-1)).toMatchObject({
+        signedIn: true,
+        handle: "neo",
+        displayName: "Thomas Anderson",
+      });
+      expect(console.warn).toHaveBeenCalledWith("[auth] failed to persist credential:", "credential save failed");
+      expect(console.warn).toHaveBeenCalledWith("[auth] failed to persist profile:", "profile save failed");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
 
-    expect(auth.getStatus()).toEqual({
-      signedIn: true,
-      handle: "neo",
-      runtimeSlot: "primary",
-      platformHost: "https://app.matrix-os.com",
+describe("AuthService expireSession", () => {
+  it("clears the credential, keeps the profile, and emits a signed-out change", async () => {
+    const { auth, store, changes, getProfile } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
     });
-    expect(auth.poll()).toEqual({ status: "authorized", profile: { handle: "neo", userId: "user-1" } });
-    expect(onAuthChanged).toHaveBeenCalledWith({
-      signedIn: true,
-      handle: "neo",
-      runtimeSlot: "primary",
-      platformHost: "https://app.matrix-os.com",
+    await auth.init();
+    await auth.expireSession();
+
+    expect(auth.getToken()).toBeNull();
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(store.clear).toHaveBeenCalledOnce();
+    expect(getProfile()).not.toBeNull();
+    expect(auth.getStatus().platformHost).toBe("https://app.matrix-os.com");
+    expect(changes.at(-1)).toMatchObject({ signedIn: false });
+  });
+
+  it("is a no-op when there is no active credential", async () => {
+    const { auth, store, changes } = makeService({ credential: null, profile: PROFILE, now: 10_000 });
+    await auth.init();
+    await auth.expireSession();
+    expect(store.clear).not.toHaveBeenCalled();
+    expect(changes).toHaveLength(0);
+  });
+
+  it("emits signed-out status before persistent sign-out cleanup can fail", async () => {
+    const { auth, store, changes } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
     });
-    expect(console.warn).toHaveBeenCalledWith("[auth] failed to persist credential:", "credential save failed");
-    expect(console.warn).toHaveBeenCalledWith("[auth] failed to persist profile:", "profile save failed");
+    const cleanupError = new Error("credential clear failed");
+    vi.mocked(store.clear).mockRejectedValueOnce(cleanupError);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await auth.init();
+
+      await expect(auth.signOut()).rejects.toThrow(cleanupError);
+
+      expect(auth.getStatus().signedIn).toBe(false);
+      expect(changes.at(-1)).toMatchObject({
+        signedIn: false,
+        runtimeSlot: "primary",
+        platformHost: "https://app.matrix-os.com",
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not start polling when sign-out races an in-flight device-code request", async () => {
-    const credentialStore = makeCredentialStore(null);
-    const saveProfile = vi.fn(async () => undefined);
-    const openExternal = vi.fn(async () => undefined);
     let resolveCode!: (response: Response) => void;
     const codePromise = new Promise<Response>((resolve) => {
       resolveCode = resolve;
@@ -402,16 +415,7 @@ describe("AuthService", () => {
         handle: "neo",
       });
     });
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      fetchFn,
-      openExternal,
-      loadProfile: async () => null,
-      saveProfile,
-      clearProfile: vi.fn(async () => undefined),
-      onAuthChanged: vi.fn(),
-    });
+    const { auth, getProfile, peekCredential, store } = makeService({ now: 10_000, fetchFn });
 
     const flow = auth.startDeviceFlow();
     await Promise.resolve();
@@ -429,8 +433,8 @@ describe("AuthService", () => {
     await expect(flow).rejects.toThrow("Sign-in request was canceled.");
     expect(auth.getStatus().signedIn).toBe(false);
     expect(tokenRequests).toBe(0);
-    expect(openExternal).not.toHaveBeenCalled();
-    expect(credentialStore.saved).toBeNull();
-    expect(saveProfile).not.toHaveBeenCalled();
+    expect(peekCredential()).toBeNull();
+    expect(getProfile()).toBeNull();
+    expect(store.save).not.toHaveBeenCalled();
   });
 });

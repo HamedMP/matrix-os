@@ -7,6 +7,7 @@ import { EmbedService } from "./embeds/embed-service";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
+import { createUpdater } from "./updates";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
@@ -18,6 +19,7 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
   const parsed = EVENT_CHANNELS[channel].safeParse(payload);
@@ -95,118 +97,25 @@ if (!gotLock) {
     if (win) {
       if (win.isMinimized()) win.restore();
       win.focus();
-<<<<<<< HEAD
-=======
-=======
-app.whenReady().then(async () => {
-  const userData = app.getPath("userData");
-  const store = createLocalStore({ dir: userData });
-  const credentialStore = createCredentialStore({ dir: userData, safeStorage });
-
-  const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
-
-  const auth = new AuthService({
-    credentialStore,
-    platformHost,
-    loadProfile: () => store.get("profile"),
-    saveProfile: (profile) => store.set("profile", profile),
-    clearProfile: () => store.delete("profile"),
-    onAuthChanged: (status) => {
-      sendEvent("auth:changed", {
-        signedIn: status.signedIn,
-        ...(status.handle ? { handle: status.handle } : {}),
-        ...(status.displayName ? { displayName: status.displayName } : {}),
-        ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
-      });
-    },
-  });
-  await auth.init();
-
-  // Renderer session gets origin-scoped bearer injection; embed partitions
-  // (separate sessions) never do (lesson L1).
-  installHeaderInjection(
-    session.defaultSession,
-    () => auth.getToken(),
-    () => auth.getGatewayOrigin(),
-  );
-  // The renderer is a different origin than the gateway (file:// in prod,
-  // localhost in dev), so allow its cross-origin fetches to the gateway.
-  const rendererOrigin = process.env.ELECTRON_RENDERER_URL
-    ? new URL(process.env.ELECTRON_RENDERER_URL).origin
-    : "null";
-  installGatewayCors(session.defaultSession, () => auth.getGatewayOrigin(), rendererOrigin);
-
-  const embeds = new EmbedService({
-    getWindow: () => mainWindow,
-    getGatewayOrigin: () => auth.getGatewayOrigin(),
-    getToken: () => auth.getToken(),
-    emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
-  });
-
-  registerIpcHandlers(ipcMain, {
-    auth,
-    store,
-    embeds,
-    openExternal: openExternalHttps,
-    setBadgeCount: (count) => {
-      app.setBadgeCount(count);
-    },
-    notify: ({ threadId, title, body }) => {
-      if (!Notification.isSupported()) return;
-      const notification = new Notification({ title, body, silent: false });
-      notification.on("click", () => {
-        mainWindow?.show();
-        mainWindow?.focus();
-        sendEvent("notification:clicked", { threadId });
-      });
-      notification.show();
-    },
-    onRuntimeChanged: (slot) => {
-      // Switching runtime invalidates embed cookies/tokens; tear them down so
-      // they re-handshake against the new slot (Integration Wiring rule).
-      embeds.closeAll();
-      sendEvent("runtime:changed", { slot });
-    },
-  });
-
-  const savedBounds = await store.get("windowBounds");
-  mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });
-  installAppMenu(() => mainWindow);
-
-  let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
-  const persistBounds = () => {
-    if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
-    boundsSaveTimer = setTimeout(() => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      const b = mainWindow.getBounds();
-      void store
-        .set("windowBounds", { x: b.x, y: b.y, width: b.width, height: b.height })
-        .catch((err: unknown) => {
-          console.warn(
-            "[main] failed to persist window bounds:",
-            err instanceof Error ? err.message : String(err),
-          );
-        });
-    }, 500);
-  };
-  mainWindow.on("resize", persistBounds);
-  mainWindow.on("move", persistBounds);
-  mainWindow.on("closed", () => {
-    if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
-    mainWindow = null;
-  });
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow({ width: 1280, height: 820 });
->>>>>>> a180ce0fa (fix(desktop): stop auto-opening the device-auth browser; brand focus ring; Matrix OS name)
->>>>>>> 70ce804b5 (feat(desktop): surface Clerk display name + avatar in the sidebar profile)
     }
   });
 
   void app
     .whenReady()
     .then(async () => {
+      // Packaged builds get the icon from build/icon.icns automatically; in dev
+      // the dock shows Electron's default icon unless we set the brand icon.
+      if (process.platform === "darwin" && !app.isPackaged && app.dock) {
+        try {
+          app.dock.setIcon(join(app.getAppPath(), "build", "icon.png"));
+        } catch (err: unknown) {
+          console.warn(
+            "[main] could not set dev dock icon:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
@@ -216,7 +125,6 @@ app.whenReady().then(async () => {
       const auth = new AuthService({
         credentialStore,
         platformHost,
-        openExternal: openExternalHttps,
         loadProfile: () => store.get("profile"),
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
@@ -224,6 +132,8 @@ app.whenReady().then(async () => {
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.handle ? { handle: status.handle } : {}),
+            ...(status.displayName ? { displayName: status.displayName } : {}),
+            ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
           });
         },
       });
@@ -306,6 +216,24 @@ app.whenReady().then(async () => {
       await openMainWindow();
       installAppMenu(() => mainWindow);
 
+      const updater = createUpdater({
+        onAvailable: (version) => {
+          console.info(`[updates] downloading Matrix OS ${version}`);
+        },
+        onReady: (version) => {
+          if (!Notification.isSupported()) return;
+          new Notification({
+            title: "Matrix OS update ready",
+            body: `Version ${version} will install after you quit and reopen the app.`,
+            silent: false,
+          }).show();
+        },
+      });
+      void updater.check();
+      updateCheckTimer = setInterval(() => {
+        void updater.check();
+      }, 60 * 60 * 1000);
+
       app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) {
           void openMainWindow();
@@ -315,6 +243,13 @@ app.whenReady().then(async () => {
     .catch((err: unknown) => {
       logMainError("failed to start app", err);
     });
+
+  app.on("before-quit", () => {
+    if (updateCheckTimer) {
+      clearInterval(updateCheckTimer);
+      updateCheckTimer = null;
+    }
+  });
 
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
