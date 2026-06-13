@@ -4,6 +4,7 @@ import {
   LayoutGrid,
   LogOut,
   PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   Sparkles,
   SquareTerminal,
@@ -61,11 +62,31 @@ function NavRow({
   );
 }
 
+function SidebarAppIcon({ iconUrl, name }: { iconUrl?: string; name: string }) {
+  const url = iconUrl && /^https?:\/\//.test(iconUrl) ? iconUrl : null;
+  const [failed, setFailed] = useState(false);
+  const prev = useRef<string | null>(null);
+  if (prev.current !== url) {
+    prev.current = url;
+    if (failed) setFailed(false);
+  }
+  if (url && !failed) {
+    return <img src={url} alt="" className="h-4 w-4 rounded-sm object-cover" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
+  }
+  return (
+    <span className="flex h-4 w-4 items-center justify-center rounded text-[10px] font-semibold" style={{ background: "var(--accent-muted)", color: "var(--accent)" }}>
+      {name.charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
 export default function Sidebar() {
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
   const openTab = useTabs((s) => s.openTab);
+  const focusTab = useTabs((s) => s.focusTab);
   const projects = useBoard((s) => s.projects);
+  const openApps = tabs.filter((t) => t.kind === "app");
   const signOut = useConnection((s) => s.signOut);
   const handle = useConnection((s) => s.handle);
   const profileName = useConnection((s) => s.displayName);
@@ -75,6 +96,7 @@ export default function Sidebar() {
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const [projectsOpen, setProjectsOpen] = useState(true);
+  const [appsOpen, setAppsOpen] = useState(true);
 
   // Reset the avatar fallback whenever the URL changes so a new image gets a
   // fresh load attempt (lesson: track prev URL, reset imgFailed on differ).
@@ -100,15 +122,14 @@ export default function Sidebar() {
       className="flex shrink-0 flex-col"
       style={{ width, background: "var(--bg-sunken)", borderRight: "1px solid var(--border-subtle)", transition: "width 140ms var(--ease-out)" }}
     >
+      {/* When collapsed the 56px rail sits under the macOS traffic lights, so the
+          titlebar stays empty (draggable) and the expand toggle lives in the nav
+          below the lights — otherwise it's unclickable behind them. */}
       <div
         className="titlebar-drag flex items-center"
         style={{ height: "var(--titlebar-height)", paddingLeft: collapsed ? 0 : 76, justifyContent: collapsed ? "center" : "flex-start" }}
       >
-        {collapsed ? (
-          <button type="button" aria-label="Expand sidebar (⌘B)" title="Expand sidebar (⌘B)" className="no-drag flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)]" onClick={toggleSidebar}>
-            <BrandLogo size={20} />
-          </button>
-        ) : (
+        {collapsed ? null : (
           <div className="flex items-center gap-2.5">
             <BrandLogo size={22} />
             <span className="text-[15px] font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>Matrix OS</span>
@@ -148,6 +169,27 @@ export default function Sidebar() {
             {projectsOpen && projects.length === 0 ? (
               <p className="px-2.5 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>No projects yet.</p>
             ) : null}
+
+            {openApps.length > 0 ? (
+              <>
+                <button type="button" className="mt-4 mb-1 flex w-full items-center gap-1 px-2.5" onClick={() => setAppsOpen((v) => !v)}>
+                  <ChevronRight size={12} style={{ color: "var(--text-tertiary)", transform: appsOpen ? "rotate(90deg)" : "none", transition: "transform 120ms" }} />
+                  <span className="text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>Open apps</span>
+                </button>
+                {appsOpen
+                  ? openApps.map((tab) => (
+                      <NavRow
+                        key={tab.id}
+                        icon={<SidebarAppIcon iconUrl={tab.icon} name={tab.title} />}
+                        label={tab.title}
+                        collapsed={false}
+                        active={tab.id === activeTabId}
+                        onClick={() => focusTab(tab.id)}
+                      />
+                    ))
+                  : null}
+              </>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -156,7 +198,7 @@ export default function Sidebar() {
         <div className={`flex items-center ${collapsed ? "justify-center" : "justify-between"} px-2 pt-1`}>
           <NavRow icon={<Settings size={15} />} label="Settings" collapsed={collapsed} active={activeTab?.kind === "settings"} onClick={() => openTab({ kind: "settings", title: "Settings" })} />
         </div>
-        <div className={`flex items-center gap-2 p-2 ${collapsed ? "justify-center" : ""}`}>
+        <div className={`flex gap-2 p-2 ${collapsed ? "flex-col items-center" : "items-center"}`}>
           <button
             type="button"
             title="Manage account"
@@ -176,7 +218,13 @@ export default function Sidebar() {
               avatarInitial
             )}
           </button>
-          {!collapsed ? (
+          {collapsed ? (
+            // Collapsed: the expand toggle lives here too (same place as the
+            // collapse toggle when open), so open/close is one consistent spot.
+            <IconButton label="Expand sidebar (⌘B)" onClick={toggleSidebar}>
+              <PanelLeftOpen size={15} />
+            </IconButton>
+          ) : (
             <>
               <div className="flex min-w-0 flex-1 flex-col leading-tight">
                 <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
@@ -191,7 +239,7 @@ export default function Sidebar() {
                 <LogOut size={14} />
               </IconButton>
             </>
-          ) : null}
+          )}
         </div>
       </div>
     </aside>
