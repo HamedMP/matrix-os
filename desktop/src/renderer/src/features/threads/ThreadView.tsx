@@ -108,9 +108,9 @@ export default function ThreadView({ threadId }: { threadId: string }) {
       </div>
 
       <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
-        {groups.map((group, i) =>
+        {groups.map((group) =>
           group.type === "tool_group" ? (
-            <div key={i} className="flex flex-col gap-1">
+            <div key={group.messages[0]?.id ?? "tools"} className="flex flex-col gap-1">
               {group.messages.map((m) => (
                 <ToolRow key={m.id} message={m} />
               ))}

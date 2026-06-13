@@ -1,11 +1,18 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MutableRefObject,
+} from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type CardPriority, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 
 const PRIORITIES: CardPriority[] = ["low", "normal", "high", "urgent"];
-const SELECT_STYLE: React.CSSProperties = {
+const SELECT_STYLE: CSSProperties = {
   background: "var(--bg-raised)",
   color: "var(--text-primary)",
   border: "1px solid var(--border-default)",
@@ -14,38 +21,9 @@ const SELECT_STYLE: React.CSSProperties = {
   fontSize: "var(--text-sm)",
 };
 
-export default function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const dialogClosedRef = useRef(!open);
-  const dialogGenerationRef = useRef(0);
-
-  useEffect(() => {
-    dialogGenerationRef.current += 1;
-    dialogClosedRef.current = !open;
-    return () => {
-      dialogGenerationRef.current += 1;
-      dialogClosedRef.current = true;
-    };
-  }, [open]);
-
-  const closeFromUser = useCallback(() => {
-    dialogGenerationRef.current += 1;
-    dialogClosedRef.current = true;
-    onClose();
-  }, [onClose]);
-
-  return (
-    <Dialog open={open} onClose={closeFromUser} width={520}>
-      {open ? (
-        <CreateTaskForm
-          onClose={closeFromUser}
-          dialogClosedRef={dialogClosedRef}
-          dialogGenerationRef={dialogGenerationRef}
-        />
-      ) : null}
-    </Dialog>
-  );
-}
-
+// Inner form is mounted only while the dialog is open, so its state starts
+// fresh on each open without a reset-on-prop effect (react-doctor: no
+// state-synced-to-prop). autoFocus replaces a focus setTimeout.
 function CreateTaskForm({
   onClose,
   dialogClosedRef,
@@ -65,20 +43,12 @@ function CreateTaskForm({
   const [priority, setPriority] = useState<CardPriority>("normal");
   const [submitting, setSubmitting] = useState(false);
   const [failed, setFailed] = useState(false);
-  const titleRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => titleRef.current?.focus(), 0);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, []);
 
   const closeFromUser = useCallback(() => {
     dialogGenerationRef.current += 1;
     dialogClosedRef.current = true;
     onClose();
-  }, [onClose]);
+  }, [dialogClosedRef, dialogGenerationRef, onClose]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -140,7 +110,7 @@ function CreateTaskForm({
       }}
     >
       <input
-        ref={titleRef}
+        autoFocus
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Task title"
@@ -214,5 +184,37 @@ function CreateTaskForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+export default function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const dialogClosedRef = useRef(!open);
+  const dialogGenerationRef = useRef(0);
+
+  useEffect(() => {
+    dialogGenerationRef.current += 1;
+    dialogClosedRef.current = !open;
+    return () => {
+      dialogGenerationRef.current += 1;
+      dialogClosedRef.current = true;
+    };
+  }, [open]);
+
+  const closeFromUser = useCallback(() => {
+    dialogGenerationRef.current += 1;
+    dialogClosedRef.current = true;
+    onClose();
+  }, [onClose]);
+
+  return (
+    <Dialog open={open} onClose={closeFromUser} width={520}>
+      {open ? (
+        <CreateTaskForm
+          onClose={closeFromUser}
+          dialogClosedRef={dialogClosedRef}
+          dialogGenerationRef={dialogGenerationRef}
+        />
+      ) : null}
+    </Dialog>
   );
 }

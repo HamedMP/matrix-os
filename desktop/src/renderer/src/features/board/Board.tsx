@@ -144,9 +144,9 @@ export default function Board() {
         {BOARD_COLUMNS.map((status) => (
           <div key={status} className="flex w-[252px] shrink-0 flex-col gap-2">
             <div className="h-5 w-24 rounded" style={{ background: "var(--bg-raised)" }} />
-            {[0, 1, 2].map((i) => (
+            {["a", "b", "c"].map((slot) => (
               <div
-                key={i}
+                key={`${status}-${slot}`}
                 className="status-pulse h-[72px] rounded-lg"
                 style={{ background: "var(--bg-raised)" }}
               />
