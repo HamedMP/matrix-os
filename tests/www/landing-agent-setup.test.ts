@@ -10,24 +10,37 @@ async function readRepoFile(path: string) {
 }
 
 describe("www landing agent setup", () => {
-  it("promotes the coding-agent setup block near the top with copy support and agent brands", async () => {
-    const landing = await readRepoFile("www/src/app/page.tsx");
+  it("promotes the copy-agent-prompt path in the landing hero", async () => {
+    const [landing, hero] = await Promise.all([
+      readRepoFile("www/src/app/page.tsx"),
+      readRepoFile("www/src/components/landing/Hero.tsx"),
+    ]);
 
-    expect(landing).toContain("<AgentSetupSection />");
-    expect(landing.indexOf("<AgentSetupSection />")).toBeLessThan(landing.indexOf("<PreviewSection />"));
-    expect(landing).toContain("AgentSetupCopyButton");
-    expect(landing).toContain("COPYABLE_AGENT_SETUP_PROMPT");
+    expect(landing).toContain("<Hero />");
+    expect(hero).toContain("CopyPromptButton");
+    expect(hero).toContain("COPYABLE_AGENT_SETUP_PROMPT");
+  });
+
+  it("keeps the full agent setup block with copy support and agent brands on the Symphony page", async () => {
+    const [symphonyPage, setupSection] = await Promise.all([
+      readRepoFile("www/src/app/symphony/page.tsx"),
+      readRepoFile("www/src/components/landing/AgentSetupSection.tsx"),
+    ]);
+
+    expect(symphonyPage).toContain("<AgentSetupSection />");
+    expect(setupSection).toContain("CopyPromptButton");
+    expect(setupSection).toContain("COPYABLE_AGENT_SETUP_PROMPT");
 
     for (const brand of ["Claude Code", "Codex", "Pi", "OpenCode"]) {
-      expect(landing).toContain(brand);
+      expect(setupSection).toContain(brand);
     }
 
-    expect(landing).toContain('logo: "/agents/claude-code.svg"');
-    expect(landing).toContain('logo: "/agents/codex.svg"');
+    expect(setupSection).toContain('logo: "/agents/claude-code.svg"');
+    expect(setupSection).toContain('logo: "/agents/codex.svg"');
   });
 
   it("ships a clipboard button with a safe fallback state", async () => {
-    const copyButton = await readRepoFile("www/src/components/landing/AgentSetupCopyButton.tsx");
+    const copyButton = await readRepoFile("www/src/components/landing/CopyPromptButton.tsx");
 
     expect(copyButton).toContain('"use client"');
     expect(copyButton).toContain("navigator.clipboard.writeText");
