@@ -5,21 +5,34 @@ import { invoke, onEvent } from "../../lib/operator";
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access; this
 // component only reports bounds and surfaces the inline re-auth prompt.
+// Off-screen rect used to hide the native view while its tab is inactive
+// (a WebContentsView is an OS overlay and would otherwise paint over the active
+// tab — lesson L14).
+const HIDDEN_BOUNDS = { x: -20000, y: 0, width: 800, height: 600 };
+
 export default function EmbedHost({
   kind,
   slug,
+  active = true,
 }: {
   kind: "hosted-shell" | "app";
   slug?: string;
+  active?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
 
   function reportBounds(): void {
     const id = embedIdRef.current;
     const host = hostRef.current;
     if (!id || !host) return;
+    if (!activeRef.current) {
+      void invoke("embed:set-bounds", { embedId: id, bounds: HIDDEN_BOUNDS });
+      return;
+    }
     const r = host.getBoundingClientRect();
     void invoke("embed:set-bounds", {
       embedId: id,
@@ -88,6 +101,12 @@ export default function EmbedHost({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, slug]);
+
+  // Show/hide the native view as the hosting tab activates/deactivates.
+  useEffect(() => {
+    reportBounds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   return (
     <div ref={hostRef} className="relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>

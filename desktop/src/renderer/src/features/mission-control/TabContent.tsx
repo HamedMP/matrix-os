@@ -16,7 +16,7 @@ import EmbedHost from "../embeds/EmbedHost";
 function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
   switch (tab.kind) {
     case "home":
-      return <HomeTab />;
+      return <HomeTab active={active} />;
     case "chat":
       return <ChatTab />;
     case "terminals":
@@ -24,7 +24,7 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "apps":
       return <AppLauncher />;
     case "app":
-      return tab.slug ? <EmbedHost kind="app" slug={tab.slug} /> : null;
+      return tab.slug ? <EmbedHost kind="app" slug={tab.slug} active={active} /> : null;
     case "board":
       return <Board projectSlug={tab.projectSlug} active={active} />;
     case "task":
