@@ -1,101 +1,47 @@
-// Matrix OS — ⌘K command palette.
-//
-// A centered overlay (toggled by `model.showCommandPalette`) with a search field
-// and a filtered list of actions. Type to filter, ↑/↓ to move, Enter to run,
-// Esc to close. Linear/SlayZone-grade: keyboard-first, no mouse required.
-//
-// Presented as an overlay in `RootShellView` (Workspace.swift). All styling
-// references DesignSystem tokens only.
 #if os(macOS)
-import SwiftUI
 import AppKit
+import SwiftUI
 import DesignSystem
-import MatrixModel
 
-/// A single runnable action in the palette.
-struct PaletteAction: Identifiable {
-    let id: String
-    let title: String
-    let symbol: String
-    let run: () -> Void
-}
-
-/// The ⌘K command palette overlay. Owns its own query/selection state; closing
-/// is driven through `model.showCommandPalette` so the menu shortcut can toggle it.
-struct CommandPalette: View {
+struct FileOpenPalette: View {
     @ObservedObject var model: AppModel
-    @State private var query = ""
     @State private var selection = 0
     @FocusState private var fieldFocused: Bool
 
-    /// Static action catalog. Closures capture `model`; project actions open the
-    /// picker by routing through the rail menu via `showCommandPalette` dismissal
-    /// plus a direct create call.
-    private var allActions: [PaletteAction] {
-        [
-            PaletteAction(id: "new-task", title: "New task", symbol: "plus.rectangle") {
-                model.createTask(status: .todo)
-            },
-            PaletteAction(id: "new-session", title: "New session", symbol: "terminal") {
-                model.beginTerminalSessionCreation()
-            },
-            PaletteAction(id: "go-home", title: "Switch to Home", symbol: "house") {
-                model.openHome()
-            },
-            PaletteAction(id: "go-board", title: "Switch to Board", symbol: "rectangle.split.3x1") {
-                model.section = .board
-            },
-            PaletteAction(id: "go-terminal", title: "Switch to Terminal", symbol: "terminal.fill") {
-                model.openTerminalSection()
-            },
-            PaletteAction(id: "go-browser", title: "Switch to Browser", symbol: "globe") {
-                model.section = .browser
-            },
-        ] + projectActions
-    }
-
-    /// One "Open <project>" action per known project, so projects are switchable
-    /// straight from the palette without leaving the keyboard.
-    private var projectActions: [PaletteAction] {
-        model.projects.map { project in
-            PaletteAction(id: "open-\(project.slug)", title: "Open project: \(project.name)", symbol: "folder") {
-                model.openProject(slug: project.slug)
-            }
-        }
-    }
-
-    private var filtered: [PaletteAction] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return allActions }
-        return allActions.filter { $0.title.lowercased().contains(q) }
+    private var results: [WorkspaceFileSearchItem] {
+        model.fileOpenSearchResults
     }
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Scrim — click to dismiss.
             Color.black.opacity(0.35)
                 .ignoresSafeArea()
                 .onTapGesture { close() }
 
             palette
-                .padding(.top, 120)
+                .padding(.top, 96)
         }
-        .onAppear { fieldFocused = true; selection = 0 }
-        .onChange(of: query) { _, _ in selection = 0 }
+        .onAppear {
+            fieldFocused = true
+            selection = 0
+            model.refreshFileOpenIndex()
+        }
+        .onChange(of: model.fileOpenQuery) { _, _ in selection = 0 }
+        .onChange(of: results.count) { _, count in
+            if count == 0 {
+                selection = 0
+            } else if selection >= count {
+                selection = count - 1
+            }
+        }
         .background(
-            PaletteKeyCatcher(
+            FileOpenKeyCatcher(
                 onUp: { moveSelection(-1) },
                 onDown: { moveSelection(1) },
-                onReturn: runSelected,
+                onReturn: openSelected,
                 onEscape: close
             )
         )
-    }
-
-    private func moveSelection(_ delta: Int) {
-        let count = filtered.count
-        guard count > 0 else { return }
-        selection = (selection + delta + count) % count
     }
 
     private var palette: some View {
@@ -104,7 +50,7 @@ struct CommandPalette: View {
             Rectangle().fill(Color.hairlineDark).frame(height: 1)
             resultList
         }
-        .frame(width: 560)
+        .frame(width: 680)
         .background(
             RoundedRectangle(cornerRadius: Radius.panel, style: .continuous)
                 .fill(Color.surfaceCard)
@@ -119,15 +65,19 @@ struct CommandPalette: View {
 
     private var searchField: some View {
         HStack(spacing: Spacing.x3) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color.inkTertiary)
-            TextField("Type a command…", text: $query)
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.signalLive)
+            TextField("Open file in current task…", text: $model.fileOpenQuery)
                 .textFieldStyle(.plain)
                 .font(.plexSans(15))
                 .foregroundStyle(Color.inkPrimary)
                 .focused($fieldFocused)
-                .onSubmit(runSelected)
+                .onSubmit(openSelected)
+            if model.isIndexingFiles {
+                ProgressView()
+                    .controlSize(.small)
+            }
         }
         .padding(.horizontal, Spacing.x4)
         .padding(.vertical, Spacing.x4)
@@ -135,37 +85,49 @@ struct CommandPalette: View {
 
     @ViewBuilder
     private var resultList: some View {
-        if filtered.isEmpty {
-            Text("No matching commands")
-                .font(.plexSans(13))
-                .foregroundStyle(Color.inkTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(Spacing.x4)
+        if results.isEmpty {
+            VStack(alignment: .leading, spacing: Spacing.x1) {
+                Text(model.isIndexingFiles ? "Indexing files…" : "No matching files")
+                    .font(.plexSans(13, weight: .semibold))
+                    .foregroundStyle(Color.inkSecondary)
+                Text("Search is scoped to projects/\(model.projectSlug).")
+                    .font(.plexSans(12))
+                    .foregroundStyle(Color.inkTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Spacing.x4)
         } else {
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    ForEach(Array(filtered.enumerated()), id: \.element.id) { index, action in
-                        row(action, active: index == selection)
-                            .onTapGesture { run(action) }
+                    ForEach(Array(results.enumerated()), id: \.element.id) { index, item in
+                        row(item, active: index == selection)
+                            .onTapGesture { open(item) }
                             .onHover { if $0 { selection = index } }
                     }
                 }
                 .padding(Spacing.x2)
             }
-            .frame(maxHeight: 320)
+            .frame(maxHeight: 390)
         }
     }
 
-    private func row(_ action: PaletteAction, active: Bool) -> some View {
+    private func row(_ item: WorkspaceFileSearchItem, active: Bool) -> some View {
         HStack(spacing: Spacing.x3) {
-            Image(systemName: action.symbol)
+            Image(systemName: iconName(for: item.name))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(active ? Color.signalLive : Color.inkTertiary)
                 .frame(width: 18)
-            Text(action.title)
-                .font(.plexSans(14))
-                .foregroundStyle(Color.inkPrimary)
-            Spacer()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.plexSans(14, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                Text(item.directory)
+                    .font(.plexMono(11))
+                    .foregroundStyle(Color.inkTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, Spacing.x3)
         .padding(.vertical, Spacing.x2)
@@ -176,25 +138,37 @@ struct CommandPalette: View {
         .contentShape(Rectangle())
     }
 
-    // MARK: - Actions
-
-    private func runSelected() {
-        guard filtered.indices.contains(selection) else { return }
-        run(filtered[selection])
+    private func moveSelection(_ delta: Int) {
+        let count = results.count
+        guard count > 0 else { return }
+        selection = (selection + delta + count) % count
     }
 
-    private func run(_ action: PaletteAction) {
-        action.run()
-        close()
+    private func openSelected() {
+        guard results.indices.contains(selection) else { return }
+        open(results[selection])
+    }
+
+    private func open(_ item: WorkspaceFileSearchItem) {
+        model.openFileFromSearch(item)
     }
 
     private func close() {
-        query = ""
-        model.showCommandPalette = false
+        model.hideFileOpenSearch()
+    }
+
+    private func iconName(for name: String) -> String {
+        switch URL(fileURLWithPath: name).pathExtension.lowercased() {
+        case "swift": return "swift"
+        case "md", "markdown": return "doc.richtext"
+        case "json", "yml", "yaml", "toml": return "curlybraces"
+        case "js", "jsx", "ts", "tsx": return "chevron.left.forwardslash.chevron.right"
+        default: return "doc.text"
+        }
     }
 }
 
-private struct PaletteKeyCatcher: NSViewRepresentable {
+private struct FileOpenKeyCatcher: NSViewRepresentable {
     let onUp: () -> Void
     let onDown: () -> Void
     let onReturn: () -> Void

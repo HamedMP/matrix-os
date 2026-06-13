@@ -47,6 +47,7 @@ final class TerminalSessionTests: XCTestCase {
         XCTAssertEqual(session.connectionState, .connecting)
         XCTAssertEqual(session.lastSeq, 0)
         XCTAssertTrue(session.isPinnedToBottom)
+        XCTAssertTrue(session.isStartupSettling)
     }
 
     func testStartConnectsTheClient() async {
@@ -60,6 +61,21 @@ final class TerminalSessionTests: XCTestCase {
         session.start()
         await source.emit(.attached(state: "running", fromSeq: 0))
         await eventually({ session.connectionState == .attached })
+    }
+
+    func testMultipleAttachHandlersRunOnceOnFirstAttach() async {
+        let (session, source) = makeSession()
+        var calls: [String] = []
+        session.onNextAttach { calls.append("focus") }
+        session.onNextAttach { calls.append("reload") }
+        session.start()
+
+        await source.emit(.attached(state: "running", fromSeq: 0))
+        await eventually({ calls == ["focus", "reload"] })
+
+        await source.emit(.output(seq: 1, data: "still live"))
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(calls, ["focus", "reload"])
     }
 
     func testOutputAdvancesSeqAndFeedsSink() async {
@@ -214,6 +230,47 @@ final class TerminalSessionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(resizes.count, 2)
         XCTAssertEqual(resizes.last?.cols, 100)
         XCTAssertEqual(resizes.last?.rows, 30)
+    }
+
+    func testStartupSettlingClearsAfterAttachAndStableResize() async {
+        let (session, source) = makeSession()
+        session.start()
+
+        await source.emit(.attached(state: "running", fromSeq: 0))
+        session.resize(cols: 110, rows: 34)
+
+        await eventuallyAsync({ await source.resizes.first?.cols == 110 })
+        await eventually({ !session.isStartupSettling })
+    }
+
+    func testAttachWithoutResizeEventuallyClearsStartupSettling() async {
+        let (session, source) = makeSession()
+        session.start()
+
+        await source.emit(.attached(state: "running", fromSeq: 0))
+
+        await eventually(
+            { !session.isStartupSettling },
+            timeout: 1.5,
+            "startup settling should fall back after attach when no size arrives"
+        )
+    }
+
+    func testStartupResizeBurstOnlyForwardsSettledSize() async {
+        let (session, source) = makeSession()
+
+        session.resize(cols: 80, rows: 24)
+        session.resize(cols: 100, rows: 28)
+        session.resize(cols: 132, rows: 41)
+
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        let earlyResizes = await source.resizes
+        XCTAssertTrue(earlyResizes.isEmpty)
+
+        await eventuallyAsync({ await source.resizes.count == 1 })
+        let resizes = await source.resizes
+        XCTAssertEqual(resizes.first?.cols, 132)
+        XCTAssertEqual(resizes.first?.rows, 41)
     }
 
     func testDetachAndShutdownForward() async {

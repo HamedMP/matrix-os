@@ -27,7 +27,8 @@ APP_ICON="$PACKAGE_DIR/Resources/AppIcon.icns"
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
 swift build --package-path "$PACKAGE_DIR" --product "$APP_NAME" --configuration "$BUILD_CONFIGURATION"
-BUILD_BINARY="$(swift build --package-path "$PACKAGE_DIR" --configuration "$BUILD_CONFIGURATION" --show-bin-path)/$APP_NAME"
+BUILD_PRODUCTS_DIR="$(swift build --package-path "$PACKAGE_DIR" --configuration "$BUILD_CONFIGURATION" --show-bin-path)"
+BUILD_BINARY="$BUILD_PRODUCTS_DIR/$APP_NAME"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
@@ -35,6 +36,13 @@ cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
 if [[ -f "$APP_ICON" ]]; then
   cp "$APP_ICON" "$APP_RESOURCES/AppIcon.icns"
+fi
+while IFS= read -r resource_bundle; do
+  cp -R "$resource_bundle" "$APP_RESOURCES/"
+done < <(find "$BUILD_PRODUCTS_DIR" -maxdepth 1 -type d -name '*.bundle' -print)
+
+if [[ ! -d "$APP_RESOURCES/CodeEditLanguages_CodeEditLanguages.bundle/Resources" ]]; then
+  echo "warning: CodeEditLanguages resources were not staged; syntax highlighting may be unavailable" >&2
 fi
 
 cat >"$INFO_PLIST" <<PLIST

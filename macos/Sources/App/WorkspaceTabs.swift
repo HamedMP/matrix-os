@@ -8,21 +8,32 @@ struct WorkspaceTabStrip: View {
     let tabs: [WorkspaceTab]
     let activeID: String?
     let isCreating: Bool
+    let pendingTerminalTabID: String?
     let onSelect: (String) -> Void
     let onClose: (String) -> Void
     let onCreate: () -> Void
+    let onCommitPendingTerminalName: (String) -> Void
+    let onCancelPendingTerminalName: () -> Void
 
     var body: some View {
         HStack(spacing: Spacing.x1) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Spacing.x1) {
                     ForEach(tabs) { tab in
-                        WorkspaceTabPill(
-                            tab: tab,
-                            isActive: tab.id == activeID,
-                            onSelect: { onSelect(tab.id) },
-                            onClose: { onClose(tab.id) }
-                        )
+                        if tab.id == pendingTerminalTabID {
+                            PendingTerminalTabPill(
+                                projectName: tab.projectName,
+                                onCommit: onCommitPendingTerminalName,
+                                onCancel: onCancelPendingTerminalName
+                            )
+                        } else {
+                            WorkspaceTabPill(
+                                tab: tab,
+                                isActive: tab.id == activeID,
+                                onSelect: { onSelect(tab.id) },
+                                onClose: { onClose(tab.id) }
+                            )
+                        }
                     }
                 }
                 .padding(.leading, Spacing.x2)
@@ -50,6 +61,74 @@ struct WorkspaceTabStrip: View {
     }
 }
 
+private struct PendingTerminalTabPill: View {
+    let projectName: String
+    let onCommit: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var name = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: Spacing.x1) {
+            HStack(spacing: Spacing.x2) {
+                AppGlyphTile(symbol: "terminal", palette: .terminal, size: 26, isActive: true)
+                VStack(alignment: .leading, spacing: 1) {
+                    TextField("session-name", text: $name)
+                        .textFieldStyle(.plain)
+                        .font(.plexSans(12, weight: .semibold))
+                        .foregroundStyle(Color.inkPrimary)
+                        .focused($focused)
+                        .frame(width: 118)
+                        .onSubmit(commit)
+                    Text(projectName)
+                        .font(.plexMono(9, weight: .medium))
+                        .foregroundStyle(Color.inkTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.leading, Spacing.x2)
+            .padding(.vertical, 5)
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.inkTertiary)
+                    .iconHitTarget(24)
+            }
+            .buttonStyle(.plain)
+            .help("Cancel")
+        }
+        .padding(.trailing, Spacing.x1)
+        .background(
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                .fill(Color.surfaceCard)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                .strokeBorder(Color.signalLive.opacity(0.7), lineWidth: 1)
+        )
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.signalLive)
+                .frame(height: 2)
+                .padding(.horizontal, Spacing.x2)
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                focused = true
+            }
+        }
+        .onExitCommand(perform: onCancel)
+        .help("Name terminal session")
+        .accessibilityLabel("Name terminal session")
+    }
+
+    private func commit() {
+        onCommit(name)
+    }
+}
+
 struct TaskPaneSpec: Identifiable, Equatable {
     let id: String
     let title: String
@@ -59,18 +138,19 @@ struct TaskPaneSpec: Identifiable, Equatable {
 }
 
 let taskPaneSpecs: [TaskPaneSpec] = [
-    TaskPaneSpec(id: "terminal", title: "Terminal", icon: "terminal", shortcut: "⌘T", panel: .terminal),
-    TaskPaneSpec(id: "editor", title: "Editor", icon: "doc.text", shortcut: "⌘E", panel: .app(slug: "editor")),
-    TaskPaneSpec(id: "artifacts", title: "Artifacts", icon: "paperclip", shortcut: "⌘⇧A", panel: .app(slug: "artifacts")),
-    TaskPaneSpec(id: "git", title: "Git", icon: "arrow.triangle.branch", shortcut: "⌘G", panel: .app(slug: "git")),
-    TaskPaneSpec(id: "settings", title: "Settings", icon: "slider.horizontal.3", shortcut: "⌘J", panel: .app(slug: "settings")),
-    TaskPaneSpec(id: "processes", title: "Processes", icon: "cpu", shortcut: "⌘⇧P", panel: .app(slug: "processes")),
-    TaskPaneSpec(id: "whiteboard", title: "Excalidraw", icon: "scribble.variable", shortcut: "⌘X", panel: .app(slug: "whiteboard")),
+    TaskPaneSpec(id: "terminal", title: "Terminal", icon: "terminal", shortcut: "⌥⌘1", panel: .terminal),
+    TaskPaneSpec(id: "editor", title: "Editor", icon: "doc.text", shortcut: "⌥⌘2", panel: .app(slug: "editor")),
+    TaskPaneSpec(id: "artifacts", title: "Artifacts", icon: "paperclip", shortcut: "⌥⌘3", panel: .app(slug: "artifacts")),
+    TaskPaneSpec(id: "git", title: "Git", icon: "arrow.triangle.branch", shortcut: "⌥⌘4", panel: .app(slug: "git")),
+    TaskPaneSpec(id: "settings", title: "Settings", icon: "slider.horizontal.3", shortcut: "⌥⌘5", panel: .app(slug: "settings")),
+    TaskPaneSpec(id: "processes", title: "Processes", icon: "cpu", shortcut: "⌥⌘6", panel: .app(slug: "processes")),
+    TaskPaneSpec(id: "whiteboard", title: "Excalidraw", icon: "scribble.variable", shortcut: "⌥⌘7", panel: .app(slug: "whiteboard")),
 ]
 
 struct TaskPaneStrip: View {
     let activePanel: Panel
     let enabledPanels: [Panel]
+    let onToggle: (Panel) -> Void
     let onFocus: (Panel) -> Void
 
     var body: some View {
@@ -79,9 +159,9 @@ struct TaskPaneStrip: View {
                 ForEach(taskPaneSpecs) { pane in
                     TaskPaneButton(
                         pane: pane,
-                        isAvailable: enabledPanels.contains(pane.panel),
+                        isEnabled: enabledPanels.contains(pane.panel),
                         isFocused: pane.panel == activePanel,
-                        action: { onFocus(pane.panel) }
+                        action: { onToggle(pane.panel) }
                     )
                     .keyboardShortcut(shortcutKey(for: pane.id), modifiers: shortcutModifiers(for: pane.id))
                     .contextMenu {
@@ -99,25 +179,25 @@ struct TaskPaneStrip: View {
 
     private func shortcutKey(for id: String) -> KeyEquivalent {
         switch id {
-        case "terminal": return "t"
-        case "editor": return "e"
-        case "artifacts": return "a"
-        case "git": return "g"
-        case "settings": return "j"
-        case "processes": return "p"
-        case "whiteboard": return "x"
+        case "terminal": return "1"
+        case "editor": return "2"
+        case "artifacts": return "3"
+        case "git": return "4"
+        case "settings": return "5"
+        case "processes": return "6"
+        case "whiteboard": return "7"
         default: return "0"
         }
     }
 
     private func shortcutModifiers(for id: String) -> EventModifiers {
-        ["artifacts", "processes"].contains(id) ? [.command, .shift] : [.command]
+        [.command, .option]
     }
 }
 
 private struct TaskPaneButton: View {
     let pane: TaskPaneSpec
-    let isAvailable: Bool
+    let isEnabled: Bool
     let isFocused: Bool
     let action: () -> Void
 
@@ -128,6 +208,11 @@ private struct TaskPaneButton: View {
                 Text(pane.title)
                     .font(.plexSans(12, weight: isFocused ? .semibold : .medium))
                     .lineLimit(1)
+                if isEnabled {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(isFocused ? Color.signalLive : Color.inkTertiary)
+                }
                 Text(pane.shortcut)
                     .font(.plexMono(9, weight: .semibold))
                     .foregroundStyle(isFocused ? Color.inkSecondary : Color.inkTertiary)
@@ -137,18 +222,21 @@ private struct TaskPaneButton: View {
             .frame(height: 30)
             .background(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .fill(isFocused ? Color.surfaceCard : Color.clear)
+                    .fill(isFocused ? Color.surfaceCard : (isEnabled ? Color.surfaceCardRaised.opacity(0.7) : Color.clear))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
-                    .strokeBorder(isFocused ? Color.signalLive.opacity(0.7) : Color.clear, lineWidth: 1)
+                    .strokeBorder(
+                        isFocused ? Color.signalLive.opacity(0.7) : (isEnabled ? Color.hairlineDark : Color.clear),
+                        lineWidth: 1
+                    )
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("\(pane.title) \(pane.shortcut)")
+        .help("\(isEnabled ? "Hide" : "Show") \(pane.title) \(pane.shortcut)")
         .accessibilityLabel(pane.title)
-        .accessibilityHint(isAvailable ? "Available" : "Opens this pane")
+        .accessibilityHint(isEnabled ? "Enabled pane" : "Disabled pane")
         .accessibilityAddTraits(isFocused ? [.isSelected] : [])
     }
 }
@@ -170,19 +258,18 @@ struct TerminalSessionTabStrip: View {
                     }
                 }
                 .padding(.horizontal, Spacing.x2)
-                .padding(.vertical, Spacing.x1)
             }
             Button(action: onCreate) {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.inkSecondary)
-                    .iconHitTarget(30)
+                    .iconHitTarget(28)
             }
             .buttonStyle(.plain)
             .disabled(isCreating)
             .help("New terminal tab")
         }
-        .frame(height: 36)
+        .frame(height: 30)
         .background(Color.surfaceRail)
     }
 
@@ -203,7 +290,7 @@ struct TerminalSessionTabStrip: View {
                 .foregroundStyle(active ? Color.inkPrimary : Color.inkSecondary)
                 .frame(minWidth: 118, maxWidth: 230, alignment: .leading)
                 .padding(.leading, Spacing.x2)
-                .frame(height: 28)
+                .frame(height: 24)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -213,7 +300,7 @@ struct TerminalSessionTabStrip: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Color.inkTertiary)
-                        .iconHitTarget(24)
+                        .iconHitTarget(22)
                 }
                 .buttonStyle(.plain)
                 .help("Close terminal tab")

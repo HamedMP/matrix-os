@@ -15,6 +15,10 @@ struct BoardView: View {
     @ObservedObject var model: AppModel
     /// Board zoom (Conductor-style). ⌘+/⌘-/⌘0 and pinch.
     @State private var zoom: CGFloat = 1
+    @State private var taskEditor: TaskEditorState?
+    @State private var pendingDeleteCard: Card?
+    @State private var editingDetailTitle: String?
+    @FocusState private var detailTitleFocused: Bool
     @GestureState private var pinch: CGFloat = 1
 
     private static let minZoom: CGFloat = 0.5
@@ -27,6 +31,28 @@ struct BoardView: View {
             content
         }
         .toolbar { toolbarContent }
+        .sheet(item: $taskEditor) { editor in
+            TaskEditorSheet(
+                state: editor,
+                onCancel: { taskEditor = nil },
+                onSave: saveTaskEditor
+            )
+        }
+        .confirmationDialog(
+            "Delete task?",
+            isPresented: Binding(
+                get: { pendingDeleteCard != nil },
+                set: { if !$0 { pendingDeleteCard = nil } }
+            ),
+            presenting: pendingDeleteCard
+        ) { card in
+            Button("Delete \(card.title)", role: .destructive) {
+                model.deleteTask(cardId: card.id)
+                pendingDeleteCard = nil
+            }
+        } message: { card in
+            Text("This removes \(card.title) from the project task board.")
+        }
     }
 
     @ViewBuilder
@@ -97,7 +123,16 @@ struct BoardView: View {
                         column: column,
                         selectedCardID: selectedBoardCard?.id,
                         onOpenCard: openCard,
-                        onAddCard: { model.createTask(status: $0) },
+                        onAddCard: { taskEditor = TaskEditorState(createIn: $0) },
+                        onEditCard: { taskEditor = TaskEditorState(editing: $0) },
+                        onArchiveCard: { model.archiveTask(cardId: $0.id) },
+                        onDeleteCard: { pendingDeleteCard = $0 },
+                        onSetCardStatus: { card, status in
+                            model.updateTask(cardId: card.id, status: status)
+                        },
+                        onSetCardPriority: { card, priority in
+                            model.updateTask(cardId: card.id, priority: priority)
+                        },
                         onMoveCard: { id, status in
                             model.updateTaskStatus(cardId: id, to: status, order: nil)
                         }
@@ -119,6 +154,26 @@ struct BoardView: View {
         )
         .background(zoomShortcuts)
         .animation(Motion.columnReflow, value: effectiveZoom)
+    }
+
+    private func saveTaskEditor(_ state: TaskEditorState) {
+        if let cardId = state.cardId {
+            model.updateTask(
+                cardId: cardId,
+                title: state.title,
+                description: state.description,
+                status: state.status,
+                priority: state.priority
+            )
+        } else {
+            model.createTask(
+                title: state.title,
+                description: state.description,
+                status: state.status,
+                priority: state.priority
+            )
+        }
+        taskEditor = nil
     }
 
     /// Hidden buttons providing ⌘+/⌘-/⌘0 zoom shortcuts.
@@ -155,6 +210,7 @@ struct BoardView: View {
             TaskPaneStrip(
                 activePanel: model.activePanel,
                 enabledPanels: model.enabledPanels,
+                onToggle: model.togglePanel,
                 onFocus: model.switchPanel
             )
             Divider().overlay(Color.hairlineDark)
@@ -168,12 +224,19 @@ struct BoardView: View {
     }
 
     private var detailHeader: some View {
-        HStack {
-            Text(activeDetailCard?.title ?? "Task")
-                .font(.plexSans(13, weight: .semibold))
-                .foregroundStyle(Color.inkPrimary)
-                .lineLimit(1)
+        HStack(spacing: Spacing.x2) {
+            if let card = activeDetailCard {
+                detailTitleControl(card)
+            } else {
+                Text("Task")
+                    .font(.plexSans(13, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                    .lineLimit(1)
+            }
             Spacer()
+            if let card = activeDetailCard {
+                detailSettingsMenu(card)
+            }
             Button(action: model.closeCard) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
@@ -189,13 +252,174 @@ struct BoardView: View {
     }
 
     @ViewBuilder
+    private func detailTitleControl(_ card: Card) -> some View {
+        if editingDetailTitle != nil {
+            TextField("Task title", text: Binding(
+                get: { editingDetailTitle ?? card.title },
+                set: { editingDetailTitle = $0 }
+            ))
+            .textFieldStyle(.plain)
+            .font(.plexSans(13, weight: .semibold))
+            .foregroundStyle(Color.inkPrimary)
+            .focused($detailTitleFocused)
+            .onSubmit { commitDetailTitle(card) }
+            .onExitCommand { editingDetailTitle = nil }
+            .frame(minWidth: 160, maxWidth: 420, alignment: .leading)
+        } else {
+            Button {
+                editingDetailTitle = card.title
+                DispatchQueue.main.async { detailTitleFocused = true }
+            } label: {
+                HStack(spacing: Spacing.x1) {
+                    Text(card.title)
+                        .font(.plexSans(13, weight: .semibold))
+                        .foregroundStyle(Color.inkPrimary)
+                        .lineLimit(1)
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.inkTertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Rename task")
+        }
+    }
+
+    private func detailSettingsMenu(_ card: Card) -> some View {
+        Menu {
+            Button("Edit Task") { taskEditor = TaskEditorState(editing: card) }
+            Divider()
+            Menu("Status") {
+                ForEach(TaskStatus.allCases, id: \.self) { status in
+                    Button(status.displayTitle) {
+                        model.updateTask(cardId: card.id, status: status)
+                    }
+                }
+            }
+            Menu("Priority") {
+                ForEach(TaskPriority.allCases, id: \.self) { priority in
+                    Button(priority.displayTitle) {
+                        model.updateTask(cardId: card.id, priority: priority)
+                    }
+                }
+            }
+            Menu("Tags") {
+                Button("Tags are not persisted yet") {}
+                    .disabled(true)
+            }
+            Button("Blocked") {
+                model.updateTask(cardId: card.id, status: .blocked)
+            }
+            Menu("Blocked by") {
+                Button("Dependency links are not persisted yet") {}
+                    .disabled(true)
+            }
+            Menu("Snooze") {
+                Button("Snooze is not persisted yet") {}
+                    .disabled(true)
+            }
+            Divider()
+            Menu("Move to") {
+                ForEach(TaskStatus.allCases, id: \.self) { status in
+                    Button(status.displayTitle) {
+                        model.updateTask(cardId: card.id, status: status)
+                    }
+                }
+            }
+            Button("Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(card.id, forType: .string)
+            }
+            Divider()
+            Button("Archive") { model.archiveTask(cardId: card.id) }
+            Button("Delete", role: .destructive) { pendingDeleteCard = card }
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.inkTertiary)
+                .iconHitTarget(30)
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .help("Task settings")
+    }
+
+    private func commitDetailTitle(_ card: Card) {
+        let nextTitle = editingDetailTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        editingDetailTitle = nil
+        guard !nextTitle.isEmpty, nextTitle != card.title else { return }
+        model.updateTask(cardId: card.id, title: nextTitle)
+    }
+
+    @ViewBuilder
     private var enabledPanelBody: some View {
         let panes = taskPaneSpecs.filter { model.enabledPanels.contains($0.panel) }
-        let active = model.enabledPanels.contains(model.activePanel) ? model.activePanel : panes.first?.panel
-        if let active {
-            panelBody(for: active)
-        } else {
+        if panes.isEmpty {
             placeholderPane("Choose a task pane to continue.")
+        } else if panes.count == 1, let pane = panes.first {
+            panelBody(for: pane.panel)
+        } else {
+            HSplitView {
+                ForEach(panes) { pane in
+                    taskPaneContainer(pane)
+                        .frame(minWidth: paneMinimumWidth(pane.panel), maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+    }
+
+    private func taskPaneContainer(_ pane: TaskPaneSpec) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: Spacing.x2) {
+                Label(pane.title, systemImage: pane.icon)
+                    .font(.plexSans(12, weight: .semibold))
+                    .foregroundStyle(pane.panel == model.activePanel ? Color.inkPrimary : Color.inkSecondary)
+                Spacer()
+                Text(pane.shortcut)
+                    .font(.plexMono(10))
+                    .foregroundStyle(Color.inkTertiary)
+                Button {
+                    model.togglePanel(pane.panel)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.inkTertiary)
+                        .iconHitTarget(24)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.enabledPanels.count <= 1)
+                .help("Close pane")
+            }
+            .padding(.horizontal, Spacing.x3)
+            .frame(height: 34)
+            .background(pane.panel == model.activePanel ? Color.surfaceCardRaised : Color.surfaceRail)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(pane.panel == model.activePanel ? Color.signalLive.opacity(0.65) : Color.hairlineDark)
+                    .frame(height: 1)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { model.switchPanel(pane.panel) }
+            panelBody(for: pane.panel)
+        }
+    }
+
+    private func paneMinimumWidth(_ panel: Panel) -> CGFloat {
+        switch panel {
+        case .terminal:
+            return 360
+        case .shell:
+            return 420
+        case .app(let slug):
+            switch slug {
+            case "settings", "processes":
+                return 380
+            case "editor", "git":
+                return 460
+            default:
+                return 340
+            }
         }
     }
 
@@ -327,6 +551,166 @@ struct BoardView: View {
 
     private func openCreateFlow() {
         model.beginSignIn(mode: .signUp)
+    }
+}
+
+private struct TaskEditorState: Identifiable {
+    let id: String
+    let cardId: String?
+    var title: String
+    var description: String
+    var status: TaskStatus
+    var priority: TaskPriority
+
+    init(createIn status: TaskStatus) {
+        self.id = "create:\(status.rawValue)"
+        self.cardId = nil
+        self.title = ""
+        self.description = ""
+        self.status = status
+        self.priority = .normal
+    }
+
+    init(editing card: Card) {
+        self.id = "edit:\(card.id)"
+        self.cardId = card.id
+        self.title = card.title
+        self.description = card.description ?? ""
+        self.status = card.status
+        self.priority = card.priority
+    }
+
+    var isCreating: Bool { cardId == nil }
+}
+
+private struct TaskEditorSheet: View {
+    @State var state: TaskEditorState
+    let onCancel: () -> Void
+    let onSave: (TaskEditorState) -> Void
+    @FocusState private var titleFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.x4) {
+            HStack {
+                Text(state.isCreating ? "Create Task" : "Edit Task")
+                    .font(.plexSans(22, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                Spacer()
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.inkTertiary)
+                        .iconHitTarget(30)
+                }
+                .buttonStyle(.plain)
+            }
+
+            VStack(alignment: .leading, spacing: Spacing.x2) {
+                Text("Title")
+                    .font(.plexSans(12, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                TextField("Task title", text: $state.title)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.plexSans(15))
+                    .focused($titleFocused)
+                    .onSubmit(commit)
+            }
+
+            VStack(alignment: .leading, spacing: Spacing.x2) {
+                Text("Description")
+                    .font(.plexSans(12, weight: .semibold))
+                    .foregroundStyle(Color.inkPrimary)
+                TextEditor(text: $state.description)
+                    .font(.plexSans(13))
+                    .frame(height: 86)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                            .strokeBorder(Color.hairlineDark.opacity(0.65), lineWidth: 1)
+                    )
+            }
+
+            HStack(spacing: Spacing.x3) {
+                Picker("Status", selection: $state.status) {
+                    ForEach(TaskStatus.allCases, id: \.self) { status in
+                        Text(status.displayTitle).tag(status)
+                    }
+                }
+                Picker("Priority", selection: $state.priority) {
+                    ForEach(TaskPriority.allCases, id: \.self) { priority in
+                        Text(priority.displayTitle).tag(priority)
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: Spacing.x2) {
+                disabledSettingRow(icon: "calendar", title: "Due date", value: "Not synced yet")
+                disabledSettingRow(icon: "tag", title: "Tags", value: "Not synced yet")
+                disabledSettingRow(icon: "folder", title: "Project", value: "Current project")
+            }
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                Spacer()
+                Button(state.isCreating ? "Create" : "Save", action: commit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(state.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(Spacing.x5)
+        .frame(width: 520)
+        .onAppear {
+            DispatchQueue.main.async { titleFocused = true }
+        }
+    }
+
+    private func disabledSettingRow(icon: String, title: String, value: String) -> some View {
+        HStack(spacing: Spacing.x2) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.inkTertiary)
+                .frame(width: 18)
+            Text(title)
+                .font(.plexSans(12, weight: .semibold))
+                .foregroundStyle(Color.inkSecondary)
+            Spacer()
+            Text(value)
+                .font(.plexSans(12, weight: .medium))
+                .foregroundStyle(Color.inkTertiary)
+        }
+        .padding(.horizontal, Spacing.x3)
+        .frame(height: 32)
+        .background(Color.surfaceRail.opacity(0.8), in: RoundedRectangle(cornerRadius: Radius.control, style: .continuous))
+    }
+
+    private func commit() {
+        guard !state.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        onSave(state)
+    }
+}
+
+private extension TaskStatus {
+    var displayTitle: String {
+        switch self {
+        case .todo: return "Backlog"
+        case .running: return "Running"
+        case .waiting: return "Waiting"
+        case .blocked: return "Blocked"
+        case .complete: return "Complete"
+        case .archived: return "Archived"
+        }
+    }
+}
+
+private extension TaskPriority {
+    var displayTitle: String {
+        switch self {
+        case .low: return "Low"
+        case .normal: return "Medium"
+        case .high: return "High"
+        case .urgent: return "Urgent"
+        }
     }
 }
 

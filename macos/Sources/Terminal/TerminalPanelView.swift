@@ -11,7 +11,7 @@ private typealias Color = SwiftUI.Color
 ///
 /// OPERATOR treatment (design.md §6.4):
 /// - `surface.terminal` background, `radius.panel`, engraved hairline.
-/// - IBM Plex Mono 12.5 / 1.45 line height, phosphor selection tint, block cursor.
+/// - IBM Plex Mono 13 / natural line height, phosphor amber block cursor + selection tint.
 /// - Top strip: session name + status badge + "● LIVE" / "↓ N new" affordance.
 /// - Calm inline states: `reconnecting…` (amber), `session exited` (grey) — never raw errors.
 public struct TerminalPanelView: View {
@@ -128,9 +128,88 @@ public struct TerminalPanelView: View {
     // MARK: - Terminal surface
 
     private var terminalSurface: some View {
-        SwiftTermView(session: session)
-            .id(session.id)
-            .background(Color.surfaceTerminal)
+        let showOverlay = TerminalConnectionOverlayPolicy.shouldShowOverlay(
+            for: session.connectionState,
+            isStartupSettling: session.isStartupSettling
+        )
+        return ZStack {
+            SwiftTermView(session: session)
+                .id(session.id)
+                .background(Color.surfaceTerminal)
+                .allowsHitTesting(!showOverlay)
+
+            if showOverlay {
+                TerminalConnectionOverlay(
+                    state: session.connectionState,
+                    isStartupSettling: session.isStartupSettling,
+                    reduceMotion: reduceMotion
+                )
+                    .transition(.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: showOverlay)
+    }
+}
+
+enum TerminalConnectionOverlayPolicy {
+    static func shouldShowOverlay(for state: TerminalConnectionState) -> Bool {
+        shouldShowOverlay(for: state, isStartupSettling: false)
+    }
+
+    static func shouldShowOverlay(
+        for state: TerminalConnectionState,
+        isStartupSettling: Bool
+    ) -> Bool {
+        switch state {
+        case .connecting, .reconnecting:
+            return true
+        case .attached:
+            return isStartupSettling
+        case .exited, .error:
+            return false
+        }
+    }
+}
+
+private struct TerminalConnectionOverlay: View {
+    let state: TerminalConnectionState
+    let isStartupSettling: Bool
+    let reduceMotion: Bool
+
+    private var title: String {
+        switch state {
+        case .attached where isStartupSettling:
+            return "Settling terminal"
+        case .reconnecting:
+            return "Reconnecting"
+        default:
+            return "Connecting"
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Color.surfaceTerminal.opacity(0.92)
+            HStack(spacing: Spacing.x2) {
+                ProgressView()
+                    .controlSize(.small)
+                    .progressViewStyle(.circular)
+                Text(title)
+                    .font(.plexMono(12, weight: .medium))
+                    .foregroundStyle(Color.terminalInk)
+                AnimatedEllipsis(color: .terminalMutedInk, reduceMotion: reduceMotion)
+            }
+            .padding(.horizontal, Spacing.x4)
+            .padding(.vertical, Spacing.x3)
+            .background(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .fill(Color.black.opacity(0.28))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.control, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+            )
+        }
     }
 }
 
@@ -202,19 +281,36 @@ private struct SwiftTermView: NSViewRepresentable {
         clickRecognizer.delaysPrimaryMouseButtonEvents = false
         view.addGestureRecognizer(clickRecognizer)
 
-        // OPERATOR look: deep terminal surface + phosphor ink, Plex Mono 12.5.
+        // OPERATOR look: deep terminal surface + phosphor ink.
+        // Background/foreground are applied before font so resetFont() sees the right colors.
         view.nativeBackgroundColor = NSColor(Color.surfaceTerminal)
         view.nativeForegroundColor = NSColor(Color.terminalInk)
-        view.font = Self.terminalFont(size: 12.5)
+
+        // Phosphor amber block cursor — matches the OPERATOR ember accent (#D06F25).
+        view.caretColor = NSColor(red: 0.816, green: 0.435, blue: 0.145, alpha: 0.9)
+
+        // Dim phosphor selection tint so highlighted text stays readable on the dark surface.
+        view.selectedTextBackgroundColor = NSColor(
+            red: 0.816, green: 0.435, blue: 0.145, alpha: 0.28
+        )
+
+        // Set font after colors so the initial display uses the right palette.
+        view.font = Self.terminalFont(size: Self.terminalFontSize)
 
         // Install the output sink so future server `output` events feed SwiftTerm.
+        // We feed raw PTY bytes; SwiftTerm's VT100/xterm parser handles all ANSI/OSC
+        // sequences (including zellij's box-drawing borders) correctly.
         session.setOutputSink { [weak view] text in
             view?.feed(text: text)
         }
+        session.onNextAttach { [weak view] in
+            TerminalFocusPolicy.scheduleAttachedFocus(for: view)
+        }
 
-        // Report the initial size once the view has a backing dimension, and start.
-        let dims = view.getTerminal().getDims()
-        session.resize(cols: dims.cols, rows: dims.rows)
+        // Do NOT report size on a zero-frame view; the real resize fires via
+        // sizeChanged(source:newCols:newRows:) once the view is laid out.
+        // Calling session.start() here triggers the WS connect; the first
+        // attached + resize handshake then uses the real frame dimensions.
         session.start()
         return view
     }
@@ -230,19 +326,33 @@ private struct SwiftTermView: NSViewRepresentable {
         }
     }
 
+    /// Target font size for the terminal surface (OPERATOR spec: Plex Mono 13).
+    /// Slightly larger than the previous 12.5 for better legibility on Retina.
+    static let terminalFontSize: CGFloat = 13.0
+
+    /// Resolves the best available monospaced font for terminal rendering.
+    ///
+    /// Priority:
+    ///  1. IBM Plex Mono — the OPERATOR design font (bundled or user-installed).
+    ///  2. Menlo — always present on macOS; excellent monospace legibility.
+    ///  3. Courier New — universal fallback.
+    ///  4. System monospaced — last resort.
+    ///
+    /// Nerd Font variants are intentionally excluded: they are almost never
+    /// installed on a standard macOS machine, and falling through the entire list
+    /// on every view creation adds measurable startup latency. If the user wants
+    /// Nerd Font glyphs they can set the font via a future preferences surface.
     private static func terminalFont(size: CGFloat) -> NSFont {
-        let preferredFamilies = [
+        let preferredFamilies: [String] = [
+            // Nerd Fonts first so zellij powerline/glyph icons render when installed.
             "MesloLGS NF",
             "MesloLGS Nerd Font Mono",
-            "MesloLGS NF Regular",
             "JetBrainsMono Nerd Font",
-            "JetBrainsMono Nerd Font Mono",
             "Hack Nerd Font",
-            "Hack Nerd Font Mono",
-            "FiraCode Nerd Font",
-            "FiraCode Nerd Font Mono",
-            "Menlo",
             "IBMPlexMono",
+            "IBM Plex Mono",
+            "Menlo",
+            "Courier New",
         ]
         for family in preferredFamilies {
             if let font = NSFont(name: family, size: size) {
@@ -280,9 +390,12 @@ private struct SwiftTermView: NSViewRepresentable {
         }
 
         // Terminal grid resized (font/frame change) → tell the server.
+        // Clamp to [1, 500] on both axes (mirrors the SlayZone/xterm safety clamp).
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+            let clampedCols = max(1, min(500, newCols))
+            let clampedRows = max(1, min(500, newRows))
             let session = self.session
-            MainActor.assumeIsolated { session.resize(cols: newCols, rows: newRows) }
+            MainActor.assumeIsolated { session.resize(cols: clampedCols, rows: clampedRows) }
         }
 
         // Scroll position → drive the LIVE / "↓ N new" affordance. 1.0 == bottom.
@@ -315,6 +428,7 @@ enum TerminalFocusPolicy {
     }
 
     static let initialFocusRetryDelays: [TimeInterval] = [0, 0.05, 0.15, 0.35]
+    static let attachedFocusRetryDelays: [TimeInterval] = [0, 0.05, 0.15]
 
     static func shouldRequestInitialFocus(
         hasFirstResponder: Bool,
@@ -331,6 +445,17 @@ enum TerminalFocusPolicy {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak view] in
                 Task { @MainActor in
                     _ = requestFocus(view)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    static func scheduleAttachedFocus(for view: TerminalView?) {
+        for delay in attachedFocusRetryDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak view] in
+                Task { @MainActor in
+                    _ = requestFocus(view, mode: .userInitiated)
                 }
             }
         }
