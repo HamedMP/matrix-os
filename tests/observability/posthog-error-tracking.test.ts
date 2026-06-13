@@ -564,8 +564,10 @@ describe("PostHog error tracking", () => {
   });
 
   it("tracks the landing to billing funnel before the shell handoff", async () => {
-    const [landingPage, landingTelemetry, landingBilling, wwwPostHogClient] = await Promise.all([
+    const [landingPage, siteHeader, ctaPrimitives, landingTelemetry, landingBilling, wwwPostHogClient] = await Promise.all([
       readFile("www/src/app/page.tsx", "utf8"),
+      readFile("www/src/components/landing/SiteHeader.tsx", "utf8"),
+      readFile("www/src/components/landing/primitives.tsx", "utf8"),
       readFile("www/src/components/landing/LandingTelemetry.tsx", "utf8"),
       readFile("www/src/components/landing/LandingBilling.tsx", "utf8"),
       readFile("www/src/lib/posthog-client.ts", "utf8"),
@@ -573,7 +575,9 @@ describe("PostHog error tracking", () => {
 
     expect(wwwPostHogClient).toContain("capturePostHogEvent");
     expect(landingPage).toContain("<LandingTelemetry />");
-    expect(landingPage).toContain('data-ph-event="marketing_cta_clicked"');
+    expect(landingPage).toContain("<SiteHeader />");
+    expect(siteHeader).toContain('data-ph-event="marketing_cta_clicked"');
+    expect(ctaPrimitives).toContain('"data-ph-event": "marketing_cta_clicked"');
     expect(landingTelemetry).toContain('"marketing_landing_viewed"');
     expect(landingTelemetry).toContain("[data-ph-event]");
     expect(landingBilling).toContain('"marketing_billing_viewed"');
