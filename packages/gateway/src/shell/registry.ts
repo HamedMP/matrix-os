@@ -8,7 +8,7 @@ import type { ScrollbackStore } from "./scrollback-store.js";
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
-  createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
+  createSession(options: { name: string; cwd?: string; layout?: string; profile?: "desktop" | "mobile"; cmd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
 }
 
@@ -18,6 +18,7 @@ const ShellSessionSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   layoutName: z.string().optional(),
+  profile: z.enum(["desktop", "mobile"]).optional(),
   tabs: z.array(z.object({
     idx: z.number(),
     name: z.string().optional(),
@@ -112,12 +113,14 @@ export class ShellRegistry {
     name: string;
     cwd?: string;
     layout?: string;
+    profile?: "desktop" | "mobile";
     cmd?: string;
   }): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const name = validateSessionName(input.name);
       const cwd = input.cwd ? await resolveShellCwd(input.cwd, this.options.homePath) : undefined;
       const layoutName = input.layout ? validateLayoutName(input.layout) : undefined;
+      const profile = input.profile;
       const file = await this.read();
       const live = new Set(await this.options.adapter.listSessions());
 
@@ -130,6 +133,7 @@ export class ShellRegistry {
           status: "active",
           updatedAt: now,
           ...(layoutName ? { layoutName } : {}),
+          ...(profile ? { profile } : {}),
         };
         file.sessions[name] = session;
         await this.write(file);
@@ -142,7 +146,7 @@ export class ShellRegistry {
         throw shellError("session_limit", "Session limit reached", 507);
       }
 
-      await this.options.adapter.createSession({ name, cwd, layout: layoutName, cmd: input.cmd });
+      await this.options.adapter.createSession({ name, cwd, layout: layoutName, profile, cmd: input.cmd });
       const now = new Date().toISOString();
       const session: ShellSession = {
         name,
@@ -150,6 +154,7 @@ export class ShellRegistry {
         createdAt: now,
         updatedAt: now,
         layoutName,
+        profile,
         tabs: [],
         attachedClients: 0,
       };

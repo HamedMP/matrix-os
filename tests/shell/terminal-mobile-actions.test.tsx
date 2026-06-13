@@ -58,9 +58,10 @@ describe("TerminalApp mobile actions", () => {
 
     await waitFor(() => expect(screen.getByTestId("terminal-mobile-actions")).toBeTruthy());
 
-    for (const name of ["Zellij", "Pane", "Tab", "Cmd", "Paste", "Search"]) {
+    for (const name of ["Zellij", "Tab", "Cmd", "Paste", "Search"]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
+    expect(screen.queryByRole("button", { name: "Pane" })).toBeNull();
   });
 
   it("dispatches paste and search actions to the focused pane", async () => {
