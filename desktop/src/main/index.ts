@@ -90,6 +90,16 @@ function createWindow(bounds: { x?: number; y?: number; width: number; height: n
 }
 
 app.whenReady().then(async () => {
+  // Packaged builds get the icon from build/icon.icns automatically; in dev the
+  // dock shows the default Electron icon, so set the brand icon best-effort.
+  if (process.platform === "darwin" && !app.isPackaged && app.dock) {
+    try {
+      app.dock.setIcon(join(app.getAppPath(), "build", "icon.png"));
+    } catch (err: unknown) {
+      console.warn("[main] could not set dev dock icon:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const userData = app.getPath("userData");
   const store = createLocalStore({ dir: userData });
   const credentialStore = createCredentialStore({ dir: userData, safeStorage });

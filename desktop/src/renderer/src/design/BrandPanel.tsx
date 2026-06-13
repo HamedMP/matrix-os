@@ -1,4 +1,24 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import matrixLogoUrl from "../assets/matrix-logo.svg";
+
+// The real Matrix OS brand glyph, recolored to the current theme via CSS mask
+// (works in light + dark since it picks up the brand color, not a baked fill).
+export function BrandLogo({ size = 22, color = "var(--accent)" }: { size?: number; color?: string }) {
+  const style: CSSProperties = {
+    width: Math.round((size * 510) / 660),
+    height: size,
+    background: color,
+    WebkitMaskImage: `url(${matrixLogoUrl})`,
+    maskImage: `url(${matrixLogoUrl})`,
+    WebkitMaskRepeat: "no-repeat",
+    maskRepeat: "no-repeat",
+    WebkitMaskSize: "contain",
+    maskSize: "contain",
+    WebkitMaskPosition: "center",
+    maskPosition: "center",
+  };
+  return <span aria-hidden style={style} />;
+}
 
 // The dark forest brand panel used on the sign-in split screen. The dotted
 // mesh evokes the Matrix wordmark without shipping a raster asset.

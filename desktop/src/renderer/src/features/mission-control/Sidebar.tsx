@@ -9,7 +9,7 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { MatrixMark } from "../../design/BrandPanel";
+import { BrandLogo } from "../../design/BrandPanel";
 import { IconButton } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
 import { useBoard } from "../../stores/board";
@@ -105,13 +105,13 @@ export default function Sidebar() {
         style={{ height: "var(--titlebar-height)", paddingLeft: collapsed ? 0 : 76, justifyContent: collapsed ? "center" : "flex-start" }}
       >
         {collapsed ? (
-          <button type="button" aria-label="Expand sidebar" className="no-drag flex h-7 w-7 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--accent)" }} onClick={toggleSidebar}>
-            <MatrixMark size={18} />
+          <button type="button" aria-label="Expand sidebar (⌘B)" title="Expand sidebar (⌘B)" className="no-drag flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[var(--bg-hover)]" onClick={toggleSidebar}>
+            <BrandLogo size={20} />
           </button>
         ) : (
-          <div className="flex items-center gap-2">
-            <span style={{ color: "var(--accent)" }}><MatrixMark size={20} /></span>
-            <span className="text-sm font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>Matrix OS</span>
+          <div className="flex items-center gap-2.5">
+            <BrandLogo size={22} />
+            <span className="text-[15px] font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>Matrix OS</span>
           </div>
         )}
       </div>
@@ -184,7 +184,7 @@ export default function Sidebar() {
                   <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span>
                 ) : null}
               </div>
-              <IconButton label="Collapse sidebar" onClick={toggleSidebar}>
+              <IconButton label="Collapse sidebar (⌘B)" onClick={toggleSidebar}>
                 <PanelLeftClose size={15} />
               </IconButton>
               <IconButton label="Sign out" onClick={() => void signOut()}>
