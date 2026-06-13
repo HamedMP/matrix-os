@@ -57,7 +57,7 @@ export const setupCommand = defineCommand({
       });
       if (trigger.status === 402) {
         if (json) {
-          console.log(formatCliError("billing_required"));
+          console.error(formatCliError("billing_required"));
         } else {
           const guidance = journeyGuidance(await fetchJourney(platformUrl, token));
           for (const line of guidance.lines) console.log(line);
