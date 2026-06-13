@@ -4,12 +4,19 @@
 # a DEDICATED preview Cloud Run service as a tagged, zero-traffic revision:
 #   https://pr-<N>---<preview-service-url>
 #
-# Safety model: the preview service (vars.CLOUD_RUN_PREVIEW_SERVICE) is a
-# separate Cloud Run service with its own preview-scoped Secret Manager
-# entries (notably platform-preview-database-url -- intended pairing is a
-# Neon branch database). Production CLOUD_RUN_SERVICE and its secrets are
-# never referenced here. The job no-ops with a clear message until the
-# preview service vars/secrets are configured.
+# Safety model: the preview service (matrix-platform-preview) is a separate
+# Cloud Run service running as a dedicated runtime SA
+# (matrix-platform-preview-runner) that can only read preview/staging
+# secrets: the staging database, preview-generated platform/jwt/edge-router
+# secrets, the Clerk keys, and the R2 bundles credentials (required for
+# CUSTOMER_VPS_ENABLED=true boot validation -- no Hetzner token is mounted,
+# so previews cannot provision real VPSes). Production CLOUD_RUN_SERVICE,
+# its runtime SA, and its secrets are never referenced. The service is
+# IAM-authenticated only (no public ingress); reach a preview with
+#   gcloud run services proxy matrix-platform-preview --region europe-west3
+# or an identity token. Config lives in the GitHub "Preview" environment;
+# the jobs no-op with a notice when it is absent. Neon branch databases per
+# PR remain deferred (spec 093).
 
 name: Preview Platform
 
@@ -43,6 +50,7 @@ jobs:
          (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview-platform')))))
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment: Preview
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
@@ -98,9 +106,10 @@ jobs:
             --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
             --tag "pr-${PR_NUMBER}" \
             --no-traffic \
-            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-preview-database-url:latest,PLATFORM_SECRET=platform-preview-secret:latest" \
-            --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 \
+            --no-allow-unauthenticated \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,PLATFORM_PUBLIC_URL=https://${CLOUD_RUN_PREVIEW_SERVICE}-515970864382.${GCP_REGION}.run.app" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest" \
+            --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
             --quiet
           desc="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json)"
@@ -121,10 +130,10 @@ jobs:
           set -euo pipefail
           body="**Platform preview revision deployed**
 
-          - URL: ${PREVIEW_URL}
+          - URL: ${PREVIEW_URL} (IAM-authenticated; use \`gcloud run services proxy ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION}\` or an identity token)
           - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (zero traffic, tag \`pr-${PR_NUMBER}\`)
 
-          Preview revisions use preview-scoped secrets and database; production is untouched."
+          Preview revisions run as the preview runtime SA against the staging database; production service, SA, and secrets are untouched."
           existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
             --jq '[.[] | select(.body | startswith("**Platform preview revision deployed**"))] | .[0].id // ""')"
           if [ -n "$existing" ]; then
@@ -140,6 +149,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'preview-platform')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: Preview
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}

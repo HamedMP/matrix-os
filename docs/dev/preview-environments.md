@@ -72,15 +72,21 @@ pipeline and remains the manual/deep-debug path.
 
 ## Platform preview revisions
 
-Add the **`preview-platform`** label. The workflow deploys the platform image
-to the dedicated preview Cloud Run service (`vars.CLOUD_RUN_PREVIEW_SERVICE`)
-as a zero-traffic tagged revision (`https://pr-<N>---<service-url>`), using
-preview-scoped Secret Manager entries (`platform-preview-database-url`,
-`platform-preview-secret`). The intended database pairing is a Neon branch per
-preview (deferred; see spec 093). On PR close the workflow removes the
-`pr-<N>` tag and deletes its revisions, mirroring the VPS teardown model. The
-jobs no-op with a notice until the preview service is configured. Production
-`CLOUD_RUN_SERVICE` and its secrets are never referenced.
+Add the **`preview-platform`** label. The workflow (bound to the GitHub
+`Preview` environment) deploys the platform image to the dedicated
+`matrix-platform-preview` Cloud Run service as a zero-traffic tagged revision
+(`https://pr-<N>---<service-url>`). The service is **IAM-authenticated only**
+— reach it with `gcloud run services proxy matrix-platform-preview --region
+europe-west3` or an identity token. It runs as the dedicated
+`matrix-platform-preview-runner` SA, which can read only: the **staging**
+database (`platform-database-url-staging` — previews share it; Neon branch
+per PR is deferred, spec 093), preview-generated platform/JWT/edge-router
+secrets, the Clerk keys, and the R2 bundles credentials (required by
+`CUSTOMER_VPS_ENABLED=true` boot validation). No Hetzner token is mounted, so
+a preview platform cannot provision real VPSes. On PR close the workflow
+removes the `pr-<N>` tag and deletes its revisions, mirroring the VPS
+teardown model. Production `CLOUD_RUN_SERVICE`, its runtime SA, and its
+secrets are never referenced.
 
 ## Centralized logs
 
