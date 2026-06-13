@@ -5,6 +5,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
+  Plus,
   Settings,
   Sparkles,
   SquareTerminal,
@@ -95,6 +96,7 @@ export default function Sidebar() {
   const unread = useThreads((s) => s.threads.filter((t) => t.unread || t.status === "needs-attention").length);
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
+  const setCreateProjectOpen = useUi((s) => s.setCreateProjectOpen);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [appsOpen, setAppsOpen] = useState(true);
 
@@ -147,10 +149,22 @@ export default function Sidebar() {
 
         {!collapsed ? (
           <>
-            <button type="button" className="mt-4 mb-1 flex w-full items-center gap-1 px-2.5" onClick={() => setProjectsOpen((v) => !v)}>
-              <ChevronRight size={12} style={{ color: "var(--text-tertiary)", transform: projectsOpen ? "rotate(90deg)" : "none", transition: "transform 120ms" }} />
-              <span className="text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>Projects</span>
-            </button>
+            <div className="group/projects mt-4 mb-1 flex items-center px-2.5">
+              <button type="button" className="flex flex-1 items-center gap-1" onClick={() => setProjectsOpen((v) => !v)}>
+                <ChevronRight size={12} style={{ color: "var(--text-tertiary)", transform: projectsOpen ? "rotate(90deg)" : "none", transition: "transform 120ms" }} />
+                <span className="text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>Projects</span>
+              </button>
+              <button
+                type="button"
+                aria-label="New project"
+                title="New project"
+                className="flex h-5 w-5 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--bg-hover)] group-hover/projects:opacity-100"
+                style={{ color: "var(--text-tertiary)" }}
+                onClick={() => setCreateProjectOpen(true)}
+              >
+                <Plus size={13} />
+              </button>
+            </div>
             {projectsOpen
               ? projects.map((project) => {
                   const isActive = activeTab?.kind === "board" && activeTab.projectSlug === project.slug;
