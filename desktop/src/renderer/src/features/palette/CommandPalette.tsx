@@ -1,6 +1,6 @@
 import { Command } from "cmdk";
 import { useEffect } from "react";
-import { Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, SquareTerminal } from "lucide-react";
+import { Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { friendlySessionName } from "../../lib/session-name";
 import { useBoard } from "../../stores/board";
@@ -82,9 +82,11 @@ export default function CommandPalette() {
             style={{ color: "var(--text-tertiary)" }}
           >
             <PaletteItem icon={<Plus size={14} />} label="New task" shortcut="C" onSelect={() => run(() => setCreateTaskOpen(true))} />
-            <PaletteItem icon={<MessageSquarePlus size={14} />} label="New agent thread" shortcut="⌘J" onSelect={() => run(() => setComposerOpen(true))} />
+            <PaletteItem icon={<Sparkles size={14} />} label="Open chat" onSelect={() => run(() => openTab({ kind: "chat", title: "Hermes", closable: false }))} />
+            <PaletteItem icon={<MessageSquarePlus size={14} />} label="New agent run" shortcut="⌘J" onSelect={() => run(() => setComposerOpen(true))} />
             <PaletteItem icon={<Home size={14} />} label="Go to Home" onSelect={() => run(() => openTab({ kind: "home", title: "Home", closable: false }))} />
-            <PaletteItem icon={<MessageSquarePlus size={14} />} label="Open Agents" onSelect={() => run(() => openTab({ kind: "agents", title: "Agents" }))} />
+            <PaletteItem icon={<SquareTerminal size={14} />} label="Open Terminal" onSelect={() => run(() => openTab({ kind: "terminals", title: "Terminal" }))} />
+            <PaletteItem icon={<LayoutGrid size={14} />} label="Open Apps" onSelect={() => run(() => openTab({ kind: "apps", title: "Apps" }))} />
             <PaletteItem icon={<Settings size={14} />} label="Open settings" onSelect={() => run(() => openTab({ kind: "settings", title: "Settings" }))} />
           </Command.Group>
 

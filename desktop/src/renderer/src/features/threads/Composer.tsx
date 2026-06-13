@@ -40,7 +40,9 @@ function ComposerForm({ onClose }: { onClose: () => void }) {
     sendKernelMessage({ text: trimmed, requestId });
     setActiveThread(thread.id);
     onClose();
-    openTab({ kind: "agents", title: "Agents" });
+    // Agent runs live inside the unified chat now; the new thread is selected
+    // in the chat rail (ChatTab focuses the active thread).
+    openTab({ kind: "chat", title: "Hermes", closable: false });
   };
 
   return (

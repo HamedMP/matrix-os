@@ -119,7 +119,7 @@ export default function Sidebar() {
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
         <nav className="flex flex-col gap-0.5">
           <NavRow icon={<Home size={15} />} label="Home" collapsed={collapsed} active={activeTab?.kind === "home"} onClick={() => openTab({ kind: "home", title: "Home", closable: false })} />
-          <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} onClick={() => openTab({ kind: "chat", title: "Hermes", closable: false })} />
+          <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} onClick={() => { useThreads.getState().setActiveThread(null); openTab({ kind: "chat", title: "Hermes", closable: false }); }} />
           <NavRow icon={<SquareTerminal size={15} />} label="Terminal" collapsed={collapsed} active={activeTab?.kind === "terminals"} onClick={() => openTab({ kind: "terminals", title: "Terminal" })} />
           <NavRow icon={<LayoutGrid size={15} />} label="Apps" collapsed={collapsed} active={activeTab?.kind === "apps" || activeTab?.kind === "app"} onClick={() => openTab({ kind: "apps", title: "Apps" })} />
         </nav>

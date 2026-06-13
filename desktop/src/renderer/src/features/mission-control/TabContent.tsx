@@ -8,7 +8,6 @@ import TerminalView from "../terminal/TerminalView";
 import ThreadView from "../threads/ThreadView";
 import SettingsView from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
-import AgentsTab from "../threads/AgentsTab";
 import ChatTab from "../chat/ChatTab";
 import TerminalsTab from "../terminal/TerminalsTab";
 import { AppLauncher, EmbedHost } from "../embeds";
@@ -32,7 +31,8 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "terminal":
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "agents":
-      return <AgentsTab />;
+      // Agent threads now live inside the unified chat (rail on the left).
+      return <ChatTab />;
     case "thread":
       return tab.threadId ? <ThreadView threadId={tab.threadId} /> : null;
     case "settings":
