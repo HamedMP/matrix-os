@@ -33,7 +33,6 @@ interface AuthServiceDeps {
   credentialStore: CredentialStore;
   platformHost: string;
   fetchFn?: FetchFn;
-  openExternal: (url: string) => Promise<void>;
   loadProfile: () => Promise<ConnectionProfile | null>;
   saveProfile: (profile: ConnectionProfile) => Promise<void>;
   clearProfile: () => Promise<void>;
@@ -193,13 +192,10 @@ export class AuthService {
         this.pendingDeviceCode = null;
       });
 
-    void this.deps.openExternal(code.verificationUri).catch((err: unknown) => {
-      console.warn(
-        "[auth] failed to open verification url:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
-
+    // Do NOT auto-open the browser. The renderer shows the user code and an
+    // explicit "Open approval page" button (shell:open-external) — auto-opening
+    // popped a surprise tab on every launch (and on every e2e run, which points
+    // at a stub whose verification URL is unroutable).
     return pendingDeviceCode;
   }
 
