@@ -22,11 +22,11 @@ vi.mock("@clerk/nextjs", () => ({
 import { BootSequence } from "../../shell/src/components/BootSequence";
 import type { JourneyState } from "../../shell/src/hooks/useJourney";
 
-function mockJourney(state: JourneyState, ok = true) {
+function mockJourney(state: JourneyState, journeyStatus = 200) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("/api/journey")) {
-      return new Response(JSON.stringify(state), { status: ok ? 200 : 503, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(state), { status: journeyStatus, headers: { "content-type": "application/json" } });
     }
     return new Response(JSON.stringify({ status: "started" }), { status: 200, headers: { "content-type": "application/json" } });
   });
@@ -157,10 +157,19 @@ describe("BootSequence", () => {
   });
 
   it("shows an unreachable state on a 503 (never guesses a phase)", async () => {
-    mockJourney(baseState, false);
+    mockJourney(baseState, 503);
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
     expect(await screen.findByText("We can’t reach Matrix right now.")).toBeTruthy();
     expect(screen.queryByTestId("shell")).toBeNull();
+  });
+
+  it("re-authenticates (does not loop) when the journey returns 401", async () => {
+    const fetchMock = mockJourney(baseState, 401);
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    expect(await screen.findByTestId("redirect-to-sign-in")).toBeTruthy();
+    // Stops polling under persistent auth failure: exactly one journey fetch.
+    const journeyCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/journey"));
+    expect(journeyCalls).toHaveLength(1);
   });
 
   it("redirects a signed-out user to sign-in instead of spinning forever", async () => {
