@@ -43,6 +43,11 @@ export async function fetchMobileJourney(baseUrl: string, token: string | null):
     if (!res.ok) return { status: "unreachable" };
     return { status: "ok", journey: (await res.json()) as MobileJourneyState };
   } catch (err: unknown) {
+    // Timeouts/aborts (DOMException) and network drops (TypeError) are expected
+    // and surface as `unreachable` (the gate offers retry). Log anything else.
+    if (!(err instanceof DOMException) && !(err instanceof TypeError)) {
+      console.warn(`[matrix] unexpected journey fetch error: ${err instanceof Error ? err.message : String(err)}`);
+    }
     return { status: "unreachable" };
   } finally {
     clearTimeout(timer);

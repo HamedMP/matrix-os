@@ -28,6 +28,12 @@ export async function fetchJourney(platformUrl: string, token: string): Promise<
     if (!res.ok) return null;
     return (await res.json()) as CliJourneyState;
   } catch (err: unknown) {
+    // Timeouts (DOMException) and network drops (TypeError) are expected
+    // transient failures — the caller falls back to guidance and the setup poll
+    // loop bails after repeated nulls. Surface anything else.
+    if (!(err instanceof DOMException) && !(err instanceof TypeError)) {
+      console.warn(`[mos] unexpected journey fetch error: ${err instanceof Error ? err.message : String(err)}`);
+    }
     return null;
   }
 }

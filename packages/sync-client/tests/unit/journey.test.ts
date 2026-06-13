@@ -81,8 +81,8 @@ describe("cli fetchJourney", () => {
     expect(await fetchJourney("https://api.matrix-os.com", "tok")).toBeNull();
   });
 
-  it("returns null when the request throws", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network"); }));
+  it("returns null when the request throws (network drop)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("network"); }));
     expect(await fetchJourney("https://api.matrix-os.com", "tok")).toBeNull();
   });
 });
