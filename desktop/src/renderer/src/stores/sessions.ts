@@ -12,13 +12,28 @@ import {
   type ZellijSessionDTO,
 } from "../lib/session-merge";
 
+export interface SessionCreateInput {
+  kind: "shell" | "agent";
+  agent?: "claude" | "codex" | "opencode" | "pi";
+  projectSlug?: string;
+  taskId?: string;
+  worktreeId?: string;
+  prompt?: string;
+}
+
+export interface CreatedSession {
+  sessionId: string;
+  attachName: string | null;
+}
+
 interface SessionsState {
   sessions: AttachableSession[];
   aliasMap: Record<string, string>;
   loading: boolean;
+  creating: boolean;
   error: AppErrorCategory | null;
   load(api: ApiClient): Promise<void>;
-  create(api: ApiClient): Promise<AttachableSession | null>;
+  create(api: ApiClient, input?: SessionCreateInput): Promise<CreatedSession | null>;
   resolveAttachName(linkedSessionId: string | null): string | null;
 }
 
@@ -37,6 +52,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   sessions: [],
   aliasMap: {},
   loading: false,
+  creating: false,
   error: null,
 
   load: async (api) => {
@@ -68,34 +84,56 @@ export const useSessions = create<SessionsState>()((set, get) => ({
     }
   },
 
-  create: async (api) => {
-    const name = nextSessionName();
-    set({ loading: true, error: null });
+  create: async (api, input) => {
+    set({ creating: true, error: null });
     try {
-      const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
-      const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
-      const refreshSequence = loadSequence + 1;
+      if (!input) {
+        const name = nextSessionName();
+        const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
+        const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
+        const refreshSequence = loadSequence + 1;
+        await get().load(api);
+        const refreshError = get().error;
+        const created = get().sessions.find((session) => session.attachName === attachName) ?? {
+          name: attachName,
+          attachName,
+          status: "active" as const,
+          source: "zellij" as const,
+        };
+        set((state) => {
+          const loadingPatch = refreshSequence === loadSequence && state.loading ? { loading: false } : {};
+          return state.sessions.some((session) => session.attachName === created.attachName)
+            ? { ...loadingPatch, creating: false, error: refreshError }
+            : { sessions: [created, ...state.sessions], ...loadingPatch, creating: false, error: refreshError };
+        });
+        return { sessionId: attachName, attachName };
+      }
+
+      const res = await api.post<{ session?: { id?: unknown } }>("/api/sessions", input);
+      const sessionId = typeof res.session?.id === "string" ? res.session.id : null;
+      // Reload so the merged aliasMap resolves the new session's zellij name
+      // (the attach target). load() clears `loading`; restore `creating`.
       await get().load(api);
       const refreshError = get().error;
-      const created = get().sessions.find((session) => session.attachName === attachName) ?? {
-        name: attachName,
-        attachName,
-        status: "active" as const,
-        source: "zellij" as const,
-      };
-      set((state) => {
-        const loadingPatch = refreshSequence === loadSequence && state.loading ? { loading: false } : {};
-        return state.sessions.some((session) => session.attachName === created.attachName)
-          ? { ...loadingPatch, error: refreshError }
-          : { sessions: [created, ...state.sessions], ...loadingPatch, error: refreshError };
-      });
-      return created;
+      if (!sessionId) {
+        set({ creating: false, error: refreshError });
+        return null;
+      }
+      if (refreshError) {
+        await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`).catch((err: unknown) => {
+          console.warn(
+            "[sessions] Failed to clean up created session after refresh failure:",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
+        set({ creating: false, error: refreshError });
+        return null;
+      }
+      set({ creating: false, error: null });
+      return { sessionId, attachName: get().aliasMap[sessionId] ?? null };
     } catch (err: unknown) {
       console.error("[sessions] Failed to create session:", err);
-      set({
-        loading: false,
-        error: err instanceof AppError ? err.category : "server",
-      });
+      set({ creating: false, error: err instanceof AppError ? err.category : "server" });
       return null;
     }
   },

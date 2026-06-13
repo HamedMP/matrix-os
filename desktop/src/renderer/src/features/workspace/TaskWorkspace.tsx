@@ -3,13 +3,15 @@ import {
   FileCode2,
   FolderTree,
   GitBranch,
+  Globe,
   Package,
   SquareTerminal,
 } from "lucide-react";
 import { useEffect, useMemo } from "react";
-import { Button, EmptyState, IconButton } from "../../design/primitives";
+import { EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
+import { useGit } from "../../stores/git";
 import { useSessions } from "../../stores/sessions";
 import { useWorkspace, type PanelKind } from "../../stores/workspace";
 import EditorPanel from "../editor/EditorPanel";
@@ -20,6 +22,7 @@ import { getAttachManager } from "../terminal/terminal-runtime";
 import ArtifactsPanel from "./ArtifactsPanel";
 import PanelStrip, { PANEL_TITLES } from "./PanelStrip";
 import ProcessesPanel from "./ProcessesPanel";
+import StartSessionControls from "./StartSessionControls";
 
 const PANEL_ICONS: Record<PanelKind, React.ReactNode> = {
   terminal: <SquareTerminal size={14} />,
@@ -56,6 +59,11 @@ export default function TaskWorkspace({
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessionsLoad = useSessions((s) => s.load);
   const aliasMap = useSessions((s) => s.aliasMap);
+  const sessionList = useSessions((s) => s.sessions);
+  const worktrees = useGit((s) => s.worktrees);
+  const previews = useGit((s) => s.previews);
+  const gitLoadAll = useGit((s) => s.loadAll);
+  const gitLoadPreviews = useGit((s) => s.loadPreviews);
   const openTask = useWorkspace((s) => s.openTask);
   const focusTask = useWorkspace((s) => s.focusTask);
   const togglePanel = useWorkspace((s) => s.togglePanel);
@@ -75,6 +83,14 @@ export default function TaskWorkspace({
   useEffect(() => {
     if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
   }, [api, sessionsLoad]);
+
+  // Worktree + preview state powers the task header chips (branch/dirty/preview
+  // health). Scoped to this task's project so the header reflects live work.
+  useEffect(() => {
+    if (!api || !projectSlug) return;
+    void gitLoadAll(api, projectSlug);
+    void gitLoadPreviews(api, projectSlug, taskId);
+  }, [api, projectSlug, taskId, gitLoadAll, gitLoadPreviews]);
 
   useEffect(() => {
     // LRU eviction releases attach buffers for tasks pushed out of the cap.
@@ -109,6 +125,29 @@ export default function TaskWorkspace({
   const attachName = card?.linkedSessionId ? (aliasMap[card.linkedSessionId] ?? null) : null;
   const layout = layouts[taskId] ?? layoutFor(taskId);
 
+  // Header chips: live session, worktree branch/dirty, preview health.
+  const sessionLive = attachName
+    ? sessionList.some((s) => s.attachName === attachName && s.status === "active")
+    : false;
+  const worktree = useMemo(
+    () => (card?.linkedWorktreeId ? worktrees.find((w) => w.id === card.linkedWorktreeId) ?? null : null),
+    [worktrees, card?.linkedWorktreeId],
+  );
+  const taskPreviews = useMemo(
+    () => previews.filter((p) => p.taskId === taskId),
+    [previews, taskId],
+  );
+  const previewHealth: "ok" | "failed" | "unknown" | null =
+    taskPreviews.length === 0
+      ? null
+      : taskPreviews.some((p) => p.lastStatus === "failed")
+        ? "failed"
+        : taskPreviews.every((p) => p.lastStatus === "ok")
+          ? "ok"
+          : "unknown";
+  const previewColor =
+    previewHealth === "ok" ? "var(--success)" : previewHealth === "failed" ? "var(--danger)" : "var(--text-tertiary)";
+
   const renderPanel = (panel: PanelKind): React.ReactNode => {
     switch (panel) {
       case "terminal":
@@ -120,18 +159,19 @@ export default function TaskWorkspace({
             headline="No live session"
             description={
               card?.linkedSessionId
-                ? "This task's session has ended on your computer."
-                : "This task has no linked terminal session yet."
+                ? "This task's session has ended. Start a new one on your cloud computer."
+                : "Start a cloud terminal or coding agent for this task."
             }
             action={
-              <Button
-                variant="primary"
-                onClick={() => {
-                  if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
-                }}
-              >
-                Refresh sessions
-              </Button>
+              projectSlug && card ? (
+                <StartSessionControls
+                  projectSlug={projectSlug}
+                  taskId={taskId}
+                  worktreeId={card.linkedWorktreeId}
+                  title={card.title}
+                  description={card.description}
+                />
+              ) : null
             }
           />
         );
@@ -154,17 +194,58 @@ export default function TaskWorkspace({
         className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+        <span className="min-w-0 max-w-[40%] truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
           {card?.title ?? "Task"}
         </span>
-        {attachName ? (
-          <span
-            className="rounded-full border px-2 py-0.5 font-mono text-xs"
-            style={{ borderColor: "var(--border-default)", color: "var(--text-tertiary)" }}
-          >
-            {attachName}
-          </span>
+
+        {/* Work-state chips: session, worktree/branch + dirty, preview health. */}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+          {attachName ? (
+            <span
+              className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
+              style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+              title={sessionLive ? "Live session" : "Session ended"}
+            >
+              <StatusDot color={sessionLive ? "var(--success)" : "var(--text-tertiary)"} pulse={sessionLive} />
+              <span className="font-mono">{attachName}</span>
+            </span>
+          ) : null}
+          {worktree ? (
+            <span
+              className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+              style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+              title={worktree.dirtyState === "dirty" ? "Uncommitted changes" : "Clean working tree"}
+            >
+              <GitBranch size={11} />
+              <span className="max-w-[140px] truncate font-mono">{worktree.currentBranch ?? worktree.sourceBranch ?? "worktree"}</span>
+              {worktree.dirtyCount ? (
+                <span style={{ color: "var(--highlight)" }}>±{worktree.dirtyCount}</span>
+              ) : null}
+            </span>
+          ) : null}
+          {previewHealth ? (
+            <span
+              className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+              style={{ borderColor: "var(--border-default)", color: previewColor }}
+              title={`Preview ${previewHealth}`}
+            >
+              <Globe size={11} />
+              {taskPreviews.length}
+            </span>
+          ) : null}
+        </div>
+
+        {projectSlug && card ? (
+          <StartSessionControls
+            projectSlug={projectSlug}
+            taskId={taskId}
+            worktreeId={card.linkedWorktreeId}
+            title={card.title}
+            description={card.description}
+            compact
+          />
         ) : null}
+
         <div className="flex items-center gap-0.5">
           {PANEL_SHORTCUT_ORDER.map((panel, i) => (
             <IconButton
