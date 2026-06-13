@@ -4,6 +4,7 @@ import {
   PANEL_MIN_PCT,
   WORKSPACE_LRU_CAP,
   defaultLayout,
+  normalizeLayout,
   useWorkspace,
   type PanelKind,
   type PanelLayout,
@@ -281,5 +282,40 @@ describe("PANEL_MIN_PCT", () => {
     for (const kind of PANEL_KINDS) {
       expect(PANEL_MIN_PCT[kind as PanelKind]).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("normalizeLayout (migration of older persisted layouts)", () => {
+  it("appends panel kinds missing from a stale layout (hidden, zero size)", () => {
+    // A layout saved before "timeline" existed.
+    const stale: PanelLayout = {
+      order: ["terminal", "editor"] as PanelKind[],
+      visible: { terminal: true, editor: false } as Record<PanelKind, boolean>,
+      sizes: { terminal: 100, editor: 0 } as Record<PanelKind, number>,
+      touchedAt: 1,
+    };
+    const norm = normalizeLayout(stale);
+    for (const kind of PANEL_KINDS) {
+      expect(norm.order).toContain(kind);
+      expect(typeof norm.visible[kind]).toBe("boolean");
+      expect(typeof norm.sizes[kind]).toBe("number");
+    }
+    // Newly added kinds default to hidden so they don't disrupt the saved view.
+    expect(norm.visible.timeline).toBe(false);
+    // Existing values are preserved.
+    expect(norm.visible.terminal).toBe(true);
+    expect(norm.sizes.terminal).toBe(100);
+  });
+
+  it("drops unknown panel kinds from order", () => {
+    const layout = { ...defaultLayout(1), order: ["terminal", "ghost", "editor"] as PanelKind[] };
+    const norm = normalizeLayout(layout);
+    expect(norm.order).not.toContain("ghost" as PanelKind);
+    expect(norm.order).toContain("terminal");
+  });
+
+  it("is idempotent for a current default layout", () => {
+    const def = defaultLayout(1);
+    expect(normalizeLayout(def).order).toEqual(def.order);
   });
 });

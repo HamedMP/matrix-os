@@ -6,7 +6,7 @@
 // the UI wires it to window.operator state:get/state:set.
 import { create } from "zustand";
 
-export type PanelKind = "terminal" | "editor" | "git" | "browser" | "artifacts" | "processes";
+export type PanelKind = "terminal" | "editor" | "git" | "browser" | "artifacts" | "processes" | "timeline";
 
 export const PANEL_KINDS: readonly PanelKind[] = [
   "terminal",
@@ -15,6 +15,7 @@ export const PANEL_KINDS: readonly PanelKind[] = [
   "browser",
   "artifacts",
   "processes",
+  "timeline",
 ];
 
 export const PANEL_MIN_PCT: Record<PanelKind, number> = {
@@ -24,6 +25,7 @@ export const PANEL_MIN_PCT: Record<PanelKind, number> = {
   browser: 15,
   artifacts: 15,
   processes: 15,
+  timeline: 18,
 };
 
 export interface PanelLayout {
@@ -54,6 +56,22 @@ export function defaultLayout(now: number = Date.now()): PanelLayout {
     sizes: equalSplitSizes(visible),
     touchedAt: now,
   };
+}
+
+// Migrate a (possibly older) persisted layout so it contains every current
+// PanelKind — new kinds are appended to order, hidden, with zero size. Without
+// this, a panel added after a layout was saved would never render (PanelStrip
+// only walks layout.order).
+export function normalizeLayout(layout: PanelLayout): PanelLayout {
+  const order = [...layout.order.filter((k) => PANEL_KINDS.includes(k))];
+  for (const kind of PANEL_KINDS) if (!order.includes(kind)) order.push(kind);
+  const visible = { ...layout.visible } as Record<PanelKind, boolean>;
+  const sizes = { ...layout.sizes } as Record<PanelKind, number>;
+  for (const kind of PANEL_KINDS) {
+    if (typeof visible[kind] !== "boolean") visible[kind] = false;
+    if (typeof sizes[kind] !== "number") sizes[kind] = 0;
+  }
+  return { ...layout, order, visible, sizes };
 }
 
 export interface WorkspaceEntry {
@@ -158,7 +176,7 @@ export const useWorkspace = create<WorkspaceState>()((set, get) => {
     },
 
     togglePanel: (taskId, panel, now = Date.now()) => {
-      const layout = get().layouts[taskId] ?? defaultLayout(now);
+      const layout = normalizeLayout(get().layouts[taskId] ?? defaultLayout(now));
       const visible = { ...layout.visible, [panel]: !layout.visible[panel] };
       // A newly shown panel with no size triggers an equal re-split; a panel
       // that kept a size from a previous show restores it untouched.
@@ -170,7 +188,7 @@ export const useWorkspace = create<WorkspaceState>()((set, get) => {
     },
 
     setPanelSizes: (taskId, sizes, now = Date.now()) => {
-      const layout = get().layouts[taskId] ?? defaultLayout(now);
+      const layout = normalizeLayout(get().layouts[taskId] ?? defaultLayout(now));
       const next = { ...layout.sizes };
       for (const kind of PANEL_KINDS) {
         const value = sizes[kind];
@@ -183,7 +201,7 @@ export const useWorkspace = create<WorkspaceState>()((set, get) => {
     },
 
     movePanel: (taskId, panel, direction, now = Date.now()) => {
-      const layout = get().layouts[taskId] ?? defaultLayout(now);
+      const layout = normalizeLayout(get().layouts[taskId] ?? defaultLayout(now));
       const index = layout.order.indexOf(panel);
       if (index === -1) return;
       const target = direction === "left" ? index - 1 : index + 1;
@@ -195,6 +213,6 @@ export const useWorkspace = create<WorkspaceState>()((set, get) => {
       writeLayout(taskId, { ...layout, order, touchedAt: now });
     },
 
-    layoutFor: (taskId) => get().layouts[taskId] ?? defaultLayout(),
+    layoutFor: (taskId) => normalizeLayout(get().layouts[taskId] ?? defaultLayout()),
   };
 });

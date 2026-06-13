@@ -4,6 +4,7 @@ import {
   FolderTree,
   GitBranch,
   Globe,
+  ListTree,
   Package,
   SquareTerminal,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import ArtifactsPanel from "./ArtifactsPanel";
 import PanelStrip, { PANEL_TITLES } from "./PanelStrip";
 import ProcessesPanel from "./ProcessesPanel";
 import StartSessionControls from "./StartSessionControls";
+import TimelinePanel from "./TimelinePanel";
 
 const PANEL_ICONS: Record<PanelKind, React.ReactNode> = {
   terminal: <SquareTerminal size={14} />,
@@ -31,6 +33,7 @@ const PANEL_ICONS: Record<PanelKind, React.ReactNode> = {
   browser: <FolderTree size={14} />,
   artifacts: <Package size={14} />,
   processes: <Activity size={14} />,
+  timeline: <ListTree size={14} />,
 };
 
 const PANEL_SHORTCUT_ORDER: PanelKind[] = [
@@ -40,6 +43,7 @@ const PANEL_SHORTCUT_ORDER: PanelKind[] = [
   "browser",
   "artifacts",
   "processes",
+  "timeline",
 ];
 
 export default function TaskWorkspace({ taskId, active = true }: { taskId: string; active?: boolean }) {
@@ -173,6 +177,8 @@ export default function TaskWorkspace({ taskId, active = true }: { taskId: strin
         return projectSlug ? <ArtifactsPanel projectSlug={projectSlug} taskId={taskId} /> : null;
       case "processes":
         return <ProcessesPanel />;
+      case "timeline":
+        return <TimelinePanel taskId={taskId} />;
     }
   };
 
