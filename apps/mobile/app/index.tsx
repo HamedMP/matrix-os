@@ -9,6 +9,10 @@ import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
 
+// Re-poll cadence while the machine is building / payment is settling, so the
+// user isn't stranded on a static spinner waiting for a phase transition.
+const JOURNEY_POLL_INTERVAL_MS = 5_000;
+
 // Signed-in users are routed through the journey gate: only a connectable phase
 // (first_run/ready) enters the shell tabs; otherwise the user sees their
 // onboarding phase (plan / settling / building / retry) instead of a broken shell.
@@ -21,6 +25,7 @@ function SignedInJourneyGate() {
 
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
       try {
         const token = await getToken();
@@ -31,6 +36,11 @@ function SignedInJourneyGate() {
           return;
         }
         setResult(next);
+        // Auto-poll transitional phases so the spinner actually progresses and
+        // hands off to the shell once ready; terminal phases wait on the user.
+        if (next.status === "ok" && (next.journey.phase === "provisioning" || next.journey.phase === "payment_settling")) {
+          timer = setTimeout(() => { if (active) setNonce((n) => n + 1); }, JOURNEY_POLL_INTERVAL_MS);
+        }
       } catch (err: unknown) {
         // getToken() (Clerk token refresh) can reject; don't strand the user on
         // a permanent spinner — surface a retryable unreachable state instead.
@@ -40,8 +50,14 @@ function SignedInJourneyGate() {
     })();
     return () => {
       active = false;
+      if (timer) clearTimeout(timer);
     };
   }, [getToken, router, nonce]);
+
+  function reload() {
+    setResult(null);
+    setNonce((n) => n + 1);
+  }
 
   async function handleRetry() {
     setWorking(true);
@@ -60,8 +76,7 @@ function SignedInJourneyGate() {
       console.warn("[mobile] retry-provision failed", err instanceof Error ? err.name : typeof err);
     } finally {
       setWorking(false);
-      setResult(null);
-      setNonce((n) => n + 1);
+      reload();
     }
   }
 
@@ -70,6 +85,7 @@ function SignedInJourneyGate() {
       result={result}
       working={working}
       onRetry={handleRetry}
+      onRefresh={reload}
       onOpenUrl={(url) => { void Linking.openURL(url); }}
     />
   );

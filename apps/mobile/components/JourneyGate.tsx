@@ -10,6 +10,8 @@ interface JourneyGateProps {
   result: JourneyFetchResult | null;
   onRetry: () => void;
   onOpenUrl: (url: string) => void;
+  /** Re-fetch the journey (no side effects) — used as a manual poll fallback. */
+  onRefresh?: () => void;
   working?: boolean;
 }
 
@@ -46,7 +48,7 @@ function PrimaryButton({ label, onPress, testID }: { label: string; onPress: () 
  * screens for plan selection, payment settling, machine build, and retry —
  * `first_run`/`ready` are handled by the caller (it hands off to the shell).
  */
-export function JourneyGate({ result, onRetry, onOpenUrl, working = false }: JourneyGateProps) {
+export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, working = false }: JourneyGateProps) {
   if (!result) {
     return (
       <Centered>
@@ -94,6 +96,9 @@ export function JourneyGate({ result, onRetry, onOpenUrl, working = false }: Jou
           {journey.nextAction.url ? (
             <PrimaryButton label="View plans" testID="journey-open-plans" onPress={() => onOpenUrl(journey.nextAction.url as string)} />
           ) : null}
+          {/* Always offer a way forward — the user picks a plan elsewhere (web),
+              then taps to re-check, even when the server omits a URL. */}
+          <PrimaryButton label="Check again" testID="journey-refresh" onPress={onRefresh} />
         </Centered>
       );
     case "payment_settling":
