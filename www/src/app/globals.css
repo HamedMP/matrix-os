@@ -6,7 +6,7 @@
 
 @source "../node_modules/fumadocs-ui/dist/**/*.js";
 
-/* ── Brand palette overrides (Ona-style docs: white content, quiet grey chrome, forest accent) ── */
+/* ── Brand palette overrides (editorial docs: white content, quiet grey chrome, forest accent) ── */
 @theme {
   --color-fd-background: #FFFFFF;
   --color-fd-primary: #434E3F;
@@ -135,7 +135,7 @@ html:not(.dark) #nd-sidebar {
   background: var(--docs-sidebar-bg) !important;
 }
 
-/* Ona-style docs polish: quiet sidebar links, rounded active pill, soft content imagery */
+/* Docs polish: quiet sidebar links, rounded active pill, soft content imagery */
 #nd-sidebar a[data-active="true"] {
   border-radius: 0.5rem;
 }
@@ -329,7 +329,7 @@ code, pre { font-family: var(--font-mono); }
 .delay-700 { animation-delay: 700ms; }
 .delay-1000 { animation-delay: 1000ms; }
 
-/* ── Landing (Ona-style) ── */
+/* ── Landing (editorial card style) ── */
 @keyframes landing-marquee {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
