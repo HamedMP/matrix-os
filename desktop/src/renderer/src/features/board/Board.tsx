@@ -16,6 +16,8 @@ import { toUserMessage } from "../../lib/errors";
 import { AppError } from "../../../../shared/app-error";
 import { useBoard, BOARD_COLUMNS, groupCardsByColumn, type Card, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
+import { useGit } from "../../stores/git";
+import { useSessions } from "../../stores/sessions";
 import { useUi } from "../../stores/ui";
 import BoardCard from "./BoardCard";
 import CreateTaskDialog from "./CreateTaskDialog";
@@ -101,6 +103,9 @@ export default function Board({ projectSlug }: { projectSlug?: string }) {
   const error = useBoard((s) => s.error);
   const moveTask = useBoard((s) => s.moveTask);
   const selectProject = useBoard((s) => s.selectProject);
+  const sessionsLoad = useSessions((s) => s.load);
+  const gitLoadAll = useGit((s) => s.loadAll);
+  const gitLoadPreviews = useGit((s) => s.loadPreviews);
   const createTaskOpen = useUi((s) => s.createTaskOpen);
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -112,6 +117,14 @@ export default function Board({ projectSlug }: { projectSlug?: string }) {
   useEffect(() => {
     if (api && activeSlug) void selectProject(api, activeSlug);
   }, [api, activeSlug, selectProject]);
+
+  // Live development state for the card badges (session/branch/dirty/preview).
+  useEffect(() => {
+    if (!api || !activeSlug) return;
+    void sessionsLoad(api);
+    void gitLoadAll(api, activeSlug);
+    void gitLoadPreviews(api, activeSlug);
+  }, [api, activeSlug, sessionsLoad, gitLoadAll, gitLoadPreviews]);
 
   const cards = useMemo(
     () => (activeSlug ? (cardsByProject[activeSlug] ?? []) : []),

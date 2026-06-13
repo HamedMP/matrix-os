@@ -1,7 +1,12 @@
-import { SquareTerminal } from "lucide-react";
-import { ContextMenu, type MenuItem } from "../../design/primitives";
+import { GitBranch, Globe, SquareTerminal } from "lucide-react";
+import { useMemo } from "react";
+import { ContextMenu, StatusDot, type MenuItem } from "../../design/primitives";
+import { invoke } from "../../lib/operator";
+import { startTaskSession } from "../../lib/task-sessions";
 import { useBoard, BOARD_COLUMNS, type Card } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
+import { useGit } from "../../stores/git";
+import { useSessions } from "../../stores/sessions";
 import { useTabs } from "../../stores/tabs";
 
 const PRIORITY_STYLE: Record<Card["priority"], { label: string; color: string } | null> = {
@@ -19,11 +24,64 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
   const updateTask = useBoard((s) => s.updateTask);
   const archiveTask = useBoard((s) => s.archiveTask);
   const deleteTask = useBoard((s) => s.deleteTask);
+  // Raw store slices (stable refs); derive per-card view with useMemo so the
+  // selector never allocates a fresh array each render (Zustand rule).
+  const sessions = useSessions((s) => s.sessions);
+  const aliasMap = useSessions((s) => s.aliasMap);
+  const worktrees = useGit((s) => s.worktrees);
+  const previews = useGit((s) => s.previews);
+
+  const sessionLive = useMemo(() => {
+    if (!card.linkedSessionId) return false;
+    const attach = aliasMap[card.linkedSessionId];
+    return attach ? sessions.some((s) => s.attachName === attach && s.status === "active") : false;
+  }, [card.linkedSessionId, aliasMap, sessions]);
+
+  const worktree = useMemo(
+    () => (card.linkedWorktreeId ? worktrees.find((w) => w.id === card.linkedWorktreeId) ?? null : null),
+    [card.linkedWorktreeId, worktrees],
+  );
+
+  const cardPreviews = useMemo(() => previews.filter((p) => p.taskId === card.id), [previews, card.id]);
+  const previewUrl = cardPreviews.find((p) => typeof p.url === "string" && p.url.length > 0)?.url ?? null;
+  const previewColor =
+    cardPreviews.length === 0
+      ? null
+      : cardPreviews.some((p) => p.lastStatus === "failed")
+        ? "var(--danger)"
+        : cardPreviews.every((p) => p.lastStatus === "ok")
+          ? "var(--success)"
+          : "var(--text-tertiary)";
 
   const priority = PRIORITY_STYLE[card.priority];
+  const hasBadges =
+    priority !== null ||
+    card.tags.length > 0 ||
+    card.linkedSessionId !== null ||
+    worktree !== null ||
+    cardPreviews.length > 0;
+
+  const startAgent = (agent: "claude" | "codex") => {
+    if (!api) return;
+    void startTaskSession(api, {
+      projectSlug: card.projectSlug,
+      taskId: card.id,
+      worktreeId: card.linkedWorktreeId,
+      title: card.title,
+      description: card.description,
+      kind: "agent",
+      agent,
+    });
+  };
 
   const menuItems: MenuItem[] = [
     { label: "Open", onSelect: openCard },
+    { label: "Open terminal", onSelect: openCard },
+    { label: "Start Claude", onSelect: () => startAgent("claude") },
+    { label: "Start Codex", onSelect: () => startAgent("codex") },
+    ...(previewUrl
+      ? [{ label: "Open preview", onSelect: () => void invoke("shell:open-external", { url: previewUrl }) }]
+      : []),
     ...BOARD_COLUMNS.filter((s) => s !== card.status).map((status) => ({
       label: `Move to ${status[0]?.toUpperCase()}${status.slice(1)}`,
       onSelect: () => {
@@ -65,14 +123,14 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
       <span className="text-sm leading-snug" style={{ color: "var(--text-primary)" }}>
         {card.title}
       </span>
-      {priority || card.tags.length > 0 || card.linkedSessionId ? (
+      {hasBadges ? (
         <div className="flex items-center gap-1.5">
           {priority ? (
             <span className="text-xs font-medium" style={{ color: priority.color }}>
               {priority.label}
             </span>
           ) : null}
-          {card.tags.slice(0, 3).map((tag) => (
+          {card.tags.slice(0, 2).map((tag) => (
             <span
               key={tag}
               className="rounded px-1.5 py-px text-xs"
@@ -82,8 +140,22 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
             </span>
           ))}
           <div className="flex-1" />
+          {worktree ? (
+            <span
+              className="flex items-center gap-0.5 text-xs"
+              style={{ color: "var(--text-tertiary)" }}
+              title={worktree.dirtyState === "dirty" ? "Uncommitted changes" : "Clean"}
+            >
+              <GitBranch size={11} />
+              {worktree.dirtyCount ? <span style={{ color: "var(--highlight)" }}>±{worktree.dirtyCount}</span> : null}
+            </span>
+          ) : null}
+          {previewColor ? <Globe size={12} style={{ color: previewColor }} /> : null}
           {card.linkedSessionId ? (
-            <SquareTerminal size={13} style={{ color: "var(--text-tertiary)" }} />
+            <span className="flex items-center gap-1" title={sessionLive ? "Live session" : "Session"}>
+              {sessionLive ? <StatusDot color="var(--success)" pulse /> : null}
+              <SquareTerminal size={13} style={{ color: sessionLive ? "var(--success)" : "var(--text-tertiary)" }} />
+            </span>
           ) : null}
         </div>
       ) : null}
