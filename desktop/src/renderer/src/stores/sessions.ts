@@ -34,6 +34,7 @@ interface SessionsState {
   error: AppErrorCategory | null;
   load(api: ApiClient): Promise<void>;
   create(api: ApiClient, input?: SessionCreateInput): Promise<CreatedSession | null>;
+  kill(api: ApiClient, attachName: string): Promise<boolean>;
   resolveAttachName(linkedSessionId: string | null): string | null;
 }
 
@@ -135,6 +136,18 @@ export const useSessions = create<SessionsState>()((set, get) => ({
       console.error("[sessions] Failed to create session:", err);
       set({ creating: false, error: err instanceof AppError ? err.category : "server" });
       return null;
+    }
+  },
+
+  kill: async (api, attachName) => {
+    try {
+      await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
+      await get().load(api);
+      return true;
+    } catch (err: unknown) {
+      console.error("[sessions] Failed to kill session:", err);
+      set({ error: err instanceof AppError ? err.category : "server" });
+      return false;
     }
   },
 

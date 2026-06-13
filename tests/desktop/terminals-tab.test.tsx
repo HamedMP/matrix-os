@@ -38,7 +38,11 @@ describe("TerminalsTab", () => {
     const create = vi.fn(
       () =>
         new Promise<{ attachName: string; name: string; status: "active" }>((resolve) => {
-          resolveCreate = resolve;
+          useSessions.setState({ creating: true });
+          resolveCreate = (value) => {
+            useSessions.setState({ creating: false });
+            resolve(value);
+          };
         }),
     );
     useSessions.setState({ create });
@@ -51,7 +55,9 @@ describe("TerminalsTab", () => {
 
     const button = screen.getAllByRole("button", { name: /new session/i })[0]!;
     fireEvent.click(button);
-    fireEvent.click(screen.getByRole("button", { name: /creating/i }));
+    const starting = screen.getByRole("button", { name: /starting/i }) as HTMLButtonElement;
+    expect(starting.disabled).toBe(true);
+    fireEvent.click(starting);
 
     expect(create).toHaveBeenCalledOnce();
 

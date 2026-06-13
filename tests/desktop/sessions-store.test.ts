@@ -85,3 +85,29 @@ describe("useSessions.create", () => {
     expect(useSessions.getState().error).toBe("offline");
   });
 });
+
+describe("useSessions.kill", () => {
+  it("DELETEs the zellij session by name (forced) and reloads", async () => {
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const get = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const api = makeApi({ delete: del, get });
+    const ok = await useSessions.getState().kill(api, "matrix-task-1");
+    expect(ok).toBe(true);
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-task-1?force=1");
+    expect(get).toHaveBeenCalled(); // reload
+  });
+
+  it("encodes unsafe session names in the delete path", async () => {
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const api = makeApi({ delete: del });
+    await useSessions.getState().kill(api, "weird/name");
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/weird%2Fname?force=1");
+  });
+
+  it("returns false and records an error category on failure", async () => {
+    const api = makeApi({ delete: vi.fn().mockRejectedValue(new AppError("server")) });
+    const ok = await useSessions.getState().kill(api, "matrix-task-1");
+    expect(ok).toBe(false);
+    expect(useSessions.getState().error).toBe("server");
+  });
+});
