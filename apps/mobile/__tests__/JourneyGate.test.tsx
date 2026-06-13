@@ -27,6 +27,14 @@ describe("JourneyGate", () => {
     expect(onOpenUrl).toHaveBeenCalledWith("https://app.matrix-os.com/?plans=1");
   });
 
+  it("account_required prompts re-sign-in instead of a stuck spinner", () => {
+    const { getByText, queryByTestId } = render(
+      <JourneyGate result={ok({ phase: "account_required", detail: "Sign in to continue." })} onRetry={noop} onOpenUrl={noop} />,
+    );
+    expect(getByText("Please sign in again")).toBeTruthy();
+    expect(queryByTestId("journey-loading")).toBeNull();
+  });
+
   it("shows a calm settling state within the window", () => {
     const { getByText, getByTestId } = render(
       <JourneyGate result={ok({ phase: "payment_settling", detail: "Activating…", settling: { since: "x", delayed: false } })} onRetry={noop} onOpenUrl={noop} />,
