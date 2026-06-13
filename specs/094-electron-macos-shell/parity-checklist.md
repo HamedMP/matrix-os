@@ -6,6 +6,20 @@ complete and verified. Status as of the initial Electron build on branch
 
 Legend: ✅ done & verified · 🟡 built, pending live-VPS verification · ⛔ blocked on gateway delta
 
+## Live production verification (2026-06-13)
+
+Run against **app.matrix-os.com** as **@hamedmp**, real VPS. Confirmed end-to-end:
+
+- ✅ Device-auth sign-in (real platform `/api/auth/device/code` + `/token`, browser approval, token persisted via safeStorage).
+- ✅ Board loads the real `matrix-os` project with 12 real tasks (bearer-JWT accepted by gateway routes proxied through the platform).
+- ✅ Sessions list returns **9 real attachable sessions** — the L6 merge over live `/api/terminal/sessions` + `/api/sessions`.
+- ✅ Kernel `/ws` socket connects.
+- ✅ Terminal attach: opened `/ws/terminal/session?session=zellij-wtrm2jf&fromSeq=<live-tail>`, received `attached{state:"running"}`, streamed live `output{seq}` frames — full zellij multi-pane TUI renders with ANSI + Nerd-Font glyphs.
+
+This proves the thin-client thesis (auth → board → real session list → live zellij attach with
+sequence replay) against production. The US1 parity bar is met live; remaining 🟡 rows below are
+secondary surfaces not yet exercised against the VPS.
+
 ## Connection & identity (US1, FR-001..006)
 
 | Item | Status | Evidence |
