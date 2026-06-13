@@ -5,7 +5,6 @@ import {
   GitBranch,
   Globe,
   ListTree,
-  Package,
   SquareTerminal,
 } from "lucide-react";
 import { useEffect, useMemo } from "react";
@@ -31,7 +30,7 @@ const PANEL_ICONS: Record<PanelKind, React.ReactNode> = {
   editor: <FileCode2 size={14} />,
   git: <GitBranch size={14} />,
   browser: <FolderTree size={14} />,
-  artifacts: <Package size={14} />,
+  artifacts: <Globe size={14} />,
   processes: <Activity size={14} />,
   timeline: <ListTree size={14} />,
 };
