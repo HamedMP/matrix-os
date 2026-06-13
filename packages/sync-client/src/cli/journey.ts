@@ -36,7 +36,7 @@ export interface JourneyGuidance {
   lines: string[];
   /** Suggested next CLI step the user should run, if any. */
   suggestedCommand?: "setup" | "login";
-  /** Process exit code: 0 when connected/ready, non-zero when action is needed. */
+  /** Process exit code: 0 when `mos login` completes a live connection, non-zero when further action is needed. */
   exitCode: number;
 }
 
@@ -86,7 +86,7 @@ export function journeyGuidance(journey: CliJourneyState | null): JourneyGuidanc
       };
     case "provisioning":
       return {
-        lines: ["No Matrix computer yet. Run `mos setup` to build one."],
+        lines: ["Your Matrix computer is being built. Run `mos setup` to watch progress."],
         suggestedCommand: "setup",
         exitCode: 1,
       };

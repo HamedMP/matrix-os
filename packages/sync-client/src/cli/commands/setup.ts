@@ -27,9 +27,11 @@ export const setupCommand = defineCommand({
   },
   run: async ({ args }) => {
     const json = args.json === true;
-    const pollIntervalMs = typeof args["poll-interval-ms"] === "string"
-      ? Math.max(0, Number(args["poll-interval-ms"]) || DEFAULT_POLL_INTERVAL_MS)
-      : DEFAULT_POLL_INTERVAL_MS;
+    const rawPollMs = Number(args["poll-interval-ms"]);
+    const pollIntervalMs =
+      typeof args["poll-interval-ms"] === "string" && Number.isFinite(rawPollMs) && rawPollMs > 0
+        ? rawPollMs
+        : DEFAULT_POLL_INTERVAL_MS;
     try {
       const profile = await resolveCliProfile(args);
       const authStatus = await resolveCliAuthStatus(profile);
@@ -50,9 +52,12 @@ export const setupCommand = defineCommand({
         signal: AbortSignal.timeout(10_000),
       });
       if (trigger.status === 402) {
-        const guidance = journeyGuidance(await fetchJourney(platformUrl, token));
-        if (json) console.log(formatCliError("billing_required"));
-        else for (const line of guidance.lines) console.log(line);
+        if (json) {
+          console.log(formatCliError("billing_required"));
+        } else {
+          const guidance = journeyGuidance(await fetchJourney(platformUrl, token));
+          for (const line of guidance.lines) console.log(line);
+        }
         process.exitCode = 1;
         return;
       }

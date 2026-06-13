@@ -77,6 +77,15 @@ export function JourneyGate({ result, onRetry, onOpenUrl, working = false }: Jou
 
   const journey = result.journey;
   switch (journey.phase) {
+    case "account_required":
+      // The local Clerk session no longer resolves to a platform account; the
+      // only way forward is to re-authenticate, not to wait on a spinner.
+      return (
+        <Centered>
+          <Title>Please sign in again</Title>
+          <Body>{journey.detail || "Your session needs to be refreshed to continue."}</Body>
+        </Centered>
+      );
     case "plan_required":
       return (
         <Centered>

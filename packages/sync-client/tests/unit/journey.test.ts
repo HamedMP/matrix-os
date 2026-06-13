@@ -46,6 +46,13 @@ describe("cli journeyGuidance", () => {
     expect(journeyGuidance(state({ phase: "ready" })).suggestedCommand).toBe("login");
   });
 
+  it("provisioning says the machine is building, not that none exists", () => {
+    const g = journeyGuidance(state({ phase: "provisioning", progress: { stage: "booting", startedAt: "x" } }));
+    expect(g.lines.join(" ")).toMatch(/being built/i);
+    expect(g.lines.join(" ")).not.toMatch(/no matrix computer/i);
+    expect(g.suggestedCommand).toBe("setup");
+  });
+
   it("describeProgress maps the provisioning stage to a human label", () => {
     expect(describeProgress(state({ phase: "provisioning", progress: { stage: "booting", startedAt: "x" } }))).toBe("booting your computer");
   });
