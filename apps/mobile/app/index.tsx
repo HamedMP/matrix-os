@@ -22,14 +22,21 @@ function SignedInJourneyGate() {
   useEffect(() => {
     let active = true;
     void (async () => {
-      const token = await getToken();
-      const next = await fetchMobileJourney(HOSTED_GATEWAY_URL, token);
-      if (!active) return;
-      if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
-        router.replace("/(tabs)/apps" as any);
-        return;
+      try {
+        const token = await getToken();
+        const next = await fetchMobileJourney(HOSTED_GATEWAY_URL, token);
+        if (!active) return;
+        if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
+          router.replace("/(tabs)/apps" as any);
+          return;
+        }
+        setResult(next);
+      } catch (err: unknown) {
+        // getToken() (Clerk token refresh) can reject; don't strand the user on
+        // a permanent spinner — surface a retryable unreachable state instead.
+        console.warn("[mobile] journey load failed", err instanceof Error ? err.name : typeof err);
+        if (active) setResult({ status: "unreachable" });
       }
-      setResult(next);
     })();
     return () => {
       active = false;
