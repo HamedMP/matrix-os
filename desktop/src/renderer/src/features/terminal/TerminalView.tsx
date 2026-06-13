@@ -38,6 +38,8 @@ export default function TerminalView({ sessionName, onRecreate }: TerminalViewPr
     const terminal = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
+      // Accessibility buffer (also lets e2e assert rendered output under webgl).
+      screenReaderMode: true,
       fontSize: 13,
       fontFamily: buildTerminalFontStack("JetBrains Mono", undefined),
       lineHeight: 1.25,
