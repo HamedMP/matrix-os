@@ -2,7 +2,9 @@ import {
   FileCode2,
   Home,
   Kanban,
+  LayoutGrid,
   MessageSquare,
+  Sparkles,
   Settings,
   SquareTerminal,
   X,
@@ -12,11 +14,13 @@ import { useTabs, type Tab, type TabKind } from "../../stores/tabs";
 
 const TAB_ICON: Record<TabKind, LucideIcon> = {
   home: Home,
+  chat: Sparkles,
   board: Kanban,
   task: FileCode2,
   terminal: SquareTerminal,
   agents: MessageSquare,
   thread: MessageSquare,
+  apps: LayoutGrid,
   settings: Settings,
 };
 
