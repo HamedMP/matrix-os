@@ -34,7 +34,7 @@ export interface JourneyState {
   readiness?: { status: "ok" | "degraded"; failing: string[] };
 }
 
-export type JourneyStatus = "loading" | "ready" | "unreachable";
+export type JourneyStatus = "loading" | "ready" | "unreachable" | "unauthorized";
 
 export interface UseJourneyResult {
   state: JourneyState | null;
@@ -87,8 +87,14 @@ export function useJourney(options: { enabled?: boolean } = {}): UseJourneyResul
           signal: controller.signal,
         });
         if (!activeRef.current) return;
+        if (res.status === 401 || res.status === 403) {
+          // Auth no longer valid — STOP polling (do not hammer the endpoint
+          // under a persistent auth failure) and let the gate re-authenticate.
+          setStatus("unauthorized");
+          return;
+        }
         if (!res.ok) {
-          // 401/403/5xx → cannot trust a phase; surface as unreachable.
+          // 5xx/other → transient; cannot trust a phase, keep retrying.
           setStatus("unreachable");
           scheduleNext(ACTIVE_POLL_MS);
           return;

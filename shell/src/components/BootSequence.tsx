@@ -147,6 +147,12 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
     );
   }
 
+  // Journey said the session is no longer valid — re-authenticate rather than
+  // showing a dead retry loop.
+  if (status === "unauthorized") {
+    return <RedirectToSignIn />;
+  }
+
   if (status === "unreachable") {
     return (
       <BootShell>
