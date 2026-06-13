@@ -34,10 +34,15 @@ export type PollResult = {
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
+// Re-authenticate slightly before the token's real expiry so an in-flight
+// request doesn't race the cutoff.
+const EXPIRY_SKEW_MS = 30_000;
+
 interface AuthServiceDeps {
   credentialStore: CredentialStore;
   platformHost: string;
   fetchFn?: FetchFn;
+  now?: () => number;
   loadProfile: () => Promise<ConnectionProfile | null>;
   saveProfile: (profile: ConnectionProfile) => Promise<void>;
   clearProfile: () => Promise<void>;
@@ -59,8 +64,19 @@ export class AuthService {
     this.profile = await this.deps.loadProfile();
   }
 
+  private now(): number {
+    return this.deps.now ? this.deps.now() : Date.now();
+  }
+
+  // A credential past (or within the skew window of) its expiry is unusable;
+  // sending it would just earn a 401, so treat it as signed-out.
+  private isExpired(): boolean {
+    return this.credential !== null && this.credential.expiresAt <= this.now() + EXPIRY_SKEW_MS;
+  }
+
   getToken(): string | null {
-    return this.credential?.accessToken ?? null;
+    if (!this.credential || this.isExpired()) return null;
+    return this.credential.accessToken;
   }
 
   getGatewayOrigin(): string {
@@ -68,7 +84,7 @@ export class AuthService {
   }
 
   getStatus(): AuthStatus {
-    const signedIn = this.credential !== null;
+    const signedIn = this.credential !== null && !this.isExpired();
     return {
       signedIn,
       ...(signedIn && this.profile ? { handle: this.profile.handle } : {}),
@@ -156,6 +172,17 @@ export class AuthService {
     if (!this.profile) return;
     this.profile = { ...this.profile, runtimeSlot: slot };
     await this.deps.saveProfile(this.profile);
+  }
+
+  // The session token expired or the gateway rejected it (401). Drop the
+  // credential but KEEP the profile so platformHost/runtime survive for a
+  // one-click re-auth, then notify the renderer to show sign-in. Idempotent.
+  async expireSession(): Promise<void> {
+    if (!this.credential) return;
+    this.credential = null;
+    this.flowState = "idle";
+    await this.deps.credentialStore.clear();
+    this.deps.onAuthChanged(this.getStatus());
   }
 
   async signOut(): Promise<void> {

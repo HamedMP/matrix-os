@@ -55,6 +55,32 @@ describe("createApiClient", () => {
     await expect(client.get("/api/apps")).rejects.toMatchObject({ category: "unauthorized" });
   });
 
+  it("invokes onUnauthorized exactly once on a 401, before throwing", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(401, {}));
+    const onUnauthorized = vi.fn();
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+      onUnauthorized,
+    });
+    await expect(client.get("/api/apps")).rejects.toMatchObject({ category: "unauthorized" });
+    expect(onUnauthorized).toHaveBeenCalledOnce();
+  });
+
+  it("does not invoke onUnauthorized for non-401 errors", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(500, {}));
+    const onUnauthorized = vi.fn();
+    const client = createApiClient({
+      baseUrl: "https://x.test",
+      getRuntimeSlot: () => "primary",
+      fetchFn,
+      onUnauthorized,
+    });
+    await expect(client.get("/api/apps")).rejects.toMatchObject({ category: "server" });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
   it("maps network failure to offline", async () => {
     const fetchFn = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
     const client = createApiClient({

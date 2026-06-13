@@ -18,6 +18,9 @@ export interface ApiClientOptions {
   baseUrl: string;
   getRuntimeSlot: () => string;
   fetchFn?: FetchFn;
+  // Invoked once when the gateway rejects the request with 401 (token expired
+  // or revoked), so the app can drop the stale session and prompt re-auth.
+  onUnauthorized?: () => void;
 }
 
 export interface ApiClient {
@@ -45,6 +48,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       throw new AppError(classifyTransportError(err), { cause: err });
     }
     if (!response.ok) {
+      if (response.status === 401) options.onUnauthorized?.();
       throw new AppError(classifyHttpStatus(response.status));
     }
     return response;

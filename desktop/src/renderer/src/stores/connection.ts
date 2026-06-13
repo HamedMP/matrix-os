@@ -34,6 +34,11 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
       ? createApiClient({
           baseUrl: status.platformHost,
           getRuntimeSlot: () => get().runtimeSlot,
+          // A 401 means the session token expired/was revoked. Drop it in the
+          // trusted core (which emits auth:changed → refresh → sign-in screen).
+          onUnauthorized: () => {
+            void invoke("auth:session-expired", {});
+          },
         })
       : null;
     set({
