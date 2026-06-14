@@ -14,7 +14,7 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "home":
       return <HomeTab />;
     case "board":
-      return <Board projectSlug={tab.projectSlug} />;
+      return <Board projectSlug={tab.projectSlug} active={active} />;
     case "task":
       return tab.taskId ? <TaskWorkspace taskId={tab.taskId} active={active} /> : null;
     case "terminal":

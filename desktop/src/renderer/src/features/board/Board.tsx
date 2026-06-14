@@ -94,7 +94,7 @@ function DraggableCard({ card, dragging }: { card: Card; dragging: boolean }) {
   );
 }
 
-export default function Board({ projectSlug }: { projectSlug?: string }) {
+export default function Board({ projectSlug, active = true }: { projectSlug?: string; active?: boolean }) {
   const api = useConnection((s) => s.api);
   const fallbackSlug = useBoard((s) => s.activeProjectSlug);
   const activeSlug = projectSlug ?? fallbackSlug;
@@ -111,11 +111,11 @@ export default function Board({ projectSlug }: { projectSlug?: string }) {
 
   const firstLoadPending = activeSlug ? (firstLoadByProject[activeSlug] ?? true) : false;
 
-  // Each board tab loads its own project's tasks and becomes the create-dialog
-  // context while mounted.
+  // Only the focused board tab becomes the create-dialog context. Inactive
+  // mounted board tabs must not clobber activeProjectSlug.
   useEffect(() => {
-    if (api && activeSlug) void selectProject(api, activeSlug);
-  }, [api, activeSlug, selectProject]);
+    if (api && activeSlug && active) void selectProject(api, activeSlug);
+  }, [api, active, activeSlug, selectProject]);
 
   const columns = useMemo(() => groupCardsByColumn(cards), [cards]);
 
