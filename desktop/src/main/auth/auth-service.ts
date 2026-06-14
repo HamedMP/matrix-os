@@ -88,9 +88,16 @@ export class AuthService {
     }
     const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
     const baseUrl = this.getGatewayOrigin();
-    const code = await requestDeviceCode({ fetchFn, baseUrl });
-    this.flowState = "pending";
     const nonce = ++this.flowNonce;
+    let code: DeviceCodeResponse;
+    try {
+      code = await requestDeviceCode({ fetchFn, baseUrl });
+    } catch (err: unknown) {
+      if (nonce !== this.flowNonce) throw new Error("Sign-in request was canceled.");
+      throw err;
+    }
+    if (nonce !== this.flowNonce) throw new Error("Sign-in request was canceled.");
+    this.flowState = "pending";
     this.pendingDeviceCode = {
       userCode: code.userCode,
       verificationUri: code.verificationUri,

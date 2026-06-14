@@ -154,4 +154,55 @@ describe("AuthService", () => {
     expect(saveProfile).not.toHaveBeenCalled();
     expect(onAuthChanged).toHaveBeenCalledTimes(1);
   });
+
+  it("does not start polling when sign-out races an in-flight device-code request", async () => {
+    const credentialStore = makeCredentialStore(null);
+    const saveProfile = vi.fn(async () => undefined);
+    const openExternal = vi.fn(async () => undefined);
+    let resolveCode!: (response: Response) => void;
+    const codePromise = new Promise<Response>((resolve) => {
+      resolveCode = resolve;
+    });
+    let tokenRequests = 0;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/auth/device/code")) return codePromise;
+      tokenRequests += 1;
+      return jsonResponse({
+        accessToken: "late-token",
+        expiresAt: Date.now() + 60_000,
+        userId: "user-1",
+        handle: "neo",
+      });
+    });
+    const auth = new AuthService({
+      credentialStore,
+      platformHost: "https://app.matrix-os.com",
+      fetchFn,
+      openExternal,
+      loadProfile: async () => null,
+      saveProfile,
+      clearProfile: vi.fn(async () => undefined),
+      onAuthChanged: vi.fn(),
+    });
+
+    const flow = auth.startDeviceFlow();
+    await Promise.resolve();
+    await auth.signOut();
+    resolveCode(
+      jsonResponse({
+        deviceCode: "device-1",
+        userCode: "ABCD",
+        verificationUri: "https://app.matrix-os.com/device",
+        expiresIn: 600,
+        interval: 5,
+      }),
+    );
+
+    await expect(flow).rejects.toThrow("Sign-in request was canceled.");
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(tokenRequests).toBe(0);
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(credentialStore.saved).toBeNull();
+    expect(saveProfile).not.toHaveBeenCalled();
+  });
 });

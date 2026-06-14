@@ -31,15 +31,20 @@ export default function SignIn() {
       setPhase("waiting");
       stopPolling();
       pollTimer.current = setInterval(() => {
-        void invoke("auth:poll", {}).then((result) => {
-          if (result.status === "authorized") {
+        void invoke("auth:poll", {})
+          .then((result) => {
+            if (result.status === "authorized") {
+              stopPolling();
+              void refresh();
+            } else if (result.status === "expired") {
+              stopPolling();
+              setPhase("expired");
+            }
+          })
+          .catch(() => {
             stopPolling();
-            void refresh();
-          } else if (result.status === "expired") {
-            stopPolling();
-            setPhase("expired");
-          }
-        });
+            setPhase("error");
+          });
       }, POLL_INTERVAL_MS);
     } catch {
       setPhase("error");
