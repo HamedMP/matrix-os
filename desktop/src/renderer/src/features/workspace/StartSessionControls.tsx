@@ -1,4 +1,4 @@
-import { Bot, SquareTerminal, Sparkles } from "lucide-react";
+import { AlertCircle, Bot, SquareTerminal, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { toUserMessage } from "../../lib/errors";
 import { startTaskSession } from "../../lib/task-sessions";
@@ -18,6 +18,11 @@ const LAUNCHERS: Launch[] = [
 function glyph(l: Launch) {
   if (l.kind === "shell") return <SquareTerminal size={13} />;
   return l.agent === "claude" ? <Sparkles size={13} /> : <Bot size={13} />;
+}
+
+export function startSessionErrorLabel(error: string | null, compact: boolean): string | null {
+  if (!error) return null;
+  return compact ? "Start failed" : error;
 }
 
 /**
@@ -45,6 +50,7 @@ export default function StartSessionControls({
   const creating = useSessions((s) => s.creating);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const errorLabel = startSessionErrorLabel(error, compact);
 
   const launch = async (l: Launch) => {
     if (!api || pending) return;
@@ -87,8 +93,20 @@ export default function StartSessionControls({
           </button>
         ))}
       </div>
-      {error && !compact ? (
-        <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span>
+      {errorLabel ? (
+        <span
+          className={
+            compact
+              ? "flex max-w-36 items-center gap-1 truncate text-xs"
+              : "flex items-center gap-1 text-xs"
+          }
+          style={{ color: "var(--danger)" }}
+          title={compact ? error ?? undefined : undefined}
+          aria-live="polite"
+        >
+          <AlertCircle size={12} className="shrink-0" />
+          <span className="truncate">{errorLabel}</span>
+        </span>
       ) : null}
     </div>
   );
