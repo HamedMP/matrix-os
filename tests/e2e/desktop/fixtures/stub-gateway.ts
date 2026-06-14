@@ -245,7 +245,7 @@ export async function startStubGateway(): Promise<StubGateway> {
         ws.send(JSON.stringify({ type: "kernel:init", sessionId: "kernel-sess-1", requestId }));
         ws.send(JSON.stringify({ type: "kernel:text", text: "On it. ", requestId }));
         ws.send(JSON.stringify({ type: "kernel:tool_start", tool: "Bash", requestId }));
-        ws.send(JSON.stringify({ type: "kernel:tool_end", input: "ls", requestId }));
+        ws.send(JSON.stringify({ type: "kernel:tool_end", input: { command: "ls" }, requestId }));
         ws.send(JSON.stringify({ type: "kernel:text", text: "Done — all tests pass.", requestId }));
         ws.send(JSON.stringify({ type: "kernel:result", data: "ok", requestId }));
       }

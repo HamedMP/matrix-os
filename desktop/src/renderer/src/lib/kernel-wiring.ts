@@ -12,6 +12,7 @@ import { useThreads } from "../stores/threads";
 import { useUi } from "../stores/ui";
 
 let socket: KernelSocket | null = null;
+let cleanupKernel: (() => void) | null = null;
 
 type BoardTaskEvent = KernelServerMessage & (TaskEventCreated | TaskEventUpdated);
 
@@ -42,13 +43,17 @@ export function abortKernelRequest(requestId: string): void {
 
 export function wireKernel(): () => void {
   const { platformHost, runtimeSlot } = useConnection.getState();
-  if (socket) {
+  if (cleanupKernel) {
+    cleanupKernel();
+    cleanupKernel = null;
+  } else if (socket) {
     socket.dispose();
     socket = null;
   }
   socket = new KernelSocket({ baseUrl: platformHost, runtimeSlot });
+  const activeSocket = socket;
 
-  const unsubscribeMessages = socket.subscribe((msg) => {
+  const unsubscribeMessages = activeSocket.subscribe((msg) => {
     const ui = useUi.getState();
     const focusedThreadId = ui.view.kind === "thread" ? ui.view.threadId : null;
     const { notification } = useThreads
@@ -89,12 +94,18 @@ export function wireKernel(): () => void {
     }
   });
 
-  socket.connect();
+  activeSocket.connect();
 
-  return () => {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
     unsubscribeMessages();
     unsubscribeBadge();
-    socket?.dispose();
-    socket = null;
+    activeSocket.dispose();
+    if (socket === activeSocket) socket = null;
+    if (cleanupKernel === cleanup) cleanupKernel = null;
   };
+  cleanupKernel = cleanup;
+  return cleanup;
 }
