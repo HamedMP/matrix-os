@@ -7,7 +7,14 @@ import {
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { serve } from '@hono/node-server';
-import { installPostHogHonoErrorTracking, isMatrixTelemetryEvent, MATRIX_TELEMETRY_EVENTS, type MatrixTelemetryEvent } from '@matrix-os/observability';
+import {
+  createPostHogErrorTracker,
+  installPostHogHonoErrorTracking,
+  installPostHogProcessErrorTracking,
+  isMatrixTelemetryEvent,
+  MATRIX_TELEMETRY_EVENTS,
+  type MatrixTelemetryEvent,
+} from '@matrix-os/observability';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -4270,6 +4277,13 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     customerVpsObjectStore,
     hostBundleObjectStore,
   });
+  const processPosthogErrorTracker = createPostHogErrorTracker({
+    service: 'matrix-platform',
+  });
+  const posthogProcessErrors = installPostHogProcessErrorTracking({
+    tracker: processPosthogErrorTracker,
+    service: 'matrix-platform',
+  });
 
   const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.log(`Platform listening on :${PORT}`);
@@ -4303,7 +4317,9 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
         ]);
+        posthogProcessErrors.dispose();
         await app.shutdownPostHog();
+        await processPosthogErrorTracker.shutdown();
         await db.destroy();
       })()
         .catch((destroyErr: unknown) => {

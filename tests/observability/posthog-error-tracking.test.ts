@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -13,6 +14,7 @@ import {
   createPostHogErrorTracker,
   createPostHogServerExceptionReporter,
   extractPostHogDistinctId,
+  installPostHogProcessErrorTracking,
   installPostHogHonoErrorTracking,
 } from "../../packages/observability/src/index.ts";
 
@@ -202,6 +204,132 @@ describe("PostHog error tracking", () => {
     });
     expect(JSON.stringify(captureException.mock.calls[0]?.[2])).not.toContain("secret");
     expect(flush).toHaveBeenCalledOnce();
+  });
+
+  it("captures uncaught exceptions before exiting the process", async () => {
+    const processEvents = new EventEmitter();
+    const captureException = vi.fn().mockResolvedValue(true);
+    const flush = vi.fn().mockResolvedValue(undefined);
+    const shutdown = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn();
+
+    installPostHogProcessErrorTracking({
+      tracker: { enabled: true, captureException, flush, shutdown },
+      process: processEvents,
+      service: "matrix-gateway",
+      logger: { warn: vi.fn(), error: vi.fn() },
+      exit,
+    });
+
+    const err = new Error("background failure");
+    processEvents.emit("uncaughtException", err, "uncaughtException");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(captureException).toHaveBeenCalledWith(err, {
+      distinctId: undefined,
+      properties: {
+        service: "matrix-gateway",
+        runtime: "node",
+        error_source: "process",
+        error_type: "uncaughtException",
+      },
+    });
+    expect(flush).not.toHaveBeenCalled();
+    expect(shutdown).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("exits after uncaught exceptions even when the process logger fails", async () => {
+    const processEvents = new EventEmitter();
+    const captureException = vi.fn().mockResolvedValue(true);
+    const shutdown = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn();
+
+    installPostHogProcessErrorTracking({
+      tracker: {
+        enabled: true,
+        captureException,
+        flush: vi.fn().mockResolvedValue(undefined),
+        shutdown,
+      },
+      process: processEvents,
+      service: "matrix-gateway",
+      logger: {
+        warn: vi.fn(),
+        error: vi.fn(() => {
+          throw new Error("logger failed");
+        }),
+      },
+      exit,
+    });
+
+    processEvents.emit("uncaughtException", new Error("background failure"), "uncaughtException");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("captures unhandled promise rejections without exiting the process", async () => {
+    const processEvents = new EventEmitter();
+    const captureException = vi.fn().mockResolvedValue(true);
+    const exit = vi.fn();
+
+    installPostHogProcessErrorTracking({
+      tracker: {
+        enabled: true,
+        captureException,
+        flush: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      },
+      process: processEvents,
+      service: "matrix-platform",
+      logger: { warn: vi.fn(), error: vi.fn() },
+      exit,
+    });
+
+    processEvents.emit("unhandledRejection", "async failure", Promise.resolve());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(captureException).toHaveBeenCalledWith(expect.any(Error), {
+      distinctId: undefined,
+      properties: {
+        service: "matrix-platform",
+        runtime: "node",
+        error_source: "process",
+        error_type: "unhandledRejection",
+      },
+    });
+    expect(captureException.mock.calls[0]?.[0].message).toBe("Non-Error rejection: async failure");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("captures object rejection values with diagnostic detail", async () => {
+    const processEvents = new EventEmitter();
+    const captureException = vi.fn().mockResolvedValue(true);
+    const exit = vi.fn();
+
+    installPostHogProcessErrorTracking({
+      tracker: {
+        enabled: true,
+        captureException,
+        flush: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      },
+      process: processEvents,
+      service: "matrix-platform",
+      logger: { warn: vi.fn(), error: vi.fn() },
+      exit,
+    });
+
+    processEvents.emit("unhandledRejection", { code: "worker_failed", retryable: true }, Promise.resolve());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(captureException.mock.calls[0]?.[0].message).toBe(
+      'Non-Error rejection: {"code":"worker_failed","retryable":true}',
+    );
+    expect(exit).not.toHaveBeenCalled();
   });
 
   it("does not capture expected 4xx Hono HTTPExceptions", async () => {

@@ -76,6 +76,37 @@ export interface PostHogServerExceptionReporter {
   shutdown(): Promise<void>;
 }
 
+export interface PostHogProcessErrorTracker {
+  enabled: boolean;
+  captureException(error: unknown, options?: CaptureExceptionOptions): Promise<boolean>;
+  flush(): Promise<void>;
+  shutdown(): Promise<void>;
+}
+
+export interface PostHogProcessErrorTarget {
+  on(event: "uncaughtException", listener: (err: Error, origin: NodeJS.UncaughtExceptionOrigin) => void): unknown;
+  on(event: "unhandledRejection", listener: (reason: unknown, promise: Promise<unknown>) => void): unknown;
+  off(event: "uncaughtException", listener: (err: Error, origin: NodeJS.UncaughtExceptionOrigin) => void): unknown;
+  off(event: "unhandledRejection", listener: (reason: unknown, promise: Promise<unknown>) => void): unknown;
+}
+
+export interface PostHogProcessErrorLogger extends PostHogLogger {
+  error(message: string): void;
+}
+
+export interface InstallPostHogProcessErrorTrackingOptions {
+  tracker: PostHogProcessErrorTracker;
+  service: string;
+  distinctId?: string;
+  process?: PostHogProcessErrorTarget;
+  logger?: PostHogProcessErrorLogger;
+  exit?: (code: number) => void;
+}
+
+export interface InstalledPostHogProcessErrorTracking {
+  dispose(): void;
+}
+
 const TOKEN_ENV_KEYS = [
   "POSTHOG_TOKEN",
   "POSTHOG_PROJECT_TOKEN",
@@ -274,6 +305,59 @@ export function createPostHogServerExceptionReporter(
   };
 }
 
+export function installPostHogProcessErrorTracking(
+  options: InstallPostHogProcessErrorTrackingOptions,
+): InstalledPostHogProcessErrorTracking {
+  const target: PostHogProcessErrorTarget = options.process ?? process;
+  const logger = options.logger ?? console;
+  const exit = options.exit ?? ((code: number) => process.exit(code));
+
+  const processProperties = (errorType: string): PostHogProperties => ({
+    service: options.service,
+    runtime: "node",
+    error_source: "process",
+    error_type: errorType,
+  });
+
+  const onUncaughtException = (err: Error, origin: NodeJS.UncaughtExceptionOrigin): void => {
+    void (async () => {
+      try {
+        logger.error(`[posthog] Uncaught exception for ${options.service}: ${errorForLog(err)}`);
+        await options.tracker.captureException(err, {
+          distinctId: options.distinctId,
+          properties: processProperties(origin),
+        });
+        await options.tracker.shutdown();
+      } catch (captureErr: unknown) {
+        logger.warn(`[posthog] Failed to capture process exception for ${options.service}: ${errorKind(captureErr)}`);
+      } finally {
+        exit(1);
+      }
+    })();
+  };
+
+  const onUnhandledRejection = (reason: unknown): void => {
+    const error = normalizeProcessError(reason);
+    logger.warn(`[posthog] Unhandled rejection for ${options.service}: ${errorKind(reason)}`);
+    void options.tracker.captureException(error, {
+      distinctId: options.distinctId,
+      properties: processProperties("unhandledRejection"),
+    }).catch((captureErr: unknown) => {
+      logger.warn(`[posthog] Failed to capture process rejection for ${options.service}: ${errorKind(captureErr)}`);
+    });
+  };
+
+  target.on("uncaughtException", onUncaughtException);
+  target.on("unhandledRejection", onUnhandledRejection);
+
+  return {
+    dispose() {
+      target.off("uncaughtException", onUncaughtException);
+      target.off("unhandledRejection", onUnhandledRejection);
+    },
+  };
+}
+
 export function extractPostHogDistinctId(cookieHeader: string | string[] | null | undefined): string | undefined {
   const cookie = Array.isArray(cookieHeader) ? cookieHeader.join("; ") : cookieHeader;
   if (!cookie) return undefined;
@@ -442,4 +526,33 @@ function errorKind(err: unknown): string {
 function errorForLog(err: unknown): string {
   if (err instanceof Error) return err.stack ?? `${err.name}: ${err.message}`;
   return typeof err === "string" ? err : errorKind(err);
+}
+
+function normalizeProcessError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(`Non-Error rejection: ${formatProcessRejectionValue(err)}`);
+}
+
+function formatProcessRejectionValue(value: unknown): string {
+  if (typeof value === "string") return sanitizeProcessErrorValue(value);
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (typeof value === "symbol" || typeof value === "function") {
+    return sanitizeProcessErrorValue(String(value));
+  }
+  try {
+    return sanitizeProcessErrorValue(JSON.stringify(value));
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      return errorKind(err);
+    }
+    return Object.prototype.toString.call(value);
+  }
+}
+
+function sanitizeProcessErrorValue(value: string | undefined): string {
+  const sanitized = value?.replace(/[\r\n\t]/g, " ").slice(0, MAX_PROPERTY_LENGTH).trim();
+  return sanitized || "unserializable";
 }
