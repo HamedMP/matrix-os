@@ -9,7 +9,6 @@ import {
   Cormorant_Garamond,
   Orbitron,
 } from "next/font/google";
-import { Analytics } from "@vercel/analytics/react";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
 import { PostHogCookieBanner } from "@/components/PostHogCookieBanner";
 import "./globals.css";
@@ -108,7 +107,6 @@ export default async function RootLayout({
       <body className={`${inter.variable} ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
         {children}
         <PostHogCookieBanner visitorCountry={visitorCountry} />
-        <Analytics />
       </body>
     </html>
   );
