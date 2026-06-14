@@ -207,6 +207,26 @@ describe("createTask", () => {
     ]);
   });
 
+  it("dedupes when a task:created event arrives before the POST response", async () => {
+    const response = deferred<unknown>();
+    const api = makeApi({
+      post: vi.fn().mockReturnValue(response.promise),
+    });
+
+    const pending = useBoard.getState().createTask(api, "proj", { title: "New" });
+    useBoard.getState().applyTaskEvent({
+      type: "task:created",
+      task: wireTask({ id: "task_new", title: "New" }),
+    });
+    response.resolve({ task: wireTask({ id: "task_new", title: "New" }) });
+    const result = await pending;
+
+    expect(result).toEqual(card({ id: "task_new", title: "New" }));
+    expect(useBoard.getState().cardsByProject["proj"]).toEqual([
+      card({ id: "task_new", title: "New" }),
+    ]);
+  });
+
   it("returns null and records the error category on failure", async () => {
     const api = makeApi({ post: vi.fn().mockRejectedValue(new AppError("unauthorized")) });
     const result = await useBoard.getState().createTask(api, "proj", { title: "New" });

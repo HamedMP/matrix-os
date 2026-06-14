@@ -314,7 +314,9 @@ export const useBoard = create<BoardState>()((set, get) => {
         set((state) => ({
           cardsByProject: {
             ...state.cardsByProject,
-            [slug]: [...(state.cardsByProject[slug] ?? []), card],
+            [slug]: (state.cardsByProject[slug] ?? []).some((existing) => existing.id === card.id)
+              ? (state.cardsByProject[slug] ?? [])
+              : [...(state.cardsByProject[slug] ?? []), card],
           },
           error: null,
         }));
