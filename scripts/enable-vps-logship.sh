@@ -73,7 +73,7 @@ mkdir -p "$(dirname "$KNOWN_HOSTS")"
 printf '%s\n%s\n%s\n' "$LOGS_INGEST_USER" "$LOGS_INGEST_PASSWORD" "$POSTHOG_PROJECT_TOKEN" |
   ssh -i "$VPS_SSH_KEY" -o StrictHostKeyChecking=accept-new \
     -o UserKnownHostsFile="$KNOWN_HOSTS" "root@${ip}" \
-    "IFS= read -r u && IFS= read -r p && IFS= read -r t && LOGS_INGEST_USER=\"\$u\" LOGS_INGEST_PASSWORD=\"\$p\" POSTHOG_PROJECT_TOKEN=\"\$t\" /opt/matrix/app/bin/matrix-install-logship '${LOGS_INGEST_URL}' '${HANDLE}' '${MATRIX_ENV}'"
+    "IFS= read -r u && IFS= read -r p && IFS= read -r t && LOGS_INGEST_USER=\"\$u\" LOGS_INGEST_PASSWORD=\"\$p\" POSTHOG_PROJECT_TOKEN=\"\$t\" /opt/matrix/bin/matrix-install-logship '${LOGS_INGEST_URL}' '${HANDLE}' '${MATRIX_ENV}'"
 
 # Record enrollment in the ops-side inventory so credential rotation has a
 # concrete target list (spec 093). Idempotent: one line per handle.
