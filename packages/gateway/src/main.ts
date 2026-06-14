@@ -6,6 +6,11 @@ import { fileURLToPath } from "node:url";
 import { writeHeapSnapshot } from "node:v8";
 import { ensureHome, loadHandle, saveIdentity, deriveAiHandle } from "@matrix-os/kernel";
 import type { SyncReport } from "@matrix-os/kernel";
+import {
+  createPostHogErrorTracker,
+  installPostHogProcessErrorTracking,
+  resolveOwnerTelemetryDistinctId,
+} from "@matrix-os/observability";
 import { createGateway } from "./server.js";
 
 try {
@@ -13,6 +18,15 @@ try {
 } catch (err: unknown) {
   console.warn("[gateway] Could not load .env:", err instanceof Error ? err.message : String(err));
 }
+
+const processPosthogErrorTracker = createPostHogErrorTracker({
+  service: "matrix-gateway",
+});
+const posthogProcessErrors = installPostHogProcessErrorTracking({
+  tracker: processPosthogErrorTracker,
+  service: "matrix-gateway",
+  distinctId: resolveOwnerTelemetryDistinctId(),
+});
 
 const syncResult = ensureHome(process.env.MATRIX_HOME || undefined);
 const homePath = syncResult.homePath;
@@ -75,7 +89,9 @@ if (proxyUrl) {
 }
 
 process.on("SIGINT", async () => {
+  posthogProcessErrors.dispose();
   await gateway.close();
+  await processPosthogErrorTracker.shutdown();
   process.exit(0);
 });
 

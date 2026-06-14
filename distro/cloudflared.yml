@@ -2,8 +2,6 @@ tunnel: matrix-os
 credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
-  - hostname: grafana.matrix-os.com
-    service: http://grafana:3000
   # Authenticated push-only Loki ingest edge (basic auth in logs-edge).
   - hostname: logs.matrix-os.com
     service: http://logs-edge:8080

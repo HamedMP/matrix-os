@@ -39,6 +39,8 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
   beforeEach(async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_"bad"&<tag>';
+    process.env.AUTH_SHELL_HOST = '127.0.0.1';
+    process.env.AUTH_SHELL_PORT = '1';
     ({ db } = await createTestPlatformDb());
 
     // Clerk stub that always fails verification -- proves the short-circuit
@@ -54,6 +56,8 @@ describe("container-proxy middleware short-circuit for device-flow paths", () =>
     await destroyTestPlatformDb(db);
     delete process.env.PLATFORM_JWT_SECRET;
     delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    delete process.env.AUTH_SHELL_HOST;
+    delete process.env.AUTH_SHELL_PORT;
   });
 
   it("GET /auth/device?user_code=XYZ on Host app.matrix-os.com short-circuits to the device-flow handler (not 500/502)", async () => {
