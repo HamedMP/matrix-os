@@ -352,6 +352,21 @@ describe("ShellSocket server frames", () => {
     expect(h.events.outputs).toEqual([{ data: "still alive", seq: 1 }]);
   });
 
+  it("keeps the handshake timeout active after a pre-attach non-fatal error", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.latest().open();
+    h.latest().frame({ type: "error", code: "buffer_overflow", message: "slow down" });
+
+    h.timers.advance(499);
+    expect(h.sockets).toHaveLength(1);
+    h.timers.advance(1);
+
+    expect(h.socket.state).toBe("reconnecting");
+    h.timers.advance(500);
+    expect(h.sockets).toHaveLength(2);
+  });
+
   it("ignores malformed JSON frames without crashing", () => {
     const h = createHarness();
     connectAndAttach(h);

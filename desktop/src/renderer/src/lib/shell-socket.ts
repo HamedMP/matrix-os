@@ -370,9 +370,9 @@ export class ShellSocket {
   }
 
   private handleErrorFrame(frame: Record<string, unknown>): void {
-    this.clearAttachHandshakeTimer();
     const code = typeof frame.code === "string" ? frame.code : "unknown";
     if (FATAL_ERROR_CODES.has(code)) {
+      this.clearAttachHandshakeTimer();
       this.teardownSocket();
       this.clearAllTimers();
       this.setState("fatal", { code });
