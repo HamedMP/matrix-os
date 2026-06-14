@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createShellClient,
   SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
@@ -8,6 +8,7 @@ import {
 
 class FakeWebSocket extends EventEmitter {
   static last: FakeWebSocket | null = null;
+  static instances: FakeWebSocket[] = [];
 
   url: string;
   sent: string[] = [];
@@ -17,6 +18,7 @@ class FakeWebSocket extends EventEmitter {
     super();
     this.url = url;
     FakeWebSocket.last = this;
+    FakeWebSocket.instances.push(this);
   }
 
   send(data: string): void {
@@ -28,7 +30,24 @@ class FakeWebSocket extends EventEmitter {
   }
 }
 
+async function waitForFakeSocketCount(expectedCount: number): Promise<void> {
+  const deadline = Date.now() + 250;
+  while (FakeWebSocket.instances.length < expectedCount) {
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for ${expectedCount} fake WebSocket instances; saw ${FakeWebSocket.instances.length}`);
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1);
+    });
+  }
+}
+
 describe("createShellClient attachSession", () => {
+  beforeEach(() => {
+    FakeWebSocket.last = null;
+    FakeWebSocket.instances = [];
+  });
+
   it("detaches on raw Ctrl-C before the websocket has attached", async () => {
     const input = new PassThrough() as PassThrough & {
       isTTY: true;
@@ -104,8 +123,8 @@ describe("createShellClient attachSession", () => {
     expect(FakeWebSocket.last?.closed).toBe(false);
     expect(FakeWebSocket.last?.sent).toContain(JSON.stringify({ type: "input", data: "\u0003" }));
 
-    FakeWebSocket.last?.emit("close");
-    await attach;
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
   });
 
   it("uses live tail by default so attach does not replay stale full-screen frames", async () => {
@@ -124,8 +143,48 @@ describe("createShellClient attachSession", () => {
     expect(FakeWebSocket.last?.url).toContain(`fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`);
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-    FakeWebSocket.last?.emit("close");
-    await attach;
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
+  it("reconnects on unexpected close after attach instead of resolving detached", async () => {
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+
+    const attach = client.attachSession("main", {
+      input: new PassThrough() as NodeJS.ReadStream,
+      output: new PassThrough() as NodeJS.WriteStream,
+      errorOutput: new PassThrough() as NodeJS.WriteStream,
+      WebSocketImpl: FakeWebSocket as never,
+      heartbeatIntervalMs: 0,
+      reconnectBaseDelayMs: 1,
+      reconnectMaxDelayMs: 1,
+    });
+
+    const firstSocket = FakeWebSocket.last;
+    firstSocket?.emit("message", JSON.stringify({ type: "attached" }));
+    firstSocket?.emit("close");
+
+    await waitForFakeSocketCount(2);
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(FakeWebSocket.instances[0]).toBe(firstSocket);
+    expect(FakeWebSocket.instances[1]?.url).toContain(`fromSeq=${SHELL_ATTACH_LIVE_TAIL_FROM_SEQ}`);
+
+    const result = await Promise.race([
+      attach.then((value) => ({ status: "settled" as const, value })),
+      new Promise<{ status: "pending" }>((resolve) => {
+        setTimeout(() => resolve({ status: "pending" }), 10);
+      }),
+    ]);
+    expect(result).toEqual({ status: "pending" });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
   });
 
   it("forwards SIGINT after attach so terminals that still emit signals can interrupt remote programs", async () => {
@@ -162,8 +221,8 @@ describe("createShellClient attachSession", () => {
     expect(FakeWebSocket.last?.closed).toBe(false);
     expect(FakeWebSocket.last?.sent.filter((frame) => frame === JSON.stringify({ type: "input", data: "\u0003" }))).toHaveLength(2);
 
-    FakeWebSocket.last?.emit("close");
-    await attach;
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
   });
 
   it("detaches cleanly on SIGTERM after attach", async () => {
