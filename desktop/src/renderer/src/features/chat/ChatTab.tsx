@@ -2,7 +2,7 @@ import { GitBranch, Laptop, Plus, SquareTerminal } from "lucide-react";
 import { useState } from "react";
 import { groupMessages } from "../../lib/chat";
 import { useBoard } from "../../stores/board";
-import { useHermesChat } from "../../stores/hermes-chat";
+import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
 import { Conversation, ConversationContent, ConversationEmptyState } from "./elements/conversation";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
@@ -38,6 +38,10 @@ function ConnectCard({ title, body, done }: { title: string; body: string; done?
   );
 }
 
+export function canSubmitChatDraft(draft: string, status: HermesStatus): boolean {
+  return draft.trim().length > 0 && status === "idle";
+}
+
 export default function ChatTab() {
   const messages = useHermesChat((s) => s.messages);
   const status = useHermesChat((s) => s.status);
@@ -53,7 +57,7 @@ export default function ChatTab() {
   const scrollKey = lastMessage ? `${lastMessage.id}:${lastMessage.content.length}:${status}` : status;
 
   const submit = () => {
-    if (draft.trim().length === 0) return;
+    if (!canSubmitChatDraft(draft, status)) return;
     send(draft);
     setDraft("");
   };
