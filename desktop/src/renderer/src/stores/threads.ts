@@ -139,10 +139,9 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
   },
 
   handleKernelMessage: (msg, opts) => {
+    const rawMessage = msg as unknown as { requestId?: unknown };
     const rawRequestId =
-      typeof (msg as { requestId?: unknown }).requestId === "string"
-        ? (msg as { requestId: string }).requestId
-        : undefined;
+      typeof rawMessage.requestId === "string" ? rawMessage.requestId : undefined;
     const parsed = KnownKernelMessageSchema.safeParse(msg);
     if (!parsed.success) return {};
     const event = parsed.data;
