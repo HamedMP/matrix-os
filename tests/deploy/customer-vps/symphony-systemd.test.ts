@@ -307,9 +307,12 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(linearClient).toContain('service: "linear"');
     expect(linearClient).toContain('action: "graphql"');
     expect(linearClient).toContain(":matrix_linear_bridge_error");
-    // A 404 from the bridge means Linear is not connected; classify it distinctly
-    // so the orchestrator can surface "setup_required" instead of a generic error.
+    // A 404 whose error says "not connected" means Linear is not connected;
+    // classify it distinctly so the orchestrator surfaces "setup_required". Other
+    // 404s (e.g. unknown handle) stay generic so they are not misreported.
     expect(linearClient).toContain(":linear_not_connected");
-    expect(linearClient).toContain("status: 404, body: %{\"error\" => _error}");
+    expect(linearClient).toContain("status: 404, body: %{\"error\" => error}");
+    expect(linearClient).toContain("linear_not_connected_error?");
+    expect(linearClient).toContain('String.contains?(String.downcase(error), "not connected")');
   });
 });

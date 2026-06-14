@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 
 // Extract a `name() { ... }` shell function body (signature line through the
 // first line that is exactly `}`) from a script so we can exercise the real
-// code without sourcing the whole daemon (which would run its poll loop).
+// code without sourcing the whole daemon (which would run its poll loop). The
+// host-bin functions follow the repo convention of a column-0 closing `}` and
+// have no nested column-0 `}` line, so an exact-line match is deterministic
+// here; brace counting would misfire on `${...}` parameter expansions.
 function extractShellFunction(script: string, name: string): string {
   const lines = script.split("\n");
   const start = lines.findIndex((l) => l === `${name}() {`);
