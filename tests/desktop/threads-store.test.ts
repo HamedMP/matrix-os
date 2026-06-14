@@ -174,6 +174,22 @@ describe("status transitions", () => {
     expect(getThread(t1.id).status).toBe("needs-attention");
     expect(getThread(t2.id).status).toBe("done");
   });
+
+  it("approval:request routes to the matching requestId when multiple threads are running", () => {
+    const store = useThreads.getState();
+    const t1 = store.startThread({ text: "one", requestId: "r1", now: 1 });
+    const t2 = store.startThread({ text: "two", requestId: "r2", now: 2 });
+    useThreads.getState().handleKernelMessage({
+      type: "approval:request",
+      id: "ap-1",
+      toolName: "Bash",
+      args: {},
+      timeout: 30,
+      requestId: "r1",
+    });
+    expect(getThread(t1.id).status).toBe("needs-attention");
+    expect(getThread(t2.id).status).toBe("running");
+  });
 });
 
 describe("unread and notifications", () => {

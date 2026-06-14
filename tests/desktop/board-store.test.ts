@@ -311,17 +311,35 @@ describe("moveTask and archiveTask", () => {
     });
   });
 
-  it("archiveTask patches status archived and hides the card from columns", async () => {
+  it("archiveTask keeps the card visible until the server confirms archive", async () => {
     await seed();
+    const d = deferred<unknown>();
     const api = makeApi({
-      patch: vi.fn().mockResolvedValue({ task: wireTask({ status: "archived" }) }),
+      patch: vi.fn().mockReturnValue(d.promise),
     });
-    await useBoard.getState().archiveTask(api, "proj", "task_a");
+    const pending = useBoard.getState().archiveTask(api, "proj", "task_a");
+
+    expect(groupCardsByColumn(useBoard.getState().cardsByProject["proj"]!).todo).toEqual([
+      card(),
+    ]);
+
+    d.resolve({ task: wireTask({ status: "archived" }) });
+    await pending;
     expect(api.patch).toHaveBeenCalledWith("/api/projects/proj/tasks/task_a", {
       status: "archived",
     });
     const grouped = groupCardsByColumn(useBoard.getState().cardsByProject["proj"]!);
     expect(grouped.todo).toEqual([]);
+  });
+
+  it("archiveTask keeps the card visible and records the error when the server rejects", async () => {
+    await seed();
+    const api = makeApi({ patch: vi.fn().mockRejectedValue(new AppError("server")) });
+    await useBoard.getState().archiveTask(api, "proj", "task_a");
+    expect(groupCardsByColumn(useBoard.getState().cardsByProject["proj"]!).todo).toEqual([
+      card(),
+    ]);
+    expect(useBoard.getState().error).toBe("server");
   });
 });
 

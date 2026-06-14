@@ -331,7 +331,27 @@ export const useBoard = create<BoardState>()((set, get) => {
     moveTask: (api, slug, taskId, status, order) =>
       mutateTask(api, slug, taskId, { status, order }),
 
-    archiveTask: (api, slug, taskId) => mutateTask(api, slug, taskId, { status: "archived" }),
+    archiveTask: (api, slug, taskId) => {
+      const cards = get().cardsByProject[slug];
+      if (!cards?.some((card) => card.id === taskId)) return Promise.resolve();
+      if (!canEnqueueTaskMutation(taskId)) {
+        set({ error: "server" });
+        return Promise.resolve();
+      }
+      return enqueueTaskMutation(taskId, async () => {
+        try {
+          const response = await api.patch<{ task: unknown }>(taskPath(slug, taskId), {
+            status: "archived",
+          });
+          const card = toCard(response.task);
+          if (card) patchCard(slug, taskId, () => card);
+          set({ error: null });
+        } catch (err: unknown) {
+          console.error("[board] Task archive failed:", err);
+          set({ error: categoryOf(err) });
+        }
+      });
+    },
 
     deleteTask: (api, slug, taskId) => {
       const cards = get().cardsByProject[slug];

@@ -139,6 +139,10 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
   },
 
   handleKernelMessage: (msg, opts) => {
+    const rawRequestId =
+      typeof (msg as { requestId?: unknown }).requestId === "string"
+        ? (msg as { requestId: string }).requestId
+        : undefined;
     const parsed = KnownKernelMessageSchema.safeParse(msg);
     if (!parsed.success) return {};
     const event = parsed.data;
@@ -224,7 +228,8 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
         });
       }
       case "approval:request": {
-        const thread = state.threads.find((t) => t.status === "running");
+        const thread =
+          byRequestId(rawRequestId) ?? state.threads.find((t) => t.status === "running");
         if (!thread) return {};
         return apply(thread, { status: "needs-attention" }, "attention");
       }
