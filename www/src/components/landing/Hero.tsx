@@ -45,8 +45,7 @@ export function Hero() {
           alt="The Matrix OS workspace with terminals, apps, and agent sessions"
           width={1920}
           height={1080}
-          preload
-          loading="eager"
+          priority
           className="block h-auto w-full"
         />
       </div>
