@@ -1,5 +1,6 @@
 import { Save } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { type AgentConfigView, normalizeAgentConfig, selectedModelEffort } from "../../../lib/agent-config";
 import { Button, StatusDot } from "../../../design/primitives";
 import { toUserMessage } from "../../../lib/errors";
 import { useConnection } from "../../../stores/connection";
@@ -9,17 +10,6 @@ const SOUL_PATH = "/files/system/soul.md";
 const AGENT_PATH = "/api/settings/agent";
 const CREDENTIALS_PATH = "/api/agents/credentials/status";
 
-interface ModelOption {
-  id: string;
-  label: string;
-  tier: string;
-}
-interface AgentConfig {
-  kernel: { model: string | null; effort: string | null };
-  availableModels: ModelOption[];
-  availableEfforts: string[];
-  defaults: { model: string; effort: string };
-}
 interface AgentCredential {
   agent: string;
   status: "available" | "missing" | "expired" | "revoked" | "failed";
@@ -178,7 +168,7 @@ function SoulEditor() {
 
 function ModelEffortCard() {
   const api = useConnection((s) => s.api);
-  const [config, setConfig] = useState<AgentConfig | null>(null);
+  const [config, setConfig] = useState<AgentConfigView | null>(null);
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState<string | null>(null);
   const [base, setBase] = useState<{ model: string | null; effort: string | null }>({ model: null, effort: null });
@@ -203,11 +193,11 @@ function ModelEffortCard() {
     if (!api) return;
     let cancelled = false;
     api
-      .get<AgentConfig>(AGENT_PATH)
-      .then((cfg) => {
+      .get<unknown>(AGENT_PATH)
+      .then((raw) => {
         if (cancelled) return;
-        const m = cfg.kernel.model ?? cfg.defaults.model;
-        const e = cfg.kernel.effort ?? cfg.defaults.effort;
+        const cfg = normalizeAgentConfig(raw);
+        const { model: m, effort: e } = selectedModelEffort(cfg);
         setConfig(cfg);
         setModel(m);
         setEffort(e);
@@ -263,6 +253,13 @@ function ModelEffortCard() {
       </div>
       {!config ? (
         <Empty text={error ?? "Loading…"} />
+      ) : config.availableModels.length === 0 ? (
+        <Empty
+          text={
+            error ??
+            "Your computer needs a runtime update before Hermes' model and reasoning effort can be configured here."
+          }
+        />
       ) : (
         <>
           <div className="flex flex-col gap-1.5">
