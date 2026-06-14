@@ -143,7 +143,17 @@ export default function Sidebar() {
           active={isView("settings")}
           onClick={() => navigate({ kind: "settings" })}
         />
-        <IconButton label="Sign out" onClick={() => void signOut()}>
+        <IconButton
+          label="Sign out"
+          onClick={() => {
+            void signOut().catch((err: unknown) => {
+              console.warn(
+                "[sidebar] sign-out failed:",
+                err instanceof Error ? err.message : String(err),
+              );
+            });
+          }}
+        >
           <LogOut size={14} />
         </IconButton>
       </div>
