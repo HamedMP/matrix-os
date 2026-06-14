@@ -482,6 +482,22 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(saved.channels.telegram.enabled).toBe(true);
     });
 
+    it("normalizes the response after partial updates to hand-edited kernel config", async () => {
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({ kernel: { model: "gpt-4o", effort: "medium" } }),
+      );
+
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ effort: "max" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, kernel: { model: null, effort: "max" } });
+    });
+
     it("rejects a model outside the allowlist", async () => {
       const res = await app.request("/api/settings/agent", {
         method: "PUT",

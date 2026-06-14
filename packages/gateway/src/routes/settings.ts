@@ -276,8 +276,8 @@ export function createSettingsRoutes(opts: {
     return c.json({
       ok: true,
       kernel: {
-        model: typeof kernel.model === "string" ? kernel.model : null,
-        effort: typeof kernel.effort === "string" ? kernel.effort : null,
+        model: normalizeKernelModel(kernel.model),
+        effort: normalizeKernelEffort(kernel.effort),
       },
     });
   });
