@@ -92,6 +92,8 @@ export function initializeWwwPostHog(
     ...(apiHost ? { api_host: apiHost } : {}),
     ui_host: currentConfig.uiHost,
     defaults: "2026-01-30",
+    autocapture: false,
+    capture_pageview: false,
     capture_exceptions: true,
     // Masked session replay: every input is masked by default so signup and
     // billing failures can be replayed without capturing what users typed.
