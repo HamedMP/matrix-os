@@ -484,7 +484,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(140, 199, 190, 0.14)",
+    borderBottomColor: "rgba(154, 164, 140, 0.14)",
   },
   iconButton: {
     width: 42,
@@ -494,7 +494,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: "rgba(234, 236, 234, 0.08)",
     borderWidth: 1,
-    borderColor: "rgba(140, 199, 190, 0.14)",
+    borderColor: "rgba(154, 164, 140, 0.14)",
   },
   headerTitleGroup: {
     flex: 1,
@@ -524,7 +524,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 11,
     borderWidth: 1,
-    borderColor: "rgba(140, 199, 190, 0.14)",
+    borderColor: "rgba(154, 164, 140, 0.14)",
     backgroundColor: "rgba(234, 236, 234, 0.07)",
   },
   sessionChipActiveCombined: {
@@ -535,8 +535,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 11,
     borderWidth: 1,
-    backgroundColor: "rgba(140, 199, 190, 0.18)",
-    borderColor: "rgba(140, 199, 190, 0.38)",
+    backgroundColor: "rgba(154, 164, 140, 0.18)",
+    borderColor: "rgba(154, 164, 140, 0.38)",
   },
   sessionChipText: {
     fontFamily: fonts.mono,
@@ -553,8 +553,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "rgba(140, 199, 190, 0.38)",
-    backgroundColor: "rgba(140, 199, 190, 0.12)",
+    borderColor: "rgba(154, 164, 140, 0.38)",
+    backgroundColor: "rgba(154, 164, 140, 0.12)",
   },
   continueIcon: {
     width: 38,
@@ -647,7 +647,7 @@ const styles = StyleSheet.create({
   },
   commandArea: {
     borderTopWidth: 1,
-    borderTopColor: "rgba(140, 199, 190, 0.14)",
+    borderTopColor: "rgba(154, 164, 140, 0.14)",
     backgroundColor: "#0f120f",
   },
   promptRow: {
@@ -694,7 +694,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(140, 199, 190, 0.14)",
+    borderColor: "rgba(154, 164, 140, 0.14)",
     backgroundColor: "rgba(234, 236, 234, 0.07)",
   },
   actionButtonText: {

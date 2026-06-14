@@ -82,7 +82,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 8,
     borderTopWidth: 1,
-    borderTopColor: "rgba(140, 199, 190, 0.16)",
+    borderTopColor: "rgba(154, 164, 140, 0.16)",
     backgroundColor: "#0f120f",
   },
   arrowRow: {
@@ -112,7 +112,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(140, 199, 190, 0.18)",
+    borderColor: "rgba(154, 164, 140, 0.18)",
     backgroundColor: "rgba(234, 236, 234, 0.08)",
   },
   keyText: {
@@ -127,7 +127,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(140, 199, 190, 0.18)",
+    borderColor: "rgba(154, 164, 140, 0.18)",
     backgroundColor: "rgba(234, 236, 234, 0.08)",
   },
   iconButton: {
@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "rgba(140, 199, 190, 0.18)",
+    borderColor: "rgba(154, 164, 140, 0.18)",
     backgroundColor: "rgba(234, 236, 234, 0.08)",
   },
 });

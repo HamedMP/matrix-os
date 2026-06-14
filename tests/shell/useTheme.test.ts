@@ -121,7 +121,7 @@ describe("theme system", () => {
   it("converts theme to CSS variables", () => {
     const vars = themeToCssVars(DEFAULT_THEME);
     expect(vars["--background"]).toBe("#FAFAF9");
-    expect(vars["--primary"]).toBe("#8CC7BE");
+    expect(vars["--primary"]).toBe("#9AA48C");
     expect(vars["--font-mono"]).toBe("JetBrains Mono, monospace");
     expect(vars["--radius"]).toBe("0.75rem");
   });

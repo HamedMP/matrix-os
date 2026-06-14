@@ -10,13 +10,13 @@ describe("theme", () => {
     const { light } = colors;
     expect(light.background).toBe("#FAFAF9");
     expect(light.foreground).toBe("#1c1917");
-    expect(light.primary).toBe("#8CC7BE");
+    expect(light.primary).toBe("#9AA48C");
     expect(light.card).toBe("#FFFFFF");
     expect(light.border).toBe("#E5E5E4");
   });
 
   it("dark theme has same primary color", () => {
-    expect(colors.dark.primary).toBe("#8CC7BE");
+    expect(colors.dark.primary).toBe("#9AA48C");
   });
 
   it("dark theme has inverted background/foreground", () => {
