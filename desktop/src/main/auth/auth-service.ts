@@ -44,6 +44,8 @@ export class AuthService {
   private credential: StoredCredential | null = null;
   private profile: ConnectionProfile | null = null;
   private flowState: "idle" | "pending" | "authorized" | "expired" = "idle";
+  private flowNonce = 0;
+  private pendingDeviceCode: Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn"> | null = null;
   private readonly deps: AuthServiceDeps;
 
   constructor(deps: AuthServiceDeps) {
@@ -53,10 +55,17 @@ export class AuthService {
   async init(): Promise<void> {
     this.credential = await this.deps.credentialStore.load();
     this.profile = await this.deps.loadProfile();
+    if (this.credential && !this.isCredentialValid(this.credential)) {
+      this.credential = null;
+      this.profile = null;
+      await this.deps.credentialStore.clear();
+      await this.deps.clearProfile();
+    }
   }
 
   getToken(): string | null {
-    return this.credential?.accessToken ?? null;
+    if (!this.credential || !this.isCredentialValid(this.credential)) return null;
+    return this.credential.accessToken;
   }
 
   getGatewayOrigin(): string {
@@ -64,7 +73,7 @@ export class AuthService {
   }
 
   getStatus(): AuthStatus {
-    const signedIn = this.credential !== null;
+    const signedIn = this.credential !== null && this.isCredentialValid(this.credential);
     return {
       signedIn,
       ...(signedIn && this.profile ? { handle: this.profile.handle } : {}),
@@ -74,10 +83,19 @@ export class AuthService {
   }
 
   async startDeviceFlow(): Promise<Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn">> {
+    if (this.flowState === "pending" && this.pendingDeviceCode) {
+      return this.pendingDeviceCode;
+    }
     const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
     const baseUrl = this.getGatewayOrigin();
     const code = await requestDeviceCode({ fetchFn, baseUrl });
     this.flowState = "pending";
+    const nonce = ++this.flowNonce;
+    this.pendingDeviceCode = {
+      userCode: code.userCode,
+      verificationUri: code.verificationUri,
+      expiresIn: code.expiresIn,
+    };
 
     // Background poll loop; auth:poll reads flowState snapshots.
     void pollForToken({
@@ -89,6 +107,7 @@ export class AuthService {
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     })
       .then(async (token) => {
+        if (nonce !== this.flowNonce) return;
         this.credential = token;
         this.profile = {
           handle: token.handle,
@@ -99,11 +118,14 @@ export class AuthService {
         await this.deps.credentialStore.save(token);
         await this.deps.saveProfile(this.profile);
         this.flowState = "authorized";
+        this.pendingDeviceCode = null;
         this.deps.onAuthChanged(this.getStatus());
       })
       .catch((err: unknown) => {
+        if (nonce !== this.flowNonce) return;
         if (err instanceof DeviceFlowError) {
           this.flowState = "expired";
+          this.pendingDeviceCode = null;
           return;
         }
         console.warn(
@@ -111,6 +133,7 @@ export class AuthService {
           err instanceof Error ? err.message : String(err),
         );
         this.flowState = "expired";
+        this.pendingDeviceCode = null;
       });
 
     void this.deps.openExternal(code.verificationUri).catch((err: unknown) => {
@@ -120,11 +143,7 @@ export class AuthService {
       );
     });
 
-    return {
-      userCode: code.userCode,
-      verificationUri: code.verificationUri,
-      expiresIn: code.expiresIn,
-    };
+    return this.pendingDeviceCode;
   }
 
   poll(): PollResult {
@@ -145,11 +164,17 @@ export class AuthService {
   }
 
   async signOut(): Promise<void> {
+    this.flowNonce += 1;
+    this.pendingDeviceCode = null;
     this.credential = null;
     this.profile = null;
     this.flowState = "idle";
     await this.deps.credentialStore.clear();
     await this.deps.clearProfile();
     this.deps.onAuthChanged(this.getStatus());
+  }
+
+  private isCredentialValid(credential: StoredCredential): boolean {
+    return credential.expiresAt > Date.now();
   }
 }

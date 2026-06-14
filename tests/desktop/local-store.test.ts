@@ -48,6 +48,13 @@ describe("local store", () => {
     await expect(store.set("windowBounds", { x: "a" } as never)).rejects.toThrow();
   });
 
+  it("validates unknown IPC state values before writing", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    await store.setUnknown("appearance", { theme: "system" });
+    await expect(store.setUnknown("appearance", { theme: "neon" })).rejects.toThrow();
+    expect(await store.get("appearance")).toEqual({ theme: "system" });
+  });
+
   it("prunes panel layouts not touched within the max age", async () => {
     const dir = await makeDir();
     const now = 1_750_000_000_000;

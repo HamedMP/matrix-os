@@ -62,7 +62,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   }));
   handle("state:set", async ({ key, value }) => {
     try {
-      await ctx.store.set(key as LocalStoreKey, value as never);
+      await ctx.store.setUnknown(key as LocalStoreKey, value);
     } catch (err: unknown) {
       console.warn(
         `[ipc] state:set rejected for key ${key}:`,

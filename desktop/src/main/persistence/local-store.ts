@@ -64,6 +64,7 @@ interface LocalStoreOptions {
 export interface LocalStore {
   get<K extends LocalStoreKey>(key: K): Promise<LocalStoreValue<K> | null>;
   set<K extends LocalStoreKey>(key: K, value: LocalStoreValue<K>): Promise<void>;
+  setUnknown(key: LocalStoreKey, value: unknown): Promise<void>;
   delete(key: LocalStoreKey): Promise<void>;
   setPanelLayout(taskKey: string, layout: PanelLayout): Promise<void>;
 }
@@ -137,6 +138,13 @@ export function createLocalStore(options: LocalStoreOptions): LocalStore {
     },
 
     async set(key, value) {
+      const parsed = KEY_SCHEMAS[key].parse(value);
+      await enqueue((state) => {
+        state[key] = parsed;
+      });
+    },
+
+    async setUnknown(key, value) {
       const parsed = KEY_SCHEMAS[key].parse(value);
       await enqueue((state) => {
         state[key] = parsed;
