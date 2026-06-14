@@ -146,6 +146,7 @@ describe("useSessions store", () => {
       baseUrl: "https://x.test",
       get,
       post,
+      put: vi.fn(),
       patch: vi.fn(),
       delete: vi.fn(),
       putText: vi.fn(),
