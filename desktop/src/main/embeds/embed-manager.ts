@@ -48,6 +48,11 @@ export class EmbedManager {
   constructor(options: EmbedManagerOptions) {
     this.createView = options.createView;
     this.maxLive = options.maxLive ?? DEFAULT_MAX_LIVE;
+    if (this.maxLive > MAX_TOTAL_EMBEDS) {
+      throw new Error(
+        `maxLive (${this.maxLive}) must not exceed MAX_TOTAL_EMBEDS (${MAX_TOTAL_EMBEDS})`,
+      );
+    }
   }
 
   open(kind: EmbedKind, slug: string | null, bounds: Bounds, url: string): string {
@@ -153,6 +158,10 @@ export class EmbedManager {
       const victim =
         this.leastRecentlyUsed((r) => !r.live) ?? this.leastRecentlyUsed(() => true);
       if (!victim) break;
+      if (victim.live) {
+        victim.view.detach();
+        victim.live = false;
+      }
       victim.view.destroy();
       this.records.delete(victim.id);
     }

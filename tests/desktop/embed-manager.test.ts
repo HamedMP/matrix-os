@@ -120,6 +120,10 @@ describe("EmbedManager", () => {
     expect(views[2]?.view.events).not.toContain("detach");
   });
 
+  it("rejects maxLive values above the total embed cap", () => {
+    expect(() => makeManager(MAX_TOTAL_EMBEDS + 1)).toThrow(/maxLive/);
+  });
+
   it("focus bumps recency so the LRU choice changes", () => {
     const { manager, views } = makeManager(2);
     const a = manager.open("app", "a", BOUNDS, "https://gw.test/a");
