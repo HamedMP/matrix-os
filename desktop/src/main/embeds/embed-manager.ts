@@ -107,13 +107,13 @@ export class EmbedManager {
   close(embedId: string): boolean {
     const record = this.records.get(embedId);
     if (!record) return false;
-    record.view.destroy();
+    this.destroyRecord(record);
     this.records.delete(embedId);
     return true;
   }
 
   closeAll(): void {
-    for (const record of this.records.values()) record.view.destroy();
+    for (const record of this.records.values()) this.destroyRecord(record);
     this.records.clear();
   }
 
@@ -158,13 +158,17 @@ export class EmbedManager {
       const victim =
         this.leastRecentlyUsed((r) => !r.live) ?? this.leastRecentlyUsed(() => true);
       if (!victim) break;
-      if (victim.live) {
-        victim.view.detach();
-        victim.live = false;
-      }
-      victim.view.destroy();
+      this.destroyRecord(victim);
       this.records.delete(victim.id);
     }
+  }
+
+  private destroyRecord(record: EmbedRecord): void {
+    if (record.live) {
+      record.view.detach();
+      record.live = false;
+    }
+    record.view.destroy();
   }
 
   private leastRecentlyUsed(predicate: (record: EmbedRecord) => boolean): EmbedRecord | null {

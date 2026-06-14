@@ -175,7 +175,13 @@ describe("EmbedManager", () => {
     const { manager, views } = makeManager();
     const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/");
     expect(manager.close(id)).toBe(true);
-    expect(views[0]?.view.events).toContain("destroy");
+    expect(views[0]?.view.events).toEqual([
+      "attach",
+      "setBounds",
+      "load:https://gw.test/",
+      "detach",
+      "destroy",
+    ]);
     expect(manager.has(id)).toBe(false);
     expect(manager.liveCount).toBe(0);
     expect(manager.close(id)).toBe(false);
@@ -195,9 +201,20 @@ describe("EmbedManager", () => {
     manager.open("app", "b", BOUNDS, "https://gw.test/b");
     manager.closeAll();
     expect(manager.liveCount).toBe(0);
-    for (const { view } of views) {
-      expect(view.events).toContain("destroy");
-    }
+    expect(views[0]?.view.events).toEqual([
+      "attach",
+      "setBounds",
+      "load:https://gw.test/a",
+      "detach",
+      "destroy",
+    ]);
+    expect(views[1]?.view.events).toEqual([
+      "attach",
+      "setBounds",
+      "load:https://gw.test/b",
+      "detach",
+      "destroy",
+    ]);
   });
 
   it("caps total records and evicts the LRU suspended embed entirely", () => {
