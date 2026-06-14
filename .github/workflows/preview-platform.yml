@@ -8,15 +8,27 @@
 # Cloud Run service running as a dedicated runtime SA
 # (matrix-platform-preview-runner) that can only read preview/staging
 # secrets: the staging database, preview-generated platform/jwt/edge-router
-# secrets, the Clerk keys, and the R2 bundles credentials (required for
-# CUSTOMER_VPS_ENABLED=true boot validation -- no Hetzner token is mounted,
-# so previews cannot provision real VPSes). Production CLOUD_RUN_SERVICE,
-# its runtime SA, and its secrets are never referenced. The service is
-# IAM-authenticated only (no public ingress); reach a preview with
-#   gcloud run services proxy matrix-platform-preview --region europe-west3
-# or an identity token. Config lives in the GitHub "Preview" environment;
-# the jobs no-op with a notice when it is absent. Neon branch databases per
-# PR remain deferred (spec 093).
+# secrets, the Clerk keys, the R2 bundles credentials, and Stripe TEST-mode
+# secrets (test secret key, test webhook secret, test price IDs). Production
+# CLOUD_RUN_SERVICE, its runtime SA, and its secrets are never referenced, and
+# only test-mode Stripe keys are mounted -- a preview can never touch live money
+# or the production database.
+#
+# Exposure: the service runs with public ingress (--allow-unauthenticated),
+# exactly like the production platform -- the app enforces its own Clerk/JWT
+# auth on every route, and the operator API stays gated by the preview
+# PLATFORM_SECRET. It is fronted by the browser-reachable host
+# https://preview.matrix-os.com so onboarding/billing PRs can be walked end to
+# end before merge. Previews are still per-PR tagged, zero-traffic revisions;
+# to walk a specific PR, route its tag to the host:
+#   gcloud run services update-traffic matrix-platform-preview \
+#     --region europe-west3 --to-tags pr-<N>=100
+# then reset when done. No Hetzner token is mounted, so previews still cannot
+# provision real VPSes (enabling the provisioned hand-off slice is a separate,
+# deliberate change -- a preview-scoped Hetzner token plus VPS reaping).
+# Config lives in the GitHub "Preview" environment; the jobs no-op with a
+# notice when it is absent. Neon branch databases per PR remain deferred
+# (spec 093).
 
 name: Preview Platform
 
@@ -106,6 +118,9 @@ jobs:
           # Derive the deterministic service URL (no hardcoded project number).
           project_number="$(gcloud projects describe "$GCP_PROJECT_ID" --format='value(projectNumber)')"
           public_url="https://${CLOUD_RUN_PREVIEW_SERVICE}-${project_number}.${GCP_REGION}.run.app"
+          # Browser-reachable preview host (custom domain mapped to this service).
+          # Origins/redirects and Stripe return URLs resolve to this host.
+          PREVIEW_PUBLIC_URL="${PREVIEW_PUBLIC_URL:-https://preview.matrix-os.com}"
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
@@ -113,9 +128,9 @@ jobs:
             --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
             --tag "pr-${PR_NUMBER}" \
             --no-traffic \
-            --no-allow-unauthenticated \
-            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,PLATFORM_PUBLIC_URL=${public_url}" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest" \
+            --allow-unauthenticated \
+            --set-env-vars "PLATFORM_RUNTIME_MODE=cloud_run,PLATFORM_PORT=8080,PLATFORM_PREVIEW=true,CUSTOMER_VPS_ENABLED=true,CUSTOMER_VPS_IMAGE_VERSION=dev,CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml,AUTH_SHELL_HOST=127.0.0.1,AUTH_SHELL_PORT=3200,MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false,MATRIX_STRIPE_BILLING_ENABLED=true,PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_URL=${PREVIEW_PUBLIC_URL},MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest" \
             --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
             --quiet
           desc="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
@@ -128,6 +143,7 @@ jobs:
             url="https://pr-${PR_NUMBER}---${base#https://}"
           fi
           echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
+          echo "PREVIEW_PUBLIC_URL=$PREVIEW_PUBLIC_URL" >> "$GITHUB_ENV"
 
       - name: Comment preview URL on PR
         if: steps.config.outputs.configured == 'true' && github.event_name == 'pull_request'
@@ -137,10 +153,11 @@ jobs:
           set -euo pipefail
           body="**Platform preview revision deployed**
 
-          - URL: ${PREVIEW_URL} (IAM-authenticated; use \`gcloud run services proxy ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION}\` or an identity token)
-          - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (zero traffic, tag \`pr-${PR_NUMBER}\`)
+          - Browser-reachable host: ${PREVIEW_PUBLIC_URL} (route this PR's tag to it: \`gcloud run services update-traffic ${CLOUD_RUN_PREVIEW_SERVICE} --region ${GCP_REGION} --to-tags pr-${PR_NUMBER}=100\`, then reset when done)
+          - Revision URL: ${PREVIEW_URL}
+          - Service: \`${CLOUD_RUN_PREVIEW_SERVICE}\` (deployed zero-traffic, tag \`pr-${PR_NUMBER}\`)
 
-          Preview revisions run as the preview runtime SA against the staging database; production service, SA, and secrets are untouched."
+          Runs as the preview runtime SA against the staging database with Stripe TEST-mode keys; production service, SA, database, and live Stripe keys are untouched."
           existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
             --jq '[.[] | select(.body | startswith("**Platform preview revision deployed**"))] | .[0].id // ""')"
           if [ -n "$existing" ]; then
