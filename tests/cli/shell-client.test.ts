@@ -426,6 +426,39 @@ describe("shell REST client", () => {
     await expect(attached).resolves.toEqual({ detached: false });
   });
 
+  it("retries transient attach failures after a prior attach", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+
+    const transientFailure = ControlledWebSocket.last!;
+    transientFailure.emit("open");
+    transientFailure.emit("message", JSON.stringify({ type: "error", code: "attach_failed" }));
+    expect(transientFailure.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(ControlledWebSocket.instances).toHaveLength(3);
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
+  });
+
   it("reconnects with fromSeq set after the last output sequence", async () => {
     vi.useFakeTimers();
     const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
