@@ -6,11 +6,11 @@ import { describe, expect, it } from "vitest";
 import App from "@renderer/App";
 
 describe("desktop app scaffold", () => {
-  it("renders the Matrix OS scaffold shell", () => {
+  it("renders the initial app shell", () => {
     const html = renderToStaticMarkup(createElement(App));
 
-    expect(html).toContain("Matrix OS");
-    expect(html).toContain("Operator scaffold");
+    expect(html).toContain("bg-app");
+    expect(html).toContain("Connecting");
   });
 
   it("keeps Node globals out of the sandboxed renderer tsconfig", () => {
