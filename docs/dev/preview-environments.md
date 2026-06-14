@@ -117,9 +117,13 @@ The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
 1. **Stripe test secrets** in Secret Manager (test mode only):
    `stripe-secret-key-test`, `stripe-webhook-secret-test`,
    `stripe-price-matrix-{starter,builder,max}-{monthly,annual}-test`.
-2. **Custom domain** `preview.matrix-os.com` mapped to the
-   `matrix-platform-preview` service (Cloud Run domain mapping) with a
-   Cloudflare DNS record, same as production app/api hosts.
+2. **Routing** `preview.matrix-os.com` → the `matrix-platform-preview` run.app
+   origin (`matrix-platform-preview-<hash>-ey.a.run.app`) via Cloudflare, the
+   **same mechanism app/api.matrix-os.com use** (Cloud Run domain mappings are
+   not available in `europe-west3`, so this is Cloudflare-proxied with the
+   run.app Host header, not a GCP domain mapping). Because previews are tagged
+   zero-traffic revisions, also route the PR under test to traffic
+   (`update-traffic --to-tags pr-<N>=100`) so the base origin serves it.
 3. **Stripe test webhook** → `https://preview.matrix-os.com/billing/webhooks/stripe`
    (`checkout.session.completed`, `.expired`, `customer.subscription.*`); store
    its signing secret as `stripe-webhook-secret-test`.
