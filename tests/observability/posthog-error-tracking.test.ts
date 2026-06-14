@@ -234,7 +234,7 @@ describe("PostHog error tracking", () => {
         error_type: "uncaughtException",
       },
     });
-    expect(flush).toHaveBeenCalledOnce();
+    expect(flush).not.toHaveBeenCalled();
     expect(shutdown).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledWith(1);
   });
@@ -269,7 +269,34 @@ describe("PostHog error tracking", () => {
         error_type: "unhandledRejection",
       },
     });
-    expect(captureException.mock.calls[0]?.[0].message).toBe("Non-Error rejection: string");
+    expect(captureException.mock.calls[0]?.[0].message).toBe("Non-Error rejection: async failure");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("captures object rejection values with diagnostic detail", async () => {
+    const processEvents = new EventEmitter();
+    const captureException = vi.fn().mockResolvedValue(true);
+    const exit = vi.fn();
+
+    installPostHogProcessErrorTracking({
+      tracker: {
+        enabled: true,
+        captureException,
+        flush: vi.fn().mockResolvedValue(undefined),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      },
+      process: processEvents,
+      service: "matrix-platform",
+      logger: { warn: vi.fn(), error: vi.fn() },
+      exit,
+    });
+
+    processEvents.emit("unhandledRejection", { code: "worker_failed", retryable: true }, Promise.resolve());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(captureException.mock.calls[0]?.[0].message).toBe(
+      'Non-Error rejection: {"code":"worker_failed","retryable":true}',
+    );
     expect(exit).not.toHaveBeenCalled();
   });
 

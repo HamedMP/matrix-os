@@ -327,7 +327,6 @@ export function installPostHogProcessErrorTracking(
           distinctId: options.distinctId,
           properties: processProperties(origin),
         });
-        await options.tracker.flush();
         await options.tracker.shutdown();
       } catch (captureErr: unknown) {
         logger.warn(`[posthog] Failed to capture process exception for ${options.service}: ${errorKind(captureErr)}`);
@@ -530,5 +529,30 @@ function errorForLog(err: unknown): string {
 }
 
 function normalizeProcessError(err: unknown): Error {
-  return err instanceof Error ? err : new Error(`Non-Error rejection: ${typeof err}`);
+  return err instanceof Error ? err : new Error(`Non-Error rejection: ${formatProcessRejectionValue(err)}`);
+}
+
+function formatProcessRejectionValue(value: unknown): string {
+  if (typeof value === "string") return sanitizeProcessErrorValue(value);
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (typeof value === "symbol" || typeof value === "function") {
+    return sanitizeProcessErrorValue(String(value));
+  }
+  try {
+    return sanitizeProcessErrorValue(JSON.stringify(value));
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      return errorKind(err);
+    }
+    return Object.prototype.toString.call(value);
+  }
+}
+
+function sanitizeProcessErrorValue(value: string | undefined): string {
+  const sanitized = value?.replace(/[\r\n\t]/g, " ").slice(0, MAX_PROPERTY_LENGTH).trim();
+  return sanitized || "unserializable";
 }
