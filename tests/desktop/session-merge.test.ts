@@ -194,4 +194,26 @@ describe("useSessions store", () => {
     expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["main"]);
     expect(useSessions.getState().error).toBe("offline");
   });
+
+  it("clears a stale load error while a refresh is pending", async () => {
+    let resolveTerminal: ((value: { sessions: unknown[] }) => void) | null = null;
+    const terminal = new Promise<{ sessions: unknown[] }>((resolve) => {
+      resolveTerminal = resolve;
+    });
+    const get = vi.fn().mockImplementation((path: string) => {
+      if (path === "/api/terminal/sessions") {
+        return terminal;
+      }
+      return Promise.resolve({ sessions: [], nextCursor: null });
+    });
+
+    useSessions.setState({ error: "offline" });
+    const load = useSessions.getState().load(makeApi(get));
+
+    expect(useSessions.getState().loading).toBe(true);
+    expect(useSessions.getState().error).toBeNull();
+
+    resolveTerminal?.({ sessions: [] });
+    await load;
+  });
 });

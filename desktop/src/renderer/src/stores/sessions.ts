@@ -32,7 +32,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   error: null,
 
   load: async (api) => {
-    set({ loading: true });
+    set({ loading: true, error: null });
     try {
       const [zellijResponse, workspaceResponse] = await Promise.all([
         api.get<{ sessions: unknown }>("/api/terminal/sessions"),
