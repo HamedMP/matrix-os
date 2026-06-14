@@ -171,6 +171,12 @@ interface TerminalLayout {
   sidebarOpen?: boolean;
 }
 
+interface ShellPickerRequest {
+  label: string;
+  cwd: string;
+  profile?: "desktop" | "mobile";
+}
+
 function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
@@ -264,8 +270,12 @@ function getCanonicalShellSessionIds(layout: TerminalLayout): string[] {
   if (!Array.isArray(layout.tabs)) {
     return [];
   }
+  return getCanonicalShellSessionIdsFromTabs(layout.tabs);
+}
+
+function getCanonicalShellSessionIdsFromTabs(tabs: Tab[]): string[] {
   const seen = new Set<string>();
-  for (const tab of layout.tabs) {
+  for (const tab of tabs) {
     for (const sessionId of getSessionIds(tab.paneTree)) {
       if (isCanonicalShellSessionId(sessionId)) {
         seen.add(sessionId);
@@ -273,6 +283,13 @@ function getCanonicalShellSessionIds(layout: TerminalLayout): string[] {
     }
   }
   return Array.from(seen);
+}
+
+function paneTreeHasSessionId(node: PaneNode, sessionId: string): boolean {
+  if (node.type === "pane") {
+    return node.sessionId === sessionId;
+  }
+  return paneTreeHasSessionId(node.children[0], sessionId) || paneTreeHasSessionId(node.children[1], sessionId);
 }
 
 function destroyTerminalSessions(sessionIds: string[]) {
@@ -301,6 +318,10 @@ function destroyTerminalSessions(sessionIds: string[]) {
       );
     });
   }
+}
+
+function destroyLegacyPtySessions(sessionIds: string[]) {
+  destroyTerminalSessions(sessionIds.filter((sessionId) => isLegacyPtySessionId(sessionId)));
 }
 
 async function ensureShellSessions(sessionNames: string[]): Promise<boolean> {
@@ -403,6 +424,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
+  const [shellPickerRequest, setShellPickerRequest] = useState<ShellPickerRequest | null>(null);
   const [initialized, setInitialized] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -502,6 +524,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const addSessionTab = (label: string, sessionId: string, cwd = DEFAULT_CWD) => {
+    const existingTab = tabsRef.current.find((tab) => paneTreeHasSessionId(tab.paneTree, sessionId));
+    if (existingTab) {
+      setActiveTabId(existingTab.id);
+      setFocusedPaneId(getFirstPaneId(existingTab.paneTree));
+      return existingTab.id;
+    }
+
     const id = genId();
     const paneId = genId();
     const tab: Tab = {
@@ -518,6 +547,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     setActiveTabId(id);
     setFocusedPaneId(paneId);
     return id;
+  };
+
+  const openShellSessionPicker = (label: string, cwd = DEFAULT_CWD, profile?: "desktop" | "mobile") => {
+    setShellPickerRequest({ label, cwd, profile });
   };
 
   const createShellSessionTab = async (label: string, cwd = DEFAULT_CWD, profile?: "desktop" | "mobile") => {
@@ -561,6 +594,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one-time mount bootstrap that loads the saved terminal layout from the gateway; the fetch is AbortSignal-guarded and every state write is gated behind a `cancelled` flag cleared in cleanup, so this is an intentional mount-driven load, not render data
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- picker data is loaded only when the user opens the attach dialog; the fetch is timeout-guarded and state writes are cancelled on close/unmount.
   useEffect(() => {
     let cancelled = false;
 
@@ -713,7 +747,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const closingTab = tabsRef.current.find((tab) => tab.id === tabId);
     if (closingTab) {
       const paneIds = getAllPaneIds(closingTab.paneTree);
-      destroyTerminalSessions([
+      destroyLegacyPtySessions([
         ...getSessionIds(closingTab.paneTree),
         ...getPendingSessionIds(paneIds),
       ]);
@@ -835,13 +869,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
     switch (e.key.toUpperCase()) {
-      case "T": e.preventDefault(); void createShellSessionTab("Zellij", getCwd()); break;
+      case "T": e.preventDefault(); openShellSessionPicker("Zellij", getCwd()); break;
       case "W": e.preventDefault(); if (focusedPaneId) closePane(focusedPaneId); break;
       case "D": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "horizontal"); break;
       case "E": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "vertical"); break;
       case "B": e.preventDefault(); setSidebarOpen(o => !o); break;
       case "C": e.preventDefault(); addTab(getCwd(), "Claude Code", true); break;
-      case "Z": e.preventDefault(); void createShellSessionTab("Zellij", getCwd()); break;
+      case "Z": e.preventDefault(); openShellSessionPicker("Zellij", getCwd()); break;
     }
   };
 
@@ -850,7 +884,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile,
-    addTab, addSessionTab, createShellSessionTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
+    addTab, addSessionTab, openShellSessionPicker, createShellSessionTab, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
   };
@@ -866,6 +900,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     >
       <TerminalAppContext.Provider value={storeApi}>
         <LocalTerminalTabBar defaultCwd={DEFAULT_CWD} />
+        {shellPickerRequest && (
+          <ShellSessionAttachPicker
+            request={shellPickerRequest}
+            onClose={() => setShellPickerRequest(null)}
+          />
+        )}
         <div className="relative flex flex-1 min-h-0">
           {!mobile && <LocalTerminalSidebar />}
           {activeTab ? (
@@ -913,7 +953,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                   type="button"
                   className="text-xs px-3 py-1.5 rounded cursor-pointer"
                   style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}
-                  onClick={() => { void createShellSessionTab("Zellij", DEFAULT_CWD); }}
+                  onClick={() => openShellSessionPicker("Zellij", DEFAULT_CWD)}
                 >
                   New Terminal
                 </button>
@@ -937,6 +977,7 @@ interface TerminalAppContextType {
   mobile: boolean;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
+  openShellSessionPicker: (label: string, cwd?: string, profile?: "desktop" | "mobile") => void;
   createShellSessionTab: (label: string, cwd?: string, profile?: "desktop" | "mobile") => Promise<string | null>;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
@@ -955,6 +996,231 @@ function useTerminalAppContext() {
   const ctx = use(TerminalAppContext);
   if (!ctx) throw new Error("Must be inside TerminalApp");
   return ctx;
+}
+
+function ShellSessionAttachPicker({
+  request,
+  onClose,
+}: {
+  request: ShellPickerRequest;
+  onClose: () => void;
+}) {
+  const ctx = useTerminalAppContext();
+  const [shells, setShells] = useState<ShellSessionSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const openSessionIds = new Set(getCanonicalShellSessionIdsFromTabs(ctx.tabs));
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadShells() {
+      setLoading(true);
+      setError(null);
+      let nextShells: ShellSessionSummary[] = [];
+      let nextError: string | null = null;
+      try {
+        const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) {
+          const data = await res.json() as { sessions?: ShellSessionSummary[] };
+          nextShells = Array.isArray(data.sessions) ? data.sessions : [];
+        } else {
+          nextError = "Could not load shells";
+        }
+      } catch (err: unknown) {
+        console.warn("Failed to load shell sessions:", err instanceof Error ? err.message : err);
+        nextError = "Could not load shells";
+      }
+      if (!cancelled) {
+        setShells(nextShells);
+        setError(nextError);
+        setLoading(false);
+      }
+    }
+
+    void loadShells();
+    return () => {
+      cancelled = true;
+    };
+  }, [request.cwd, request.label, request.profile]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const attachShell = (shell: ShellSessionSummary) => {
+    ctx.addSessionTab(shell.name, shell.name, request.cwd);
+    onClose();
+  };
+
+  const createShell = () => {
+    onClose();
+    void ctx.createShellSessionTab(request.label, request.cwd, request.profile);
+  };
+
+  const sortedShells = [...shells].sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <div
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        padding: "64px 12px 12px",
+        background: "rgba(0,0,0,0.22)",
+      }}
+    >
+      <div
+        role="dialog"
+        aria-label="Attach Zellij session"
+        style={{
+          width: "min(360px, calc(100vw - 24px))",
+          maxHeight: "min(420px, calc(100vh - 96px))",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          borderRadius: 8,
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          color: "var(--foreground)",
+          boxShadow: "0 16px 48px rgba(0,0,0,0.28)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 12px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <TerminalIcon size={15} strokeWidth={1.8} />
+          <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700 }}>
+            Attach Zellij session
+          </div>
+          <button
+            type="button"
+            aria-label="Close Zellij session picker"
+            onClick={onClose}
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 5,
+              border: "1px solid transparent",
+              background: "transparent",
+              color: "var(--muted-foreground)",
+              cursor: "pointer",
+            }}
+          >
+            x
+          </button>
+        </div>
+        <div style={{ overflowY: "auto", padding: 8 }}>
+          {loading && (
+            <div style={{ padding: "18px 8px", color: "var(--muted-foreground)", fontSize: 12, textAlign: "center" }}>
+              Loading shells...
+            </div>
+          )}
+          {!loading && error && (
+            <div style={{ padding: "18px 8px", color: "var(--destructive)", fontSize: 12, textAlign: "center" }}>
+              {error}
+            </div>
+          )}
+          {!loading && !error && sortedShells.length === 0 && (
+            <div style={{ padding: "18px 8px", color: "var(--muted-foreground)", fontSize: 12, textAlign: "center" }}>
+              No Zellij sessions
+            </div>
+          )}
+          {!loading && !error && sortedShells.map((shell) => {
+            const alreadyOpen = openSessionIds.has(shell.name);
+            const status = shell.status ? `${shell.status}` : "shell";
+            return (
+              <button
+                key={shell.name}
+                type="button"
+                aria-label={`Attach shell ${shell.name}`}
+                onClick={() => attachShell(shell)}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "9px 8px",
+                  borderRadius: 6,
+                  border: "1px solid transparent",
+                  background: "transparent",
+                  color: "var(--foreground)",
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: alreadyOpen ? "var(--success)" : "var(--muted-foreground)",
+                    opacity: alreadyOpen ? 1 : 0.55,
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 13, fontWeight: 650, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {shell.name}
+                  </span>
+                  <span style={{ display: "block", fontSize: 11, color: "var(--muted-foreground)" }}>
+                    {alreadyOpen ? "open" : status}
+                  </span>
+                </span>
+                <span style={{ fontSize: 11, color: "var(--muted-foreground)", flexShrink: 0 }}>
+                  {alreadyOpen ? "Focus" : "Attach"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ padding: 8, borderTop: "1px solid var(--border)" }}>
+          <button
+            type="button"
+            aria-label="Create Zellij shell"
+            onClick={createShell}
+            style={{
+              width: "100%",
+              height: 32,
+              borderRadius: 6,
+              border: "1px solid transparent",
+              background: "var(--primary)",
+              color: "var(--primary-foreground)",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Create shell
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ---- Local versions of TabBar and Sidebar that use context instead of global store ----
@@ -1096,7 +1362,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
   const newTabButton = (
     <ToolbarBtn
-      onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
+      onClick={() => ctx.openShellSessionPicker("Zellij", getCwd())}
       title="New tab (Ctrl+Shift+T)"
       ariaLabel="New tab"
     >
@@ -1235,7 +1501,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               Claude
             </ToolbarBtn>
             <ToolbarBtn
-              onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
+              onClick={() => ctx.openShellSessionPicker("Zellij", getCwd())}
               title="Launch Zellij (Ctrl+Shift+Z)"
               variant="primary"
             >
@@ -1302,7 +1568,7 @@ function MobileTerminalActions({
         label="Zellij"
         title="Open mobile Zellij"
         icon={<TerminalIcon size={14} strokeWidth={1.8} />}
-        onClick={() => { void ctx.createShellSessionTab("Mobile Zellij", getCwd(), "mobile"); }}
+        onClick={() => ctx.openShellSessionPicker("Mobile Zellij", getCwd(), "mobile")}
         background={accent}
         foreground="var(--primary-foreground)"
         border="transparent"
@@ -1311,7 +1577,7 @@ function MobileTerminalActions({
         label="Tab"
         title="Open terminal tab"
         icon={<PlusIcon size={14} strokeWidth={1.8} />}
-        onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd(), "mobile"); }}
+        onClick={() => ctx.openShellSessionPicker("Zellij", getCwd(), "mobile")}
         background={actionBackground}
         foreground={foreground}
         border={actionBorder}

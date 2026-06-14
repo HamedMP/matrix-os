@@ -147,23 +147,36 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New tab" }));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
     const tablist = screen.getByRole("tablist", { name: "Terminal tabs" });
     const tabs = screen.getAllByRole("tab");
     const newTabButton = screen.getByRole("button", { name: "New tab" });
 
-    expect(tabs).toHaveLength(2);
+    expect(tabs).toHaveLength(1);
     expect(tablist.children[0]).toBe(tabs[0]);
-    expect(tablist.children[1]).toBe(tabs[1]);
-    expect(tablist.children[2]).toBe(newTabButton);
+    expect(tablist.children[1]).toBe(newTabButton);
   });
 
-  it("opens zellij-backed shell sessions from the new-tab control", async () => {
+  it("attaches existing zellij shell sessions from the new-tab picker", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: [{ name: "main", status: "active" }, { name: "bench", status: "active" }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
     render(<TerminalApp />);
 
     await act(async () => {
@@ -178,20 +191,105 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    const createCalls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([input, init]: [RequestInfo | URL, RequestInit | undefined]) => (
-        String(input).endsWith("/api/terminal/sessions") &&
-        init?.method === "POST" &&
-        typeof init.body === "string"
-      ))
-      .map(([, init]: [RequestInfo | URL, RequestInit]) => JSON.parse(String(init.body)) as { name: string });
+    expect(screen.getByRole("dialog", { name: "Attach Zellij session" })).toBeTruthy();
 
-    expect(createCalls.some((body) => /^zellij-/.test(body.name))).toBe(true);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: "Attach shell bench" }));
+    });
+
+    const createCalls = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).endsWith("/api/terminal/sessions") && init?.method === "POST"
+    ));
+    expect(createCalls).toHaveLength(0);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^zellij-/),
+        sessionId: "bench",
       },
     });
+  });
+
+  it("focuses an already attached zellij shell instead of duplicating it from the picker", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: [{ name: "main", status: "active" }, { name: "bench", status: "active" }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Attach shell bench" }));
+    });
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: "Attach shell bench" }));
+    });
+
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.getByRole("tab", { selected: true }).textContent).toContain("bench");
+  });
+
+  it("shows an empty zellij picker without creating a shell automatically", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("No Zellij sessions")).toBeTruthy();
+    const createCalls = fetchMock.mock.calls.filter(([input, init]) => (
+      String(input).endsWith("/api/terminal/sessions") && init?.method === "POST"
+    ));
+    expect(createCalls).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Create Zellij shell" })).toBeTruthy();
   });
 
   it("keeps the tab close button pinned to the tab edge for short labels", async () => {
@@ -247,7 +345,27 @@ describe("TerminalApp", () => {
     expect(openButton.parentElement?.style.width).not.toBe("44px");
   });
 
-  it("opens zellij-backed shell sessions from Ctrl+Shift+T", async () => {
+  it("opens the zellij session picker from Ctrl+Shift+T", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: [{ name: "main", status: "active" }, { name: "bench", status: "active" }] }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
     render(<TerminalApp />);
 
     await act(async () => {
@@ -266,9 +384,15 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    expect(screen.getByRole("dialog", { name: "Attach Zellij session" })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Attach shell bench" }));
+    });
+
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^zellij-/),
+        sessionId: "bench",
       },
     });
   });
@@ -290,6 +414,14 @@ describe("TerminalApp", () => {
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "New Terminal" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("dialog", { name: "Attach Zellij session" })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create Zellij shell" }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -702,7 +834,61 @@ describe("TerminalApp", () => {
     expect(deleteCalls.length).toBe(1);
   });
 
-  it("creates toolbar zellij launches as canonical shell sessions", async () => {
+  it("detaches a zellij tab without deleting the canonical shell session", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: [{ name: "main", status: "active" }, { name: "bench", status: "active" }] }),
+        });
+      }
+      if (url.includes("/api/terminal/sessions/") && init?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: "Attach shell bench" }));
+    });
+
+    fireEvent.click(screen.getAllByTitle("Close tab")[1]);
+
+    const deleteCalls = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions/bench?force=1") && init?.method === "DELETE"
+    ));
+
+    expect(deleteCalls).toHaveLength(0);
+    expect(screen.queryByRole("tab", { name: /bench/i })).toBeNull();
+  });
+
+  it("creates toolbar zellij launches only after the picker create action", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -716,6 +902,17 @@ describe("TerminalApp", () => {
 
     await act(async () => {
       fireEvent.click(screen.getByTitle("Launch Zellij (Ctrl+Shift+Z)"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("dialog", { name: "Attach Zellij session" })).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([input, init]) => (
+      String(input).includes("/api/terminal/sessions") && init?.method === "POST"
+    ))).toBe(false);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create Zellij shell" }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -778,6 +975,12 @@ describe("TerminalApp", () => {
 
     await act(async () => {
       fireEvent.click(screen.getByTitle("Launch Zellij (Ctrl+Shift+Z)"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create Zellij shell" }));
       await Promise.resolve();
     });
 
