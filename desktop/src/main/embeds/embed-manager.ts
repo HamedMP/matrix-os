@@ -23,7 +23,7 @@ export interface EmbedViewLike {
 export type EmbedKind = "hosted-shell" | "app";
 
 export interface EmbedManagerOptions {
-  createView: (opts: { partition: string }) => EmbedViewLike;
+  createView: (opts: { partition: string; onState: (state: "loading" | "ready" | "failed") => void }) => EmbedViewLike;
   allowedOrigins: string[];
   maxLive?: number;
 }
@@ -39,6 +39,7 @@ interface EmbedRecord {
   live: boolean;
   loadFailed: boolean;
   lastUsed: number;
+  onState: (state: "loading" | "ready" | "failed") => void;
 }
 
 export class EmbedManager {
@@ -59,7 +60,13 @@ export class EmbedManager {
     }
   }
 
-  open(kind: EmbedKind, slug: string | null, bounds: Bounds, url: string): string {
+  open(
+    kind: EmbedKind,
+    slug: string | null,
+    bounds: Bounds,
+    url: string,
+    options?: { id?: string; onState?: (state: "loading" | "ready" | "failed") => void },
+  ): string {
     if (!isNavigationAllowed(url, this.allowedOrigins)) {
       throw new Error("embed URL is not allowed");
     }
@@ -69,8 +76,10 @@ export class EmbedManager {
         ? "persist:hosted-shell"
         : this.appPartition(slug);
 
-    const id = randomUUID();
-    const view = this.createView({ partition });
+    const id = options?.id ?? randomUUID();
+    if (this.records.has(id)) throw new Error("embed id already exists");
+    const onState = options?.onState ?? (() => undefined);
+    const view = this.createView({ partition, onState });
     const record: EmbedRecord = {
       id,
       url,
@@ -78,11 +87,12 @@ export class EmbedManager {
       live: true,
       loadFailed: false,
       lastUsed: ++this.tick,
+      onState,
     };
     view.attach();
     view.setBounds(bounds);
-    this.loadInto(record);
     this.records.set(id, record);
+    this.loadInto(record);
 
     this.enforceMaxLive();
     this.enforceTotalCap();
@@ -149,6 +159,7 @@ export class EmbedManager {
         err instanceof Error ? err.message : String(err),
       );
       record.loadFailed = true;
+      record.onState("failed");
     });
   }
 

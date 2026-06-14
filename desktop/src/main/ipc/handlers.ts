@@ -118,8 +118,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
 
   handle("embed:open", async ({ kind, slug, bounds }) => {
     try {
-      const embedId = await ctx.embeds.open({ kind, slug, bounds });
-      return { embedId };
+      return await ctx.embeds.open({ kind, slug, bounds });
     } catch (err: unknown) {
       console.warn(
         "[ipc] embed:open failed:",

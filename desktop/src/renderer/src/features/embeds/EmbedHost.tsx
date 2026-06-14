@@ -21,6 +21,16 @@ export default function EmbedHost({
     if (!host) return;
     let disposed = false;
     let offState: (() => void) | null = null;
+    const pendingStates = new Map<string, typeof state>();
+
+    offState = onEvent("embed:state", (payload) => {
+      const currentId = embedIdRef.current;
+      if (payload.embedId === currentId) {
+        setState(payload.state);
+        return;
+      }
+      pendingStates.set(payload.embedId, payload.state);
+    });
 
     const rect = host.getBoundingClientRect();
     const bounds = {
@@ -31,15 +41,14 @@ export default function EmbedHost({
     };
 
     void invoke("embed:open", { kind, ...(slug ? { slug } : {}), bounds })
-      .then(({ embedId }) => {
+      .then(({ embedId, state: initialState }) => {
         if (disposed) {
           void invoke("embed:close", { embedId });
           return;
         }
         embedIdRef.current = embedId;
-        offState = onEvent("embed:state", (payload) => {
-          if (payload.embedId === embedId) setState(payload.state);
-        });
+        setState(pendingStates.get(embedId) ?? initialState);
+        pendingStates.delete(embedId);
       })
       .catch(() => {
         if (!disposed) setState("failed");

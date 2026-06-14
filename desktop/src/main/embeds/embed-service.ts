@@ -5,6 +5,7 @@
 // so the renderer can show an inline re-auth prompt without ever touching the
 // native principal (L1).
 import { net, session, type BaseWindow } from "electron";
+import { randomUUID } from "node:crypto";
 import { EmbedManager, type Bounds } from "./embed-manager";
 import { LaunchTokenCache } from "./launch-token-cache";
 import { handoffWithRetry, type CookieJarLike, type ParsedCookie } from "./app-session";
@@ -26,29 +27,38 @@ interface OpenRequest {
   bounds: Bounds;
 }
 
+interface OpenResult {
+  embedId: string;
+  state: EmbedState;
+}
+
+const MAX_PENDING_HOSTED_SHELLS = 12;
+
 export class EmbedService {
   private readonly manager: EmbedManager;
   private readonly tokenCache = new LaunchTokenCache();
   private readonly deps: EmbedServiceDeps;
+  private readonly pendingHostedShells = new Map<string, Bounds>();
+  private readonly hostedShellIds = new Set<string>();
 
   constructor(deps: EmbedServiceDeps) {
     this.deps = deps;
     this.manager = new EmbedManager({
       maxLive: 3,
-      createView: ({ partition }) => {
+      createView: ({ partition, onState }) => {
         const window = this.deps.getWindow();
         if (!window) throw new Error("no window for embed");
         return createWebContentsView({
           window,
           partition,
           allowedOrigins: [this.deps.getGatewayOrigin()],
-          onState: () => undefined,
+          onState,
         });
       },
     });
   }
 
-  async open(request: OpenRequest): Promise<string> {
+  async open(request: OpenRequest): Promise<OpenResult> {
     const gatewayOrigin = this.deps.getGatewayOrigin();
     if (request.kind === "hosted-shell") {
       return this.openHostedShell(gatewayOrigin, request.bounds);
@@ -61,17 +71,38 @@ export class EmbedService {
   }
 
   close(embedId: string): boolean {
-    return this.manager.close(embedId);
+    const wasPending = this.pendingHostedShells.delete(embedId);
+    this.hostedShellIds.delete(embedId);
+    return this.manager.close(embedId) || wasPending;
   }
 
   closeAll(): void {
+    this.pendingHostedShells.clear();
+    this.hostedShellIds.clear();
+    this.tokenCache.clear();
     this.manager.closeAll();
   }
 
   async retryAuth(embedId: string): Promise<boolean> {
     // The renderer asks to retry after an inline sign-in; re-run the handoff
     // and resume the embed. The native principal is never altered here.
+    if (this.pendingHostedShells.has(embedId)) {
+      const bounds = this.pendingHostedShells.get(embedId)!;
+      const opened = await this.createHostedShellEmbed(this.deps.getGatewayOrigin(), bounds, embedId);
+      if (!opened) return false;
+      this.pendingHostedShells.delete(embedId);
+      this.hostedShellIds.add(embedId);
+      this.deps.emitState(embedId, "loading");
+      return true;
+    }
     if (!this.manager.has(embedId)) return false;
+    if (this.hostedShellIds.has(embedId)) {
+      const handoff = await this.performHostedShellHandoff(this.deps.getGatewayOrigin());
+      if (!handoff) {
+        this.deps.emitState(embedId, "auth-required");
+        return false;
+      }
+    }
     return this.manager.focus(embedId);
   }
 
@@ -100,7 +131,42 @@ export class EmbedService {
     };
   }
 
-  private async openHostedShell(gatewayOrigin: string, bounds: Bounds): Promise<string> {
+  private async openHostedShell(gatewayOrigin: string, bounds: Bounds): Promise<OpenResult> {
+    const embedId = randomUUID();
+    const opened = await this.createHostedShellEmbed(gatewayOrigin, bounds, embedId);
+    if (!opened) {
+      this.rememberPendingHostedShell(embedId, bounds);
+      return { embedId, state: "auth-required" };
+    }
+    this.hostedShellIds.add(embedId);
+    return { embedId, state: "loading" };
+  }
+
+  private rememberPendingHostedShell(embedId: string, bounds: Bounds): void {
+    this.pendingHostedShells.set(embedId, bounds);
+    while (this.pendingHostedShells.size > MAX_PENDING_HOSTED_SHELLS) {
+      const oldest = this.pendingHostedShells.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.pendingHostedShells.delete(oldest);
+    }
+  }
+
+  private async createHostedShellEmbed(
+    gatewayOrigin: string,
+    bounds: Bounds,
+    embedId: string,
+  ): Promise<boolean> {
+    const handoff = await this.performHostedShellHandoff(gatewayOrigin);
+    if (!handoff) return false;
+    const url = `${gatewayOrigin}/`;
+    this.manager.open("hosted-shell", null, bounds, url, {
+      id: embedId,
+      onState: (state) => this.deps.emitState(embedId, state),
+    });
+    return true;
+  }
+
+  private async performHostedShellHandoff(gatewayOrigin: string): Promise<boolean> {
     const handoff = await handoffWithRetry(
       {
         gatewayOrigin,
@@ -109,15 +175,10 @@ export class EmbedService {
       },
       "/",
     );
-    const url = `${gatewayOrigin}/`;
-    const embedId = this.manager.open("hosted-shell", null, bounds, url);
-    if (!handoff.ok) {
-      this.deps.emitState(embedId, "auth-required");
-    }
-    return embedId;
+    return handoff.ok;
   }
 
-  private async openApp(gatewayOrigin: string, slug: string, bounds: Bounds): Promise<string> {
+  private async openApp(gatewayOrigin: string, slug: string, bounds: Bounds): Promise<OpenResult> {
     let cached = this.tokenCache.get(slug);
     if (!cached) {
       const token = await this.fetchLaunchToken(gatewayOrigin, slug);
@@ -129,7 +190,12 @@ export class EmbedService {
     if (!cached) throw new Error("could not obtain app launch token");
     const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
     if (!resolved) throw new Error("app launch url failed origin check");
-    return this.manager.open("app", slug, bounds, resolved);
+    const embedId = randomUUID();
+    this.manager.open("app", slug, bounds, resolved, {
+      id: embedId,
+      onState: (state) => this.deps.emitState(embedId, state),
+    });
+    return { embedId, state: "loading" };
   }
 
   private async fetchLaunchToken(

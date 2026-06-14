@@ -7,6 +7,7 @@ import { z } from "zod/v4";
 const Empty = z.object({}).strict();
 
 const Ok = z.object({ ok: z.boolean() }).strict();
+const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
 
 const ProfileSchema = z
   .object({
@@ -114,7 +115,7 @@ export const INVOKE_CHANNELS = {
         bounds: BoundsSchema,
       })
       .strict(),
-    response: z.object({ embedId: z.string().min(1).max(64) }).strict(),
+    response: z.object({ embedId: z.string().min(1).max(64), state: EmbedStateSchema }).strict(),
   },
   "embed:set-bounds": {
     request: z
@@ -178,7 +179,7 @@ export const EVENT_CHANNELS = {
   "embed:state": z
     .object({
       embedId: z.string().min(1).max(64),
-      state: z.enum(["loading", "ready", "auth-required", "failed"]),
+      state: EmbedStateSchema,
     })
     .strict(),
   "notification:clicked": z.object({ threadId: z.string().min(1).max(128) }).strict(),
