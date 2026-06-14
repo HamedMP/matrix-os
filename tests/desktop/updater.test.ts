@@ -82,8 +82,8 @@ describe("createUpdater", () => {
     warn.mockRestore();
   });
 
-  it("stays disabled when no packaged update feed is configured", async () => {
-    delete process.env.OPERATOR_UPDATE_FEED;
+  it("stays disabled when the app is not packaged", async () => {
+    electronMock.app.isPackaged = false;
     const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
 
     await updater.check();

@@ -1,0 +1,143 @@
+name: Desktop Build
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: Desktop update channel.
+        required: true
+        type: string
+      version_suffix:
+        description: Optional prerelease suffix appended to desktop/package.json.
+        required: false
+        type: string
+        default: ""
+      artifact_prefix:
+        description: Prefix for uploaded artifacts.
+        required: true
+        type: string
+      retention_days:
+        description: Artifact retention.
+        required: false
+        type: number
+        default: 14
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    name: macOS ${{ matrix.arch }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    env:
+      MATRIX_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+      CSC_LINK: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE_PASSWORD || secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_APP_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply desktop prerelease suffix
+        if: ${{ inputs.version_suffix != '' }}
+        env:
+          VERSION_SUFFIX: ${{ inputs.version_suffix }}
+        run: |
+          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); j.version=j.version.replace(/-.*/, '') + '-' + process.env.VERSION_SUFFIX; await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
+
+      - name: Build desktop app
+        run: pnpm --filter desktop build
+
+      - name: Package desktop app
+        working-directory: desktop
+        run: pnpm exec electron-builder --config electron-builder.yml --mac --${{ matrix.arch }} --publish never
+
+      - name: Verify packaged update resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f desktop/dist/*-mac.yml
+          test -f desktop/dist/*.dmg
+          test -f desktop/dist/*.zip
+          test -f desktop/dist/mac*/Matrix\ OS.app/Contents/Resources/app-update.yml
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ inputs.artifact_prefix }}-macos-${{ matrix.arch }}
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*-mac.yml
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      MATRIX_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply desktop prerelease suffix
+        if: ${{ inputs.version_suffix != '' }}
+        env:
+          VERSION_SUFFIX: ${{ inputs.version_suffix }}
+        run: |
+          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); j.version=j.version.replace(/-.*/, '') + '-' + process.env.VERSION_SUFFIX; await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
+
+      - name: Build desktop app
+        run: pnpm --filter desktop build
+
+      - name: Package desktop app
+        working-directory: desktop
+        run: pnpm exec electron-builder --config electron-builder.yml --linux AppImage --x64 --publish never
+
+      - name: Verify packaged update resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f desktop/dist/*.AppImage
+          test -f desktop/dist/latest-linux.yml
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ inputs.artifact_prefix }}-linux-x64
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*-linux.yml
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

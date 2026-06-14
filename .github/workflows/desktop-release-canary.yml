@@ -1,0 +1,86 @@
+name: Desktop Canary Release
+
+on:
+  schedule:
+    - cron: "17 */12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-canary
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare canary metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      suffix: ${{ steps.meta.outputs.suffix }}
+      artifact_prefix: ${{ steps.meta.outputs.artifact_prefix }}
+    steps:
+      - id: meta
+        run: |
+          set -euo pipefail
+          SUFFIX="canary.$(date -u +%Y%m%d%H%M%S)"
+          echo "suffix=$SUFFIX" >> "$GITHUB_OUTPUT"
+          echo "artifact_prefix=matrix-desktop-desktop-canary" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/desktop-build.yml
+    with:
+      channel: canary
+      version_suffix: ${{ needs.prepare.outputs.suffix }}
+      artifact_prefix: ${{ needs.prepare.outputs.artifact_prefix }}
+      retention_days: 7
+    secrets: inherit
+
+  release:
+    name: Publish canary release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Move desktop-canary tag
+        run: |
+          set -euo pipefail
+          git tag -f desktop-canary "$GITHUB_SHA"
+          git push origin refs/tags/desktop-canary --force
+
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: ${{ needs.prepare.outputs.artifact_prefix }}-*
+          path: desktop-release
+          merge-multiple: true
+
+      - name: Merge macOS update manifests
+        uses: ./.github/actions/merge-mac-manifests
+        with:
+          directory: desktop-release
+
+      - name: Generate release manifest
+        run: |
+          node scripts/release/generate-desktop-release-manifest.mjs desktop-release desktop-canary "${{ needs.prepare.outputs.suffix }}" canary "$GITHUB_SHA"
+
+      - name: Write release notes
+        run: |
+          printf 'Automated Matrix OS Desktop canary for %s.\n' "$GITHUB_SHA" > RELEASE_NOTES.md
+
+      - name: Publish desktop-canary prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: desktop-canary
+          name: Matrix OS Desktop Canary
+          target_commitish: ${{ github.sha }}
+          body_path: RELEASE_NOTES.md
+          prerelease: true
+          draft: false
+          make_latest: false
+          files: desktop-release/**
+          fail_on_unmatched_files: true
+          overwrite_files: true

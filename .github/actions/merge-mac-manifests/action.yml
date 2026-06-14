@@ -1,0 +1,13 @@
+name: Merge macOS update manifests
+description: Merge arm64 and x64 electron-builder mac update manifests into one latest-mac.yml.
+inputs:
+  directory:
+    description: Directory containing downloaded desktop artifacts.
+    required: true
+  output:
+    description: Manifest filename to write.
+    required: false
+    default: latest-mac.yml
+runs:
+  using: node20
+  main: merge-mac-manifests.mjs

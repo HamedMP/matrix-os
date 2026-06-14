@@ -1,0 +1,156 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Desktop version to release (semver, no leading v)"
+        required: true
+        type: string
+      channel:
+        description: Update channel.
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - beta
+          - canary
+      mode:
+        description: Dry-run uploads artifacts only; publish creates/updates the GitHub release.
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref_name || inputs.version }}-${{ inputs.channel || 'stable' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      channel: ${{ steps.meta.outputs.channel }}
+      mode: ${{ steps.meta.outputs.mode }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      artifact_prefix: ${{ steps.meta.outputs.artifact_prefix }}
+    steps:
+      - name: Resolve metadata
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "push" ]; then
+            TAG="$REF_NAME"
+            VERSION="${TAG#desktop-v}"
+            CHANNEL="stable"
+            MODE="publish"
+          else
+            VERSION="$INPUT_VERSION"
+            TAG="desktop-v$VERSION"
+            CHANNEL="$INPUT_CHANNEL"
+            MODE="$INPUT_MODE"
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid desktop version: $VERSION" >&2
+            exit 1
+          fi
+          case "$CHANNEL" in stable|beta|canary) ;; *) echo "invalid channel: $CHANNEL" >&2; exit 1 ;; esac
+          PRERELEASE=false
+          if [ "$CHANNEL" != "stable" ] || [[ "$VERSION" == *-* ]]; then
+            PRERELEASE=true
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "artifact_prefix=matrix-desktop-$TAG-$CHANNEL" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/desktop-build.yml
+    with:
+      channel: ${{ needs.prepare.outputs.channel }}
+      artifact_prefix: ${{ needs.prepare.outputs.artifact_prefix }}
+      retention_days: 30
+    secrets: inherit
+
+  release:
+    name: Publish release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: ${{ needs.prepare.outputs.artifact_prefix }}-*
+          path: desktop-release
+          merge-multiple: true
+
+      - name: Merge macOS update manifests
+        uses: ./.github/actions/merge-mac-manifests
+        with:
+          directory: desktop-release
+
+      - name: Generate release manifest
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+        run: |
+          node scripts/release/generate-desktop-release-manifest.mjs desktop-release "$TAG" "$VERSION" "$CHANNEL" "$GITHUB_SHA"
+
+      - name: Generate GitHub release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$GITHUB_SHA" \
+            -q .body > RELEASE_NOTES.md
+
+      - name: Upload dry-run bundle
+        if: ${{ needs.prepare.outputs.mode == 'dry-run' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: desktop-release-${{ needs.prepare.outputs.tag }}-${{ needs.prepare.outputs.channel }}
+          path: desktop-release/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub release
+        if: ${{ needs.prepare.outputs.mode == 'publish' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Matrix OS Desktop ${{ needs.prepare.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          body_path: RELEASE_NOTES.md
+          prerelease: ${{ needs.prepare.outputs.prerelease }}
+          draft: false
+          make_latest: ${{ needs.prepare.outputs.channel == 'stable' }}
+          files: desktop-release/**
+          fail_on_unmatched_files: true
