@@ -313,6 +313,29 @@ describe("ShellSocket server frames", () => {
     expect(h.sockets).toHaveLength(1);
   });
 
+  it("closes the socket before notifying onExit", () => {
+    let h!: Harness;
+    let closedDuringExit = false;
+    h = createHarness({
+      events: {
+        onState: (state, detail) => {
+          h.events.states.push(detail === undefined ? { state } : { state, detail });
+        },
+        onOutput: (data, seq) => h.events.outputs.push({ data, seq }),
+        onGap: () => {
+          h.events.gaps += 1;
+        },
+        onExit: (code) => {
+          closedDuringExit = h.latest().closed;
+          h.events.exits.push(code);
+        },
+      },
+    });
+    connectAndAttach(h);
+    h.latest().frame({ type: "exit", code: 0 });
+    expect(closedDuringExit).toBe(true);
+  });
+
   it("ignores pong frames", () => {
     const h = createHarness();
     connectAndAttach(h);
@@ -642,6 +665,40 @@ describe("ShellSocket input", () => {
     expect(h.latest().inputFrames()).toEqual(["hel", "lo"]);
   });
 
+  it("flushes pending input before the attached state callback runs", () => {
+    let h!: Harness;
+    let framesSeenOnAttach: string[] = [];
+    h = createHarness({
+      events: {
+        onState: (state, detail) => {
+          h.events.states.push(detail === undefined ? { state } : { state, detail });
+          if (state === "attached") framesSeenOnAttach = h.latest().inputFrames();
+        },
+        onOutput: (data, seq) => h.events.outputs.push({ data, seq }),
+        onGap: () => {
+          h.events.gaps += 1;
+        },
+        onExit: (code) => h.events.exits.push(code),
+      },
+    });
+    h.socket.connect();
+    h.socket.sendInput("queued");
+    h.latest().open();
+    h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+    expect(framesSeenOnAttach).toEqual(["queued"]);
+  });
+
+  it("does not split surrogate pairs across input chunks", () => {
+    const h = createHarness();
+    connectAndAttach(h);
+    const input = `${"a".repeat(32_767)}😀b`;
+    h.socket.sendInput(input);
+    const chunks = h.latest().inputFrames();
+    expect(chunks.join("")).toBe(input);
+    expect(chunks[0]).toBe("a".repeat(32_767));
+    expect(chunks[1]).toBe("😀b");
+  });
+
   it("caps the pre-attach buffer at 64 chunks, dropping the oldest", () => {
     const h = createHarness();
     h.socket.connect();
@@ -693,6 +750,38 @@ describe("ShellSocket detach and dispose", () => {
     expect(h.latest().closed).toBe(true);
     h.timers.advance(120_000);
     expect(h.sockets).toHaveLength(2);
+  });
+
+  it("ignores non-attach frames while cleanup-attaching after end", () => {
+    const h = createHarness();
+    connectAndAttach(h);
+    h.latest().serverClose();
+    h.socket.detach();
+
+    h.latest().open();
+    h.latest().frame({ type: "output", seq: 2, data: "late" });
+
+    expect(h.socket.state).toBe("ended");
+    expect(h.events.outputs).toEqual([]);
+    h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+    expect(h.latest().sentFrames()).toContainEqual({ type: "detach" });
+  });
+
+  it("detach while connecting closes the partial socket and cleanup-attaches", () => {
+    const h = createHarness();
+    h.socket.connect();
+    const connecting = h.latest();
+
+    h.socket.detach();
+
+    expect(connecting.sentFrames()).toEqual([]);
+    expect(connecting.closed).toBe(true);
+    expect(h.socket.state).toBe("ended");
+    expect(h.sockets).toHaveLength(2);
+    h.latest().open();
+    h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+    expect(h.latest().sentFrames()).toContainEqual({ type: "detach" });
+    expect(h.latest().closed).toBe(true);
   });
 
   it("dispose clears every timer and emits no further events", () => {

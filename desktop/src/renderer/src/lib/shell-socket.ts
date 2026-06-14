@@ -80,6 +80,18 @@ function clampInt(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
+function nextChunkEnd(value: string, start: number): number {
+  let end = Math.min(start + INPUT_CHUNK_CHARS, value.length);
+  if (end < value.length) {
+    const prev = value.charCodeAt(end - 1);
+    const next = value.charCodeAt(end);
+    if (prev >= 0xd800 && prev <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+      end -= 1;
+    }
+  }
+  return end <= start ? Math.min(start + INPUT_CHUNK_CHARS, value.length) : end;
+}
+
 function defaultCreateWebSocket(url: string): WebSocketLike {
   return new WebSocket(url) as unknown as WebSocketLike;
 }
@@ -143,8 +155,10 @@ export class ShellSocket {
   sendInput(data: string): void {
     if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
     if (data.length === 0) return;
-    for (let offset = 0; offset < data.length; offset += INPUT_CHUNK_CHARS) {
-      const chunk = data.slice(offset, offset + INPUT_CHUNK_CHARS);
+    for (let offset = 0; offset < data.length;) {
+      const end = nextChunkEnd(data, offset);
+      const chunk = data.slice(offset, end);
+      offset = end;
       if (this.currentState === "attached" && this.socket !== null) {
         this.sendFrame({ type: "input", data: chunk });
       } else {
@@ -177,8 +191,9 @@ export class ShellSocket {
   detach(): void {
     if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
     this.detachPending = true;
-    if (this.socket === null) {
+    if (this.currentState !== "attached") {
       const sessionName = this.attachedSessionName ?? this.opts.sessionName ?? null;
+      this.teardownSocket();
       this.clearAllTimers();
       this.setState("ended");
       if (sessionName !== null && sessionName.length > 0) {
@@ -308,6 +323,9 @@ export class ShellSocket {
       return;
     }
     const frame = parsed as Record<string, unknown>;
+    if (this.currentState === "ended" && !(this.detachPending && frame.type === "attached")) {
+      return;
+    }
     switch (frame.type) {
       case "attached":
         this.handleAttached(frame);
@@ -342,8 +360,8 @@ export class ShellSocket {
       return;
     }
     this.failedAttempts = 0;
-    this.setState("attached");
     this.flushPendingInput();
+    this.setState("attached");
     this.scheduleAttachTimers();
   }
 
@@ -365,8 +383,8 @@ export class ShellSocket {
       console.warn("[shell-socket] ignoring invalid exit frame");
       return;
     }
-    this.opts.events.onExit(code);
     this.endSession();
+    this.opts.events.onExit(code);
   }
 
   private handleErrorFrame(frame: Record<string, unknown>): void {
