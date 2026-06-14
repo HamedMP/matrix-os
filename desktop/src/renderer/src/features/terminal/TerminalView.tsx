@@ -75,8 +75,13 @@ export default function TerminalView({ sessionName, onRecreate }: TerminalViewPr
       attachment.resize(terminal.cols, terminal.rows);
     };
     sendDims();
+    let rafId: number | null = null;
     const observer = new ResizeObserver(() => {
-      window.requestAnimationFrame(sendDims);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        sendDims();
+      });
     });
     observer.observe(host);
 
@@ -84,6 +89,10 @@ export default function TerminalView({ sessionName, onRecreate }: TerminalViewPr
 
     return () => {
       observer.disconnect();
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       dataDisposable.dispose();
       try {
         manager.cacheBuffer(sessionName, serialize.serialize());

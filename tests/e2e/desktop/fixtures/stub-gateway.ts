@@ -262,6 +262,8 @@ export async function startStubGateway(): Promise<StubGateway> {
     state,
     close: () =>
       new Promise<void>((resolve, reject) => {
+        for (const client of terminalWss.clients) client.terminate();
+        for (const client of kernelWss.clients) client.terminate();
         terminalWss.close();
         kernelWss.close();
         server.close((err) => (err ? reject(err) : resolve()));
