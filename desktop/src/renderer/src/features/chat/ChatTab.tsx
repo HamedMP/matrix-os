@@ -209,7 +209,7 @@ export default function ChatTab() {
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {showHermes ? <HermesPane /> : <ThreadView threadId={activeThread.id} embedded />}
+        {activeThread ? <ThreadView threadId={activeThread.id} embedded /> : <HermesPane />}
       </div>
     </div>
   );

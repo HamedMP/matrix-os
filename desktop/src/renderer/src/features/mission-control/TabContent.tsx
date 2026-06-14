@@ -50,7 +50,12 @@ export default function TabContent() {
   // we treat embeds as inactive (detached) — otherwise the palette/composer/
   // dialogs would render behind the embed.
   const overlayOpen = useUi(
-    (s) => s.paletteOpen || s.composerOpen || s.quickOpenOpen || s.createTaskOpen,
+    (s) =>
+      s.paletteOpen ||
+      s.composerOpen ||
+      s.quickOpenOpen ||
+      s.createTaskOpen ||
+      s.createProjectOpen,
   );
 
   if (tabs.length === 0) {
