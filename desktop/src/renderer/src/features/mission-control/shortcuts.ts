@@ -4,6 +4,12 @@ import { useBoard } from "../../stores/board";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 
+interface CloseTabShortcutState {
+  activeTabId: string | null;
+  tabs: Array<{ id: string; closable: boolean }>;
+  closeTab(id: string): void;
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
@@ -33,6 +39,18 @@ export function handleMenuNavigate(kind: string): void {
     console.warn(`[shortcuts] unsupported menu:navigate kind: ${kind}`);
   }
   useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+}
+
+export function handleCloseTabShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+  tabs: CloseTabShortcutState,
+): void {
+  event.preventDefault();
+  if (!tabs.activeTabId) return;
+  const tab = tabs.tabs.find((t) => t.id === tabs.activeTabId);
+  if (tab?.closable) {
+    tabs.closeTab(tabs.activeTabId);
+  }
 }
 
 export function useGlobalShortcuts(): void {
@@ -72,13 +90,7 @@ export function useGlobalShortcuts(): void {
       }
       // Close the active tab.
       if (meta && key === "w") {
-        if (tabs.activeTabId) {
-          const tab = tabs.tabs.find((t) => t.id === tabs.activeTabId);
-          if (tab?.closable) {
-            e.preventDefault();
-            tabs.closeTab(tabs.activeTabId);
-          }
-        }
+        handleCloseTabShortcut(e, tabs);
         return;
       }
       // Toggle sidebar.

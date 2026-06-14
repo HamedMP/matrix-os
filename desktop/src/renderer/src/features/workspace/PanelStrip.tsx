@@ -22,6 +22,29 @@ interface PanelStripProps {
   renderPanel: (panel: PanelKind) => React.ReactNode;
 }
 
+export function groupLayoutForPanels(
+  visiblePanels: PanelKind[],
+  sizes: Record<PanelKind, number>,
+): number[] {
+  const even = visiblePanels.length ? 100 / visiblePanels.length : 0;
+  return visiblePanels.map((panel) => sizes[panel] || even);
+}
+
+export function panelSizesFromGroupLayout(
+  visiblePanels: PanelKind[],
+  nextLayout: number[],
+  previousSizes: Record<PanelKind, number>,
+): Record<PanelKind, number> {
+  const next = { ...previousSizes };
+  visiblePanels.forEach((panel, index) => {
+    const value = nextLayout[index];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      next[panel] = value;
+    }
+  });
+  return next;
+}
+
 export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
   const layouts = useWorkspace((s) => s.layouts);
   const setPanelSizes = useWorkspace((s) => s.setPanelSizes);
@@ -32,13 +55,10 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
   // Remount the group when the visible set changes so default sizes re-apply.
   const groupKey = visiblePanels.join("-");
 
-  // Library layouts are percentages (0..100), keyed by panel id — same unit as
-  // our persisted sizes.
+  // Library layouts are percentages (0..100), ordered by rendered panel.
+  // The workspace store persists them keyed by panel id.
   const defaultGroupLayout = useMemo(() => {
-    const out: Record<string, number> = {};
-    const even = visiblePanels.length ? 100 / visiblePanels.length : 0;
-    for (const panel of visiblePanels) out[panel] = layout.sizes[panel] || even;
-    return out;
+    return groupLayoutForPanels(visiblePanels, layout.sizes);
   }, [visiblePanels, layout.sizes]);
 
   if (visiblePanels.length === 0) {
@@ -56,7 +76,9 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
       key={groupKey}
       orientation="horizontal"
       defaultLayout={defaultGroupLayout}
-      onLayoutChange={(next) => setPanelSizes(taskId, next as Record<PanelKind, number>)}
+      onLayoutChange={(next) =>
+        setPanelSizes(taskId, panelSizesFromGroupLayout(visiblePanels, next, layout.sizes))
+      }
       className="flex min-h-0 min-w-0 flex-1"
     >
       {visiblePanels.map((panel, index) => (
