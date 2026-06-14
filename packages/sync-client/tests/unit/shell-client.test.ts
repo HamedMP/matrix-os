@@ -30,6 +30,18 @@ class FakeWebSocket extends EventEmitter {
   }
 }
 
+async function waitForFakeSocketCount(expectedCount: number): Promise<void> {
+  const deadline = Date.now() + 250;
+  while (FakeWebSocket.instances.length < expectedCount) {
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for ${expectedCount} fake WebSocket instances; saw ${FakeWebSocket.instances.length}`);
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1);
+    });
+  }
+}
+
 describe("createShellClient attachSession", () => {
   beforeEach(() => {
     FakeWebSocket.last = null;
@@ -156,9 +168,7 @@ describe("createShellClient attachSession", () => {
     firstSocket?.emit("message", JSON.stringify({ type: "attached" }));
     firstSocket?.emit("close");
 
-    await new Promise((resolve) => {
-      setTimeout(resolve, 10);
-    });
+    await waitForFakeSocketCount(2);
 
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(FakeWebSocket.instances[0]).toBe(firstSocket);
