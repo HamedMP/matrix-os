@@ -79,6 +79,12 @@ jobs:
           test -f desktop/dist/*.zip
           test -f desktop/dist/mac*/Matrix\ OS.app/Contents/Resources/app-update.yml
 
+      - name: Rename mac update manifest for arch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv desktop/dist/latest-mac.yml "desktop/dist/${{ matrix.arch }}-mac.yml"
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v6
         with:

@@ -19,13 +19,18 @@ jobs:
     timeout-minutes: 5
     outputs:
       suffix: ${{ steps.meta.outputs.suffix }}
+      version: ${{ steps.meta.outputs.version }}
       artifact_prefix: ${{ steps.meta.outputs.artifact_prefix }}
     steps:
+      - uses: actions/checkout@v6
+
       - id: meta
         run: |
           set -euo pipefail
           SUFFIX="canary.$(date -u +%Y%m%d%H%M%S)"
+          BASE_VERSION="$(node -p "require('./desktop/package.json').version.replace(/-.*/, '')")"
           echo "suffix=$SUFFIX" >> "$GITHUB_OUTPUT"
+          echo "version=$BASE_VERSION-$SUFFIX" >> "$GITHUB_OUTPUT"
           echo "artifact_prefix=matrix-desktop-desktop-canary" >> "$GITHUB_OUTPUT"
 
   build:
@@ -65,7 +70,7 @@ jobs:
 
       - name: Generate release manifest
         run: |
-          node scripts/release/generate-desktop-release-manifest.mjs desktop-release desktop-canary "${{ needs.prepare.outputs.suffix }}" canary "$GITHUB_SHA"
+          node scripts/release/generate-desktop-release-manifest.mjs desktop-release desktop-canary "${{ needs.prepare.outputs.version }}" canary "$GITHUB_SHA"
 
       - name: Write release notes
         run: |

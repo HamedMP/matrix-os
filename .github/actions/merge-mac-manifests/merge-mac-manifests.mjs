@@ -23,7 +23,9 @@ if (!directory) {
 }
 
 const names = await readdir(directory);
-const manifestNames = names.filter((name) => name.endsWith("-mac.yml") || name === "latest-mac.yml");
+const manifestNames = names
+  .filter((name) => name.endsWith("-mac.yml") || name === "latest-mac.yml")
+  .sort((a, b) => a.localeCompare(b));
 if (manifestNames.length < 2) {
   throw new Error(`expected at least 2 mac manifests in ${directory}, found ${manifestNames.length}`);
 }
