@@ -112,6 +112,18 @@ describe("createProject", () => {
     expect(post).toHaveBeenCalledWith("/api/projects", { name: "repo", mode: "github", url: "https://github.com/o/repo" });
   });
 
+  it("preserves the refresh error when creation succeeds but the project list reload fails", async () => {
+    const api = makeApi({
+      post: vi.fn().mockResolvedValue({ project: { slug: "my-app", name: "My App" } }),
+      get: vi.fn().mockRejectedValue(new AppError("offline")),
+    });
+
+    const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
+
+    expect(project).toEqual({ slug: "my-app", name: "My App" });
+    expect(useBoard.getState().error).toBe("offline");
+  });
+
   it("returns null and sets an error category on failure", async () => {
     const api = makeApi({ post: vi.fn().mockRejectedValue(new AppError("server")) });
     const project = await useBoard.getState().createProject(api, { name: "x", mode: "scratch" });

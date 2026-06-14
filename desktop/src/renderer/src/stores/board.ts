@@ -194,7 +194,7 @@ interface BoardState {
   firstLoadByProject: Record<string, boolean>;
   refreshing: boolean;
   error: AppErrorCategory | null;
-  loadProjects(api: ApiClient): Promise<void>;
+  loadProjects(api: ApiClient): Promise<boolean>;
   createProject(api: ApiClient, input: { name: string; mode: "scratch" | "github"; url?: string }): Promise<Project | null>;
   selectProject(api: ApiClient, slug: string): Promise<void>;
   refreshTasks(api: ApiClient, slug: string): Promise<void>;
@@ -290,9 +290,11 @@ export const useBoard = create<BoardState>()((set, get) => {
           if (parsed.success) projects.push({ slug: parsed.data.slug, name: parsed.data.name });
         }
         set({ projects, error: null });
+        return true;
       } catch (err: unknown) {
         console.error("[board] Failed to load projects:", err);
         set({ error: categoryOf(err) });
+        return false;
       }
     },
 
@@ -307,8 +309,8 @@ export const useBoard = create<BoardState>()((set, get) => {
         }
         const project: Project = { slug: parsed.data.slug, name: parsed.data.name };
         // Refresh the list so the sidebar shows it immediately.
-        await get().loadProjects(api);
-        set({ error: null });
+        const refreshed = await get().loadProjects(api);
+        if (refreshed) set({ error: null });
         return project;
       } catch (err: unknown) {
         console.error("[board] Create project failed:", err);
