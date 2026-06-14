@@ -68,7 +68,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),
-    delete: (path) => request(path, { method: "DELETE" }),
+    // The gateway task DELETE route parses the JSON body unconditionally, so a
+    // body-less DELETE 400s; always send an empty JSON object.
+    delete: (path) =>
+      request(path, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
     putText: (path, body) =>
       request(path, {
         method: "PUT",
