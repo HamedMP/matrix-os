@@ -65,6 +65,11 @@ export interface ShellAttachOptions {
   errorOutput?: NodeJS.WriteStream;
   detachSequence?: string;
   mouse?: boolean;
+  heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
+  heartbeatMissesBeforeReconnect?: number;
+  reconnectBaseDelayMs?: number;
+  reconnectMaxDelayMs?: number;
   WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
 }
 
@@ -72,6 +77,13 @@ export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 const RUN_RESPONSE_GRACE_MS = 30_000;
+const SHELL_ATTACH_HEARTBEAT_INTERVAL_MS = 20_000;
+const SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS = 60_000;
+const SHELL_ATTACH_RECONNECT_BASE_DELAY_MS = 500;
+const SHELL_ATTACH_RECONNECT_MAX_DELAY_MS = 5_000;
+const SHELL_ATTACH_HEARTBEAT_MISSES_BEFORE_RECONNECT = 2;
+const SHELL_ATTACH_RECONNECT_NOTICE = "\r\n\u001b[7m Matrix shell disconnected. Waiting for the gateway to come back; this session will reconnect automatically. \u001b[0m\r\n";
+const SHELL_ATTACH_RESTORED_NOTICE = "\r\n\u001b[7m Matrix shell connection restored. \u001b[0m\r\n";
 const LOCAL_TERMINAL_INPUT_RESET = [
   "\u001b[?1000l",
   "\u001b[?1002l",
@@ -418,10 +430,6 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       }
 
       const headers = options.token ? { Authorization: `Bearer ${options.token}` } : undefined;
-      const ws = new WebSocketImpl(createAttachUrl(name, {
-        ...attachOptions,
-        fromSeq: attachOptions.fromSeq ?? SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
-      }), { headers });
       const output = attachOptions.output ?? process.stdout;
       const errorOutput = attachOptions.errorOutput ?? process.stderr;
       const input = (attachOptions.input ?? process.stdin) as MaybeTtyStream;
@@ -434,31 +442,41 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         dropMouse,
         resetLocalInputModes,
       });
+      const heartbeatIntervalMs = attachOptions.heartbeatIntervalMs ?? SHELL_ATTACH_HEARTBEAT_INTERVAL_MS;
+      const heartbeatTimeoutMs = attachOptions.heartbeatTimeoutMs ?? SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS;
+      const heartbeatMissesBeforeReconnect =
+        attachOptions.heartbeatMissesBeforeReconnect ?? SHELL_ATTACH_HEARTBEAT_MISSES_BEFORE_RECONNECT;
+      const reconnectBaseDelayMs = attachOptions.reconnectBaseDelayMs ?? SHELL_ATTACH_RECONNECT_BASE_DELAY_MS;
+      const reconnectMaxDelayMs = attachOptions.reconnectMaxDelayMs ?? SHELL_ATTACH_RECONNECT_MAX_DELAY_MS;
       let pendingInput = "";
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
+        let currentWs: AttachWebSocket | null = null;
         let socketOpen = false;
-        let remoteAttached = false;
+        let everAttached = false;
         let rawModeEnabled = false;
+        let reconnecting = false;
+        let reconnectAttempt = 0;
+        let lastSeq: number | undefined;
         const queuedFrames: string[] = [];
         let queuedFrameBytes = 0;
-        const timeout = setTimeout(() => {
-          settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
-          ws.close();
-        }, timeoutMs);
-        timeout.unref?.();
+        let attachTimeout: ReturnType<typeof setTimeout> | undefined;
+        let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+        let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+        let heartbeatTimeout: ReturnType<typeof setTimeout> | undefined;
+        let heartbeatPending = false;
+        let missedHeartbeats = 0;
         const cleanup = () => {
-          clearTimeout(timeout);
+          clearTimeout(attachTimeout);
+          clearTimeout(reconnectTimer);
+          stopHeartbeat();
+          cleanupSocket();
           input.off?.("data", onInput);
           process.off("SIGWINCH", onResize);
           process.off("SIGINT", onSignal);
           process.off("SIGTERM", onSignal);
           process.off("exit", onProcessExit);
-          ws.off?.("open", onOpen);
-          ws.off?.("message", onMessage);
-          ws.off?.("close", onClose);
-          ws.off?.("error", onError);
           pendingInput = "";
           inputFilter.reset();
           resetLocalInputModes();
@@ -476,12 +494,127 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           cleanup();
           fn();
         };
+        const currentFromSeq = () => {
+          if (lastSeq !== undefined) {
+            return Math.min(lastSeq + 1, Number.MAX_SAFE_INTEGER);
+          }
+          return attachOptions.fromSeq ?? SHELL_ATTACH_LIVE_TAIL_FROM_SEQ;
+        };
+        const stopHeartbeat = () => {
+          clearInterval(heartbeatInterval);
+          clearTimeout(heartbeatTimeout);
+          heartbeatInterval = undefined;
+          heartbeatTimeout = undefined;
+          heartbeatPending = false;
+          missedHeartbeats = 0;
+        };
+        const noteRemoteActivity = () => {
+          clearTimeout(heartbeatTimeout);
+          heartbeatTimeout = undefined;
+          heartbeatPending = false;
+          missedHeartbeats = 0;
+        };
+        const startHeartbeat = () => {
+          if (heartbeatInterval || heartbeatIntervalMs < 1 || heartbeatTimeoutMs < 1) {
+            return;
+          }
+          heartbeatInterval = setInterval(() => {
+            if (settled || !currentWs || !socketOpen || heartbeatPending) {
+              return;
+            }
+            try {
+              currentWs.send(JSON.stringify({ type: "ping" }));
+              heartbeatPending = true;
+              heartbeatTimeout = setTimeout(() => {
+                if (!settled && heartbeatPending) {
+                  missedHeartbeats += 1;
+                  heartbeatPending = false;
+                  heartbeatTimeout = undefined;
+                  if (missedHeartbeats >= heartbeatMissesBeforeReconnect) {
+                    currentWs?.close();
+                  }
+                }
+              }, heartbeatTimeoutMs);
+              heartbeatTimeout.unref?.();
+            } catch (err: unknown) {
+              if (!everAttached) {
+                settle(() => reject(Object.assign(new Error("Request failed"), {
+                  code: err instanceof Error ? "attach_failed" : "request_failed",
+                })));
+                return;
+              }
+              currentWs?.close();
+            }
+          }, heartbeatIntervalMs);
+          heartbeatInterval.unref?.();
+        };
+        const cleanupSocket = () => {
+          if (!currentWs) {
+            return;
+          }
+          clearTimeout(attachTimeout);
+          stopHeartbeat();
+          currentWs.off?.("open", onOpen);
+          currentWs.off?.("message", onMessage);
+          currentWs.off?.("close", onClose);
+          currentWs.off?.("error", onError);
+          currentWs = null;
+          socketOpen = false;
+        };
+        const connect = () => {
+          if (settled) {
+            return;
+          }
+          cleanupSocket();
+          currentWs = new WebSocketImpl(createAttachUrl(name, {
+            ...attachOptions,
+            fromSeq: currentFromSeq(),
+          }), { headers });
+          attachTimeout = setTimeout(() => {
+            const timedOutWs = currentWs;
+            timedOutWs?.close();
+            if (everAttached) {
+              if (currentWs === timedOutWs) {
+                cleanupSocket();
+              }
+              scheduleReconnect();
+              return;
+            }
+            settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
+          }, timeoutMs);
+          attachTimeout.unref?.();
+          currentWs.on("open", onOpen);
+          currentWs.on("message", onMessage);
+          currentWs.on("close", onClose);
+          currentWs.on("error", onError);
+        };
+        const scheduleReconnect = () => {
+          if (settled) {
+            return;
+          }
+          if (reconnectTimer) {
+            return;
+          }
+          if (!reconnecting) {
+            errorOutput.write("\r\nConnection lost. Reconnecting...\r\n");
+            output.write(SHELL_ATTACH_RECONNECT_NOTICE);
+          }
+          reconnecting = true;
+          const backoffExponent = Math.min(reconnectAttempt, 31);
+          const delay = Math.min(reconnectBaseDelayMs * (2 ** backoffExponent), reconnectMaxDelayMs);
+          reconnectAttempt += 1;
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = undefined;
+            connect();
+          }, delay);
+          reconnectTimer.unref?.();
+        };
         const markOpen = () => {
           if (socketOpen) {
             return;
           }
           socketOpen = true;
-          clearTimeout(timeout);
+          clearTimeout(attachTimeout);
           sendResizeFrame();
           for (const frame of queuedFrames.splice(0)) {
             sendFrame(frame);
@@ -496,10 +629,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             const nextQueuedBytes = queuedFrameBytes + Buffer.byteLength(frame, "utf8");
             if (nextQueuedBytes > SHELL_ATTACH_MAX_QUEUED_BYTES) {
               errorOutput.write("Shell attach failed\n");
+              currentWs?.close();
               settle(() => reject(Object.assign(new Error("Request failed"), {
                 code: "attach_failed",
               })));
-              ws.close();
               return;
             }
             queuedFrameBytes = nextQueuedBytes;
@@ -507,8 +640,12 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             return;
           }
           try {
-            ws.send(frame);
+            currentWs?.send(frame);
           } catch (err: unknown) {
+            if (everAttached) {
+              currentWs?.close();
+              return;
+            }
             errorOutput.write("Shell attach failed\n");
             settle(() => reject(Object.assign(new Error("Request failed"), {
               code: err instanceof Error ? "attach_failed" : "request_failed",
@@ -516,13 +653,14 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
         };
         const detachLocal = () => {
+          const wsToClose = currentWs;
           sendFrame(JSON.stringify({ type: "detach" }));
-          ws.close();
           settle(() => resolve({ detached: true }));
+          wsToClose?.close();
         };
         const onInput = (chunk: Buffer | string) => {
           const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
-          if (rawModeEnabled && !remoteAttached && rawData.includes("\u0003")) {
+          if (rawModeEnabled && !everAttached && rawData.includes("\u0003")) {
             detachLocal();
             return;
           }
@@ -565,7 +703,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           sendResizeFrame();
         };
         const onSignal = (signal?: NodeJS.Signals) => {
-          if (signal === "SIGTERM" || !remoteAttached) {
+          if (signal === "SIGTERM" || !everAttached) {
             detachLocal();
             return;
           }
@@ -599,39 +737,58 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
           const msg = parsed as Record<string, unknown>;
           if (msg.type === "attached") {
-            remoteAttached = true;
+            everAttached = true;
+            reconnectAttempt = 0;
             markOpen();
+            startHeartbeat();
+            if (reconnecting) {
+              reconnecting = false;
+              errorOutput.write("\r\nConnection restored.\r\n");
+              output.write(SHELL_ATTACH_RESTORED_NOTICE);
+            }
             schedulePostAttachResizeFrames();
           } else if (msg.type === "output" && typeof msg.data === "string") {
+            if (Number.isSafeInteger(msg.seq) && (msg.seq as number) >= 0) {
+              lastSeq = msg.seq as number;
+            }
+            noteRemoteActivity();
             inputFilter.noteRemoteOutput();
             output.write(msg.data);
+          } else if (msg.type === "pong") {
+            noteRemoteActivity();
           } else if (msg.type === "error") {
             const code = typeof msg.code === "string" && SAFE_SHELL_SERVER_ERROR_CODES.has(msg.code)
               ? msg.code
               : "attach_failed";
+            if (everAttached && code === "attach_failed") {
+              currentWs?.close();
+              return;
+            }
             settle(() => reject(Object.assign(new Error("Request failed"), { code })));
           } else if (msg.type === "exit") {
             settle(() => resolve({ detached: false }));
           }
         };
         const onClose = () => {
-          if (!remoteAttached) {
+          const shouldReconnect = everAttached;
+          cleanupSocket();
+          if (!shouldReconnect) {
             settle(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
             return;
           }
-          settle(() => resolve({ detached: true }));
+          scheduleReconnect();
         };
         const onError = (err: unknown) => {
+          if (everAttached) {
+            currentWs?.close();
+            return;
+          }
           errorOutput.write("Shell attach failed\n");
           settle(() => reject(Object.assign(new Error("Request failed"), {
             code: err instanceof Error ? "attach_failed" : "request_failed",
           })));
         };
 
-        ws.on("open", onOpen);
-        ws.on("message", onMessage);
-        ws.on("close", onClose);
-        ws.on("error", onError);
         if (input.isTTY && typeof input.setRawMode === "function") {
           resetLocalInputModes();
           input.setRawMode(true);
@@ -643,6 +800,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         process.once("SIGTERM", onSignal);
         process.once("exit", onProcessExit);
         input.on?.("data", onInput);
+        connect();
       });
     },
   };
