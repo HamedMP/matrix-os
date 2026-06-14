@@ -44,8 +44,7 @@ describe("www landing agent setup", () => {
 
     expect(proxy).toContain('"/dashboard(.*)"');
     expect(proxy).toContain('"/admin(.*)"');
-    expect(proxy).toContain('matcher: ["/dashboard(.*)", "/admin(.*)"]');
-    expect(proxy).not.toContain('"/((?!_next');
+    expect(proxy).toContain('matcher: ["/dashboard(.*)", "/admin(.*)", "/((?!_next|.*\\\\..*).*)"]');
     expect(proxy).not.toContain('"/(api|trpc)(.*)"');
   });
 
