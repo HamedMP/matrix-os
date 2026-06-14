@@ -27,7 +27,7 @@ export const useUi = create<UiState>()((set) => ({
   paletteOpen: false,
   quickOpenOpen: false,
   sidebarCollapsed: false,
-  setCreateTaskOpen: (open) => set({ createTaskOpen: open }),
+  setCreateTaskOpen: (open) => set({ createTaskOpen: open, createTaskStatus: null }),
   openCreateTask: (status) => set({ createTaskOpen: true, createTaskStatus: status ?? null }),
   setComposerOpen: (open) => set({ composerOpen: open }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
