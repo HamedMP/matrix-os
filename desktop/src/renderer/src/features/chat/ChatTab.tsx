@@ -49,6 +49,8 @@ export default function ChatTab() {
   const projectName = projects[0]?.name ?? projects[0]?.slug ?? "matrix-os";
   const groups = groupMessages(messages);
   const empty = messages.length === 0;
+  const lastMessage = messages.at(-1);
+  const scrollKey = lastMessage ? `${lastMessage.id}:${lastMessage.content.length}:${status}` : status;
 
   const submit = () => {
     if (draft.trim().length === 0) return;
@@ -92,7 +94,7 @@ export default function ChatTab() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <Conversation>
+      <Conversation scrollKey={scrollKey}>
         <ConversationContent>
           {groups.map((group) =>
             group.type === "tool_group" ? (

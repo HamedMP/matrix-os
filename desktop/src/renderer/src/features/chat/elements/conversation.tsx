@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
 // AI-Elements-style Conversation: auto-scrolls to the bottom while streaming
 // and shows a jump-to-latest button when the user scrolls up.
-export function Conversation({ children }: { children: ReactNode }) {
+export function Conversation({ children, scrollKey }: { children: ReactNode; scrollKey: string | number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
 
@@ -23,7 +23,7 @@ export function Conversation({ children }: { children: ReactNode }) {
       const el = ref.current;
       if (el) el.scrollTop = el.scrollHeight;
     }
-  });
+  }, [atBottom, scrollKey]);
 
   return (
     <div className="relative min-h-0 flex-1">

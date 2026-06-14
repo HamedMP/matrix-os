@@ -41,7 +41,7 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       role: "user",
       content: trimmed,
       requestId,
-      timestamp: 0,
+      timestamp: Date.now(),
     };
     set((state) => ({
       messages: [...state.messages, userMessage].slice(-TRANSCRIPT_CAP),
