@@ -427,4 +427,102 @@ describe("Settings: desktop + theme + wallpapers", () => {
       expect(await res.json()).toEqual({ error: "Failed to restart channel" });
     });
   });
+
+  describe("GET /agent (kernel config)", () => {
+    it("returns null model/effort, the model allowlist, and defaults when unset", async () => {
+      const res = await app.request("/api/settings/agent");
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.kernel).toEqual({ model: null, effort: null });
+      expect(data.availableModels.map((m: { id: string }) => m.id)).toContain("claude-opus-4-6");
+      expect(data.availableEfforts).toEqual(["low", "medium", "high", "max"]);
+      expect(data.defaults).toEqual({ model: "claude-opus-4-6", effort: "high" });
+    });
+
+    it("reflects persisted kernel config", async () => {
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({ kernel: { model: "claude-sonnet-4-5", effort: "low" } }),
+      );
+      const res = await app.request("/api/settings/agent");
+      const data = await res.json();
+      expect(data.kernel).toEqual({ model: "claude-sonnet-4-5", effort: "low" });
+    });
+
+    it("normalizes hand-edited model and effort values outside the allowlists", async () => {
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({ kernel: { model: "gpt-4o", effort: "ludicrous" } }),
+      );
+
+      const res = await app.request("/api/settings/agent");
+      const data = await res.json();
+
+      expect(data.kernel).toEqual({ model: null, effort: null });
+    });
+  });
+
+  describe("PUT /agent (kernel config)", () => {
+    it("persists model + effort and preserves other config keys", async () => {
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({ channels: { telegram: { enabled: true } } }),
+      );
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "claude-haiku-4-5", effort: "max" }),
+      });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, kernel: { model: "claude-haiku-4-5", effort: "max" } });
+
+      const saved = JSON.parse(readFileSync(join(homePath, "system/config.json"), "utf-8"));
+      expect(saved.kernel).toEqual({ model: "claude-haiku-4-5", effort: "max" });
+      // Unrelated config (channels) is preserved.
+      expect(saved.channels.telegram.enabled).toBe(true);
+    });
+
+    it("normalizes the response after partial updates to hand-edited kernel config", async () => {
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({ kernel: { model: "gpt-4o", effort: "medium" } }),
+      );
+
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ effort: "max" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, kernel: { model: null, effort: "max" } });
+    });
+
+    it("rejects a model outside the allowlist", async () => {
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "gpt-4o" }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects an invalid reasoning effort", async () => {
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ effort: "ludicrous" }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects unknown fields (strict schema)", async () => {
+      const res = await app.request("/api/settings/agent", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "claude-opus-4-6", systemPrompt: "pwn" }),
+      });
+      expect(res.status).toBe(400);
+    });
+  });
 });

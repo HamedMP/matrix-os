@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { z } from "zod/v4";
 import {
   access,
   mkdir,
@@ -24,6 +25,35 @@ const DESKTOP_DEFAULTS = {
 
 const THEME_DEFAULTS = {};
 const SETTINGS_BODY_LIMIT = 256 * 1024;
+
+// Curated kernel model allowlist surfaced to the agent-config UI. Keep in sync
+// with the kernel runtime; users may only persist a model from this list.
+const KERNEL_MODELS = [
+  { id: "claude-opus-4-6", label: "Claude Opus 4.6", tier: "Most capable" },
+  { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", tier: "Balanced" },
+  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", tier: "Fastest" },
+] as const;
+const KERNEL_MODEL_IDS = KERNEL_MODELS.map((m) => m.id) as [string, ...string[]];
+const KERNEL_EFFORTS = ["low", "medium", "high", "max"] as const;
+const KERNEL_DEFAULTS = { model: "claude-opus-4-6", effort: "high" } as const;
+
+const KernelPatchSchema = z
+  .object({
+    model: z.enum(KERNEL_MODEL_IDS).optional(),
+    effort: z.enum(KERNEL_EFFORTS).optional(),
+  })
+  .strict();
+
+function normalizeKernelModel(value: unknown): string | null {
+  return typeof value === "string" && KERNEL_MODEL_IDS.includes(value) ? value : null;
+}
+
+function normalizeKernelEffort(value: unknown): string | null {
+  return typeof value === "string" && (KERNEL_EFFORTS as readonly string[]).includes(value)
+    ? value
+    : null;
+}
+
 const WALLPAPER_FILE_EXTENSIONS = new Set([
   ".avif",
   ".gif",
@@ -210,7 +240,46 @@ export function createSettingsRoutes(opts: {
     const cfg = await readConfig();
     const handlePath = join(homePath, "system/handle.json");
     const handle = await readJson(handlePath, {}, "handle");
-    return c.json({ identity: handle, kernel: cfg.kernel ?? {} });
+    const kernel = (cfg.kernel ?? {}) as Record<string, unknown>;
+    return c.json({
+      identity: handle,
+      kernel: {
+        model: normalizeKernelModel(kernel.model),
+        effort: normalizeKernelEffort(kernel.effort),
+      },
+      availableModels: KERNEL_MODELS,
+      availableEfforts: KERNEL_EFFORTS,
+      defaults: KERNEL_DEFAULTS,
+    });
+  });
+
+  app.put("/agent", bodyLimit({ maxSize: SETTINGS_BODY_LIMIT }), async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[settings] Failed to parse agent config request:", err);
+      }
+      return c.json({ error: "Invalid JSON" }, 400);
+    }
+    const parsed = KernelPatchSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid kernel settings" }, 400);
+    }
+    const cfg = await readConfig();
+    const kernel = { ...((cfg.kernel ?? {}) as Record<string, unknown>) };
+    if (parsed.data.model !== undefined) kernel.model = parsed.data.model;
+    if (parsed.data.effort !== undefined) kernel.effort = parsed.data.effort;
+    cfg.kernel = kernel;
+    await writeJsonAtomic(configPath, cfg);
+    return c.json({
+      ok: true,
+      kernel: {
+        model: normalizeKernelModel(kernel.model),
+        effort: normalizeKernelEffort(kernel.effort),
+      },
+    });
   });
 
   app.get("/skills", async (c) => {
