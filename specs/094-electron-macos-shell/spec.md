@@ -158,7 +158,7 @@ The user drives the app with the keyboard: a command palette opens tasks, projec
 - **FR-011**: Users MUST be able to create, rename, move (status/order), archive, and delete tasks; mutations go to the gateway (owner Postgres is the source of truth) with optimistic concurrency — stale writes refresh, never silently overwrite.
 - **FR-012**: Task creation MUST offer both "create" and "create + open" completion actions.
 - **FR-013**: Board reads MUST be stale-while-revalidate: cached cards render immediately, refresh happens in the background; full-screen skeletons appear only on first load.
-- **FR-014**: Board changes made elsewhere (web shell, CLI, agents) MUST appear in the app within 2 seconds via event push, not client polling.
+- **FR-014**: Board changes made elsewhere (web shell, CLI, agents) MUST appear in the app within 2 seconds. Event push is the target mechanism; bounded REST polling/SWR refresh is acceptable only while the full task-event push dependency remains outstanding.
 - **FR-015**: Tasks MUST support tags, priority, and per-project statuses; the board MUST be identical in content across native app, web shell, and CLI.
 
 #### Terminals (thin client)
@@ -186,7 +186,7 @@ The user drives the app with the keyboard: a command palette opens tasks, projec
 - **FR-040**: Each open task MUST present a panel strip — terminal, editor, git, browser/preview, artifacts, processes — where panels toggle independently, are resizable with per-panel minimums, and persist layout per task.
 - **FR-041**: The editor MUST provide VS Code-class editing for files on the VPS: syntax highlighting, find/replace, multiple open files, dirty indicators, and conflict-safe saves (warn when the file changed remotely since load).
 - **FR-042**: The file browser/quick-open MUST list and search project files via the gateway file API; all paths are validated server-side; the client never composes raw filesystem paths beyond user-visible navigation.
-- **FR-043**: The processes panel MUST show running processes on the VPS (read-only at minimum) via the gateway.
+- **FR-043**: The processes panel MUST show running processes on the VPS (read-only at minimum) via the gateway once the process-listing dependency is available; until then it MUST render an explicit unavailable state rather than fake process data.
 - **FR-044**: The artifacts panel MUST list task/project artifacts and previews with safe rendering (no arbitrary remote origins).
 - **FR-045**: Open-task workspaces MUST be limited by an LRU policy: beyond the cap, the least-recently-used workspace releases live sockets and heavy views but remains restorable.
 
@@ -327,11 +327,12 @@ The user drives the app with the keyboard: a command palette opens tasks, projec
 
 ## Dependencies (gateway/platform deltas)
 
-1. **Task event push**: board live-sync (FR-014) needs task events on the existing gateway WebSocket; today task events are REST-poll only.
+1. **Task event push**: board live-sync (FR-014) needs full task create/update/delete events on the existing gateway WebSocket; bounded REST polling/SWR refresh is the temporary fallback.
 2. **Session termination by name**: FR-026 needs a gateway endpoint to kill a terminal-multiplexer session by name (known prototype blocker).
 3. **Diff content endpoint**: FR-050/051 need working-tree and branch diff content via the gateway (branches/PRs/worktrees lists already exist).
 4. **Desktop release feed**: FR-091 needs a signed update feed tied to release channels.
-5. **Long-running command attention** (FR-070, best-effort): may need a gateway signal for command completion in unfocused sessions; degrade gracefully if absent.
+5. **Process listing endpoint**: FR-043 needs a gateway read endpoint for running VPS processes; the desktop client shows an unavailable state until it exists.
+6. **Long-running command attention** (FR-070, best-effort): may need a gateway signal for command completion in unfocused sessions; degrade gracefully if absent.
 
 ## Out of Scope
 
