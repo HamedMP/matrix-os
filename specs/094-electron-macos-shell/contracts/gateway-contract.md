@@ -89,4 +89,5 @@ the end. All HTTP via the platform proxy host with `Authorization: Bearer <token
 2. **Kill zellij session by name** — terminate UI disabled-with-tooltip until present.
 3. **Diff content endpoint** — git panel ships lists/status only; diff pane gated.
 4. **Desktop release feed** (signed, channel-aware) — updater no-ops without it.
-5. **Command-completion attention signal** — best-effort; absent = no terminal-idle notifications.
+5. **Process listing endpoint** — processes panel shows an explicit unavailable state until present.
+6. **Command-completion attention signal** — best-effort; absent = no terminal-idle notifications.

@@ -248,7 +248,7 @@ The user drives the app with the keyboard: a command palette opens tasks, projec
 - **SC-002**: Opening a task reaches a usable terminal prompt within 3 seconds.
 - **SC-003**: Terminal keystroke echo latency is ≤150 ms at p95 on typical broadband.
 - **SC-004**: After a network drop, terminals reconnect and restore scrollback within 5 seconds of connectivity returning, with zero duplicated output lines.
-- **SC-005**: Board changes made on another client appear in the app within 2 seconds.
+- **SC-005**: Board changes made on another client appear in the app within 2 seconds once Dependency #1 lands; bounded REST polling/SWR refresh is the acceptable interim behavior while full task-event push remains outstanding.
 - **SC-006**: Switching between two open task workspaces preserves terminal buffers and editor state and completes with no visible reload (perceived as instant; ≤200 ms to interactive).
 - **SC-007**: 90% of first-time users complete sign-in and reach their board without external help.
 - **SC-008**: Deleting the app and all its local data loses zero user work; signing in on a fresh machine restores projects, tasks, sessions, and history from the VPS.
