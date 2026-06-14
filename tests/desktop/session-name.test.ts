@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { friendlySessionName } from "@desktop/renderer/src/lib/session-name";
 
 describe("friendlySessionName", () => {
-  it("is a stable two-word adjective-noun label", () => {
+  it("is a stable readable label", () => {
     const a = friendlySessionName("matrix-9b2f8c3e");
-    expect(a).toMatch(/^[a-z]+-[a-z]+$/);
+    expect(a).toMatch(/^[a-z]+-[a-z]+-[a-z0-9]{4}$/);
     expect(friendlySessionName("matrix-9b2f8c3e")).toBe(a); // deterministic
   });
 
@@ -14,5 +14,10 @@ describe("friendlySessionName", () => {
     );
     // Not all identical — the hash spreads inputs across the wordlists.
     expect(names.size).toBeGreaterThan(1);
+  });
+
+  it("adds enough hash suffix entropy to avoid visible collisions in typical session lists", () => {
+    const names = Array.from({ length: 100 }, (_, i) => friendlySessionName(`matrix-task-${i}`));
+    expect(new Set(names).size).toBe(names.length);
   });
 });

@@ -1,7 +1,8 @@
-// Friendly two-word display names for sessions. The gateway's zellij session
-// names are opaque (matrix-<id>); we derive a stable, readable "adjective-noun"
-// label from the attach name deterministically (same name → same label) so the
-// UI never shows a random hash. The real attach name is still used to connect.
+// Friendly display names for sessions. The gateway's zellij session names are
+// opaque (matrix-<id>); we derive a stable, readable "adjective-noun-hash"
+// label from the attach name deterministically (same name -> same label) so the
+// UI avoids opaque IDs while still distinguishing sessions when word pairs
+// collide. The real attach name is still used to connect.
 
 const ADJECTIVES = [
   "amber", "azure", "bold", "brave", "bright", "calm", "clever", "cosmic",
@@ -30,10 +31,11 @@ function hash32(value: string): number {
   return h >>> 0;
 }
 
-/** Stable "adjective-noun" label for an attach name (e.g. "brave-otter"). */
+/** Stable "adjective-noun-hash" label for an attach name (e.g. "brave-otter-1a2b"). */
 export function friendlySessionName(attachName: string): string {
   const h = hash32(attachName);
-  const adjective = ADJECTIVES[h % ADJECTIVES.length]!;
-  const noun = NOUNS[Math.floor(h / ADJECTIVES.length) % NOUNS.length]!;
-  return `${adjective}-${noun}`;
+  const adjective = ADJECTIVES[(h & 0xffff) % ADJECTIVES.length]!;
+  const noun = NOUNS[(h >>> 16) % NOUNS.length]!;
+  const suffix = h.toString(36).padStart(7, "0").slice(-4);
+  return `${adjective}-${noun}-${suffix}`;
 }
