@@ -66,9 +66,12 @@ is skipped, and the job fails so the skip is visible. Manual deploy: `gh workflo
 Required repo secrets (beyond the existing release secrets):
 `PREVIEW_CLERK_USER_ID` — the Clerk user that owns preview VPSes.
 
-For richer branch testing flows (staging platform container + feature VPS with
-SSH verification) see the `staging-platform-vps` command, which predates this
-pipeline and remains the manual/deep-debug path.
+To walk the full onboarding/billing flow against branch platform code — a
+four-slice split (staging slot for the shell, an IAM-proxied `preview-platform`
+revision for the journey/reliability API, a local `dev:platform` + Stripe CLI
+for the test-mode checkout/webhook race, and a disposable feature VPS for the
+provisioned hand-off) — see the `staging-platform-vps` command and
+[Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
 
 ## Platform preview revisions
 

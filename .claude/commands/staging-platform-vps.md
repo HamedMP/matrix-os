@@ -22,7 +22,7 @@ $ARGUMENTS
 
 Expected input examples:
 
-- `setup pr 508 handle <feature-handle> clerk <your-clerk-user-id>`
+- `setup pr <N> handle <feature-handle> clerk <your-clerk-user-id>`
 - `teardown handle <feature-handle>`
 - `status handle <feature-handle>`
 
