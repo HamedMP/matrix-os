@@ -4,35 +4,44 @@ import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import { createFilesApi, openFile } from "./editor-save";
 
+type PreviewState =
+  | { path: string; status: "loading" }
+  | { path: string; status: "ready"; content: string }
+  | { path: string; status: "error"; error: string };
+
 // Read-only rendered markdown for .md/.mdx files. Reuses the chat response prose
 // styling so docs read like docs instead of raw CodeMirror text. Toggle to Code
 // in the editor header to edit.
 export default function MarkdownPreview({ path }: { path: string }) {
   const api = useConnection((s) => s.api);
-  const [content, setContent] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<PreviewState>(() => ({ path, status: "loading" }));
+
+  let preview = state;
+  if (state.path !== path) {
+    preview = { path, status: "loading" };
+    setState(preview);
+  }
 
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
-    setContent(null);
-    setError(null);
+    const requestedPath = path;
     void openFile(createFilesApi(api), path)
       .then((file) => {
-        if (!cancelled) setContent(file.content);
+        if (!cancelled) setState({ path: requestedPath, status: "ready", content: file.content });
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(toUserMessage(err));
+        if (!cancelled) setState({ path: requestedPath, status: "error", error: toUserMessage(err) });
       });
     return () => {
       cancelled = true;
     };
   }, [api, path]);
 
-  if (error) {
-    return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--danger)" }}>{error}</div>;
+  if (preview.status === "error") {
+    return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--danger)" }}>{preview.error}</div>;
   }
-  if (content === null) {
+  if (preview.status === "loading") {
     return <div className="flex flex-1 items-center justify-center text-sm" style={{ color: "var(--text-tertiary)" }}>Loading…</div>;
   }
 
@@ -43,7 +52,7 @@ export default function MarkdownPreview({ path }: { path: string }) {
         style={{ color: "var(--text-primary)" }}
         data-selectable
       >
-        <ReactMarkdown>{content}</ReactMarkdown>
+        <ReactMarkdown>{preview.content}</ReactMarkdown>
       </div>
     </div>
   );
