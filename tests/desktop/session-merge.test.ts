@@ -141,11 +141,11 @@ describe("useSessions store", () => {
     useSessions.setState(useSessions.getInitialState(), true);
   });
 
-  function makeApi(get: ReturnType<typeof vi.fn>): ApiClient {
+  function makeApi(get: ReturnType<typeof vi.fn>, post: ReturnType<typeof vi.fn> = vi.fn()): ApiClient {
     return {
       baseUrl: "https://x.test",
       get,
-      post: vi.fn(),
+      post,
       patch: vi.fn(),
       delete: vi.fn(),
       putText: vi.fn(),
@@ -252,5 +252,24 @@ describe("useSessions store", () => {
 
     resolveTerminal?.({ sessions: [] });
     await load;
+  });
+
+  it("creates a terminal session and selects the attachable result", async () => {
+    const get = vi.fn().mockImplementation((path: string) => {
+      if (path === "/api/terminal/sessions") {
+        return Promise.resolve({ sessions: [{ name: "operator-new", status: "active" }] });
+      }
+      return Promise.resolve({ sessions: [], nextCursor: null });
+    });
+    const post = vi.fn().mockResolvedValue({ name: "operator-new", created: true });
+
+    const created = await useSessions.getState().create(makeApi(get, post));
+
+    expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
+      name: expect.stringMatching(/^operator-[a-z0-9]+-[a-f0-9]{8}$/),
+    });
+    expect(created?.attachName).toBe("operator-new");
+    expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["operator-new"]);
+    expect(useSessions.getState().error).toBeNull();
   });
 });

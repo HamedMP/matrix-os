@@ -11,6 +11,7 @@ export default function TerminalsTab() {
   const api = useConnection((s) => s.api);
   const sessions = useSessions((s) => s.sessions);
   const load = useSessions((s) => s.load);
+  const create = useSessions((s) => s.create);
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,7 +58,16 @@ export default function TerminalsTab() {
           )}
         </div>
         <div className="border-t p-2" style={{ borderColor: "var(--border-subtle)" }}>
-          <Button variant="subtle" className="w-full justify-center" onClick={() => api && void load(api)}>
+          <Button
+            variant="subtle"
+            className="w-full justify-center"
+            onClick={() => {
+              if (!api) return;
+              void create(api).then((session) => {
+                if (session) setSelected(session.attachName);
+              });
+            }}
+          >
             <Plus size={13} />
             New session
           </Button>

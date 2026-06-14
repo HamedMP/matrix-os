@@ -78,11 +78,20 @@ export function installGatewayCors(
     }
     const responseHeaders: Record<string, string[]> = {};
     for (const [key, value] of Object.entries(details.responseHeaders ?? {})) {
-      if (!key.toLowerCase().startsWith("access-control-")) responseHeaders[key] = value;
+      const lower = key.toLowerCase();
+      if (
+        lower !== "access-control-allow-origin" &&
+        lower !== "access-control-allow-methods" &&
+        lower !== "access-control-allow-headers" &&
+        lower !== "access-control-allow-credentials"
+      ) {
+        responseHeaders[key] = value;
+      }
     }
     responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
     responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
     responseHeaders["Access-Control-Allow-Headers"] = ["Authorization, Content-Type"];
+    responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
     if (details.method === "OPTIONS") {
       callback({ responseHeaders, statusLine: "HTTP/1.1 200 OK" });
       return;

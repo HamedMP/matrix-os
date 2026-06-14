@@ -35,6 +35,7 @@ describe("installGatewayCors", () => {
     const res = fire({ url: `${GATEWAY}/api/channels/status`, method: "GET", responseHeaders: { "content-type": ["application/json"] } });
     expect(res.responseHeaders?.["Access-Control-Allow-Origin"]).toEqual(["http://localhost:5173"]);
     expect(res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]).toContain("Authorization");
+    expect(res.responseHeaders?.["Access-Control-Allow-Credentials"]).toEqual(["true"]);
     expect(res.responseHeaders?.["content-type"]).toEqual(["application/json"]);
   });
 
@@ -55,6 +56,22 @@ describe("installGatewayCors", () => {
       responseHeaders: { "Access-Control-Allow-Origin": ["https://app.matrix-os.com"] },
     });
     expect(res.responseHeaders?.["Access-Control-Allow-Origin"]).toEqual(["http://localhost:5173"]);
+  });
+
+  it("preserves upstream exposed headers while replacing allow headers", () => {
+    const { session, fire } = corsSession();
+    installGatewayCors(session, () => GATEWAY, "http://localhost:5173");
+    const res = fire({
+      url: `${GATEWAY}/api/apps`,
+      method: "GET",
+      responseHeaders: {
+        "Access-Control-Allow-Origin": ["https://app.matrix-os.com"],
+        "Access-Control-Expose-Headers": ["ETag, X-Matrix-Version"],
+      },
+    });
+    expect(res.responseHeaders?.["Access-Control-Allow-Origin"]).toEqual(["http://localhost:5173"]);
+    expect(res.responseHeaders?.["Access-Control-Expose-Headers"]).toEqual(["ETag, X-Matrix-Version"]);
+    expect(res.responseHeaders?.["Access-Control-Allow-Credentials"]).toEqual(["true"]);
   });
 
   it("leaves non-gateway responses untouched", () => {
