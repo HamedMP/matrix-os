@@ -28,7 +28,8 @@ Your projects appear in the title bar's project switcher. Each project is a kanb
 **Todo, Running, Waiting, Blocked, Complete** columns. Drag cards between columns, right-click a
 card for status/priority/archive/delete, and press **C** (or **⌘N**) to create a task. Create
 dialogs offer both **Create** (⌘↵) and **Create + open** (⌘⇧↵). Changes made on the web shell,
-CLI, or by agents appear in the app automatically.
+CLI, or by agents are wired through the shared gateway events; full-field live sync is still
+being verified against the VPS gateway before it is treated as complete parity.
 
 ## Terminals
 
@@ -43,17 +44,18 @@ are listed under **Sessions**.
 Press **⌘J** anywhere to open the composer and start an agent run. Each run is a thread with
 live status (running, needs attention, done, failed). Run several at once and switch freely
 between them; the sidebar shows status dots and unread markers. When a thread finishes or needs
-input while the app is in the background, you get a native notification — click it to jump
-straight to that thread.
+input while the app is in the background, the native notification path is wired, but background
+completion notifications still need live-VPS verification before public release.
 
 ## Task workspace
 
 Opening a task reveals a resizable panel strip — terminal, editor, git, files, artifacts,
-processes. Toggle panels with **⌘1–⌘6**, drag the dividers to resize, and the layout persists
-per task. The editor is VS Code-class (Monaco) with multiple files, find/replace, and
-conflict-safe saves (it warns if a file changed on the server since you opened it). Switching
-between open tasks is instant — terminals keep their buffers and editors keep their open files.
-Press **⌘P** to quick-open a file by name.
+and a processes panel that shows an explicit unavailable state until the gateway process-list
+endpoint lands. Toggle panels with **⌘1–⌘6**, drag the dividers to resize, and the layout
+persists per task. The editor is VS Code-class (Monaco) with multiple files, find/replace,
+and conflict-safe saves (it warns if a file changed on the server since you opened it).
+Switching between open tasks is instant — terminals keep their buffers and editors keep their
+open files. Press **⌘P** to quick-open a file by name.
 
 ## Apps and Canvas
 
@@ -73,8 +75,9 @@ in an isolated browser context with no access to the app's privileged APIs.
 ## Settings
 
 Native settings cover account, runtime/VM selection, appearance (dark/light/system), and system
-info, with channels, integrations, billing, and cron read at parity with the web shell.
-Switching runtime re-targets every surface — board, terminals, chat, and apps.
+info. Channels, integrations, billing, and cron are being brought to read parity with the web
+shell as the remaining gateway-read wiring is verified. Switching runtime re-targets every
+surface — board, terminals, chat, and apps.
 
 ## Privacy and updates
 

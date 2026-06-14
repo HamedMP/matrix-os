@@ -82,4 +82,11 @@ suite("operator desktop e2e", () => {
     await page.getByText(/^Done$/).first().waitFor({ timeout: 5_000 });
     await page.screenshot({ path: join(SCREENSHOT_DIR, "03-thread.png") });
   }, 30_000);
+
+  it("renders the app launcher from the gateway catalog", async () => {
+    await page.getByRole("button", { name: "Apps" }).click();
+    await page.getByText("Notes").waitFor({ timeout: 10_000 });
+    await page.getByText("Pomodoro").waitFor();
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-apps.png") });
+  }, 30_000);
 });

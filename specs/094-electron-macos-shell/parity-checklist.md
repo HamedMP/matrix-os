@@ -124,7 +124,7 @@ secondary surfaces not yet exercised against the VPS.
 | `bun run typecheck` (desktop) | ✅ clean |
 | `bun run check:patterns` | ✅ 0 violations (desktop clean) |
 | 328 unit tests (`tests/desktop`) | ✅ green |
-| 3 Playwright e2e flows (`tests/e2e/desktop`) | ✅ green + screenshots |
+| 4 Playwright e2e flows (`tests/e2e/desktop`) | ✅ green + screenshots |
 | `npx react-doctor@latest desktop` | ✅ 0 critical (warnings noted) |
 
 ## Outstanding before prototype retirement
