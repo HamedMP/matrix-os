@@ -47,6 +47,7 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 30_000;
 const BACKOFF_JITTER = 0.5;
 const BACKOFF_MAX_EXPONENT = 10;
+const ATTACH_HANDSHAKE_TIMEOUT_MS = BACKOFF_BASE_MS;
 const CONNECTION_LOST_AFTER_FAILURES = 2;
 const RESIZE_DEBOUNCE_STARTUP_MS = 220;
 const RESIZE_DEBOUNCE_STEADY_MS = 90;
@@ -95,6 +96,7 @@ export class ShellSocket {
   private started = false;
   private disposed = false;
   private lastSeqValue = 0;
+  private receivedOutput = false;
   private attachedSessionName: string | null = null;
   private failedAttempts = 0;
   private pendingInput: string[] = [];
@@ -106,6 +108,7 @@ export class ShellSocket {
   private resizeTimer: TimerHandle | null = null;
   private settleTimer: TimerHandle | null = null;
   private fallbackTimer: TimerHandle | null = null;
+  private handshakeTimer: TimerHandle | null = null;
 
   constructor(options: ShellSocketOptions) {
     const hasSession = typeof options.sessionName === "string" && options.sessionName.length > 0;
@@ -214,7 +217,16 @@ export class ShellSocket {
       this.scheduleReconnect();
     };
 
-    socket.onopen = () => undefined;
+    socket.onopen = () => {
+      if (this.socket !== socket) return;
+      this.clearAttachHandshakeTimer();
+      this.handshakeTimer = this.setT(() => {
+        if (this.socket !== socket || this.disposed) return;
+        this.handshakeTimer = null;
+        console.warn("[shell-socket] attach handshake timed out");
+        onClosed();
+      }, ATTACH_HANDSHAKE_TIMEOUT_MS);
+    };
     socket.onmessage = (event) => {
       if (this.socket === socket) this.handleMessage(event.data);
     };
@@ -235,7 +247,7 @@ export class ShellSocket {
       ? (this.attachedSessionName ?? this.opts.sessionName ?? null)
       : (this.opts.sessionName ?? null);
     if (sessionName !== null && sessionName.length > 0) {
-      const fromSeq = isReconnect ? this.lastSeqValue + 1 : LIVE_TAIL_FROM_SEQ;
+      const fromSeq = isReconnect && this.receivedOutput ? this.lastSeqValue + 1 : LIVE_TAIL_FROM_SEQ;
       return `${base}/ws/terminal/session?session=${encodeURIComponent(sessionName)}&fromSeq=${fromSeq}${runtimeSuffix}`;
     }
     return `${base}/ws/terminal?cwd=${encodeURIComponent(this.opts.cwd ?? "")}${runtimeSuffix}`;
@@ -252,6 +264,7 @@ export class ShellSocket {
       this.clearT(this.fallbackTimer);
       this.fallbackTimer = null;
     }
+    this.clearAttachHandshakeTimer();
     const exponent = Math.min(this.failedAttempts, BACKOFF_MAX_EXPONENT);
     const baseDelay = Math.min(BACKOFF_BASE_MS * 2 ** exponent, BACKOFF_CAP_MS);
     const delay = baseDelay * (1 - BACKOFF_JITTER * this.random());
@@ -308,6 +321,7 @@ export class ShellSocket {
   }
 
   private handleAttached(frame: Record<string, unknown>): void {
+    this.clearAttachHandshakeTimer();
     if (typeof frame.session === "string" && frame.session.length > 0) {
       this.attachedSessionName = frame.session;
     }
@@ -325,6 +339,7 @@ export class ShellSocket {
       return;
     }
     this.lastSeqValue = seq;
+    this.receivedOutput = true;
     this.opts.events.onOutput(data, seq);
   }
 
@@ -339,6 +354,7 @@ export class ShellSocket {
   }
 
   private handleErrorFrame(frame: Record<string, unknown>): void {
+    this.clearAttachHandshakeTimer();
     const code = typeof frame.code === "string" ? frame.code : "unknown";
     if (FATAL_ERROR_CODES.has(code)) {
       this.teardownSocket();
@@ -419,8 +435,21 @@ export class ShellSocket {
     socket.onerror = null;
   }
 
+  private clearAttachHandshakeTimer(): void {
+    if (this.handshakeTimer !== null) {
+      this.clearT(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
+  }
+
   private clearAllTimers(): void {
-    for (const key of ["reconnectTimer", "resizeTimer", "settleTimer", "fallbackTimer"] as const) {
+    for (const key of [
+      "reconnectTimer",
+      "resizeTimer",
+      "settleTimer",
+      "fallbackTimer",
+      "handshakeTimer",
+    ] as const) {
       const handle = this[key];
       if (handle !== null) {
         this.clearT(handle);

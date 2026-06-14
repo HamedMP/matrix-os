@@ -256,6 +256,17 @@ describe("ShellSocket URL building", () => {
     );
   });
 
+  it("reconnects with the live-tail sentinel when no output has arrived yet", () => {
+    const h = createHarness();
+    connectAndAttach(h);
+    h.latest().serverClose();
+    h.timers.advance(500);
+    expect(h.sockets).toHaveLength(2);
+    expect(h.latest().url).toBe(
+      `wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+    );
+  });
+
   it("reconnects an auto-created terminal by its attached session name", () => {
     const h = createHarness({ sessionName: undefined, cwd: "/work" });
     h.socket.connect();
@@ -383,6 +394,21 @@ describe("ShellSocket reconnect", () => {
     h.timers.advance(499);
     expect(h.sockets).toHaveLength(1);
     h.timers.advance(1);
+    expect(h.sockets).toHaveLength(2);
+  });
+
+  it("reconnects when the websocket opens but never sends an attach frame", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.latest().open();
+
+    h.timers.advance(499);
+    expect(h.sockets).toHaveLength(1);
+    expect(h.socket.state).toBe("connecting");
+
+    h.timers.advance(1);
+    expect(h.socket.state).toBe("reconnecting");
+    h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
   });
 
