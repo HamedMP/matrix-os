@@ -13,7 +13,9 @@ export interface TerminalThemeOption {
   label: string;
 }
 
-const palettes: Record<string, AnsiPalette> = {
+type ConcreteTerminalThemeId = Exclude<TerminalThemeId, "system">;
+
+const palettes = {
   "one-dark": {
     black: "#282c34",
     red: "#e06c75",
@@ -192,9 +194,9 @@ const palettes: Record<string, AnsiPalette> = {
     // visual weight on bold text.
     brightWhite: "#d0d7de",
   },
-};
+} satisfies Record<ConcreteTerminalThemeId, AnsiPalette>;
 
-const themeMapping: Record<string, string> = {
+const themeMapping: Record<string, ConcreteTerminalThemeId> = {
   "default-dark": "one-dark",
   "default-light": "one-light",
   "catppuccin": "catppuccin-mocha",
@@ -271,7 +273,7 @@ const terminalThemePresets = {
     selectionBackground: "#0969da33",
   },
 } satisfies Record<
-  Exclude<TerminalThemeId, "system">,
+  ConcreteTerminalThemeId,
   {
     label: string;
     background: string;
@@ -284,7 +286,7 @@ const terminalThemePresets = {
 export const TERMINAL_THEME_OPTIONS: TerminalThemeOption[] = [
   { id: "system", label: "Match OS" },
   ...Object.entries(terminalThemePresets).map(([id, preset]) => ({
-    id: id as Exclude<TerminalThemeId, "system">,
+    id: id as ConcreteTerminalThemeId,
     label: preset.label,
   })),
 ];
@@ -309,7 +311,7 @@ export function getAnsiPalette(themeSlug: string, backgroundHex: string): AnsiPa
 }
 
 export function getTerminalThemePreset(
-  themeId: Exclude<TerminalThemeId, "system">,
+  themeId: ConcreteTerminalThemeId,
 ) {
   return {
     ...terminalThemePresets[themeId],
