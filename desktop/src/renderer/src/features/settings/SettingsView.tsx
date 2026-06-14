@@ -127,7 +127,14 @@ export default function SettingsView() {
           <Button
             variant="primary"
             disabled={slotInput.trim().length === 0 || slotInput === runtimeSlot}
-            onClick={() => void selectRuntime(slotInput.trim())}
+            onClick={() => {
+              void selectRuntime(slotInput.trim()).catch((err: unknown) => {
+                console.warn(
+                  "[settings] runtime switch failed:",
+                  err instanceof Error ? err.message : String(err),
+                );
+              });
+            }}
           >
             Switch
           </Button>

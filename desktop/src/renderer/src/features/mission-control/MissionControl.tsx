@@ -17,6 +17,8 @@ import { wireKernel } from "../../lib/kernel-wiring";
 
 export default function MissionControl() {
   const api = useConnection((s) => s.api);
+  const platformHost = useConnection((s) => s.platformHost);
+  const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const loadProjects = useBoard((s) => s.loadProjects);
   const view = useUi((s) => s.view);
 
@@ -27,7 +29,7 @@ export default function MissionControl() {
     void loadProjects(api);
     const dispose = wireKernel();
     return dispose;
-  }, [api, loadProjects]);
+  }, [api, loadProjects, platformHost, runtimeSlot]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">

@@ -48,8 +48,14 @@ export default function Titlebar() {
           label: p.name || p.slug,
           onSelect: () => {
             if (api) {
-              void selectProject(api, p.slug);
-              navigate({ kind: "board" });
+              void selectProject(api, p.slug)
+                .then(() => navigate({ kind: "board" }))
+                .catch((err: unknown) => {
+                  console.warn(
+                    "[titlebar] project switch failed:",
+                    err instanceof Error ? err.message : String(err),
+                  );
+                });
             }
           },
         }))}
