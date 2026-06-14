@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.Presenter do
   Shared projections for the observability API and dashboard.
   """
 
-  alias SymphonyElixir.{Config, Linear.Bridge, Orchestrator, StatusDashboard}
+  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do
@@ -13,7 +13,7 @@ defmodule SymphonyElixirWeb.Presenter do
       %{} = snapshot ->
         %{
           generated_at: generated_at,
-          credential_status: credential_status(),
+          credential_status: credential_status(snapshot),
           counts: %{
             running: length(snapshot.running),
             retrying: length(snapshot.retrying)
@@ -27,14 +27,14 @@ defmodule SymphonyElixirWeb.Presenter do
       :timeout ->
         %{
           generated_at: generated_at,
-          credential_status: credential_status(),
+          credential_status: credential_status(:no_snapshot),
           error: %{code: "snapshot_timeout", message: "Snapshot timed out"}
         }
 
       :unavailable ->
         %{
           generated_at: generated_at,
-          credential_status: credential_status(),
+          credential_status: credential_status(:no_snapshot),
           error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}
         }
     end
@@ -190,21 +190,17 @@ defmodule SymphonyElixirWeb.Presenter do
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)
 
-  defp credential_status do
+  # Reports whether Linear is actually usable, derived from the orchestrator's
+  # most recent candidate poll rather than mere presence of bridge env vars.
+  # Those vars are always written on a customer VPS, so env presence cannot tell
+  # a connected integration apart from a disconnected one; the live poll can.
+  defp credential_status(snapshot) do
     case Config.settings() do
       {:ok, settings} ->
-        cond do
-          settings.tracker.kind != "linear" ->
-            "not_required"
-
-          is_binary(settings.tracker.api_key) and settings.tracker.api_key == Bridge.credential() ->
-            if matrix_linear_bridge_configured?(), do: "connected", else: "setup_required"
-
-          is_binary(settings.tracker.api_key) ->
-            "connected"
-
-          true ->
-            "setup_required"
+        if settings.tracker.kind == "linear" do
+          linear_credential_status(snapshot)
+        else
+          "not_required"
         end
 
       {:error, _reason} ->
@@ -212,14 +208,10 @@ defmodule SymphonyElixirWeb.Presenter do
     end
   end
 
-  defp matrix_linear_bridge_configured? do
-    Enum.all?(["PLATFORM_INTERNAL_URL", "UPGRADE_TOKEN", "MATRIX_HANDLE"], fn name ->
-      case System.get_env(name) do
-        value when is_binary(value) and value != "" -> true
-        _ -> false
-      end
-    end)
-  end
+  defp linear_credential_status(%{tracker: %{status: :ok}}), do: "connected"
+  defp linear_credential_status(%{tracker: %{status: :setup_required}}), do: "setup_required"
+  # :error, nil (no poll completed yet), or no live snapshot (timeout/unavailable).
+  defp linear_credential_status(_snapshot), do: "unavailable"
 
   defp due_at_iso8601(due_in_ms) when is_integer(due_in_ms) do
     DateTime.utc_now()

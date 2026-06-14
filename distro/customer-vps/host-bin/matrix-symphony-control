@@ -35,10 +35,22 @@ unit_available() {
   systemctl cat "$UNIT" >/dev/null 2>&1
 }
 
-credential_configured() {
-  local credential_dir="$MATRIX_HOME/system/symphony/credentials"
-  [ -d "$credential_dir" ] || return 1
-  find "$credential_dir" -maxdepth 1 -type f -name '*.linear' -size +0c -print -quit | grep -q .
+# Reports whether the Symphony->platform Linear bridge is wired on this host:
+# the env file must carry the handle, platform URL, and upgrade token the
+# Elixir service uses to reach platform-owned Linear credentials. This is a
+# host-verifiable precondition, not proof Linear is connected -- the
+# authoritative connection signal is the Symphony service credential_status
+# (derived from a live Linear poll). The previous check scanned a Symphony
+# credential directory for a per-credential file that nothing on the host ever
+# creates, so it was always false.
+SYMPHONY_ENV_FILE="${SYMPHONY_ENV_FILE:-/opt/matrix/env/symphony.env}"
+bridge_configured() {
+  [ -r "$SYMPHONY_ENV_FILE" ] || return 1
+  local key
+  for key in MATRIX_HANDLE PLATFORM_INTERNAL_URL UPGRADE_TOKEN; do
+    grep -Eq "^${key}=.+" "$SYMPHONY_ENV_FILE" || return 1
+  done
+  return 0
 }
 
 print_status() {
@@ -67,7 +79,7 @@ print_status() {
         ;;
     esac
   fi
-  if credential_configured; then
+  if bridge_configured; then
     credential=true
   fi
   printf '{"available":%s,"running":%s,"status":"%s","canStart":%s,"canStop":%s,"credentialConfigured":%s,"managedBy":"systemd"}\n' \
