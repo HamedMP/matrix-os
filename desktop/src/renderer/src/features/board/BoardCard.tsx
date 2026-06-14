@@ -76,7 +76,6 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
 
   const menuItems: MenuItem[] = [
     { label: "Open", onSelect: openCard },
-    { label: "Open terminal", onSelect: openCard },
     { label: "Start Claude", onSelect: () => startAgent("claude") },
     { label: "Start Codex", onSelect: () => startAgent("codex") },
     ...(previewUrl

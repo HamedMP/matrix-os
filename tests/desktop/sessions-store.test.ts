@@ -111,3 +111,32 @@ describe("useSessions.kill", () => {
     expect(useSessions.getState().error).toBe("server");
   });
 });
+
+describe("useSessions.restart", () => {
+  it("recreates the same zellij session name and reloads", async () => {
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const post = vi.fn().mockResolvedValue({ name: "matrix-task-1", created: true });
+    const get = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const api = makeApi({ delete: del, post, get });
+
+    const restarted = await useSessions.getState().restart(api, "matrix-task-1");
+
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-task-1?force=1");
+    expect(post).toHaveBeenCalledWith("/api/terminal/sessions", { name: "matrix-task-1" });
+    expect(get).toHaveBeenCalled();
+    expect(restarted).toEqual({ sessionId: "matrix-task-1", attachName: "matrix-task-1" });
+    expect(useSessions.getState().creating).toBe(false);
+    expect(useSessions.getState().error).toBeNull();
+  });
+
+  it("continues when the old session is already gone", async () => {
+    const del = vi.fn().mockRejectedValue(new AppError("notFound"));
+    const post = vi.fn().mockResolvedValue({ name: "matrix-task-1", created: true });
+    const api = makeApi({ delete: del, post });
+
+    const restarted = await useSessions.getState().restart(api, "matrix-task-1");
+
+    expect(restarted?.attachName).toBe("matrix-task-1");
+    expect(post).toHaveBeenCalledWith("/api/terminal/sessions", { name: "matrix-task-1" });
+  });
+});

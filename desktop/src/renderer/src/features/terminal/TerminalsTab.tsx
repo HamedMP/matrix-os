@@ -26,6 +26,7 @@ export default function TerminalsTab() {
   const load = useSessions((s) => s.load);
   const create = useSessions((s) => s.create);
   const kill = useSessions((s) => s.kill);
+  const restart = useSessions((s) => s.restart);
   const creating = useSessions((s) => s.creating);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const projects = useBoard((s) => s.projects);
@@ -104,6 +105,12 @@ export default function TerminalsTab() {
     }
   };
 
+  const restartSession = async (attachName: string) => {
+    if (!api || creating) return;
+    const restarted = await restart(api, attachName);
+    if (restarted?.attachName) setSelected(restarted.attachName);
+  };
+
   const selectedSession = sessions.find((s) => s.attachName === selected) ?? null;
 
   return (
@@ -155,7 +162,7 @@ export default function TerminalsTab() {
                         <span className="truncate font-mono text-[10px]" style={{ color: "var(--text-tertiary)" }}>{s.name}</span>
                       </button>
                       {exited ? (
-                        <IconButton label="Restart session" onClick={() => void newSession()}>
+                        <IconButton label="Restart session" onClick={() => void restartSession(s.attachName)}>
                           <RotateCcw size={12} />
                         </IconButton>
                       ) : null}

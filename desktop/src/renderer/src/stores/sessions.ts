@@ -35,6 +35,7 @@ interface SessionsState {
   load(api: ApiClient): Promise<void>;
   create(api: ApiClient, input?: SessionCreateInput): Promise<CreatedSession | null>;
   kill(api: ApiClient, attachName: string): Promise<boolean>;
+  restart(api: ApiClient, attachName: string): Promise<CreatedSession | null>;
   resolveAttachName(linkedSessionId: string | null): string | null;
 }
 
@@ -148,6 +149,26 @@ export const useSessions = create<SessionsState>()((set, get) => ({
       console.error("[sessions] Failed to kill session:", err);
       set({ error: err instanceof AppError ? err.category : "server" });
       return false;
+    }
+  },
+
+  restart: async (api, attachName) => {
+    set({ creating: true });
+    try {
+      try {
+        await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
+      } catch (err: unknown) {
+        if (!(err instanceof AppError && err.category === "notFound")) throw err;
+      }
+      const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name: attachName });
+      const restarted = typeof response.name === "string" && response.name.trim() ? response.name.trim() : attachName;
+      await get().load(api);
+      set({ creating: false, error: null });
+      return { sessionId: restarted, attachName: restarted };
+    } catch (err: unknown) {
+      console.error("[sessions] Failed to restart session:", err);
+      set({ creating: false, error: err instanceof AppError ? err.category : "server" });
+      return null;
     }
   },
 
