@@ -332,7 +332,37 @@ describe("shell REST client", () => {
     await expect(attached).resolves.toEqual({ detached: false });
   });
 
-  it("closes and reconnects when heartbeat pong or output is missing", async () => {
+  it("keeps the socket open across repeated heartbeat pongs", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      heartbeatIntervalMs: 20,
+      heartbeatTimeoutMs: 60,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+
+    for (let i = 0; i < 3; i += 1) {
+      await vi.advanceTimersByTimeAsync(20);
+      ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "pong" }));
+    }
+    await vi.advanceTimersByTimeAsync(59);
+
+    expect(ControlledWebSocket.instances).toHaveLength(1);
+    expect(ControlledWebSocket.last?.closed).toBe(false);
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
+  });
+
+  it("closes and reconnects after consecutive missed heartbeat pongs or output", async () => {
     vi.useFakeTimers();
     const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
     const input = new EventEmitter() as NodeJS.ReadStream;
@@ -354,14 +384,18 @@ describe("shell REST client", () => {
     const first = ControlledWebSocket.last!;
 
     await vi.advanceTimersByTimeAsync(80);
+    expect(first.closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(80);
     expect(first.closed).toBe(true);
     await vi.advanceTimersByTimeAsync(5);
 
     expect(ControlledWebSocket.instances).toHaveLength(2);
     expect(errorOutput.write).toHaveBeenCalledWith("\r\nConnection lost. Reconnecting...\r\n");
+    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("Matrix shell disconnected"));
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     expect(errorOutput.write).toHaveBeenCalledWith("\r\nConnection restored.\r\n");
+    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("connection restored"));
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
     await expect(attached).resolves.toEqual({ detached: false });
   });

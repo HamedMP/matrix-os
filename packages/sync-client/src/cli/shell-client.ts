@@ -67,6 +67,7 @@ export interface ShellAttachOptions {
   mouse?: boolean;
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
+  heartbeatMissesBeforeReconnect?: number;
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
   WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
@@ -80,6 +81,9 @@ const SHELL_ATTACH_HEARTBEAT_INTERVAL_MS = 20_000;
 const SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS = 60_000;
 const SHELL_ATTACH_RECONNECT_BASE_DELAY_MS = 500;
 const SHELL_ATTACH_RECONNECT_MAX_DELAY_MS = 5_000;
+const SHELL_ATTACH_HEARTBEAT_MISSES_BEFORE_RECONNECT = 2;
+const SHELL_ATTACH_RECONNECT_NOTICE = "\r\n\u001b[7m Matrix shell disconnected. Waiting for the gateway to come back; this session will reconnect automatically. \u001b[0m\r\n";
+const SHELL_ATTACH_RESTORED_NOTICE = "\r\n\u001b[7m Matrix shell connection restored. \u001b[0m\r\n";
 const LOCAL_TERMINAL_INPUT_RESET = [
   "\u001b[?1000l",
   "\u001b[?1002l",
@@ -440,6 +444,8 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       });
       const heartbeatIntervalMs = attachOptions.heartbeatIntervalMs ?? SHELL_ATTACH_HEARTBEAT_INTERVAL_MS;
       const heartbeatTimeoutMs = attachOptions.heartbeatTimeoutMs ?? SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS;
+      const heartbeatMissesBeforeReconnect =
+        attachOptions.heartbeatMissesBeforeReconnect ?? SHELL_ATTACH_HEARTBEAT_MISSES_BEFORE_RECONNECT;
       const reconnectBaseDelayMs = attachOptions.reconnectBaseDelayMs ?? SHELL_ATTACH_RECONNECT_BASE_DELAY_MS;
       const reconnectMaxDelayMs = attachOptions.reconnectMaxDelayMs ?? SHELL_ATTACH_RECONNECT_MAX_DELAY_MS;
       let pendingInput = "";
@@ -460,6 +466,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
         let heartbeatTimeout: ReturnType<typeof setTimeout> | undefined;
         let heartbeatPending = false;
+        let missedHeartbeats = 0;
         const cleanup = () => {
           clearTimeout(attachTimeout);
           clearTimeout(reconnectTimer);
@@ -504,6 +511,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           clearTimeout(heartbeatTimeout);
           heartbeatTimeout = undefined;
           heartbeatPending = false;
+          missedHeartbeats = 0;
         };
         const startHeartbeat = () => {
           if (heartbeatInterval || heartbeatIntervalMs < 1 || heartbeatTimeoutMs < 1) {
@@ -518,7 +526,12 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               heartbeatPending = true;
               heartbeatTimeout = setTimeout(() => {
                 if (!settled && heartbeatPending) {
-                  currentWs?.close();
+                  missedHeartbeats += 1;
+                  heartbeatPending = false;
+                  heartbeatTimeout = undefined;
+                  if (missedHeartbeats >= heartbeatMissesBeforeReconnect) {
+                    currentWs?.close();
+                  }
                 }
               }, heartbeatTimeoutMs);
               heartbeatTimeout.unref?.();
@@ -583,6 +596,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
           if (!reconnecting) {
             errorOutput.write("\r\nConnection lost. Reconnecting...\r\n");
+            output.write(SHELL_ATTACH_RECONNECT_NOTICE);
           }
           reconnecting = true;
           const backoffExponent = Math.min(reconnectAttempt, 31);
@@ -600,7 +614,6 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           }
           socketOpen = true;
           clearTimeout(attachTimeout);
-          startHeartbeat();
           sendResizeFrame();
           for (const frame of queuedFrames.splice(0)) {
             sendFrame(frame);
@@ -726,9 +739,11 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             everAttached = true;
             reconnectAttempt = 0;
             markOpen();
+            startHeartbeat();
             if (reconnecting) {
               reconnecting = false;
               errorOutput.write("\r\nConnection restored.\r\n");
+              output.write(SHELL_ATTACH_RESTORED_NOTICE);
             }
             schedulePostAttachResizeFrames();
           } else if (msg.type === "output" && typeof msg.data === "string") {
