@@ -58,16 +58,20 @@ export default function ProcessesPanel() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const mounted = useRef(false);
 
-  const load = async () => {
+  const load = async (isCancelled: () => boolean = () => false) => {
     if (!api || inFlight.current) return;
     inFlight.current = true;
+    const cancelled = () => !mounted.current || isCancelled();
     try {
       const raw = await api.get<unknown>("/api/system/activity?processLimit=25");
+      if (cancelled()) return;
       const parsed = SnapshotSchema.safeParse(raw);
       setSnapshot(parsed.success ? parsed.data : {});
       setError(parsed.success ? null : "Unexpected response.");
     } catch (err: unknown) {
+      if (cancelled()) return;
       setError(toUserMessage(err));
       setSnapshot((prev) => prev ?? {});
     } finally {
@@ -77,14 +81,16 @@ export default function ProcessesPanel() {
 
   useEffect(() => {
     if (!api) return;
+    mounted.current = true;
     let cancelled = false;
     const tick = () => {
-      if (!cancelled) void load();
+      if (!cancelled) void load(() => cancelled);
     };
     tick();
     const timer = setInterval(tick, POLL_MS);
     return () => {
       cancelled = true;
+      mounted.current = false;
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

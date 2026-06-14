@@ -308,7 +308,34 @@ describe("loadPreviews", () => {
     expect(get).toHaveBeenCalledWith("/api/projects/proj/previews?limit=100&taskId=task_a");
   });
 
-  it("clears stale previews and sets the error category on failure", async () => {
+  it("merges task-scoped previews without removing other task badges", async () => {
+    useGit.setState({
+      previews: [
+        {
+          ...wirePreview({ id: "prev_task_a", taskId: "task_a", label: "Task A" }),
+          updatedAt: T1,
+        },
+        {
+          ...wirePreview({ id: "prev_task_b", taskId: "task_b", label: "Task B" }),
+          updatedAt: T1,
+        },
+      ],
+    });
+    const get = vi.fn().mockResolvedValue({
+      previews: [wirePreview({ id: "prev_task_a", taskId: "task_a", label: "Task A refreshed" })],
+      nextCursor: null,
+    });
+    const api = makeApi({ get: get as never });
+
+    await useGit.getState().loadPreviews(api, "proj", "task_a");
+
+    expect(Object.fromEntries(useGit.getState().previews.map((preview) => [preview.id, preview.label]))).toEqual({
+      prev_task_a: "Task A refreshed",
+      prev_task_b: "Task B",
+    });
+  });
+
+  it("keeps existing previews and sets the error category on failure", async () => {
     const existing = {
       id: "prev_keep",
       projectSlug: "proj",
@@ -323,7 +350,7 @@ describe("loadPreviews", () => {
 
     await useGit.getState().loadPreviews(api, "proj");
 
-    expect(useGit.getState().previews).toEqual([]);
+    expect(useGit.getState().previews).toEqual([existing]);
     expect(useGit.getState().previewError).toBe("timeout");
   });
 

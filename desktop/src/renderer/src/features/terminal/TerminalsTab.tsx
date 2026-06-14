@@ -162,7 +162,7 @@ export default function TerminalsTab() {
                         <span className="truncate font-mono text-[10px]" style={{ color: "var(--text-tertiary)" }}>{s.name}</span>
                       </button>
                       {exited ? (
-                        <IconButton label="Restart session" onClick={() => void restartSession(s.attachName)}>
+                        <IconButton label="Restart session" disabled={creating} onClick={() => void restartSession(s.attachName)}>
                           <RotateCcw size={12} />
                         </IconButton>
                       ) : null}

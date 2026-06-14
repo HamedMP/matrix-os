@@ -36,7 +36,7 @@ describe("artifacts preview URLs", () => {
     render(<ArtifactsPanel projectSlug="matrix-os" taskId="task-1" />);
 
     expect(screen.getByText("Couldn't load artifacts")).toBeTruthy();
-    expect(screen.queryByText("No artifacts")).toBeNull();
+    expect(screen.queryByText("No previews")).toBeNull();
   });
 
   it("does not show list load failures as artifact failures", () => {
@@ -51,6 +51,6 @@ describe("artifacts preview URLs", () => {
     render(<ArtifactsPanel projectSlug="matrix-os" taskId="task-1" />);
 
     expect(screen.queryByText("Couldn't load artifacts")).toBeNull();
-    expect(screen.getByText("No artifacts")).toBeTruthy();
+    expect(screen.getByText("No previews")).toBeTruthy();
   });
 });

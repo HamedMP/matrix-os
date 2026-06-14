@@ -9,7 +9,7 @@ import {
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -96,6 +96,11 @@ export default function TaskWorkspace({
   const togglePanel = useWorkspace((s) => s.togglePanel);
   const layouts = useWorkspace((s) => s.layouts);
   const layoutFor = useWorkspace((s) => s.layoutFor);
+  const [stopAgentState, setStopAgentState] = useState<{
+    attachName: string | null;
+    pending: boolean;
+    error: string | null;
+  }>({ attachName: null, pending: false, error: null });
 
   const card = useMemo(() => {
     for (const cards of Object.values(cardsByProject)) {
@@ -151,6 +156,11 @@ export default function TaskWorkspace({
 
   const attachName = card?.linkedSessionId ? (aliasMap[card.linkedSessionId] ?? null) : null;
   const layout = layouts[taskId] ?? layoutFor(taskId);
+  if (stopAgentState.attachName !== attachName) {
+    setStopAgentState({ attachName, pending: false, error: null });
+  }
+  const stopAgentPending = stopAgentState.attachName === attachName && stopAgentState.pending;
+  const stopAgentError = stopAgentState.attachName === attachName ? stopAgentState.error : null;
 
   // Header chips: live session, agent run, worktree branch/dirty, preview health.
   const liveSession = useMemo(
@@ -177,6 +187,13 @@ export default function TaskWorkspace({
           : "unknown";
   const previewColor =
     previewHealth === "ok" ? "var(--success)" : previewHealth === "failed" ? "var(--danger)" : "var(--text-tertiary)";
+
+  const stopAgent = async () => {
+    if (!api || !attachName || stopAgentPending) return;
+    setStopAgentState({ attachName, pending: true, error: null });
+    const ok = await killSession(api, attachName);
+    setStopAgentState({ attachName, pending: false, error: ok ? null : "Stop failed" });
+  };
 
   const renderPanel = (panel: PanelKind): React.ReactNode => {
     switch (panel) {
@@ -253,16 +270,17 @@ export default function TaskWorkspace({
                 <button
                   type="button"
                   aria-label="Stop agent"
-                  title="Stop agent"
+                  aria-busy={stopAgentPending}
+                  disabled={!api || stopAgentPending}
+                  title={stopAgentPending ? "Stopping agent" : stopAgentError ?? "Stop agent"}
                   className="ml-0.5 flex h-4 w-4 items-center justify-center rounded"
-                  style={{ color: "var(--danger)" }}
-                  onClick={() => {
-                    if (api && attachName) void killSession(api, attachName);
-                  }}
+                  style={{ color: stopAgentPending ? "var(--text-tertiary)" : "var(--danger)" }}
+                  onClick={() => void stopAgent()}
                 >
                   <CircleStop size={12} />
                 </button>
               ) : null}
+              {stopAgentError ? <span style={{ color: "var(--danger)" }}>{stopAgentError}</span> : null}
             </span>
           ) : null}
           {worktree ? (

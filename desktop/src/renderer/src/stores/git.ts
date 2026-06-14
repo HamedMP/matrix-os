@@ -94,6 +94,15 @@ function parseRows<T>(schema: z.ZodType<T>, rows: unknown): T[] {
 
 let loadAllRequestSeq = 0;
 
+function mergePreviewsForScope(existing: Preview[], incoming: Preview[], slug: string, taskId?: string): Preview[] {
+  const incomingIds = new Set(incoming.map((preview) => preview.id));
+  const scopedOut = existing.filter((preview) => {
+    if (preview.projectSlug !== slug) return true;
+    return taskId ? preview.taskId !== taskId : false;
+  });
+  return [...scopedOut.filter((preview) => !incomingIds.has(preview.id)), ...incoming];
+}
+
 interface GitState {
   branches: Branch[];
   prs: PullRequest[];
@@ -177,9 +186,10 @@ export const useGit = create<GitState>()((set, get) => ({
   loadPreviews: async (api, slug, taskId) => {
     const scope: PreviewScope = { projectSlug: slug, taskId: taskId ?? null };
     const query = taskId ? `?limit=100&taskId=${encodeURIComponent(taskId)}` : "?limit=100";
-    set({ previews: [], previewScope: scope, previewError: null });
+    set({ previewScope: scope, previewError: null });
     try {
       const res = await api.get<{ previews?: unknown }>(`/api/projects/${slug}/previews${query}`);
+      const incoming = parseRows(PreviewSchema, res.previews);
       set((state) => {
         if (
           state.previewScope?.projectSlug !== scope.projectSlug ||
@@ -187,7 +197,7 @@ export const useGit = create<GitState>()((set, get) => ({
         ) {
           return {};
         }
-        return { previews: parseRows(PreviewSchema, res.previews), previewError: null };
+        return { previews: mergePreviewsForScope(state.previews, incoming, slug, taskId), previewError: null };
       });
     } catch (err: unknown) {
       set((state) => {
