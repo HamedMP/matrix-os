@@ -1,13 +1,16 @@
-import { RefreshCw, SquareTerminal } from "lucide-react";
+import { AlertTriangle, RefreshCw, SquareTerminal } from "lucide-react";
 import { useEffect } from "react";
 import { Button, EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
 import { useUi } from "../../stores/ui";
+import { categoryMessage } from "../../../../shared/app-error";
 
 export default function SessionsView() {
   const api = useConnection((s) => s.api);
   const sessions = useSessions((s) => s.sessions);
+  const loading = useSessions((s) => s.loading);
+  const error = useSessions((s) => s.error);
   const load = useSessions((s) => s.load);
   const navigate = useUi((s) => s.navigate);
 
@@ -15,12 +18,36 @@ export default function SessionsView() {
     if (api) void load(api);
   }, [api, load]);
 
+  if (sessions.length === 0 && error) {
+    return (
+      <EmptyState
+        icon={<AlertTriangle size={28} />}
+        headline="Could not load sessions"
+        description={categoryMessage(error)}
+        action={
+          <Button
+            variant="primary"
+            onClick={() => {
+              if (api) void load(api);
+            }}
+          >
+            Refresh
+          </Button>
+        }
+      />
+    );
+  }
+
   if (sessions.length === 0) {
     return (
       <EmptyState
         icon={<SquareTerminal size={28} />}
-        headline="No sessions"
-        description="Terminal sessions running on your computer appear here."
+        headline={loading ? "Loading sessions" : "No sessions"}
+        description={
+          loading
+            ? "Checking terminal sessions on your computer."
+            : "Terminal sessions running on your computer appear here."
+        }
         action={
           <Button
             variant="primary"

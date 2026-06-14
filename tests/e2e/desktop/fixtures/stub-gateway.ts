@@ -199,8 +199,8 @@ export async function startStubGateway(): Promise<StubGateway> {
     socket.destroy();
   });
 
-  let seq = 0;
   function runTerminalSession(ws: WebSocket, session: string): void {
+    let seq = 0;
     if (session !== "matrix-task-1") {
       ws.send(JSON.stringify({ type: "error", code: "session_not_found", message: "Session not found" }));
       ws.close();

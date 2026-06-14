@@ -10,7 +10,7 @@ import { buildTerminalFontStack } from "../../lib/terminal/terminal-fonts";
 import type { ShellSocketState } from "../../lib/shell-socket";
 import { getAttachManager } from "./terminal-runtime";
 
-const GAP_MARKER = "\r\n[2m── output gap ──[0m\r\n";
+const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
 interface TerminalViewProps {
   sessionName: string;
