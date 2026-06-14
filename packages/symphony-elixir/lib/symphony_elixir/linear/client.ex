@@ -472,6 +472,11 @@ defmodule SymphonyElixir.Linear.Client do
     {:ok, %{response | body: data}}
   end
 
+  defp unwrap_matrix_linear_bridge_response({:ok, %{status: 404, body: %{"error" => _error}}}) do
+    Logger.warning("Matrix Linear bridge reports Linear is not connected")
+    {:error, :linear_not_connected}
+  end
+
   defp unwrap_matrix_linear_bridge_response({:ok, %{body: %{"error" => _error}}}) do
     Logger.warning("Matrix Linear bridge returned an error response")
     {:error, :matrix_linear_bridge_error}

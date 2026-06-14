@@ -37,7 +37,8 @@ defmodule SymphonyElixir.Orchestrator do
       claimed: MapSet.new(),
       retry_attempts: %{},
       codex_totals: nil,
-      codex_rate_limits: nil
+      codex_rate_limits: nil,
+      last_tracker_status: nil
     ]
   end
 
@@ -210,52 +211,72 @@ defmodule SymphonyElixir.Orchestrator do
   defp maybe_dispatch(%State{} = state) do
     state = reconcile_running_issues(state)
 
-    with :ok <- Config.validate!(),
-         {:ok, issues} <- Tracker.fetch_candidate_issues(),
-         true <- available_slots(state) > 0 do
-      choose_issues(issues, state)
-    else
-      {:error, :missing_linear_api_token} ->
-        Logger.error("Linear API token missing in WORKFLOW.md")
-        state
-
-      {:error, :missing_linear_project_slug} ->
-        Logger.error("Linear project slug missing in WORKFLOW.md")
-        state
-
-      {:error, :missing_tracker_kind} ->
-        Logger.error("Tracker kind missing in WORKFLOW.md")
-
-        state
-
-      {:error, {:unsupported_tracker_kind, kind}} ->
-        Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
-
-        state
-
-      {:error, {:invalid_workflow_config, message}} ->
-        Logger.error("Invalid WORKFLOW.md config: #{message}")
-        state
-
-      {:error, {:missing_workflow_file, path, reason}} ->
-        Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
-        state
-
-      {:error, :workflow_front_matter_not_a_map} ->
-        Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
-        state
-
-      {:error, {:workflow_parse_error, reason}} ->
-        Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
-        state
+    case Config.validate!() do
+      :ok ->
+        dispatch_candidate_issues(state)
 
       {:error, reason} ->
-        Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
-        state
-
-      false ->
-        state
+        log_dispatch_blocker(reason)
+        put_tracker_status(state, tracker_status_for_error(reason))
     end
+  end
+
+  defp dispatch_candidate_issues(%State{} = state) do
+    case Tracker.fetch_candidate_issues() do
+      {:ok, issues} ->
+        # The candidate poll succeeded, so Linear is reachable and authorized.
+        state = put_tracker_status(state, :ok)
+
+        if available_slots(state) > 0 do
+          choose_issues(issues, state)
+        else
+          state
+        end
+
+      {:error, reason} ->
+        log_dispatch_blocker(reason)
+        put_tracker_status(state, tracker_status_for_error(reason))
+    end
+  end
+
+  defp log_dispatch_blocker(:missing_linear_api_token),
+    do: Logger.error("Linear API token missing in WORKFLOW.md")
+
+  defp log_dispatch_blocker(:missing_linear_project_slug),
+    do: Logger.error("Linear project slug missing in WORKFLOW.md")
+
+  defp log_dispatch_blocker(:missing_tracker_kind),
+    do: Logger.error("Tracker kind missing in WORKFLOW.md")
+
+  defp log_dispatch_blocker({:unsupported_tracker_kind, kind}),
+    do: Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
+
+  defp log_dispatch_blocker({:invalid_workflow_config, message}),
+    do: Logger.error("Invalid WORKFLOW.md config: #{message}")
+
+  defp log_dispatch_blocker({:missing_workflow_file, path, reason}),
+    do: Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
+
+  defp log_dispatch_blocker(:workflow_front_matter_not_a_map),
+    do: Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
+
+  defp log_dispatch_blocker({:workflow_parse_error, reason}),
+    do: Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
+
+  defp log_dispatch_blocker(reason),
+    do: Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+
+  # Maps a poll/validation failure to the credential signal surfaced to the
+  # shell. Only a missing token or an explicit "Linear not connected" from the
+  # platform bridge means the owner must connect Linear; everything else is a
+  # transient/operational error reported as unavailable.
+  defp tracker_status_for_error(:missing_linear_api_token), do: :setup_required
+  defp tracker_status_for_error({:linear_api_request, :linear_not_connected}), do: :setup_required
+  defp tracker_status_for_error(_reason), do: :error
+
+  defp put_tracker_status(%State{} = state, status)
+       when status in [:ok, :setup_required, :error] do
+    %{state | last_tracker_status: status}
   end
 
   defp reconcile_running_issues(%State{} = state) do
@@ -1038,6 +1059,7 @@ defmodule SymphonyElixir.Orchestrator do
        retrying: retrying,
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
+       tracker: %{status: state.last_tracker_status},
        polling: %{
          checking?: state.poll_check_in_progress == true,
          next_poll_in_ms: next_poll_in_ms(state.next_poll_due_at_ms, now_ms),

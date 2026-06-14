@@ -24,10 +24,44 @@ readonly HEALTH_URL="http://127.0.0.1:4000/health"
 readonly AUTO_APPLY_FAILED_MARKER="$APP_DIR/.auto-apply-failed"
 readonly STAGING_ARTIFACT_TTL_SECONDS="${MATRIX_STAGING_ARTIFACT_TTL_SECONDS:-86400}"
 readonly STAGING_CLEANUP_INTERVAL_SECONDS="${MATRIX_STAGING_CLEANUP_INTERVAL_SECONDS:-3600}"
+readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
+# Keys this agent owns and rewrites on every sync from platform-provided values.
+# Any other key in symphony.env (e.g. an operator-set SYMPHONY_LINEAR_PROJECT_SLUG)
+# is preserved across updates instead of being wiped.
+readonly SYMPHONY_MANAGED_KEYS="MATRIX_HANDLE PLATFORM_INTERNAL_URL UPGRADE_TOKEN"
 
 log() { echo "matrix-sync-agent: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
+
+# Echo the lines of an existing symphony.env that this agent does not manage so
+# operator-set configuration survives a host bundle update. Blank and comment
+# lines are kept; managed KEY= lines are dropped (re-emitted with fresh values
+# by write_symphony_env). Group-readable file (root:matrix 0640), so the matrix
+# user that runs this agent can read it directly.
+preserve_unmanaged_symphony_env() {
+  local existing_file="$1"
+  [ -f "$existing_file" ] || return 0
+  local line key
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      '' | '#'*)
+        printf '%s\n' "$line"
+        ;;
+      *=*)
+        key="${line%%=*}"
+        case " $SYMPHONY_MANAGED_KEYS " in
+          *" $key "*) : ;; # managed key: re-emitted with fresh value elsewhere
+          *) printf '%s\n' "$line" ;;
+        esac
+        ;;
+      *)
+        printf '%s\n' "$line"
+        ;;
+    esac
+  done <"$existing_file"
+}
+
 write_symphony_env() {
   local status=0
   local temp_file
@@ -36,8 +70,9 @@ write_symphony_env() {
     printf 'MATRIX_HANDLE=%s\n' "${MATRIX_HANDLE:?MATRIX_HANDLE is required}"
     printf 'PLATFORM_INTERNAL_URL=%s\n' "${PLATFORM_INTERNAL_URL:?PLATFORM_INTERNAL_URL is required}"
     printf 'UPGRADE_TOKEN=%s\n' "${UPGRADE_TOKEN:?UPGRADE_TOKEN is required}"
+    preserve_unmanaged_symphony_env "$SYMPHONY_ENV_FILE"
   } >"$temp_file"
-  sudo install -o root -g matrix -m 0640 "$temp_file" /opt/matrix/env/symphony.env || status=$?
+  sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?
   rm -f "$temp_file"
   return "$status"
 }
