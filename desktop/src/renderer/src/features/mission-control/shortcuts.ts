@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { onEvent } from "../../lib/operator";
 import { useUi } from "../../stores/ui";
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -23,6 +24,11 @@ export function useGlobalShortcuts(): void {
         ui.setComposerOpen(!ui.composerOpen);
         return;
       }
+      if (meta && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        ui.setQuickOpenOpen(!ui.quickOpenOpen);
+        return;
+      }
       if (!meta && e.key.toLowerCase() === "c" && !isTypingTarget(e.target)) {
         if (ui.paletteOpen || ui.composerOpen || ui.createTaskOpen) return;
         e.preventDefault();
@@ -30,6 +36,20 @@ export function useGlobalShortcuts(): void {
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    const offAction = onEvent("menu:action", ({ action }) => {
+      const ui = useUi.getState();
+      if (action === "new-task") ui.setCreateTaskOpen(true);
+      if (action === "new-thread") ui.setComposerOpen(true);
+      if (action === "palette") ui.setPaletteOpen(!ui.paletteOpen);
+      if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
+    });
+    const offNavigate = onEvent("menu:navigate", ({ kind }) => {
+      useUi.getState().navigate({ kind });
+    });
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      offAction();
+      offNavigate();
+    };
   }, []);
 }
