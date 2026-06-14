@@ -195,6 +195,12 @@ body {
   height: 100vh;
 }
 
+@media (max-width: 767px) {
+  #clerk-components > div:has(> button[aria-label="Keyless prompt"]) {
+    display: none !important;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
