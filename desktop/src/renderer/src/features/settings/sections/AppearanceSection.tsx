@@ -6,7 +6,7 @@ import { Card, SectionHeader } from "./section-kit";
 type Theme = "dark" | "light" | "system";
 
 export default function AppearanceSection() {
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>("dark");
 
   useEffect(() => {
     void invoke("state:get", { key: "appearance" })
