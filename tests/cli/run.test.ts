@@ -51,7 +51,10 @@ async function createFakeRunGateway(runResult: Record<string, unknown> = {
   wss.on("connection", (ws) => {
     wsConnections += 1;
     ws.send(JSON.stringify({ type: "attached" }));
-    setTimeout(() => ws.close(), 10).unref?.();
+    setTimeout(() => {
+      ws.send(JSON.stringify({ type: "exit" }));
+      ws.close();
+    }, 10).unref?.();
   });
 
   await new Promise<void>((resolve) => {
@@ -204,7 +207,7 @@ describe("run CLI command", () => {
       expect(JSON.parse(result.stdout)).toEqual({
         v: 1,
         ok: true,
-        data: { detached: true, session: "run-session" },
+        data: { detached: false, session: "run-session" },
       });
       expect(result.stderr).toContain("\u001b[?1000l");
       expect(gateway.createRequests).toBe(1);

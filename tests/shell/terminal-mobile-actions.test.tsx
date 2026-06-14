@@ -58,7 +58,7 @@ describe("TerminalApp mobile actions", () => {
 
     await waitFor(() => expect(screen.getByTestId("terminal-mobile-actions")).toBeTruthy());
 
-    for (const name of ["Zellij", "Pane", "Tab", "Cmd", "Paste", "Search"]) {
+    for (const name of ["Shell", "Pane", "Tab", "Cmd", "Paste", "Search"]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
   });

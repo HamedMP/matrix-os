@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyZellijFailure,
@@ -274,6 +277,48 @@ describe("zellij adapter", () => {
         }),
       }),
     );
+  });
+
+  it("writes and uses the compact Matrix zellij config for shell sessions", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-zellij-"));
+    try {
+      const pty = ptyProcess();
+      const spawnPty = vi.fn(() => pty);
+      const adapter = createZellijAdapter({
+        execFile: vi.fn(),
+        spawnPty,
+        timeoutMs: 25,
+        startupDelayMs: 1,
+        homePath,
+      });
+
+      await adapter.createSession({ name: "main", cwd: "/home/matrix/home/projects" });
+
+      const configDir = join(homePath, "system", "zellij");
+      const configPath = join(configDir, "config.kdl");
+      const layoutPath = join(configDir, "layouts", "matrix.kdl");
+      const config = await readFile(configPath, "utf8");
+      const layout = await readFile(layoutPath, "utf8");
+
+      expect(config).toContain("pane_frames false");
+      expect(config).toContain("simplified_ui true");
+      expect(config).toContain('default_layout "matrix"');
+      expect(layout).toContain('plugin location="zellij:compact-bar"');
+      expect(layout).not.toContain("tab-bar");
+      expect(layout).not.toContain("status-bar");
+      expect(spawnPty).toHaveBeenCalledWith(
+        "zellij",
+        ["--session", "main"],
+        expect.objectContaining({
+          env: expect.objectContaining({
+            ZELLIJ_CONFIG_DIR: configDir,
+            ZELLIJ_CONFIG_FILE: configPath,
+          }),
+        }),
+      );
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 
   it("creates command sessions with the command as the initial focused pane", async () => {

@@ -1,10 +1,11 @@
 import {
   execFile as nodeExecFile,
 } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { shellError, type ShellSafeError } from "./errors.js";
 
 type ExecFile = typeof nodeExecFile;
@@ -55,6 +56,7 @@ export interface ZellijAdapterDeps {
   nowMs?: () => number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  homePath?: string;
 }
 
 export interface CreateSessionOptions {
@@ -108,6 +110,26 @@ const ZELLIJ_CONTEXT_ENV_KEYS = new Set([
 const DEFAULT_STARTUP_DELAY_MS = 500;
 const DEFAULT_RETAINED_PTY_TTL_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_MAX_RETAINED_PTYS = 128;
+const MATRIX_ZELLIJ_CONFIG = `// Matrix OS generated shell config.
+pane_frames false
+simplified_ui true
+default_layout "matrix"
+theme "default"
+`;
+const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS keeps Zellij chrome compact; the browser shell renders sessions and actions.
+layout {
+  default_tab_template {
+    children
+    pane size=1 borderless=true {
+      plugin location="zellij:compact-bar"
+    }
+  }
+
+  tab name="main" {
+    pane
+  }
+}
+`;
 
 type RetainedCreatePty = {
   process: ShellAttachProcess;
@@ -116,7 +138,17 @@ type RetainedCreatePty = {
   tempLayoutDir?: string;
 };
 
-function attachEnv(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+type ZellijConfigPaths = {
+  dir: string;
+  file: string;
+  layoutDir: string;
+  layoutFile: string;
+};
+
+function attachEnv(
+  source: NodeJS.ProcessEnv = process.env,
+  configPaths: ZellijConfigPaths | null = null,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(source)) {
     if (typeof value !== "string") continue;
@@ -130,6 +162,10 @@ function attachEnv(source: NodeJS.ProcessEnv = process.env): Record<string, stri
   env.CLICOLOR = "1";
   env.FORCE_COLOR = "3";
   env.LANG = env.LANG || "en_US.UTF-8";
+  if (configPaths) {
+    env.ZELLIJ_CONFIG_DIR = configPaths.dir;
+    env.ZELLIJ_CONFIG_FILE = configPaths.file;
+  }
   return env;
 }
 
@@ -213,6 +249,18 @@ async function cleanupTempLayoutDir(path: string): Promise<void> {
   }
 }
 
+async function atomicWriteText(path: string, content: string): Promise<void> {
+  const { rename } = await import("node:fs/promises");
+  const tmpPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmpPath, content, { flag: "wx", mode: 0o600 });
+    await rename(tmpPath, path);
+  } catch (err: unknown) {
+    await rm(tmpPath, { force: true });
+    throw err;
+  }
+}
+
 export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter {
   const execFile = deps.execFile ?? nodeExecFile;
   const timeoutMs = deps.timeoutMs ?? 10_000;
@@ -223,6 +271,33 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   const cwd = deps.cwd ?? process.cwd();
   const spawnPty = deps.spawnPty ?? defaultPtySpawn();
   const retainedCreatePtys = new Map<string, RetainedCreatePty>();
+  const zellijConfigPaths = deps.homePath
+    ? {
+        dir: join(resolve(deps.homePath), "system", "zellij"),
+        file: join(resolve(deps.homePath), "system", "zellij", "config.kdl"),
+        layoutDir: join(resolve(deps.homePath), "system", "zellij", "layouts"),
+        layoutFile: join(resolve(deps.homePath), "system", "zellij", "layouts", "matrix.kdl"),
+      }
+    : null;
+  let ensureConfigPromise: Promise<void> | null = null;
+
+  async function ensureMatrixZellijConfig(): Promise<void> {
+    if (!zellijConfigPaths) {
+      return;
+    }
+    if (!ensureConfigPromise) {
+      ensureConfigPromise = (async () => {
+        const { mkdir } = await import("node:fs/promises");
+        await mkdir(zellijConfigPaths.layoutDir, { recursive: true });
+        await atomicWriteText(zellijConfigPaths.file, MATRIX_ZELLIJ_CONFIG);
+        await atomicWriteText(zellijConfigPaths.layoutFile, MATRIX_ZELLIJ_LAYOUT);
+      })().catch((err: unknown) => {
+        ensureConfigPromise = null;
+        throw err;
+      });
+    }
+    await ensureConfigPromise;
+  }
 
   function releaseRetainedCreatePty(name: string, options: { kill?: boolean } = {}): void {
     const retained = retainedCreatePtys.get(name);
@@ -260,7 +335,8 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     }
   }
 
-  function run(args: string[], timeout = timeoutMs, runCwd?: string): Promise<string> {
+  async function run(args: string[], timeout = timeoutMs, runCwd?: string): Promise<string> {
+    await ensureMatrixZellijConfig();
     const controller = new AbortController();
     return new Promise((resolve, reject) => {
       const child = execFile(
@@ -270,7 +346,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           timeout,
           signal: controller.signal,
           cwd: runCwd,
-          env: attachEnv(deps.env),
+          env: attachEnv(deps.env, zellijConfigPaths),
         },
         (err, stdout, stderr) => {
           if (err) {
@@ -313,6 +389,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         .filter(Boolean);
     },
     async createSession(options) {
+      await ensureMatrixZellijConfig();
       sweepRetainedCreatePtys();
       evictRetainedCreatePtyIfNeeded(options.name);
       releaseRetainedCreatePty(options.name, { kill: true });
@@ -336,7 +413,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           cols: 120,
           rows: 40,
           cwd: options.cwd ?? cwd,
-          env: attachEnv(deps.env),
+          env: attachEnv(deps.env, zellijConfigPaths),
         });
 
         const startup = { exited: null as PtyExitEvent | null };
@@ -389,7 +466,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         cols: 120,
         rows: 40,
         cwd,
-        env: attachEnv(deps.env),
+        env: attachEnv(deps.env, zellijConfigPaths),
       });
       const abort = () => {
         pty.kill();

@@ -507,7 +507,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const shellScrollbackStore = new ScrollbackStore({ homePath });
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
-  const zellijAdapter = createZellijAdapter();
+  const zellijAdapter = createZellijAdapter({ homePath });
   const shellLayoutStore = new LayoutStore({ homePath, adapter: zellijAdapter });
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
