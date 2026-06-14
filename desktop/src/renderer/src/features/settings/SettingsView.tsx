@@ -54,12 +54,19 @@ export default function SettingsView() {
   const [infoError, setInfoError] = useState(false);
 
   useEffect(() => {
-    void invoke("state:get", { key: "appearance" }).then((result) => {
-      const value = result.value as { theme?: string } | null;
-      if (value?.theme === "light" || value?.theme === "system" || value?.theme === "dark") {
-        setTheme(value.theme);
-      }
-    });
+    void invoke("state:get", { key: "appearance" })
+      .then((result) => {
+        const value = result.value as { theme?: string } | null;
+        if (value?.theme === "light" || value?.theme === "system" || value?.theme === "dark") {
+          setTheme(value.theme);
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn(
+          "[settings] load appearance failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      });
   }, []);
 
   useEffect(() => {
