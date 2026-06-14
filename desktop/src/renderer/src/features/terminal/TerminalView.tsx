@@ -35,11 +35,12 @@ export default function TerminalView({ sessionName, onRecreate }: TerminalViewPr
 
     const manager = getAttachManager();
     const theme = getTerminalThemePreset("one-dark");
+    const screenReaderMode = navigator.webdriver === true;
     const terminal = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
-      // Accessibility buffer (also lets e2e assert rendered output under webgl).
-      screenReaderMode: true,
+      // Playwright needs readable terminal text while WebGL is active.
+      screenReaderMode,
       fontSize: 13,
       fontFamily: buildTerminalFontStack("JetBrains Mono", undefined),
       lineHeight: 1.25,
