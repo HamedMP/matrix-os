@@ -172,6 +172,28 @@ describe("reduceChat: abort and error", () => {
       requestId: "r1",
     });
   });
+
+  it("kernel:error replaces unsafe internal details with generic copy", () => {
+    const out = reduceChat([], {
+      type: "kernel:error",
+      message: "Error: anthropic request failed at /home/matrix/packages/kernel/index.ts",
+      requestId: "r1",
+    });
+    expect(out[0]).toMatchObject({
+      role: "system",
+      content: "Something went wrong. Please try again.",
+      requestId: "r1",
+    });
+  });
+
+  it("kernel:error replaces overlong messages with generic copy", () => {
+    const out = reduceChat([], {
+      type: "kernel:error",
+      message: "A".repeat(240),
+      requestId: "r1",
+    });
+    expect(out[0]!.content).toBe("Something went wrong. Please try again.");
+  });
 });
 
 describe("reduceChat: purity", () => {

@@ -118,13 +118,21 @@ function categoryOf(err: unknown): AppErrorCategory {
 
 const TASKS_PAGE_LIMIT = 100;
 const MAX_TASK_PAGES = 10;
+const MAX_PENDING_TASK_MUTATIONS = 250;
 
 // Per-task in-flight chains so two rapid mutations cannot interleave. Each
 // queued fn handles its own errors (chain never rejects); entries evict
-// themselves once their chain settles, so the map stays bounded.
+// themselves once their chain settles, and the live map has a hard cap.
 const taskMutationTails = new Map<string, Promise<void>>();
 
+function canEnqueueTaskMutation(taskId: string): boolean {
+  return taskMutationTails.has(taskId) || taskMutationTails.size < MAX_PENDING_TASK_MUTATIONS;
+}
+
 function enqueueTaskMutation(taskId: string, fn: () => Promise<void>): Promise<void> {
+  if (!canEnqueueTaskMutation(taskId)) {
+    return Promise.reject(new AppError("server"));
+  }
   const tail = taskMutationTails.get(taskId) ?? Promise.resolve();
   const next = tail.then(fn);
   taskMutationTails.set(taskId, next);
@@ -233,6 +241,10 @@ export const useBoard = create<BoardState>()((set, get) => {
   ): Promise<void> {
     const before = get().cardsByProject[slug]?.find((card) => card.id === taskId);
     if (!before) return Promise.resolve();
+    if (!canEnqueueTaskMutation(taskId)) {
+      set({ error: "server" });
+      return Promise.resolve();
+    }
     patchCard(slug, taskId, (card) => ({ ...card, ...patch }));
     return enqueueTaskMutation(taskId, async () => {
       try {
@@ -323,25 +335,27 @@ export const useBoard = create<BoardState>()((set, get) => {
 
     deleteTask: (api, slug, taskId) => {
       const cards = get().cardsByProject[slug];
-      const target = cards?.find((card) => card.id === taskId);
-      if (!cards || !target) return Promise.resolve();
-      replaceProjectCards(slug, cards.filter((card) => card.id !== taskId));
+      if (!cards?.some((card) => card.id === taskId)) return Promise.resolve();
+      if (!canEnqueueTaskMutation(taskId)) {
+        set({ error: "server" });
+        return Promise.resolve();
+      }
       return enqueueTaskMutation(taskId, async () => {
         try {
           await api.delete<{ ok: boolean }>(taskPath(slug, taskId));
-          set({ error: null });
-        } catch (err: unknown) {
-          console.error("[board] Task delete failed:", err);
           set((state) => {
             const current = state.cardsByProject[slug] ?? [];
-            const restored = current.some((card) => card.id === taskId)
-              ? current
-              : [...current, target];
             return {
-              cardsByProject: { ...state.cardsByProject, [slug]: restored },
-              error: categoryOf(err),
+              cardsByProject: {
+                ...state.cardsByProject,
+                [slug]: current.filter((card) => card.id !== taskId),
+              },
+              error: null,
             };
           });
+        } catch (err: unknown) {
+          console.error("[board] Task delete failed:", err);
+          set({ error: categoryOf(err) });
         }
       });
     },

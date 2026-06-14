@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog } from "../../design/primitives";
 import { sendKernelMessage } from "../../lib/kernel-wiring";
 import { useBoard } from "../../stores/board";
-import { useSessions } from "../../stores/sessions";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 
@@ -14,7 +13,6 @@ export default function Composer() {
   const navigate = useUi((s) => s.navigate);
   const startThread = useThreads((s) => s.startThread);
   const cardsByProject = useBoard((s) => s.cardsByProject);
-  const resolveAttachName = useSessions((s) => s.resolveAttachName);
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
 

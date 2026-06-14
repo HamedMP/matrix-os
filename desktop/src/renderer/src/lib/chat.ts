@@ -17,6 +17,23 @@ function newMsgId(): string {
   return `msg-${Date.now()}-${msgSeq}`;
 }
 
+const SAFE_KERNEL_ERROR_MESSAGE = "Something went wrong. Please try again.";
+const MAX_KERNEL_ERROR_CHARS = 180;
+const UNSAFE_KERNEL_ERROR_PATTERN =
+  /(?:\/home\/|\/tmp\/|node_modules|packages\/|desktop\/src|Error:|Exception|stack trace|postgres|database|anthropic|openai|claude|ENOENT|EACCES)/i;
+
+function safeKernelErrorMessage(message: string): string {
+  const trimmed = message.replace(/\s+/g, " ").trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > MAX_KERNEL_ERROR_CHARS ||
+    UNSAFE_KERNEL_ERROR_PATTERN.test(trimmed)
+  ) {
+    return SAFE_KERNEL_ERROR_MESSAGE;
+  }
+  return trimmed;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -128,7 +145,7 @@ export function reduceChat(messages: ChatMessage[], event: ChatEvent): ChatMessa
       next.push({
         id: newMsgId(),
         role: "system",
-        content: event.message,
+        content: safeKernelErrorMessage(event.message),
         requestId: reqId,
         timestamp: Date.now(),
       });

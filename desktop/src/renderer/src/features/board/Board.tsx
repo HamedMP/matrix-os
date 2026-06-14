@@ -29,6 +29,8 @@ const COLUMN_LABEL: Record<CardStatus, string> = {
   archived: "Archived",
 };
 
+const EMPTY_CARDS: Card[] = [];
+
 const COLUMN_COLOR: Record<CardStatus, string> = {
   todo: "var(--status-todo)",
   running: "var(--status-running)",
@@ -95,7 +97,9 @@ function DraggableCard({ card, dragging }: { card: Card; dragging: boolean }) {
 export default function Board() {
   const api = useConnection((s) => s.api);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
-  const cardsByProject = useBoard((s) => s.cardsByProject);
+  const cards = useBoard((s) =>
+    activeSlug ? (s.cardsByProject[activeSlug] ?? EMPTY_CARDS) : EMPTY_CARDS,
+  );
   const firstLoadPending = useBoard((s) => s.firstLoadPending);
   const error = useBoard((s) => s.error);
   const moveTask = useBoard((s) => s.moveTask);
@@ -103,10 +107,6 @@ export default function Board() {
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
-  const cards = useMemo(
-    () => (activeSlug ? (cardsByProject[activeSlug] ?? []) : []),
-    [activeSlug, cardsByProject],
-  );
   const columns = useMemo(() => groupCardsByColumn(cards), [cards]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));

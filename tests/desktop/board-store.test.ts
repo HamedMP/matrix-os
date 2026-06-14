@@ -333,15 +333,21 @@ describe("deleteTask", () => {
     await useBoard.getState().selectProject(api, "proj");
   }
 
-  it("removes optimistically and confirms with the server", async () => {
+  it("keeps the card visible until the server confirms deletion", async () => {
     await seed();
-    const api = makeApi({ delete: vi.fn().mockResolvedValue({ ok: true }) });
-    await useBoard.getState().deleteTask(api, "proj", "task_a");
+    const d = deferred<unknown>();
+    const api = makeApi({ delete: vi.fn().mockReturnValue(d.promise) });
+    const pending = useBoard.getState().deleteTask(api, "proj", "task_a");
+
+    expect(useBoard.getState().cardsByProject["proj"]).toEqual([card()]);
+    d.resolve({ ok: true });
+    await pending;
+
     expect(api.delete).toHaveBeenCalledWith("/api/projects/proj/tasks/task_a");
     expect(useBoard.getState().cardsByProject["proj"]).toEqual([]);
   });
 
-  it("rolls back the removal when the server rejects", async () => {
+  it("keeps the card visible and records the error when the server rejects", async () => {
     await seed();
     const api = makeApi({ delete: vi.fn().mockRejectedValue(new AppError("server")) });
     await useBoard.getState().deleteTask(api, "proj", "task_a");
