@@ -1,6 +1,6 @@
 import { LayoutGrid, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { EmptyState } from "../../design/primitives";
+import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
@@ -39,6 +39,8 @@ export default function AppLauncher() {
   const openTab = useTabs((s) => s.openTab);
   const apps = useApps((s) => s.apps);
   const loaded = useApps((s) => s.loaded);
+  const loading = useApps((s) => s.loading);
+  const error = useApps((s) => s.error);
   const load = useApps((s) => s.load);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -82,7 +84,24 @@ export default function AppLauncher() {
     }
   };
 
-  if (loaded && apps.length === 0) {
+  if (error) {
+    return (
+      <EmptyState
+        icon={<LayoutGrid size={26} />}
+        headline="Apps unavailable"
+        description="The app catalog could not be loaded. Try again once your computer is reachable."
+        action={
+          api ? (
+            <Button variant="primary" disabled={loading} onClick={() => void load(api, true)}>
+              {loading ? "Loading..." : "Retry"}
+            </Button>
+          ) : null
+        }
+      />
+    );
+  }
+
+  if (loaded && !loading && apps.length === 0) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
