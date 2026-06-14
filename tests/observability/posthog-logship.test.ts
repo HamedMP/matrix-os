@@ -30,6 +30,8 @@ describe("PostHog fleet log shipping", () => {
     expect(helper).toContain("printf '%s\\n%s\\n%s\\n' \"$LOGS_INGEST_USER\" \"$LOGS_INGEST_PASSWORD\" \"$POSTHOG_PROJECT_TOKEN\"");
     expect(helper).toContain("IFS= read -r t");
     expect(helper).toContain('POSTHOG_PROJECT_TOKEN=\\"\\$t\\"');
+    expect(helper).toContain("/opt/matrix/bin/matrix-install-logship");
+    expect(helper).not.toContain("/opt/matrix/app/bin/matrix-install-logship");
     expect(helper).not.toContain("POSTHOG_PROJECT_TOKEN='${POSTHOG_PROJECT_TOKEN}'");
   });
 });
