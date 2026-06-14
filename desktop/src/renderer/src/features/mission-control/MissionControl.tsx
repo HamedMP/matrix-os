@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useTabs } from "../../stores/tabs";
+import { useUi } from "../../stores/ui";
 import { useWorkspace, type PanelLayout } from "../../stores/workspace";
 import Sidebar from "./Sidebar";
 import TabBar from "./TabBar";
