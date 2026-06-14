@@ -448,6 +448,18 @@ describe("Settings: desktop + theme + wallpapers", () => {
       const data = await res.json();
       expect(data.kernel).toEqual({ model: "claude-sonnet-4-5", effort: "low" });
     });
+
+    it("normalizes hand-edited model and effort values outside the allowlists", async () => {
+      writeFileSync(
+        join(homePath, "system/config.json"),
+        JSON.stringify({ kernel: { model: "gpt-4o", effort: "ludicrous" } }),
+      );
+
+      const res = await app.request("/api/settings/agent");
+      const data = await res.json();
+
+      expect(data.kernel).toEqual({ model: null, effort: null });
+    });
   });
 
   describe("PUT /agent (kernel config)", () => {

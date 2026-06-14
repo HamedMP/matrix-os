@@ -43,6 +43,17 @@ const KernelPatchSchema = z
     effort: z.enum(KERNEL_EFFORTS).optional(),
   })
   .strict();
+
+function normalizeKernelModel(value: unknown): string | null {
+  return typeof value === "string" && KERNEL_MODEL_IDS.includes(value) ? value : null;
+}
+
+function normalizeKernelEffort(value: unknown): string | null {
+  return typeof value === "string" && (KERNEL_EFFORTS as readonly string[]).includes(value)
+    ? value
+    : null;
+}
+
 const WALLPAPER_FILE_EXTENSIONS = new Set([
   ".avif",
   ".gif",
@@ -233,8 +244,8 @@ export function createSettingsRoutes(opts: {
     return c.json({
       identity: handle,
       kernel: {
-        model: typeof kernel.model === "string" ? kernel.model : null,
-        effort: typeof kernel.effort === "string" ? kernel.effort : null,
+        model: normalizeKernelModel(kernel.model),
+        effort: normalizeKernelEffort(kernel.effort),
       },
       availableModels: KERNEL_MODELS,
       availableEfforts: KERNEL_EFFORTS,

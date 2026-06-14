@@ -257,11 +257,25 @@ const AppSessionProvisionBodySchema = z.object({
   runtime: RuntimeSlotSchema.optional().default('primary'),
 }).strict();
 
+const ClerkImageUrlSchema = z.preprocess((value) => {
+  if (value === undefined || value === null) return value;
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    new URL(value);
+    return value;
+  } catch (err) {
+    if (!(err instanceof TypeError)) {
+      throw err;
+    }
+    return null;
+  }
+}, z.string().url().nullable().optional());
+
 const ClerkUserProfileSchema = z.object({
   username: z.string().nullable().optional(),
   first_name: z.string().nullable().optional(),
   last_name: z.string().nullable().optional(),
-  image_url: z.string().url().nullable().optional(),
+  image_url: ClerkImageUrlSchema,
   primary_email_address_id: z.string().nullable().optional(),
   email_addresses: z.array(z.object({
     id: z.string().optional(),
