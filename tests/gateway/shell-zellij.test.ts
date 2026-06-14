@@ -317,10 +317,16 @@ describe("zellij adapter", () => {
   it("creates mobile profile sessions with a borderless compact layout", async () => {
     const pty = ptyProcess();
     let layoutPath: string | undefined;
+    let configPath: string | undefined;
     let layoutText = "";
+    let configText = "";
     const spawnPty = vi.fn((_command, args) => {
-      layoutPath = String(args[3]);
+      const layoutFlagIndex = args.indexOf("--new-session-with-layout");
+      const configFlagIndex = args.indexOf("--config");
+      layoutPath = String(args[layoutFlagIndex + 1]);
+      configPath = String(args[configFlagIndex + 1]);
       layoutText = readFileSync(layoutPath, "utf8");
+      configText = readFileSync(configPath, "utf8");
       return pty;
     });
     const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25, startupDelayMs: 1 });
@@ -334,6 +340,8 @@ describe("zellij adapter", () => {
     expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
       [
+        "--config",
+        expect.stringMatching(/matrix-zellij-layout-/),
         "--session",
         "mobile-main",
         "--new-session-with-layout",
@@ -346,7 +354,14 @@ describe("zellij adapter", () => {
     expect(layoutText).not.toContain("default_tab_template");
     expect(layoutText).toContain('pane cwd="/home/alice/projects" borderless=true');
     expect(layoutText).not.toContain("pane_frames");
+    expect(configText).toContain("show_startup_tips false");
+    expect(configText).toContain("show_release_notes false");
+    expect(configText).toContain("pane_frames false");
+    expect(configText).toContain("simplified_ui true");
+    expect(configText).not.toContain("session_serialization");
+    expect(configText).not.toContain("plugins {");
     expect(layoutPath).toEqual(expect.any(String));
+    expect(configPath).toEqual(expect.any(String));
   });
 
   it("rejects session creation when the retained PTY exits during startup", async () => {

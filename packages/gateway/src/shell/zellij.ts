@@ -325,7 +325,10 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         if (options.profile === "mobile") {
           tempLayoutDir = await mkdtemp(join(tmpdir(), "matrix-zellij-layout-"));
           const layoutPath = join(tempLayoutDir, "layout.kdl");
+          const configPath = join(tempLayoutDir, "config.kdl");
+          await writeFile(configPath, mobileSessionConfig(), { mode: 0o600 });
           await writeFile(layoutPath, mobileSessionLayout(options.cwd, options.cmd), { mode: 0o600 });
+          args.unshift("--config", configPath);
           args.push("--new-session-with-layout", layoutPath);
         } else if (options.cmd) {
           tempLayoutDir = await mkdtemp(join(tmpdir(), "matrix-zellij-layout-"));
@@ -547,6 +550,14 @@ ${argLine}    }
     plugin location="compact-bar"
   }
 }
+`;
+}
+
+function mobileSessionConfig(): string {
+  return `show_startup_tips false
+show_release_notes false
+pane_frames false
+simplified_ui true
 `;
 }
 
