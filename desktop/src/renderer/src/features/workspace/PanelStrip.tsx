@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
+import { Group, Panel, Separator, type Layout as GroupLayout } from "react-resizable-panels";
 import {
   useWorkspace,
   defaultLayout,
@@ -25,19 +25,23 @@ interface PanelStripProps {
 export function groupLayoutForPanels(
   visiblePanels: PanelKind[],
   sizes: Record<PanelKind, number>,
-): number[] {
+): GroupLayout {
   const even = visiblePanels.length ? 100 / visiblePanels.length : 0;
-  return visiblePanels.map((panel) => sizes[panel] || even);
+  const next: GroupLayout = {};
+  for (const panel of visiblePanels) {
+    next[panel] = sizes[panel] || even;
+  }
+  return next;
 }
 
 export function panelSizesFromGroupLayout(
   visiblePanels: PanelKind[],
-  nextLayout: number[],
+  nextLayout: GroupLayout | number[],
   previousSizes: Record<PanelKind, number>,
 ): Record<PanelKind, number> {
   const next = { ...previousSizes };
   visiblePanels.forEach((panel, index) => {
-    const value = nextLayout[index];
+    const value = Array.isArray(nextLayout) ? nextLayout[index] : nextLayout[panel];
     if (typeof value === "number" && Number.isFinite(value)) {
       next[panel] = value;
     }
