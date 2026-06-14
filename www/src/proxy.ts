@@ -9,6 +9,13 @@ const withClerk = clerkMiddleware(async (auth, req) => {
   }
 });
 
+type ProxyRequest = Parameters<typeof withClerk>[0];
+type ProxyEvent = Parameters<typeof withClerk>[1];
+type ProtectedRouteAuthorizer = (
+  request: ProxyRequest,
+  event: ProxyEvent,
+) => ReturnType<typeof withClerk>;
+
 function normalizeCsp(policy: string): string {
   return policy.replace(/\s{2,}/g, " ").trim();
 }
@@ -32,33 +39,56 @@ function buildContentSecurityPolicy(nonce: string): string {
   `);
 }
 
-function applySecurityHeaders(request: Parameters<typeof withClerk>[0]) {
+function createSecurityResponse(request: ProxyRequest) {
   const nonce = btoa(crypto.randomUUID());
   const requestHeaders = new Headers(request.headers);
   const csp = buildContentSecurityPolicy(nonce);
   requestHeaders.set("x-nonce", nonce);
-  requestHeaders.set("Content-Security-Policy", csp);
 
   const response = NextResponse.next({
     request: {
       headers: requestHeaders,
     },
   });
+  return applySecurityHeaders(response, csp);
+}
+
+function applySecurityHeaders(response: NextResponse, csp: string) {
   response.headers.set("Content-Security-Policy", csp);
   response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
   response.headers.set("Permissions-Policy", "browsing-topics=(), interest-cohort=()");
   return response;
 }
 
-export default function proxy(
-  request: Parameters<typeof withClerk>[0],
-  event: Parameters<typeof withClerk>[1],
-) {
-  if (isProtectedRoute(request)) {
-    return withClerk(request, event);
+function applySecurityResponseHeaders(response: Response, securityResponse: NextResponse) {
+  for (const [name, value] of securityResponse.headers) {
+    if (
+      name === "content-security-policy" ||
+      name === "cross-origin-opener-policy" ||
+      name === "permissions-policy" ||
+      name === "x-middleware-override-headers" ||
+      name.startsWith("x-middleware-request-")
+    ) {
+      response.headers.set(name, value);
+    }
   }
-  return applySecurityHeaders(request);
+  return response;
 }
+
+export async function proxyWithSecurity(
+  request: ProxyRequest,
+  event: ProxyEvent,
+  authorizeProtectedRoute: ProtectedRouteAuthorizer = withClerk,
+) {
+  const securityResponse = createSecurityResponse(request);
+  if (isProtectedRoute(request)) {
+    const clerkResponse = await authorizeProtectedRoute(request, event);
+    return applySecurityResponseHeaders(clerkResponse ?? NextResponse.next(), securityResponse);
+  }
+  return securityResponse;
+}
+
+export default proxyWithSecurity;
 
 export const config = {
   matcher: ["/dashboard(.*)", "/admin(.*)", "/((?!_next|.*\\..*).*)"],

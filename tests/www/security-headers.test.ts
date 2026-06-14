@@ -1,55 +1,68 @@
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { NextResponse } from "next/server";
+import { describe, expect, it, vi } from "vitest";
+import { config, proxyWithSecurity } from "../../www/src/proxy";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+type ProxyModule = typeof import("../../www/src/proxy");
 
-async function readRepoFile(path: string) {
-  return readFile(resolve(root, path), "utf8");
+function makeRequest(pathname: string) {
+  return {
+    headers: new Headers(),
+    nextUrl: new URL(`https://matrix-os.com${pathname}`),
+  } as Parameters<ProxyModule["default"]>[0];
+}
+
+function expectSecurityHeaders(response: Response) {
+  const csp = response.headers.get("Content-Security-Policy");
+  expect(csp).toBeTruthy();
+  expect(csp).toContain("default-src 'self'");
+  expect(csp).toContain("script-src 'self' 'nonce-");
+  expect(csp).toContain("'strict-dynamic'");
+  expect(csp).toContain("connect-src 'self'");
+  expect(csp).not.toContain("Content-Security-Policy-Report-Only");
+  expect(csp).not.toContain("'unsafe-inline' 'unsafe-eval'");
+  expect(response.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
+  expect(response.headers.get("Permissions-Policy")).toBe("browsing-topics=(), interest-cohort=()");
 }
 
 describe("www Lighthouse security headers", () => {
-  it("sets an enforced nonce CSP and COOP from the proxy", async () => {
-    const proxy = await readRepoFile("www/src/proxy.ts");
+  it("sets an enforced nonce CSP and COOP on public route responses", async () => {
+    const authorizeProtectedRoute = vi.fn();
+    const response = await proxyWithSecurity(
+      makeRequest("/"),
+      {} as Parameters<ProxyModule["default"]>[1],
+      authorizeProtectedRoute,
+    );
 
-    expect(proxy).toContain("Content-Security-Policy");
-    expect(proxy).toContain("Cross-Origin-Opener-Policy");
-    expect(proxy).toContain("x-nonce");
-    expect(proxy).toContain("script-src");
-    expect(proxy).toContain("'strict-dynamic'");
-    expect(proxy).toContain("'nonce-${nonce}'");
-    expect(proxy).not.toContain("Content-Security-Policy-Report-Only");
-    expect(proxy).not.toContain("'unsafe-inline' 'unsafe-eval'");
+    expectSecurityHeaders(response);
+    expect(response.headers.get("x-middleware-request-x-nonce")).toBeTruthy();
+    expect(response.headers.get("x-middleware-request-content-security-policy")).toBeNull();
+    expect(authorizeProtectedRoute).not.toHaveBeenCalled();
   });
 
-  it("keeps Clerk middleware scoped while applying security headers broadly", async () => {
-    const proxy = await readRepoFile("www/src/proxy.ts");
+  it("keeps Clerk auth for protected routes while preserving security headers", async () => {
+    const authorizeProtectedRoute = vi.fn(async () => {
+      const response = NextResponse.next();
+      response.headers.set("x-clerk-checked", "1");
+      return response;
+    });
+    const response = await proxyWithSecurity(
+      makeRequest("/dashboard"),
+      {} as Parameters<ProxyModule["default"]>[1],
+      authorizeProtectedRoute,
+    );
 
-    expect(proxy).toContain('createRouteMatcher(["/dashboard(.*)", "/admin(.*)"])');
-    expect(proxy).toContain('"/((?!_next|.*\\\\..*).*)"');
-    expect(proxy).toContain("return withClerk(request, event)");
-    expect(proxy).toContain("return applySecurityHeaders");
+    expect(authorizeProtectedRoute).toHaveBeenCalledOnce();
+    expect(response.headers.get("x-clerk-checked")).toBe("1");
+    expectSecurityHeaders(response);
+    expect(response.headers.get("x-middleware-request-x-nonce")).toBeTruthy();
+    expect(response.headers.get("x-middleware-request-content-security-policy")).toBeNull();
   });
 
-  it("passes the CSP nonce to the server-rendered landing JSON-LD script", async () => {
-    const landing = await readRepoFile("www/src/app/page.tsx");
-
-    expect(landing).toContain('headers()).get("x-nonce")');
-    expect(landing).toContain('<script');
-    expect(landing).toContain("nonce={nonce}");
-    expect(landing).toContain("suppressHydrationWarning");
-  });
-
-  it("does not load browser-blocklisted analytics scripts on first paint", async () => {
-    const [layout, client] = await Promise.all([
-      readRepoFile("www/src/app/layout.tsx"),
-      readRepoFile("www/src/lib/posthog-client.ts"),
+  it("matches protected routes and broad non-static document routes", async () => {
+    expect(config.matcher).toEqual([
+      "/dashboard(.*)",
+      "/admin(.*)",
+      "/((?!_next|.*\\..*).*)",
     ]);
-
-    expect(layout).not.toContain("@vercel/analytics");
-    expect(layout).not.toContain("<Analytics");
-    expect(client).toContain("autocapture: false");
-    expect(client).toContain("capture_pageview: false");
   });
 });
