@@ -54,7 +54,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
       // Evict the oldest closable, non-active tab when over the cap.
       let tabs = [...state.tabs, tab];
       if (tabs.length > MAX_TABS) {
-        const victim = tabs.find((t) => t.closable && t.id !== id);
+        const victim = tabs.find((t) => t.closable && t.id !== id && t.id !== state.activeTabId);
         if (victim) tabs = tabs.filter((t) => t.id !== victim.id);
       }
       return { tabs, activeTabId: id };

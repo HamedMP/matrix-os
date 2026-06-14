@@ -66,7 +66,11 @@ function CreateTaskForm({
   }, []);
 
   const submit = async (openAfter: boolean) => {
-    if (!api || !activeSlug || title.trim().length === 0 || submitting) return;
+    if (title.trim().length === 0 || submitting) return;
+    if (!api || !activeSlug) {
+      setFailed(true);
+      return;
+    }
     const submitGeneration = dialogGenerationRef.current;
     setSubmitting(true);
     setFailed(false);

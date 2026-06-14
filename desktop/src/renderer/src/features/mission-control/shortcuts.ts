@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { onEvent } from "../../lib/operator";
+import { useBoard } from "../../stores/board";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 
@@ -46,7 +47,19 @@ export function useGlobalShortcuts(): void {
     });
     const offNavigate = onEvent("menu:navigate", ({ kind }) => {
       if (kind === "settings") useTabs.getState().openTab({ kind: "settings", title: "Settings" });
-      if (kind === "board") useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+      if (kind === "board") {
+        const { activeProjectSlug, projects } = useBoard.getState();
+        const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
+        if (project) {
+          useTabs.getState().openTab({
+            kind: "board",
+            projectSlug: project.slug,
+            title: project.name || project.slug,
+          });
+        } else {
+          useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+        }
+      }
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown);

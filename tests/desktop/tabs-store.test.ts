@@ -76,4 +76,20 @@ describe("tabs store", () => {
     // The non-closable home tab survives eviction.
     expect(state.tabs.some((t) => t.id === pinned)).toBe(true);
   });
+
+  it("does not evict the previously active tab when opening beyond the cap", () => {
+    const active = useTabs.getState().openTab({ kind: "board", projectSlug: "p0", title: "P0" });
+    const oldestInactive = useTabs.getState().openTab({ kind: "board", projectSlug: "p1", title: "P1" });
+    for (let i = 2; i < 24; i++) {
+      useTabs.getState().openTab({ kind: "board", projectSlug: `p${i}`, title: `P${i}` });
+    }
+    useTabs.getState().focusTab(active);
+
+    useTabs.getState().openTab({ kind: "board", projectSlug: "p24", title: "P24" });
+
+    const state = useTabs.getState();
+    expect(state.tabs).toHaveLength(24);
+    expect(state.tabs.some((t) => t.id === active)).toBe(true);
+    expect(state.tabs.some((t) => t.id === oldestInactive)).toBe(false);
+  });
 });
