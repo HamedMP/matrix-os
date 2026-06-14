@@ -22,7 +22,7 @@ export const DEFAULT_THEME: Theme = {
     "card-foreground": "#1c1917",
     popover: "#FAFAF9",
     "popover-foreground": "#1c1917",
-    primary: "#8CC7BE",
+    primary: "#9AA48C",
     "primary-foreground": "#1a1f18",
     secondary: "#f5f5f4",
     "secondary-foreground": "#3c4044",
@@ -35,7 +35,7 @@ export const DEFAULT_THEME: Theme = {
     warning: "#eab308",
     border: "#e5e5e4",
     input: "#e5e5e4",
-    ring: "#8CC7BE",
+    ring: "#D06F25",
   },
   fonts: {
     mono: "JetBrains Mono, monospace",

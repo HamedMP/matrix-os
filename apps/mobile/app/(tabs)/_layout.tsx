@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   iconShellFocused: {
-    backgroundColor: "rgba(140, 199, 190, 0.24)",
+    backgroundColor: "rgba(154, 164, 140, 0.24)",
     borderWidth: 1,
     borderColor: "rgba(50, 61, 46, 0.08)",
   },

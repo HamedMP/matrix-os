@@ -36,7 +36,7 @@ export async function GET(
             position: 'absolute',
             inset: 0,
             background:
-              'radial-gradient(circle at 18% 18%, rgba(208,111,37,0.26), transparent 270px), radial-gradient(circle at 88% 18%, rgba(140,199,190,0.32), transparent 320px)',
+              'radial-gradient(circle at 18% 18%, rgba(208,111,37,0.26), transparent 270px), radial-gradient(circle at 88% 18%, rgba(154,164,140,0.32), transparent 320px)',
           }}
         />
         <img

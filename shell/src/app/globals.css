@@ -79,14 +79,14 @@
   --font-mono: "JetBrains Mono", monospace;
   --radius: 0.75rem;
 
-  /* Sage-green / teal palette — white app surfaces */
+  /* Moss-green OS accent on white app surfaces (sage-teal retired -> moss) */
   --background: #FAFAF9;
   --foreground: #1c1917;
   --card: #FAFAF9;
   --card-foreground: #1c1917;
   --popover: #FAFAF9;
   --popover-foreground: #1c1917;
-  --primary: #8CC7BE;
+  --primary: #9AA48C;
   --primary-foreground: #1a1f18;
   --secondary: #f5f5f4;
   --secondary-foreground: #3c4044;
@@ -99,7 +99,7 @@
   --warning: #eab308;
   --border: #e5e5e4;
   --input: #e5e5e4;
-  --ring: #8CC7BE;
+  --ring: #D06F25;
 
   /* Brand palette (shared source of truth with the matrix-os.com landing).
      These do NOT recolor the OS accent (--primary stays the shell theme);
@@ -120,7 +120,7 @@
   /* Page background gradient tokens (separate from app --background) */
   --gradient-deep: #323D2E;
   --gradient-mid: #9AA48C;
-  --gradient-light: #8CC7BE;
+  --gradient-light: #B8C4A8; /* lighter lichen tint — keeps mid->light contrast */
   --gradient-accent: #6a8a7a;
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);

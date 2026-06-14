@@ -87,7 +87,7 @@ Gateway:
   "gradientColors": {
     "deep": "#323D2E",
     "mid": "#9AA48C",
-    "light": "#8CC7BE",
+    "light": "#9AA48C",
     "accent": "#6a8a7a"
   }
 }

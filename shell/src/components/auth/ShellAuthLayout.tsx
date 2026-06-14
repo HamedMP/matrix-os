@@ -17,7 +17,7 @@ export function ShellAuthLayout({ eyebrow, title, body, children }: ShellAuthLay
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(circle at 14% 12%, rgba(250,250,249,0.88), transparent 34%), radial-gradient(circle at 82% 18%, rgba(140,199,190,0.24), transparent 30%), radial-gradient(circle at 70% 92%, rgba(208,111,37,0.14), transparent 34%)",
+            "radial-gradient(circle at 14% 12%, rgba(250,250,249,0.88), transparent 34%), radial-gradient(circle at 82% 18%, rgba(154,164,140,0.24), transparent 30%), radial-gradient(circle at 70% 92%, rgba(208,111,37,0.14), transparent 34%)",
         }}
       />
       <div
@@ -75,7 +75,7 @@ export function ShellAuthLayout({ eyebrow, title, body, children }: ShellAuthLay
             </div>
             <div className="grid h-56 grid-cols-[72px_1fr] gap-3 overflow-hidden rounded-[20px] bg-[#141614] p-3">
               <div className="flex flex-col gap-2 rounded-2xl bg-white/8 p-2">
-                {["bg-[#8CC7BE]", "bg-white/30", "bg-white/20", "bg-white/20"].map((color, index) => (
+                {["bg-[#9AA48C]", "bg-white/30", "bg-white/20", "bg-white/20"].map((color, index) => (
                   <span key={index} className={`size-10 rounded-xl ${color}`} />
                 ))}
               </div>
@@ -83,7 +83,7 @@ export function ShellAuthLayout({ eyebrow, title, body, children }: ShellAuthLay
                 <div className="rounded-2xl bg-white/10" />
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-2xl border border-white/10 bg-white/10" />
-                  <div className="rounded-2xl border border-[#8CC7BE]/25 bg-[#8CC7BE]/15" />
+                  <div className="rounded-2xl border border-[#9AA48C]/25 bg-[#9AA48C]/15" />
                 </div>
               </div>
             </div>
@@ -91,7 +91,7 @@ export function ShellAuthLayout({ eyebrow, title, body, children }: ShellAuthLay
         </div>
 
         <div className="relative mx-auto w-full max-w-[430px]">
-          <div className="absolute -inset-5 rounded-[34px] bg-[#8CC7BE]/18 blur-2xl" aria-hidden="true" />
+          <div className="absolute -inset-5 rounded-[34px] bg-[#9AA48C]/18 blur-2xl" aria-hidden="true" />
           <div className="relative rounded-[30px] border border-[#323D2E]/12 bg-[#FAFAF9]/72 p-3 shadow-[0_34px_90px_rgba(50,61,46,0.18)] backdrop-blur-xl">
             {children}
           </div>
