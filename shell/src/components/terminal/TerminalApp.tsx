@@ -561,18 +561,18 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const backgroundShellSession = (sessionId: string) => {
-    setTabs((prev) => {
-      const next = prev.filter((tab) => !getSessionIds(tab.paneTree).includes(sessionId));
-      setActiveTabId((current) => {
-        if (next.some((tab) => tab.id === current)) return current;
-        return next[0]?.id ?? "";
-      });
-      setFocusedPaneId((current) => {
-        if (current && next.some((tab) => hasPaneId(tab.paneTree, current))) return current;
-        return next[0] ? getFirstPaneId(next[0].paneTree) : null;
-      });
-      return next;
-    });
+    const next = tabs.filter((tab) => !getSessionIds(tab.paneTree).includes(sessionId));
+    const nextActiveTabId = next.some((tab) => tab.id === activeTabId) ? activeTabId : next[0]?.id ?? "";
+    const nextFocusedPaneId =
+      focusedPaneId && next.some((tab) => hasPaneId(tab.paneTree, focusedPaneId))
+        ? focusedPaneId
+        : next[0]
+          ? getFirstPaneId(next[0].paneTree)
+          : null;
+
+    setTabs(next);
+    setActiveTabId(nextActiveTabId);
+    setFocusedPaneId(nextFocusedPaneId);
   };
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one-time mount bootstrap that loads the saved terminal layout from the gateway; the fetch is AbortSignal-guarded and every state write is gated behind a `cancelled` flag cleared in cleanup, so this is an intentional mount-driven load, not render data
@@ -882,7 +882,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       <TerminalAppContext.Provider value={storeApi}>
         <TerminalWorkspaceChrome />
         <div className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}>
-          {mobile ? <LocalTerminalSidebar /> : <LocalTerminalSidebar />}
+          <LocalTerminalSidebar />
           {activeTab ? (
             <div
               className="flex-1 min-w-0 min-h-0 flex"
@@ -2082,9 +2082,11 @@ function LocalTerminalSidebar() {
               <div style={{ color: "#3E4339", fontFamily: "Orbitron, system-ui, sans-serif", fontSize: 20, fontWeight: 800, lineHeight: "24px" }}>
                 matrixos
               </div>
-              <div className="truncate" style={{ color: "#858578", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
-                {ctx.sidebarSelectedPath ? formatCwd(ctx.sidebarSelectedPath) : "~/dev/matrix-os"}
-              </div>
+              {!ctx.mobile ? (
+                <div className="truncate" style={{ color: "#858578", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
+                  {ctx.sidebarSelectedPath ? formatCwd(ctx.sidebarSelectedPath) : "~/projects"}
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="flex shrink-0 items-center" style={{ gap: 10 }}>

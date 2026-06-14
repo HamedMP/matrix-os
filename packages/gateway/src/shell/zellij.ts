@@ -2,7 +2,7 @@ import {
   execFile as nodeExecFile,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -250,7 +250,6 @@ async function cleanupTempLayoutDir(path: string): Promise<void> {
 }
 
 async function atomicWriteText(path: string, content: string): Promise<void> {
-  const { rename } = await import("node:fs/promises");
   const tmpPath = `${path}.${randomUUID()}.tmp`;
   try {
     await writeFile(tmpPath, content, { flag: "wx", mode: 0o600 });
