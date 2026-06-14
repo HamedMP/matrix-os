@@ -54,6 +54,10 @@ export default function SettingsView() {
   const [infoError, setInfoError] = useState(false);
 
   useEffect(() => {
+    setSlotInput(runtimeSlot);
+  }, [runtimeSlot]);
+
+  useEffect(() => {
     void invoke("state:get", { key: "appearance" })
       .then((result) => {
         const value = result.value as { theme?: string } | null;
@@ -77,8 +81,14 @@ export default function SettingsView() {
       .then((data) => {
         if (!cancelled) setInfo(data);
       })
-      .catch(() => {
-        if (!cancelled) setInfoError(true);
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          console.warn(
+            "[settings] load system info failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+          setInfoError(true);
+        }
       });
     return () => {
       cancelled = true;

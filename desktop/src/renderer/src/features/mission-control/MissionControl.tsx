@@ -27,9 +27,13 @@ export default function MissionControl() {
   useEffect(() => {
     if (!api) return;
     void loadProjects(api);
+  }, [api, loadProjects]);
+
+  useEffect(() => {
+    if (!api) return;
     const dispose = wireKernel();
     return dispose;
-  }, [api, loadProjects, platformHost, runtimeSlot]);
+  }, [api, platformHost, runtimeSlot]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
