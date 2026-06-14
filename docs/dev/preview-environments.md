@@ -110,12 +110,14 @@ dashboards.
 - **VPSes (preview or fleet)**: Grafana Alloy, installed by
   `matrix-install-logship` (ships in the host bundle `bin/`). It tails the
   matrix systemd units and the kernel JSONL logs, labels streams with
-  `handle` and `env`, and pushes to `https://logs.matrix-os.com` — a Caddy
-  edge that accepts only authenticated `POST /loki/api/v1/push` (basic auth;
-  Loki's query API is not exposed). Enroll a VPS once from the ops box:
+  `handle` and `env`, and dual-writes to PostHog Logs via OTLP/HTTP plus the
+  existing `https://logs.matrix-os.com` Loki ingest edge. Loki is retained only
+  as the `preview-logs.sh` compatibility path until the self-hosted
+  observability stack retirement slice removes it. Enroll a VPS once from the
+  ops box:
 
   ```bash
-  PLATFORM_SECRET=... LOGS_INGEST_USER=fleet LOGS_INGEST_PASSWORD=... \
+  PLATFORM_SECRET=... LOGS_INGEST_USER=fleet LOGS_INGEST_PASSWORD=... POSTHOG_PROJECT_TOKEN=<project-token> \
     ./scripts/enable-vps-logship.sh <handle> <preview|prod|staging>
   ```
 

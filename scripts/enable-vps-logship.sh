@@ -2,7 +2,7 @@
 # Enroll a Matrix OS VPS in centralized log shipping from the ops box.
 #
 # Usage:
-#   PLATFORM_SECRET=... LOGS_INGEST_USER=... LOGS_INGEST_PASSWORD=... \
+#   PLATFORM_SECRET=... LOGS_INGEST_USER=... LOGS_INGEST_PASSWORD=... POSTHOG_PROJECT_TOKEN=... \
 #     ./scripts/enable-vps-logship.sh <handle> <env>
 #
 #   handle  matrix handle of the VPS (looked up in /vps/fleet)
@@ -27,6 +27,7 @@ VPS_SSH_KEY="${VPS_SSH_KEY:-$HOME/.ssh/customer_vps_smoke}"
 : "${PLATFORM_SECRET:?PLATFORM_SECRET must be set}"
 : "${LOGS_INGEST_USER:?LOGS_INGEST_USER must be set}"
 : "${LOGS_INGEST_PASSWORD:?LOGS_INGEST_PASSWORD must be set}"
+: "${POSTHOG_PROJECT_TOKEN:?POSTHOG_PROJECT_TOKEN must be set}"
 
 if ! printf '%s' "$HANDLE" | grep -Eq '^[a-z0-9][a-z0-9-]{1,62}$'; then
   echo "enable-vps-logship: invalid handle" >&2
@@ -69,10 +70,10 @@ echo "enable-vps-logship: enrolling ${HANDLE} (${ip}) as env=${MATRIX_ENV}"
 # the operator removes the stale entry.
 KNOWN_HOSTS="${LOGSHIP_KNOWN_HOSTS:-$HOME/.matrixos/logship-known-hosts}"
 mkdir -p "$(dirname "$KNOWN_HOSTS")"
-printf '%s\n%s\n' "$LOGS_INGEST_USER" "$LOGS_INGEST_PASSWORD" |
+printf '%s\n%s\n%s\n' "$LOGS_INGEST_USER" "$LOGS_INGEST_PASSWORD" "$POSTHOG_PROJECT_TOKEN" |
   ssh -i "$VPS_SSH_KEY" -o StrictHostKeyChecking=accept-new \
     -o UserKnownHostsFile="$KNOWN_HOSTS" "root@${ip}" \
-    "IFS= read -r u && IFS= read -r p && LOGS_INGEST_USER=\"\$u\" LOGS_INGEST_PASSWORD=\"\$p\" /opt/matrix/app/bin/matrix-install-logship '${LOGS_INGEST_URL}' '${HANDLE}' '${MATRIX_ENV}'"
+    "IFS= read -r u && IFS= read -r p && IFS= read -r t && LOGS_INGEST_USER=\"\$u\" LOGS_INGEST_PASSWORD=\"\$p\" POSTHOG_PROJECT_TOKEN=\"\$t\" /opt/matrix/app/bin/matrix-install-logship '${LOGS_INGEST_URL}' '${HANDLE}' '${MATRIX_ENV}'"
 
 # Record enrollment in the ops-side inventory so credential rotation has a
 # concrete target list (spec 093). Idempotent: one line per handle.

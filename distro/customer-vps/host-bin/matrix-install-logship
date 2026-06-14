@@ -2,7 +2,7 @@
 # Install and enable the Grafana Alloy log shipper on a Matrix OS VPS.
 #
 # Usage:
-#   LOGS_INGEST_USER=... LOGS_INGEST_PASSWORD=... \
+#   LOGS_INGEST_USER=... LOGS_INGEST_PASSWORD=... POSTHOG_PROJECT_TOKEN=... \
 #     matrix-install-logship <ingest-url> <handle> <env>
 #
 #   ingest-url  https URL of the Loki push edge (e.g. https://logs.matrix-os.com)
@@ -38,6 +38,7 @@ HANDLE="$2"
 MATRIX_ENV="$3"
 INGEST_USER="${LOGS_INGEST_USER:?LOGS_INGEST_USER must be set in the environment}"
 INGEST_PASSWORD="${LOGS_INGEST_PASSWORD:?LOGS_INGEST_PASSWORD must be set in the environment}"
+POSTHOG_PROJECT_TOKEN="${POSTHOG_PROJECT_TOKEN:?POSTHOG_PROJECT_TOKEN must be set in the environment}"
 
 case "$INGEST_URL" in
   https://*) ;;
@@ -112,6 +113,20 @@ loki.write "central" {
   }
 }
 
+otelcol.receiver.loki "posthog" {
+  output {
+    logs = [otelcol.exporter.otlphttp.posthog_logs.input]
+  }
+}
+
+otelcol.exporter.otlphttp "posthog_logs" {
+  logs_endpoint = "https://eu.i.posthog.com/i/v1/logs"
+  client {
+    endpoint = "https://eu.i.posthog.com"
+    headers = { "Authorization" = "Bearer " + sys.env("POSTHOG_PROJECT_TOKEN") }
+  }
+}
+
 loki.relabel "journal" {
   forward_to = []
   rule {
@@ -120,39 +135,40 @@ loki.relabel "journal" {
   }
 }
 
+// handle/env are source labels so the OTLP path carries the same attribution as Loki.
 loki.source.journal "matrix_units" {
   matches       = "_SYSTEMD_UNIT=matrix-gateway.service"
   relabel_rules = loki.relabel.journal.rules
-  labels        = { source = "journal" }
-  forward_to    = [loki.write.central.receiver]
+  labels        = { source = "journal", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
+  forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]
 }
 
 loki.source.journal "matrix_shell" {
   matches       = "_SYSTEMD_UNIT=matrix-shell.service"
   relabel_rules = loki.relabel.journal.rules
-  labels        = { source = "journal" }
-  forward_to    = [loki.write.central.receiver]
+  labels        = { source = "journal", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
+  forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]
 }
 
 loki.source.journal "matrix_sync" {
   matches       = "_SYSTEMD_UNIT=matrix-sync-agent.service"
   relabel_rules = loki.relabel.journal.rules
-  labels        = { source = "journal" }
-  forward_to    = [loki.write.central.receiver]
+  labels        = { source = "journal", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
+  forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]
 }
 
 loki.source.journal "matrix_code" {
   matches       = "_SYSTEMD_UNIT=matrix-code.service"
   relabel_rules = loki.relabel.journal.rules
-  labels        = { source = "journal" }
-  forward_to    = [loki.write.central.receiver]
+  labels        = { source = "journal", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
+  forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]
 }
 
 loki.source.journal "matrix_symphony" {
   matches       = "_SYSTEMD_UNIT=matrix-symphony.service"
   relabel_rules = loki.relabel.journal.rules
-  labels        = { source = "journal" }
-  forward_to    = [loki.write.central.receiver]
+  labels        = { source = "journal", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
+  forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]
 }
 
 local.file_match "kernel_jsonl" {
@@ -161,7 +177,8 @@ local.file_match "kernel_jsonl" {
 
 loki.source.file "kernel_logs" {
   targets    = local.file_match.kernel_jsonl.targets
-  forward_to = [loki.write.central.receiver]
+  labels     = { source = "jsonl", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
+  forward_to = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]
 }
 EOF
 chmod 0640 /etc/alloy/matrix-logship.alloy
@@ -169,8 +186,8 @@ chmod 0640 /etc/alloy/matrix-logship.alloy
 umask 077
 # printf %s writes values byte-for-byte; no heredoc/expansion semantics to
 # reason about for credentials containing shell-special characters.
-printf 'LOGS_INGEST_URL=%s\nLOGS_INGEST_USER=%s\nLOGS_INGEST_PASSWORD=%s\n' \
-  "$INGEST_URL" "$INGEST_USER" "$INGEST_PASSWORD" > /opt/matrix/env/logship.env
+printf 'LOGS_INGEST_URL=%s\nLOGS_INGEST_USER=%s\nLOGS_INGEST_PASSWORD=%s\nPOSTHOG_PROJECT_TOKEN=%s\n' \
+  "$INGEST_URL" "$INGEST_USER" "$INGEST_PASSWORD" "$POSTHOG_PROJECT_TOKEN" > /opt/matrix/env/logship.env
 chmod 0600 /opt/matrix/env/logship.env
 
 cat > /etc/systemd/system/matrix-logship.service << 'EOF'
