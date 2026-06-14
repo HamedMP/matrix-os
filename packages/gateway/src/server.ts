@@ -214,6 +214,7 @@ import {
   createShellWsHandler,
   createZellijAdapter,
   ShellRegistry as ZellijShellRegistry,
+  shellWsMessageDataToString,
 } from "./shell/index.js";
 import {
   CLIENT_ERROR_LOG_BODY_LIMIT,
@@ -2363,7 +2364,10 @@ export async function createGateway(config: GatewayConfig) {
           });
         },
         onMessage(evt, ws) {
-          const raw = typeof evt.data === "string" ? evt.data : "";
+          const raw = shellWsMessageDataToString(evt.data);
+          if (raw === null) {
+            return;
+          }
           if (namedHandle) {
             namedHandle.onMessage(raw);
             return;
@@ -2517,7 +2521,10 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onMessage(evt, ws) {
-          const raw = typeof evt.data === "string" ? evt.data : "";
+          const raw = shellWsMessageDataToString(evt.data);
+          if (raw === null) {
+            return;
+          }
           if (namedSession) {
             namedHandle?.onMessage(raw);
             return;

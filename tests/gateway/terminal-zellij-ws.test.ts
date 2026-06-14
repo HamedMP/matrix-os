@@ -4,6 +4,7 @@ import {
   createShellWsHandler,
   SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,
   SHELL_ATTACH_RECENT_REPLAY_EVENTS,
+  shellWsMessageDataToString,
   type ShellWsSocket,
 } from "../../packages/gateway/src/shell/ws.js";
 
@@ -131,6 +132,39 @@ describe("zellij terminal WebSocket", () => {
 
     expect(ws.sent).toContainEqual({ type: "pong" });
     expect(pty.writes).toEqual([]);
+  });
+
+  it("normalizes binary websocket frames before protocol parsing", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    const rawPing = shellWsMessageDataToString(Buffer.from(JSON.stringify({ type: "ping" })));
+    expect(rawPing).toBe(JSON.stringify({ type: "ping" }));
+    session.onMessage(rawPing!);
+
+    expect(ws.sent).toContainEqual({ type: "pong" });
+    expect(pty.writes).toEqual([]);
+  });
+
+  it("normalizes websocket BufferSource frame variants", () => {
+    const json = JSON.stringify({ type: "ping" });
+    const arrayBuffer = new TextEncoder().encode(json).buffer;
+    const uint8 = new Uint8Array(arrayBuffer);
+
+    expect(shellWsMessageDataToString(json)).toBe(json);
+    expect(shellWsMessageDataToString(Buffer.from(json))).toBe(json);
+    expect(shellWsMessageDataToString(arrayBuffer)).toBe(json);
+    expect(shellWsMessageDataToString(uint8)).toBe(json);
+    expect(shellWsMessageDataToString({})).toBeNull();
   });
 
   it("maps live-tail attach to a bounded recent replay window", async () => {
