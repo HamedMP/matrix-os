@@ -121,9 +121,9 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
           className="flex items-center justify-end gap-2 border-t pt-3"
           style={{ borderColor: "var(--border-subtle)" }}
         >
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
+        <Button variant="ghost" disabled={submitting} onClick={onClose}>
+          Cancel
+        </Button>
           <Button
             variant="subtle"
             disabled={submitting || title.trim().length === 0}
