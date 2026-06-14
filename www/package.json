@@ -9,7 +9,7 @@
     "start": "next start"
   },
   "dependencies": {
-    "@clerk/nextjs": "6.39.0",
+    "@clerk/nextjs": "6.39.5",
     "@clerk/ui": "1.12.1",
     "@matrix-os/clerk-sync": "workspace:*",
     "@matrix-os/observability": "workspace:*",

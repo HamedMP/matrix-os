@@ -1,6 +1,5 @@
 import Image from "next/image";
 import { ArrowRightIcon } from "lucide-react";
-import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { palette as c, cardShadow, fonts } from "./theme";
 import { CtaButton, SectionShell } from "./primitives";
 import { CopyPromptButton } from "./CopyPromptButton";
@@ -26,16 +25,9 @@ export function Hero() {
           computer. Terminals, repos, previews, and workflows that keep going after your laptop closes.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
-          <SignedOut>
-            <CtaButton href="https://app.matrix-os.com" phLocation="hero" phTarget="start_cloud_dev">
-              Get started
-            </CtaButton>
-          </SignedOut>
-          <SignedIn>
-            <CtaButton href="https://app.matrix-os.com" phLocation="hero" phTarget="open_app">
-              Open Matrix OS <ArrowRightIcon className="size-4" />
-            </CtaButton>
-          </SignedIn>
+          <CtaButton href="https://app.matrix-os.com" phLocation="hero" phTarget="start_cloud_dev">
+            Get started <ArrowRightIcon className="size-4" />
+          </CtaButton>
           <CopyPromptButton text={COPYABLE_AGENT_SETUP_PROMPT} />
         </div>
         <p className="mt-4 text-[0.8125rem]" style={{ color: c.subtle, fontFamily: fonts.sans }}>
@@ -53,7 +45,8 @@ export function Hero() {
           alt="The Matrix OS workspace with terminals, apps, and agent sessions"
           width={1920}
           height={1080}
-          priority
+          preload
+          loading="eager"
           className="block h-auto w-full"
         />
       </div>

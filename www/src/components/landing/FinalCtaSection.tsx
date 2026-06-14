@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
-import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { palette as c, fonts } from "./theme";
 import { CtaButton, SectionShell } from "./primitives";
 import { Reveal } from "./Reveal";
@@ -20,16 +19,9 @@ export function FinalCtaSection() {
             Start with one cloud workspace. Add agents, tools, workflows, and teammates as the work grows.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
-            <SignedOut>
-              <CtaButton href="https://app.matrix-os.com" large phLocation="final_cta" phTarget="start_cloud_dev">
-                Get started
-              </CtaButton>
-            </SignedOut>
-            <SignedIn>
-              <CtaButton href="https://app.matrix-os.com" large phLocation="final_cta" phTarget="open_app">
-                Open Matrix OS <ArrowRightIcon className="size-4" />
-              </CtaButton>
-            </SignedIn>
+            <CtaButton href="https://app.matrix-os.com" large phLocation="final_cta" phTarget="start_cloud_dev">
+              Get started <ArrowRightIcon className="size-4" />
+            </CtaButton>
             <CtaButton href="/contact" variant="outline" large>
               Request a demo
             </CtaButton>

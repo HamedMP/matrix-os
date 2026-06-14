@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowRightIcon, ChevronDownIcon } from "lucide-react";
-import { SignedIn, SignedOut } from "@clerk/nextjs";
 import { Logo } from "./Logo";
 import { IsoArt } from "./IsoArt";
 import { palette as c, fonts } from "./theme";
@@ -492,39 +491,24 @@ export function SiteHeader() {
         </div>
 
         <div className="site-header-actions">
-          <SignedOut>
-            <a
-              href="https://app.matrix-os.com"
-              className="site-header-button site-header-button-soft site-header-signin"
-              data-ph-event="marketing_cta_clicked"
-              data-ph-location="nav"
-              data-ph-target="sign_in"
-            >
-              Sign in
-            </a>
-            <a
-              href="https://app.matrix-os.com"
-              className="site-header-button site-header-button-dark"
-              data-ph-event="marketing_cta_clicked"
-              data-ph-location="nav"
-              data-ph-target="get_started"
-            >
-              Get started
-            </a>
-          </SignedOut>
-          <SignedIn>
-            <a
-              href="https://app.matrix-os.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="site-header-button site-header-button-dark"
-              data-ph-event="marketing_cta_clicked"
-              data-ph-location="nav"
-              data-ph-target="open_app"
-            >
-              Open Matrix OS
-            </a>
-          </SignedIn>
+          <a
+            href="https://app.matrix-os.com"
+            className="site-header-button site-header-button-soft site-header-signin"
+            data-ph-event="marketing_cta_clicked"
+            data-ph-location="nav"
+            data-ph-target="sign_in"
+          >
+            Sign in
+          </a>
+          <a
+            href="https://app.matrix-os.com"
+            className="site-header-button site-header-button-dark"
+            data-ph-event="marketing_cta_clicked"
+            data-ph-location="nav"
+            data-ph-target="get_started"
+          >
+            Get started
+          </a>
           <button
             type="button"
             className="site-header-button site-header-button-soft site-header-menu-toggle"
@@ -585,19 +569,12 @@ export function SiteHeader() {
           </nav>
 
           <div className="site-header-sheet-actions">
-            <SignedOut>
-              <a href="https://app.matrix-os.com" className="site-header-button site-header-button-soft" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="sign_in">
-                Sign in
-              </a>
-              <a href="https://app.matrix-os.com" className="site-header-button site-header-button-dark" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="get_started">
-                Get started
-              </a>
-            </SignedOut>
-            <SignedIn>
-              <a href="https://app.matrix-os.com" target="_blank" rel="noopener noreferrer" className="site-header-button site-header-button-dark" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="open_app">
-                Open Matrix OS
-              </a>
-            </SignedIn>
+            <a href="https://app.matrix-os.com" className="site-header-button site-header-button-soft" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="sign_in">
+              Sign in
+            </a>
+            <a href="https://app.matrix-os.com" className="site-header-button site-header-button-dark" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="get_started">
+              Get started
+            </a>
           </div>
         </div>
       ) : null}

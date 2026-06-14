@@ -21,6 +21,34 @@ describe("www landing agent setup", () => {
     expect(hero).toContain("COPYABLE_AGENT_SETUP_PROMPT");
   });
 
+  it("renders public landing CTAs without waiting on Clerk auth state", async () => {
+    const [header, hero, finalCta] = await Promise.all([
+      readRepoFile("www/src/components/landing/SiteHeader.tsx"),
+      readRepoFile("www/src/components/landing/Hero.tsx"),
+      readRepoFile("www/src/components/landing/FinalCtaSection.tsx"),
+    ]);
+
+    for (const source of [header, hero, finalCta]) {
+      expect(source).not.toContain("@clerk/nextjs");
+      expect(source).not.toContain("SignedIn");
+      expect(source).not.toContain("SignedOut");
+    }
+
+    expect(header).toContain("Get started");
+    expect(hero).toContain("Get started");
+    expect(finalCta).toContain("Get started");
+  });
+
+  it("keeps Clerk middleware off the public landing render path", async () => {
+    const proxy = await readRepoFile("www/src/proxy.ts");
+
+    expect(proxy).toContain('"/dashboard(.*)"');
+    expect(proxy).toContain('"/admin(.*)"');
+    expect(proxy).toContain('matcher: ["/dashboard(.*)", "/admin(.*)"]');
+    expect(proxy).not.toContain('"/((?!_next');
+    expect(proxy).not.toContain('"/(api|trpc)(.*)"');
+  });
+
   it("keeps the full agent setup block with copy support and agent brands on the Symphony page", async () => {
     const [symphonyPage, setupSection] = await Promise.all([
       readRepoFile("www/src/app/symphony/page.tsx"),

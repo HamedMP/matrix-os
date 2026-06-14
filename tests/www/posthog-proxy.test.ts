@@ -31,6 +31,8 @@ describe("www PostHog proxy path", () => {
 describe("www PostHog identify wiring", () => {
   const clientSource = readFileSync(join(process.cwd(), "www/src/lib/posthog-client.ts"), "utf8");
   const layoutSource = readFileSync(join(process.cwd(), "www/src/app/layout.tsx"), "utf8");
+  const loginSource = readFileSync(join(process.cwd(), "www/src/app/login/[[...login]]/page.tsx"), "utf8");
+  const signupSource = readFileSync(join(process.cwd(), "www/src/app/signup/[[...signup]]/page.tsx"), "utf8");
   const identifySource = readFileSync(
     join(process.cwd(), "www/src/components/PostHogIdentify.tsx"),
     "utf8",
@@ -41,14 +43,22 @@ describe("www PostHog identify wiring", () => {
     expect(clientSource).toMatch(/export function resetPostHogIdentity\(/);
   });
 
-  it("mounts PostHogIdentify inside the Clerk provider", () => {
-    expect(layoutSource).toMatch(/<PostHogIdentify\s*\/>/);
-    const clerkOpen = layoutSource.indexOf("<ClerkProvider>");
-    const identify = layoutSource.indexOf("<PostHogIdentify");
-    const clerkClose = layoutSource.indexOf("</ClerkProvider>");
-    expect(clerkOpen).toBeGreaterThanOrEqual(0);
-    expect(identify).toBeGreaterThan(clerkOpen);
-    expect(identify).toBeLessThan(clerkClose);
+  it("keeps the global marketing layout free of Clerk client auth", () => {
+    expect(layoutSource).not.toContain("ClerkProvider");
+    expect(layoutSource).not.toContain("PostHogIdentify");
+    expect(layoutSource).not.toContain("clerk.matrix-os.com");
+  });
+
+  it("mounts PostHogIdentify inside Clerk only on auth pages", () => {
+    for (const source of [loginSource, signupSource]) {
+      expect(source).toMatch(/<PostHogIdentify\s*\/>/);
+      const clerkOpen = source.indexOf("<ClerkProvider>");
+      const identify = source.indexOf("<PostHogIdentify");
+      const clerkClose = source.indexOf("</ClerkProvider>");
+      expect(clerkOpen).toBeGreaterThanOrEqual(0);
+      expect(identify).toBeGreaterThan(clerkOpen);
+      expect(identify).toBeLessThan(clerkClose);
+    }
   });
 
   it("identifies with the Clerk user id and resets on sign-out", () => {
