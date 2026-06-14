@@ -172,12 +172,11 @@ loki.source.journal "matrix_symphony" {
 }
 
 local.file_match "kernel_jsonl" {
-  path_targets = [{ __path__ = "${MATRIX_HOME_LOGS}/*.jsonl" }]
+  path_targets = [{ __path__ = "${MATRIX_HOME_LOGS}/*.jsonl", source = "jsonl", handle = "${HANDLE}", env = "${MATRIX_ENV}" }]
 }
 
 loki.source.file "kernel_logs" {
   targets    = local.file_match.kernel_jsonl.targets
-  labels     = { source = "jsonl", handle = "${HANDLE}", env = "${MATRIX_ENV}" }
   forward_to = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]
 }
 EOF

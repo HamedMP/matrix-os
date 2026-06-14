@@ -19,7 +19,8 @@ describe("PostHog fleet log shipping", () => {
     expect(installer).toContain('headers = { "Authorization" = "Bearer " + sys.env("POSTHOG_PROJECT_TOKEN") }');
 
     expect(installer).toContain('forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]');
-    expect(installer).toContain('labels     = { source = "jsonl", handle = "${HANDLE}", env = "${MATRIX_ENV}" }');
+    expect(installer).toContain('path_targets = [{ __path__ = "${MATRIX_HOME_LOGS}/*.jsonl", source = "jsonl", handle = "${HANDLE}", env = "${MATRIX_ENV}" }]');
+    expect(installer).not.toMatch(/loki\.source\.file "kernel_logs" \{[^}]*\n\s+labels\s+=/);
     expect(installer).toContain('forward_to = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]');
   });
 
