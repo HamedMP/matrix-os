@@ -15,6 +15,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   const [conflict, setConflict] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const doSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   useEffect(() => {
     if (!api || !hostRef.current) return;
@@ -58,12 +59,12 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void doSave();
+        void doSaveRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+  }, []);
 
   async function doSave(): Promise<void> {
     const editor = editorRef.current;
@@ -87,6 +88,8 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       setSaving(false);
     }
   }
+
+  doSaveRef.current = doSave;
 
   async function overwrite(): Promise<void> {
     const editor = editorRef.current;

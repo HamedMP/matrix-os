@@ -61,10 +61,16 @@ export const useEditorTabs = create<EditorTabsState>()((set) => ({
 
   closeTask: (taskId) =>
     set((state) => {
+      const closingPaths = new Set(state.tabsByTask[taskId] ?? []);
       const tabsByTask = { ...state.tabsByTask };
       const activePathByTask = { ...state.activePathByTask };
       delete tabsByTask[taskId];
       delete activePathByTask[taskId];
-      return { tabsByTask, activePathByTask };
+      const remainingOpenPaths = new Set(Object.values(tabsByTask).flat());
+      return {
+        tabsByTask,
+        activePathByTask,
+        dirtyPaths: state.dirtyPaths.filter((path) => !closingPaths.has(path) || remainingOpenPaths.has(path)),
+      };
     }),
 }));
