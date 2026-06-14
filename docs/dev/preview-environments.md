@@ -100,9 +100,14 @@ the PR you want to walk, then reset:
 ```bash
 gcloud run services update-traffic matrix-platform-preview \
   --region europe-west3 --to-tags pr-<N>=100      # walk this PR
-gcloud run services update-traffic matrix-platform-preview \
-  --region europe-west3 --to-latest               # reset when done
 ```
+
+The host serves whichever PR tag currently holds traffic, so switching to
+another PR is just another `--to-tags pr-<M>=100` (no separate reset needed).
+Avoid `--to-latest` here — on this service "latest" is the most recently
+*deployed* PR revision, not a stable base, so it would leave the host pinned to
+whatever deployed last. To park the host on a known-good target, point traffic
+at an explicit revision/tag you designate as the resting state.
 
 Provisioning the boot→ready hand-off in the browser is still out of scope (no
 Hetzner token on preview); enabling it is a deliberate follow-up (a
