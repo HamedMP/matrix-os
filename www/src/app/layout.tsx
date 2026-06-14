@@ -9,11 +9,9 @@ import {
   Cormorant_Garamond,
   Orbitron,
 } from "next/font/google";
-import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/react";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
 import { PostHogCookieBanner } from "@/components/PostHogCookieBanner";
-import { PostHogIdentify } from "@/components/PostHogIdentify";
 import "./globals.css";
 
 const inter = Inter({
@@ -104,18 +102,13 @@ export default async function RootLayout({
       data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
     >
       <head>
-        <link rel="dns-prefetch" href="https://clerk.matrix-os.com" />
         <link rel="dns-prefetch" href="https://eu.i.posthog.com" />
-        <link rel="preconnect" href="https://clerk.matrix-os.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
       </head>
       <body className={`${inter.variable} ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
-        <ClerkProvider>
-          {children}
-          <PostHogIdentify />
-          <PostHogCookieBanner visitorCountry={visitorCountry} />
-          <Analytics />
-        </ClerkProvider>
+        {children}
+        <PostHogCookieBanner visitorCountry={visitorCountry} />
+        <Analytics />
       </body>
     </html>
   );
