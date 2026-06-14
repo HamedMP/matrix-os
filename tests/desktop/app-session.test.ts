@@ -20,7 +20,7 @@ function scriptedDeps(
 ) {
   const requests: Array<{
     url: string;
-    init: { method: string; headers: Record<string, string>; body: string };
+    init: Parameters<HandoffDeps["request"]>[1];
   }> = [];
   const ops: string[] = [];
   const deps: HandoffDeps = {
@@ -40,8 +40,8 @@ function scriptedDeps(
       set: async (cookie) => {
         ops.push(`jar:set:${cookie.name}@${cookie.url}`);
       },
-      remove: async (_url, name) => {
-        ops.push(`jar:remove:${name}`);
+      remove: async (url, name) => {
+        ops.push(`jar:remove:${name}@${url}`);
       },
     },
   };
@@ -197,6 +197,7 @@ describe("performAppSessionHandoff", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe(`${GATEWAY}/api/auth/app-session`);
     expect(requests[0]?.init.method).toBe("POST");
+    expect(requests[0]?.init.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(requests[0]?.init.body ?? "{}")).toEqual({ redirectTo: "/canvas" });
   });
 
@@ -257,10 +258,10 @@ describe("performAppSessionHandoff", () => {
     const result = await performAppSessionHandoff(deps, "/");
     expect(result).toEqual({ ok: true });
     expect(ops.filter((op) => op.startsWith("jar:remove"))).toEqual([
-      "jar:remove:__client_uat",
-      "jar:remove:session_helper",
+      "jar:remove:__client_uat@https://app.matrix-os.com",
+      "jar:remove:session_helper@https://clerk.matrix-os.com",
     ]);
-    const lastRemove = ops.lastIndexOf("jar:remove:session_helper");
+    const lastRemove = ops.lastIndexOf("jar:remove:session_helper@https://clerk.matrix-os.com");
     const firstSet = ops.findIndex((op) => op.startsWith("jar:set"));
     expect(firstSet).toBeGreaterThan(lastRemove);
   });

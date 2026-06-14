@@ -5,6 +5,7 @@
 // cleared before installing the fresh pair).
 
 export const REQUIRED_COOKIES = ["matrix_app_session", "matrix_native_app_session"] as const;
+const APP_SESSION_TIMEOUT_MS = 10_000;
 
 export interface ParsedCookie {
   name: string;
@@ -107,6 +108,12 @@ export function isStaleClerkCookie(cookie: { name: string; domain?: string }): b
   return false;
 }
 
+function removalUrlForCookie(cookie: { domain?: string }, gatewayOrigin: string): string {
+  const fallbackHost = new URL(gatewayOrigin).hostname;
+  const domain = cookie.domain?.replace(/^\./, "").trim() || fallbackHost;
+  return `https://${domain}`;
+}
+
 export interface CookieJarLike {
   get(filter: Record<string, never>): Promise<Array<{ name: string; domain?: string; path?: string }>>;
   set(cookie: ParsedCookie & { url: string }): Promise<void>;
@@ -116,7 +123,7 @@ export interface CookieJarLike {
 export interface HandoffDeps {
   request: (
     url: string,
-    init: { method: string; headers: Record<string, string>; body: string },
+    init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
   ) => Promise<{ status: number; setCookieHeaders: string[] }>;
   cookieJar: CookieJarLike;
   gatewayOrigin: string;
@@ -134,6 +141,7 @@ export async function performAppSessionHandoff(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ redirectTo }),
+      signal: AbortSignal.timeout(APP_SESSION_TIMEOUT_MS),
     });
   } catch (err: unknown) {
     console.warn(
@@ -154,7 +162,9 @@ export async function performAppSessionHandoff(
     // L3: clear stale Clerk cookies before installing the fresh pair.
     const existing = await deps.cookieJar.get({});
     for (const cookie of existing) {
-      if (isStaleClerkCookie(cookie)) await deps.cookieJar.remove(deps.gatewayOrigin, cookie.name);
+      if (isStaleClerkCookie(cookie)) {
+        await deps.cookieJar.remove(removalUrlForCookie(cookie, deps.gatewayOrigin), cookie.name);
+      }
     }
     for (const name of REQUIRED_COOKIES) {
       const cookie = cookies.find((c) => c.name === name);
