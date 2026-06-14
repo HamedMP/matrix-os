@@ -12,7 +12,8 @@ sign in on a new machine and everything is restored from your computer in the cl
 
 ## Install and sign in
 
-1. Download the signed app and drag it to Applications.
+1. Download the internal macOS build and drag it to Applications. Public signed/notarized
+   distribution is tracked in the desktop release pipeline.
 2. Launch it and click **Sign in with Matrix OS**. A browser opens to approve the device; no
    tokens to copy by hand.
 3. Once approved, your board renders automatically. The credential is stored in the macOS
@@ -78,6 +79,7 @@ Switching runtime re-targets every surface — board, terminals, chat, and apps.
 ## Privacy and updates
 
 The app holds no durable workspace data locally: only the credential, your connection profile,
-window and layout state, and bounded caches. Losing the machine loses no work. The app ships
-signed and notarized, and self-updates over your release channel in the background, applying on
-the next relaunch — it never force-restarts an attached terminal.
+window and layout state, and bounded caches. Losing the machine loses no work. Internal builds
+can check the configured update feed when one is present, but signed/notarized public
+distribution and automatic release-channel updates remain gated on the desktop release feed and
+macOS signing credentials.
