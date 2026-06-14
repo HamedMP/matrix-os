@@ -321,8 +321,8 @@ export function installPostHogProcessErrorTracking(
 
   const onUncaughtException = (err: Error, origin: NodeJS.UncaughtExceptionOrigin): void => {
     void (async () => {
-      logger.error(`[posthog] Uncaught exception for ${options.service}: ${errorForLog(err)}`);
       try {
+        logger.error(`[posthog] Uncaught exception for ${options.service}: ${errorForLog(err)}`);
         await options.tracker.captureException(err, {
           distinctId: options.distinctId,
           properties: processProperties(origin),

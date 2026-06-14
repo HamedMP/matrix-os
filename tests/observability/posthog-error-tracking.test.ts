@@ -239,6 +239,38 @@ describe("PostHog error tracking", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("exits after uncaught exceptions even when the process logger fails", async () => {
+    const processEvents = new EventEmitter();
+    const captureException = vi.fn().mockResolvedValue(true);
+    const shutdown = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn();
+
+    installPostHogProcessErrorTracking({
+      tracker: {
+        enabled: true,
+        captureException,
+        flush: vi.fn().mockResolvedValue(undefined),
+        shutdown,
+      },
+      process: processEvents,
+      service: "matrix-gateway",
+      logger: {
+        warn: vi.fn(),
+        error: vi.fn(() => {
+          throw new Error("logger failed");
+        }),
+      },
+      exit,
+    });
+
+    processEvents.emit("uncaughtException", new Error("background failure"), "uncaughtException");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(captureException).not.toHaveBeenCalled();
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("captures unhandled promise rejections without exiting the process", async () => {
     const processEvents = new EventEmitter();
     const captureException = vi.fn().mockResolvedValue(true);
