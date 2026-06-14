@@ -62,11 +62,22 @@ function applySecurityHeaders(response: NextResponse, csp: string) {
 
 function applySecurityResponseHeaders(response: Response, securityResponse: NextResponse) {
   for (const [name, value] of securityResponse.headers) {
+    if (name === "x-middleware-override-headers") {
+      const merged = [
+        ...(response.headers.get(name)?.split(",") ?? []),
+        ...value.split(","),
+      ]
+        .map((header) => header.trim())
+        .filter((header, index, headers) => header.length > 0 && headers.indexOf(header) === index)
+        .join(",");
+      response.headers.set(name, merged);
+      continue;
+    }
+
     if (
       name === "content-security-policy" ||
       name === "cross-origin-opener-policy" ||
       name === "permissions-policy" ||
-      name === "x-middleware-override-headers" ||
       name.startsWith("x-middleware-request-")
     ) {
       response.headers.set(name, value);

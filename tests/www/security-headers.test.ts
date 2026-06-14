@@ -43,6 +43,9 @@ describe("www Lighthouse security headers", () => {
     const authorizeProtectedRoute = vi.fn(async () => {
       const response = NextResponse.next();
       response.headers.set("x-clerk-checked", "1");
+      response.headers.set("x-middleware-override-headers", "x-clerk-auth-status,x-clerk-auth-token");
+      response.headers.set("x-middleware-request-x-clerk-auth-status", "signed-in");
+      response.headers.set("x-middleware-request-x-clerk-auth-token", "token");
       return response;
     });
     const response = await proxyWithSecurity(
@@ -55,6 +58,13 @@ describe("www Lighthouse security headers", () => {
     expect(response.headers.get("x-clerk-checked")).toBe("1");
     expectSecurityHeaders(response);
     expect(response.headers.get("x-middleware-request-x-nonce")).toBeTruthy();
+    expect(response.headers.get("x-middleware-request-x-clerk-auth-status")).toBe("signed-in");
+    expect(response.headers.get("x-middleware-request-x-clerk-auth-token")).toBe("token");
+    expect(response.headers.get("x-middleware-override-headers")?.split(",")).toEqual([
+      "x-clerk-auth-status",
+      "x-clerk-auth-token",
+      "x-nonce",
+    ]);
     expect(response.headers.get("x-middleware-request-content-security-policy")).toBeNull();
   });
 
