@@ -98,6 +98,7 @@ export class ShellSocket {
   private lastSeqValue = 0;
   private receivedOutput = false;
   private attachedSessionName: string | null = null;
+  private detachPending = false;
   private failedAttempts = 0;
   private pendingInput: string[] = [];
   private lastKnownDims: Dims | null = null;
@@ -175,7 +176,17 @@ export class ShellSocket {
 
   detach(): void {
     if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
-    this.sendFrame({ type: "detach" });
+    this.detachPending = true;
+    if (this.socket === null) {
+      const sessionName = this.attachedSessionName ?? this.opts.sessionName ?? null;
+      this.clearAllTimers();
+      this.setState("ended");
+      if (sessionName !== null && sessionName.length > 0) {
+        this.openSocket(true);
+      }
+      return;
+    }
+    this.sendDetachFrame();
     this.endSession();
   }
 
@@ -325,6 +336,11 @@ export class ShellSocket {
     if (typeof frame.session === "string" && frame.session.length > 0) {
       this.attachedSessionName = frame.session;
     }
+    if (this.detachPending) {
+      this.sendDetachFrame();
+      this.endSession();
+      return;
+    }
     this.failedAttempts = 0;
     this.setState("attached");
     this.flushPendingInput();
@@ -408,6 +424,11 @@ export class ShellSocket {
     } catch (err: unknown) {
       console.warn("[shell-socket] websocket send failed:", errorText(err));
     }
+  }
+
+  private sendDetachFrame(): void {
+    this.sendFrame({ type: "detach" });
+    this.detachPending = false;
   }
 
   private endSession(): void {

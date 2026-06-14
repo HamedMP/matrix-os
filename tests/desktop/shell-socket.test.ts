@@ -664,15 +664,20 @@ describe("ShellSocket detach and dispose", () => {
     expect(h.sockets).toHaveLength(1);
   });
 
-  it("detach during a pending reconnect cancels the retry", () => {
+  it("detach during a pending reconnect sends a detach frame through a cleanup attach", () => {
     const h = createHarness();
     connectAndAttach(h);
     h.latest().serverClose();
     expect(h.socket.state).toBe("reconnecting");
     h.socket.detach();
     expect(h.socket.state).toBe("ended");
+    expect(h.sockets).toHaveLength(2);
+    h.latest().open();
+    h.latest().frame({ type: "attached", session: "main", state: "running", fromSeq: 0 });
+    expect(h.latest().sentFrames()).toContainEqual({ type: "detach" });
+    expect(h.latest().closed).toBe(true);
     h.timers.advance(120_000);
-    expect(h.sockets).toHaveLength(1);
+    expect(h.sockets).toHaveLength(2);
   });
 
   it("dispose clears every timer and emits no further events", () => {
