@@ -10,7 +10,7 @@ import {
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { IconButton } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
@@ -87,7 +87,7 @@ export default function Sidebar() {
   const openTab = useTabs((s) => s.openTab);
   const focusTab = useTabs((s) => s.focusTab);
   const projects = useBoard((s) => s.projects);
-  const openApps = tabs.filter((t) => t.kind === "app");
+  const openApps = useMemo(() => tabs.filter((t) => t.kind === "app"), [tabs]);
   const signOut = useConnection((s) => s.signOut);
   const handle = useConnection((s) => s.handle);
   const profileName = useConnection((s) => s.displayName);

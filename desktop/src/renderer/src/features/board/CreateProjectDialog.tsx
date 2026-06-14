@@ -37,7 +37,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         setError("Couldn't create the project. Check the name" + (mode === "github" ? " and the GitHub URL." : "."));
         return;
       }
-      void selectProject(api, project.slug);
+      await selectProject(api, project.slug);
       onClose();
       openTab({ kind: "board", projectSlug: project.slug, title: project.name || project.slug });
     } catch (err: unknown) {
