@@ -16,7 +16,7 @@ const PRESETS: { id: string; label: string; theme: Theme | null; gradient: strin
     id: "sage",
     label: "Sage",
     theme: DEFAULT_THEME,
-    gradient: ["#323D2E", "#9AA48C", "#9AA48C", "#6a8a7a"],
+    gradient: ["#323D2E", "#9AA48C", "#B8C4A8", "#6a8a7a"],
   },
   {
     id: "retro",
@@ -63,7 +63,7 @@ export function AppearanceSection() {
   const [gradColors, setGradColors] = useState(() => ({
     deep: "#323D2E",
     mid: "#9AA48C",
-    light: "#9AA48C",
+    light: "#B8C4A8",
     accent: "#6a8a7a",
   }));
 

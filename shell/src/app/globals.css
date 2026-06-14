@@ -120,7 +120,7 @@
   /* Page background gradient tokens (separate from app --background) */
   --gradient-deep: #323D2E;
   --gradient-mid: #9AA48C;
-  --gradient-light: #9AA48C;
+  --gradient-light: #B8C4A8; /* lighter lichen tint — keeps mid->light contrast */
   --gradient-accent: #6a8a7a;
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);

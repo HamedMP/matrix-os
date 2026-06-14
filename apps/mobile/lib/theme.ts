@@ -35,7 +35,7 @@ export const colors = {
     destructive: "#ef4444",
     success: "#22c55e",
     warning: "#eab308",
-    forest: "#9AA48C",
+    forest: "#323D2E",
     moss: "#6A8A7A",
     lichen: "#9AA48C",
   },
