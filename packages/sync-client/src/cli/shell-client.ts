@@ -506,6 +506,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           heartbeatInterval = undefined;
           heartbeatTimeout = undefined;
           heartbeatPending = false;
+          missedHeartbeats = 0;
         };
         const noteRemoteActivity = () => {
           clearTimeout(heartbeatTimeout);

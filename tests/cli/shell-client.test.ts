@@ -394,8 +394,11 @@ describe("shell REST client", () => {
     expect(output.write).toHaveBeenCalledWith(expect.stringContaining("Matrix shell disconnected"));
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    const second = ControlledWebSocket.last!;
     expect(errorOutput.write).toHaveBeenCalledWith("\r\nConnection restored.\r\n");
     expect(output.write).toHaveBeenCalledWith(expect.stringContaining("connection restored"));
+    await vi.advanceTimersByTimeAsync(80);
+    expect(second.closed).toBe(false);
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
     await expect(attached).resolves.toEqual({ detached: false });
   });
