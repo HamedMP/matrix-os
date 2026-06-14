@@ -25,6 +25,7 @@ export default function AgentSection() {
         setSoul(text);
         setBaseline(text);
         setLoaded(true);
+        setError(null);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -43,6 +44,7 @@ export default function AgentSection() {
     try {
       await api.putText(SOUL_PATH, soul);
       setBaseline(soul);
+      setError(null);
       setStatus("saved");
       setTimeout(() => setStatus("idle"), 1500);
     } catch (err: unknown) {
