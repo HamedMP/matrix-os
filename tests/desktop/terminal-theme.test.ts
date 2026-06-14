@@ -56,6 +56,13 @@ describe("terminal theme presets", () => {
     expect(getAnsiPalette("missing-theme", "#101010").black).toBe("#282c34");
     expect(getAnsiPalette("missing-theme", "#ffffff").black).toBe("#383a42");
   });
+
+  it("keeps solarized-light ANSI black distinct from white", () => {
+    const palette = getTerminalThemePreset("solarized-light");
+
+    expect(palette.black).toBe("#073642");
+    expect(palette.black).not.toBe(palette.white);
+  });
 });
 
 describe("terminal font stacks", () => {

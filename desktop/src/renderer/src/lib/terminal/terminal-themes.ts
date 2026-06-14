@@ -132,7 +132,7 @@ const palettes = {
     brightWhite: "#fdf6e3",
   },
   "solarized-light": {
-    black: "#eee8d5",
+    black: "#073642",
     red: "#dc322f",
     green: "#859900",
     yellow: "#b58900",
