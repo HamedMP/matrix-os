@@ -161,6 +161,9 @@ jobs:
     timeout-minutes: 30
     env:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      # In-app auth routes; defaults keep Clerk off the hosted Account Portal.
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: ${{ vars.NEXT_PUBLIC_CLERK_SIGN_IN_URL || '/sign-in' }}
+      NEXT_PUBLIC_CLERK_SIGN_UP_URL: ${{ vars.NEXT_PUBLIC_CLERK_SIGN_UP_URL || '/sign-up' }}
       NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY || vars.NEXT_PUBLIC_POSTHOG_KEY }}
       NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || vars.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
       NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.i.posthog.com' }}

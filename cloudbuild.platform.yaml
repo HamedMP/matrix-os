@@ -1,6 +1,8 @@
 substitutions:
   _IMAGE: europe-west3-docker.pkg.dev/matrix-os-1144/matrix-os/matrix-platform:manual
   _NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ''
+  _NEXT_PUBLIC_CLERK_SIGN_IN_URL: '/sign-in'
+  _NEXT_PUBLIC_CLERK_SIGN_UP_URL: '/sign-up'
   _NEXT_PUBLIC_POSTHOG_KEY: ''
   _NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ''
   _NEXT_PUBLIC_POSTHOG_HOST: ''
@@ -15,6 +17,10 @@ steps:
       - Dockerfile.platform
       - --build-arg
       - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      - --build-arg
+      - NEXT_PUBLIC_CLERK_SIGN_IN_URL=${_NEXT_PUBLIC_CLERK_SIGN_IN_URL}
+      - --build-arg
+      - NEXT_PUBLIC_CLERK_SIGN_UP_URL=${_NEXT_PUBLIC_CLERK_SIGN_UP_URL}
       - --build-arg
       - NEXT_PUBLIC_POSTHOG_KEY=${_NEXT_PUBLIC_POSTHOG_KEY}
       - --build-arg
