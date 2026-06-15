@@ -4,7 +4,6 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MobileShell } from "../../shell/src/components/mobile/MobileShell.js";
 import { MobileAppSurface } from "../../shell/src/components/mobile/MobileAppSurface.js";
 import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher.js";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
@@ -12,6 +11,10 @@ import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: () => <div data-testid="terminal-app" />,
+}));
+
+vi.mock("../../shell/src/components/Settings.js", () => ({
+  Settings: () => null,
 }));
 
 vi.mock("@clerk/nextjs", () => ({
@@ -56,6 +59,10 @@ vi.mock("@/hooks/useTheme", () => ({
 function ViewportProbe() {
   const mobile = useMobileViewport();
   return <div data-testid="viewport-mode">{mobile ? "mobile" : "desktop"}</div>;
+}
+
+async function loadMobileShell() {
+  return (await import("../../shell/src/components/mobile/MobileShell.js")).MobileShell;
 }
 
 describe("mobile shell", () => {
@@ -172,6 +179,7 @@ describe("mobile shell", () => {
       ok: true,
       json: async () => [],
     })));
+    const MobileShell = await loadMobileShell();
 
     render(<MobileShell />);
 
@@ -195,17 +203,19 @@ describe("mobile shell", () => {
       ok: true,
       json: async () => [],
     })));
+    const MobileShell = await loadMobileShell();
 
     render(<MobileShell launchAppPath="__terminal__" />);
 
     await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
   });
 
-  it("renders a hydration-stable clock placeholder before mounting", () => {
+  it("renders a hydration-stable clock placeholder before mounting", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
       ok: true,
       json: async () => [],
     })));
+    const MobileShell = await loadMobileShell();
 
     expect(renderToString(<MobileShell />)).toContain("--:--");
   });

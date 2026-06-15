@@ -42,6 +42,7 @@ vi.mock("@/components/ui/tooltip", () => ({
 
 describe("UserButton", () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.restoreAllMocks();
     vi.useRealTimers();
     clerkState.isLoaded = true;
