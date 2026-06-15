@@ -147,12 +147,18 @@ export function useTheme() {
 
 export async function saveTheme(theme: Theme): Promise<void> {
   const gatewayUrl = getGatewayUrl();
-  await fetch(`${gatewayUrl}/api/settings/theme`, {
+  const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
     signal: AbortSignal.timeout(10_000),
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(theme),
   });
+  if (!res.ok) {
+    throw new Error("Failed to save theme");
+  }
+  if (typeof document !== "undefined") {
+    applyTheme(theme);
+  }
 }
 
 async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME): Promise<Theme> {

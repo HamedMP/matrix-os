@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { THEME_PRESETS, getPreset } from "../../shell/src/lib/theme-presets";
+import { MATRIX_OS_APP_THEME_OPTIONS, THEME_PRESETS, getPreset } from "../../shell/src/lib/theme-presets";
 
 const REQUIRED_COLOR_KEYS = [
   "background",
@@ -25,8 +25,13 @@ const REQUIRED_COLOR_KEYS = [
 ];
 
 describe("theme presets", () => {
-  it("has 7 presets", () => {
-    expect(THEME_PRESETS).toHaveLength(7);
+  it("includes the legacy presets plus the three Paper Matrix OS app themes", () => {
+    expect(THEME_PRESETS).toHaveLength(10);
+    expect(MATRIX_OS_APP_THEME_OPTIONS.map((option) => option.id)).toEqual([
+      "light",
+      "matrix-dark",
+      "matrix",
+    ]);
   });
 
   it.each(THEME_PRESETS.map((p) => [p.name, p]))(
@@ -85,6 +90,36 @@ describe("getPreset", () => {
     const preset = getPreset("nord");
     expect(preset).toBeDefined();
     expect(preset!.colors.primary).toBe("#88c0d0");
+  });
+
+  it("returns the Paper Matrix OS app themes", () => {
+    expect(getPreset("light")).toMatchObject({
+      name: "light",
+      mode: "light",
+      colors: expect.objectContaining({
+        background: "#E9E9D8",
+        primary: "#4F5A44",
+        ring: "#CF7835",
+      }),
+    });
+    expect(getPreset("matrix-dark")).toMatchObject({
+      name: "matrix-dark",
+      mode: "dark",
+      colors: expect.objectContaining({
+        background: "#1C2019",
+        primary: "#9CB77A",
+        ring: "#CF7835",
+      }),
+    });
+    expect(getPreset("matrix")).toMatchObject({
+      name: "matrix",
+      mode: "dark",
+      colors: expect.objectContaining({
+        background: "#020A02",
+        primary: "#39FF6A",
+        ring: "#39FF6A",
+      }),
+    });
   });
 
   it("returns undefined for unknown name", () => {

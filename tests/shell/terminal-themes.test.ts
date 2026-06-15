@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getAnsiPalette, type AnsiPalette } from "../../shell/src/components/terminal/terminal-themes.js";
+import { getAnsiPalette, getTerminalThemePreset, type AnsiPalette } from "../../shell/src/components/terminal/terminal-themes.js";
 
 const ANSI_KEYS: (keyof AnsiPalette)[] = [
   "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
@@ -15,6 +15,47 @@ function assertCompleteAnsiPalette(palette: AnsiPalette) {
 }
 
 describe("Terminal Themes", () => {
+  it("uses the Paper Dark shell theme as the default terminal palette", () => {
+    const preset = getTerminalThemePreset("dark");
+
+    expect(preset).toMatchObject({
+      label: "Dark",
+      background: "#0C0C0C",
+      foreground: "#BFBFBF",
+      cursor: "#0AD18B",
+      cyan: "#00E5C0",
+      blue: "#6AA0FF",
+    });
+    assertCompleteAnsiPalette(preset);
+  });
+
+  it("uses the Paper Light shell theme colors", () => {
+    const preset = getTerminalThemePreset("light");
+
+    expect(preset).toMatchObject({
+      label: "Light",
+      background: "#FBF1C7",
+      foreground: "#3C3836",
+      cursor: "#79740E",
+      blue: "#458588",
+    });
+    assertCompleteAnsiPalette(preset);
+  });
+
+  it("uses the Paper Matrix shell theme colors", () => {
+    const preset = getTerminalThemePreset("matrix");
+
+    expect(preset).toMatchObject({
+      label: "Matrix",
+      background: "#020A02",
+      foreground: "#2FBF55",
+      cursor: "#39FF6A",
+      green: "#2FBF55",
+      brightGreen: "#39FF6A",
+    });
+    assertCompleteAnsiPalette(preset);
+  });
+
   it("returns one-dark palette for 'default-dark' theme slug", () => {
     const palette = getAnsiPalette("default-dark", "#1a1a2e");
     expect(palette.black).toBe("#282c34");

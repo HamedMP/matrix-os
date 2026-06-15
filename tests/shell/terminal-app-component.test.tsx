@@ -5,6 +5,9 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
 const paneGridSpy = vi.fn();
+const { saveThemeSpy } = vi.hoisted(() => ({
+  saveThemeSpy: vi.fn(async () => {}),
+}));
 
 vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
   PaneGrid: (props: unknown) => {
@@ -15,10 +18,13 @@ vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
 
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({
+    name: "matrix-dark",
     mode: "dark",
-    colors: { background: "#101820", foreground: "#f0efe7", primary: "#33aaff" },
-    fonts: {},
+    colors: { background: "#1C2019", foreground: "#F0EFE5", primary: "#9CB77A" },
+    fonts: { mono: "JetBrains Mono, monospace", sans: "Inter, system-ui, sans-serif" },
+    radius: "0.75rem",
   }),
+  saveTheme: saveThemeSpy,
 }));
 
 vi.mock("@/stores/terminal-settings", () => {
@@ -38,9 +44,13 @@ vi.mock("@/stores/terminal-settings", () => {
     setSmoothScroll: vi.fn(),
     setCursorBlink: vi.fn(),
   };
+  const useTerminalSettings = (selector: (value: typeof state) => unknown) => selector(state);
+  useTerminalSettings.getState = () => state;
 
   return {
-    useTerminalSettings: (selector: (value: typeof state) => unknown) => selector(state),
+    TERMINAL_FONT_FAMILIES: ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"],
+    DEFAULT_TERMINAL_THEME_ID: "dark",
+    useTerminalSettings,
   };
 });
 
@@ -55,6 +65,7 @@ class ResizeObserverMock {
 describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
+    saveThemeSpy.mockClear();
     vi.useFakeTimers();
     vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -152,8 +163,8 @@ describe("TerminalApp", () => {
     expect(keyBar.style.position).toBe("sticky");
     expect(keyBar.style.bottom).toBe("var(--matrix-terminal-keybar-bottom)");
     expect(keyBar.style.getPropertyValue("--matrix-terminal-keybar-bottom")).toBe("env(keyboard-inset-height, 0px)");
-    expect(keyBar.style.background).toContain("16, 24, 32");
-    expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("240, 239, 231");
+    expect(keyBar.style.background).toContain("28, 32, 25");
+    expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("240, 239, 229");
     expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy();
   });
 
@@ -188,6 +199,74 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Files" })).toBeNull();
     expect(screen.queryByText("Zellij")).toBeNull();
+  });
+
+  it("renders the Paper theme button and saves Paper app themes", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const button = screen.getByRole("button", { name: "Theme" });
+    expect(button.textContent?.replace(/\s+/g, "")).toBe("☼Theme");
+    expect(button.style.height).toBe("34px");
+    expect(button.style.borderRadius).toBe("9px");
+    expect(button.style.background).toBe("rgb(32, 36, 28)");
+    expect(button.style.borderColor).toBe("rgb(45, 49, 39)");
+
+    await act(async () => {
+      fireEvent.click(button);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    expect(screen.getByText("Warm paper")).toBeTruthy();
+    expect(screen.getByText("Warm dark")).toBeTruthy();
+    expect(screen.getByText("Phosphor green")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Match system" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Change shell theme/ })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix Phosphor green" }));
+      await Promise.resolve();
+    });
+
+    expect(saveThemeSpy).toHaveBeenCalledWith(expect.objectContaining({
+      name: "matrix",
+      mode: "dark",
+      colors: expect.objectContaining({
+        background: "#020A02",
+        primary: "#39FF6A",
+        ring: "#39FF6A",
+      }),
+    }));
+  });
+
+  it("opens the advanced shell-theme controls from the Paper theme menu", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Change shell theme/ }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveProperty("value", "dark");
+    expect(screen.getByRole("option", { name: "Dark" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Light" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Matrix" })).toBeTruthy();
   });
 
   it("copies Matrix shell connect commands from session rows", async () => {

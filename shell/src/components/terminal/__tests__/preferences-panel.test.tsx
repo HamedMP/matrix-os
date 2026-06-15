@@ -23,15 +23,19 @@ describe("TerminalPreferencesPanel", () => {
     render(<TerminalPreferencesPanel />);
 
     expect(screen.getByRole("option", { name: "MesloLGS NF" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Dark" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Light" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Matrix" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Dracula" })).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "dracula" } });
+    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "matrix" } });
     fireEvent.change(screen.getByLabelText("Font"), { target: { value: "MesloLGS NF" } });
     fireEvent.click(screen.getByLabelText("Ligatures"));
     fireEvent.change(screen.getByLabelText("Cursor"), { target: { value: "bar" } });
     fireEvent.click(screen.getByLabelText("Smooth scroll"));
 
     expect(useTerminalSettings.getState()).toMatchObject({
-      themeId: "dracula",
+      themeId: "matrix",
       fontFamily: "MesloLGS NF",
       ligatures: false,
       cursorStyle: "bar",
