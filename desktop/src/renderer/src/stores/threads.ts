@@ -227,8 +227,12 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
         });
       }
       case "approval:request": {
+        // Match by requestId; otherwise fall back only when exactly one thread
+        // is running (unambiguous). With multiple running threads, guessing by
+        // array order would flag the wrong one, so drop the event instead.
+        const running = state.threads.filter((t) => t.status === "running");
         const thread =
-          byRequestId(rawRequestId) ?? state.threads.find((t) => t.status === "running");
+          byRequestId(rawRequestId) ?? (running.length === 1 ? running[0] : undefined);
         if (!thread) return {};
         return apply(thread, { status: "needs-attention" }, "attention");
       }
