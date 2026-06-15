@@ -65,4 +65,12 @@ describe("TerminalPreferencesPanel", () => {
 
     expect(useTerminalSettings.getState().themeId).toBe("dracula");
   });
+
+  it("shows the mapped theme when local settings still contain a legacy theme id", () => {
+    useTerminalSettings.setState({ themeId: "one-light" });
+
+    render(<TerminalPreferencesPanel />);
+
+    expect(screen.getByLabelText("Theme")).toHaveProperty("value", "light");
+  });
 });

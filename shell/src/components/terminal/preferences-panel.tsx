@@ -10,7 +10,9 @@ const CURSOR_OPTIONS: TerminalCursorStyle[] = ["block", "bar", "underline"];
 function mapLegacyThemeId(themeId: TerminalThemeId | undefined): ShellThemeId | null {
   if (!themeId) return null;
   if (themeId === "dark" || themeId === "light" || themeId === "matrix") return themeId;
+  if (themeId === "system") return null;
   if (themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light") return "light";
+  if (themeId === "one-dark" || themeId === "catppuccin-mocha" || themeId === "dracula" || themeId === "solarized-dark" || themeId === "nord" || themeId === "github-dark") return "dark";
   return "dark";
 }
 
@@ -29,6 +31,7 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
   const setLigatures = useTerminalSettings((s) => s.setLigatures);
   const setCursorStyle = useTerminalSettings((s) => s.setCursorStyle);
   const setSmoothScroll = useTerminalSettings((s) => s.setSmoothScroll);
+  const selectedShellThemeId = mapLegacyThemeId(themeId) ?? "dark";
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-effect-event-handler, react-doctor/no-fetch-in-effect -- guarded preferences load: runs only when `sessionName` is set, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. The setters hydrate the terminal-settings store from one server response (not a synchronous render cascade), and the load is render-driven, not a user event. A data-fetching library is unnecessary for this one-shot session read.
   useEffect(() => {
@@ -104,11 +107,11 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
         <span style={{ color: "var(--muted-foreground)" }}>Theme</span>
         <select
           aria-label="Theme"
-          value={themeId}
+          value={selectedShellThemeId}
           onChange={(event) => {
-            const next = event.target.value as TerminalThemeId;
+            const next = event.target.value as ShellThemeId;
             setThemeId(next);
-            persist({ shellThemeId: mapLegacyThemeId(next) ?? "dark" });
+            persist({ shellThemeId: next });
           }}
         >
           {TERMINAL_THEME_OPTIONS.map((option) => (

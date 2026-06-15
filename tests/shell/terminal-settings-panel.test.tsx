@@ -31,4 +31,12 @@ describe("TerminalSettingsPanel", () => {
       fontFamily: "Fira Code",
     });
   });
+
+  it("maps legacy theme ids before rendering the app settings theme picker", () => {
+    useTerminalSettings.setState({ themeId: "one-light" });
+
+    render(<TerminalSettingsPanel />);
+
+    expect(screen.getByLabelText("Theme")).toHaveProperty("value", "light");
+  });
 });

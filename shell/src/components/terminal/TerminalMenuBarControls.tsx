@@ -1,7 +1,13 @@
 "use client";
 
-import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
+import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type ShellThemeId, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
 import { TERMINAL_THEME_OPTIONS } from "./terminal-themes";
+
+function mapLegacyThemeId(themeId: TerminalThemeId | undefined): ShellThemeId {
+  if (themeId === "light" || themeId === "dark" || themeId === "matrix") return themeId;
+  if (themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light") return "light";
+  return "dark";
+}
 
 export function TerminalSettingsPanel() {
   const themeId = useTerminalSettings((s) => s.themeId);
@@ -12,6 +18,7 @@ export function TerminalSettingsPanel() {
   const setFontSize = useTerminalSettings((s) => s.setFontSize);
   const setFontFamily = useTerminalSettings((s) => s.setFontFamily);
   const setCursorBlink = useTerminalSettings((s) => s.setCursorBlink);
+  const selectedShellThemeId = mapLegacyThemeId(themeId);
 
   return (
     <div className="space-y-4">
@@ -22,8 +29,8 @@ export function TerminalSettingsPanel() {
         <select
           id="terminal-theme"
           className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm"
-          value={themeId}
-          onChange={(e) => setThemeId(e.target.value as TerminalThemeId)}
+          value={selectedShellThemeId}
+          onChange={(e) => setThemeId(e.target.value as ShellThemeId)}
         >
           {TERMINAL_THEME_OPTIONS.map((t) => (
             <option key={t.id} value={t.id}>
