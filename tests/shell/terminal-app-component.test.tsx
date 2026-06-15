@@ -395,6 +395,140 @@ describe("TerminalApp", () => {
     ]));
   });
 
+  it("asks for Paper confirmation before permanently deleting a session", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    let deleted = false;
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: deleted ? [] : [
+              {
+                name: "claude-review",
+                status: "active",
+                placement: "active",
+                visualStatus: "finished",
+                latestSeq: 2,
+                lastSeenSeq: 1,
+                unread: true,
+                tabs: [{ idx: 0, name: "review", focused: true }],
+              },
+            ],
+          }),
+        } as Response);
+      }
+      if (url.includes("/api/terminal/sessions/claude-review") && init?.method === "DELETE") {
+        deleted = true;
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = screen.getByRole("button", { name: "Open claude-review" }).closest(".group");
+    expect(row).toBeTruthy();
+    fireEvent.mouseEnter(row!);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close claude-review" }));
+      await Promise.resolve();
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "Close this session?" });
+    expect(within(dialog).getByText("Closing ends the session and permanently deletes it and its transcript. You won't be able to reopen or recover it — this can't be undone.")).toBeTruthy();
+    expect(within(dialog).getByText("claude-review")).toBeTruthy();
+    expect(within(dialog).getByText("active · 1 unread")).toBeTruthy();
+    expect(dialog.style.alignItems).toBe("center");
+    expect(dialog.style.justifyContent).toBe("center");
+    expect(dialog.style.background).toBe("rgba(3, 10, 3, 0.74)");
+    expect(calls.filter((call) => call.init?.method === "DELETE")).toHaveLength(0);
+
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("dialog", { name: "Close this session?" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open claude-review" })).toBeTruthy();
+
+    fireEvent.mouseEnter(row!);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close claude-review" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Close this session?" })).getByRole("button", { name: "Delete" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(calls.filter((call) => call.init?.method === "DELETE")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Open claude-review" })).toBeNull();
+  });
+
+  it("uses the Paper mobile bottom sheet for session close confirmation", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", visualStatus: "idle", unread: false, tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp mobile />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = screen.getByRole("button", { name: "Open matrix-main" }).closest(".group");
+    expect(row).toBeTruthy();
+    fireEvent.mouseEnter(row!);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Close matrix-main" }));
+      await Promise.resolve();
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "Close this session?" });
+    expect(dialog.style.alignItems).toBe("flex-end");
+    const sheet = screen.getByTestId("terminal-close-confirmation-sheet");
+    expect(sheet.style.borderTopLeftRadius).toBe("26px");
+    expect(sheet.style.borderTopRightRadius).toBe("26px");
+    expect(within(sheet).getByRole("button", { name: "Delete" })).toBeTruthy();
+    expect(within(sheet).getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
   it("persists Paper active and background placement toggles through the gateway", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -1379,6 +1513,14 @@ describe("TerminalApp", () => {
       fireEvent.click(deleteButton);
       await Promise.resolve();
     });
+    expect(vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions/main?force=1") && init?.method === "DELETE"
+    ))).toHaveLength(0);
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Close this session?" })).getByRole("button", { name: "Delete" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     const deleteCalls = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
       String(input).includes("/api/terminal/sessions/main?force=1") && init?.method === "DELETE"
     ));
@@ -1587,6 +1729,13 @@ describe("TerminalApp", () => {
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /close matrix-main/i }));
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("dialog", { name: "Close this session?" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Close this session?" })).getByRole("button", { name: "Delete" }));
       await Promise.resolve();
     });
     expect(screen.queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();

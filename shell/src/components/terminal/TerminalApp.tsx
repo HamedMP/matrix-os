@@ -21,6 +21,7 @@ import {
   SearchIcon,
   SquareTerminalIcon,
   TerminalIcon,
+  Trash2Icon,
 } from "lucide-react";
 import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
@@ -2378,6 +2379,7 @@ function LocalTerminalSidebar() {
   const deletingShellsRef = useRef<Set<string> | null>(null);
   if (deletingShellsRef.current === null) deletingShellsRef.current = new Set();
   const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
+  const [closeConfirmationShell, setCloseConfirmationShell] = useState<ShellSessionSummary | null>(null);
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -2816,36 +2818,57 @@ function LocalTerminalSidebar() {
     openActiveShell(shell, { markSeen: false });
   };
 
+  const pendingCloseShell = closeConfirmationShell
+    ? unfilteredRenderedShells.find((shell) => shell.name === closeConfirmationShell.name) ?? closeConfirmationShell
+    : null;
+  const closeConfirmationOverlay = pendingCloseShell ? (
+    <ShellCloseConfirmation
+      shell={pendingCloseShell}
+      mobile={ctx.mobile}
+      deleting={deletingShellNames.includes(pendingCloseShell.name)}
+      onCancel={() => setCloseConfirmationShell(null)}
+      onConfirm={() => {
+        const shellName = pendingCloseShell.name;
+        setCloseConfirmationShell(null);
+        void deleteManagedShell(shellName);
+      }}
+    />
+  ) : null;
+
   if (!ctx.sidebarOpen && !ctx.mobile) {
     return (
-      <CollapsedSessionsRail
-        shells={unfilteredRenderedShells}
-        onExpand={() => ctx.setSidebarOpen(true)}
-        onNew={() => void createManagedShell()}
-        onOpen={makeShellActive}
-      />
+      <>
+        <CollapsedSessionsRail
+          shells={unfilteredRenderedShells}
+          onExpand={() => ctx.setSidebarOpen(true)}
+          onNew={() => void createManagedShell()}
+          onOpen={makeShellActive}
+        />
+        {closeConfirmationOverlay}
+      </>
     );
   }
 
   if (!ctx.sidebarOpen) {
-    return null;
+    return closeConfirmationOverlay;
   }
 
   return (
-    <div
-      className="shrink-0 overflow-hidden"
-      style={{
-        background: "#E9E9D8",
-        borderRight: ctx.mobile ? "none" : "1px solid #D6D5C4",
-        borderBottom: ctx.mobile ? "1px solid #D6D5C4" : "none",
-        color: "#31362D",
-        display: "flex",
-        flexDirection: "column",
-        maxHeight: ctx.mobile ? "52%" : undefined,
-        minHeight: ctx.mobile ? 360 : undefined,
-        width: drawerWidth,
-      }}
-    >
+    <>
+      <div
+        className="shrink-0 overflow-hidden"
+        style={{
+          background: "#E9E9D8",
+          borderRight: ctx.mobile ? "none" : "1px solid #D6D5C4",
+          borderBottom: ctx.mobile ? "1px solid #D6D5C4" : "none",
+          color: "#31362D",
+          display: "flex",
+          flexDirection: "column",
+          maxHeight: ctx.mobile ? "52%" : undefined,
+          minHeight: ctx.mobile ? 360 : undefined,
+          width: drawerWidth,
+        }}
+      >
       <div
         className="shrink-0"
         style={{
@@ -2997,7 +3020,7 @@ function LocalTerminalSidebar() {
             onOpen={openActiveShell}
             onToggle={moveShellToBackground}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
-            onDelete={(shell) => void deleteManagedShell(shell.name)}
+            onDelete={(shell) => setCloseConfirmationShell(shell)}
           />
         )}
         {!shellsLoading && renderedShells.length > 0 && (
@@ -3010,11 +3033,312 @@ function LocalTerminalSidebar() {
             onOpen={makeShellActive}
             onToggle={makeShellActive}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
-            onDelete={(shell) => void deleteManagedShell(shell.name)}
+            onDelete={(shell) => setCloseConfirmationShell(shell)}
           />
         )}
       </div>
     </div>
+      {closeConfirmationOverlay}
+    </>
+  );
+}
+
+function formatCloseConfirmationMeta(shell: ShellSessionSummary): string {
+  const placement = shell.placement === "background" ? "background" : "active";
+  const unreadCount = typeof shell.latestSeq === "number" && typeof shell.lastSeenSeq === "number"
+    ? Math.max(0, shell.latestSeq - shell.lastSeenSeq)
+    : shell.unread ? 1 : 0;
+  return unreadCount > 0 ? `${placement} · ${unreadCount} unread` : placement;
+}
+
+function ShellCloseConfirmation({
+  shell,
+  mobile,
+  deleting,
+  onCancel,
+  onConfirm,
+}: {
+  shell: ShellSessionSummary;
+  mobile: boolean;
+  deleting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const displayName = formatShellDisplayName(shell.name);
+  const titleId = "terminal-close-confirmation-title";
+  const bodyCopy = mobile
+    ? "Closing permanently deletes this session and its transcript. This can't be undone."
+    : "Closing ends the session and permanently deletes it and its transcript. You won't be able to reopen or recover it — this can't be undone.";
+  const sessionMeta = formatCloseConfirmationMeta(shell);
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onCancel]);
+  const sheetStyle: CSSProperties = mobile
+    ? {
+        background: "#FFFDF7",
+        borderTopLeftRadius: 26,
+        borderTopRightRadius: 26,
+        boxShadow: "0 -18px 50px rgba(0,0,0,0.44)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 18,
+        maxWidth: 390,
+        padding: "10px 22px 0",
+        width: "100%",
+      }
+    : {
+        background: "#FFFDF7",
+        border: "1px solid #E4E2D2",
+        borderRadius: 18,
+        boxShadow: "0 30px 70px rgba(0,0,0,0.37)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 20,
+        maxWidth: "calc(100% - 48px)",
+        padding: 28,
+        width: 440,
+      };
+  return (
+    <dialog
+      open
+      aria-modal="true"
+      aria-labelledby={titleId}
+      tabIndex={-1}
+      style={{
+        alignItems: mobile ? "flex-end" : "center",
+        background: "rgba(3, 10, 3, 0.74)",
+        border: 0,
+        bottom: 0,
+        display: "flex",
+        justifyContent: "center",
+        left: 0,
+        margin: 0,
+        maxHeight: "none",
+        maxWidth: "none",
+        padding: mobile ? 0 : 24,
+        position: "absolute",
+        right: 0,
+        top: 0,
+        width: "auto",
+        zIndex: 40,
+      }}
+    >
+      <button
+        type="button"
+        aria-label="Cancel close session"
+        onClick={onCancel}
+        style={{
+          background: "transparent",
+          border: 0,
+          bottom: 0,
+          cursor: "default",
+          left: 0,
+          padding: 0,
+          position: "absolute",
+          right: 0,
+          top: 0,
+        }}
+      />
+      <div data-testid="terminal-close-confirmation-sheet" style={{ ...sheetStyle, position: "relative", zIndex: 1 }}>
+        {mobile ? (
+          <div className="flex items-center justify-center" style={{ paddingBottom: 6 }}>
+            <span style={{ background: "#D6D5C4", borderRadius: 999, height: 5, width: 42 }} />
+          </div>
+        ) : null}
+        <div style={{ alignItems: "flex-start", display: "flex", gap: 14 }}>
+          <div
+            className="flex shrink-0 items-center justify-center"
+            style={{
+              background: "#F0EFE5",
+              border: "1px solid #DCDAC9",
+              borderRadius: mobile ? 13 : 12,
+              color: "#77786E",
+              height: mobile ? 46 : 44,
+              width: mobile ? 46 : 44,
+            }}
+          >
+            <Trash2Icon aria-hidden="true" size={mobile ? 21 : 20} strokeWidth={2} />
+          </div>
+          <div style={{ display: "flex", flex: "1 1 0%", flexDirection: "column", gap: 6, minWidth: 0, paddingTop: 2 }}>
+            <div
+              id={titleId}
+              style={{
+                color: "#2A2E22",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: mobile ? 19 : 18,
+                fontWeight: 700,
+                lineHeight: "24px",
+              }}
+            >
+              Close this session?
+            </div>
+            <div
+              style={{
+                color: "#858578",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 14,
+                lineHeight: "20px",
+              }}
+            >
+              {bodyCopy}
+            </div>
+          </div>
+        </div>
+        <div
+          style={{
+            alignItems: "center",
+            background: "#F4F3E9",
+            border: "1px solid #E4E2D2",
+            borderRadius: mobile ? 12 : 10,
+            display: "flex",
+            flexShrink: 0,
+            gap: 10,
+            height: mobile ? 48 : 44,
+            padding: "0 14px",
+          }}
+        >
+          <span
+            className={getShellStatusDotClassName(shell)}
+            aria-hidden="true"
+            style={{
+              ...getShellStatusDotStyle(shell),
+              borderRadius: 999,
+              flexShrink: 0,
+              height: mobile ? 8 : 7,
+              width: mobile ? 8 : 7,
+            }}
+          />
+          <span
+            className="truncate"
+            style={{
+              color: "#31362D",
+              flex: "1 1 0%",
+              fontFamily: "var(--font-mono, ui-monospace, monospace)",
+              fontSize: mobile ? 15 : 14,
+              fontWeight: 700,
+              lineHeight: "18px",
+              minWidth: 0,
+            }}
+          >
+            {displayName}
+          </span>
+          <span
+            style={{
+              color: "#A09F92",
+              flexShrink: 0,
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 12,
+              fontWeight: 500,
+              lineHeight: "16px",
+            }}
+          >
+            {sessionMeta}
+          </span>
+        </div>
+        {mobile ? (
+          <>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                type="button"
+                aria-label="Delete"
+                disabled={deleting}
+                onClick={onConfirm}
+                className="flex items-center justify-center"
+                style={{
+                  background: "#2A2E22",
+                  border: 0,
+                  borderRadius: 14,
+                  color: "#F8F7EF",
+                  cursor: deleting ? "not-allowed" : "pointer",
+                  fontFamily: "Inter, system-ui, sans-serif",
+                  fontSize: 16,
+                  fontWeight: 600,
+                  gap: 8,
+                  height: 52,
+                  opacity: deleting ? 0.68 : 1,
+                }}
+              >
+                <Trash2Icon aria-hidden="true" size={17} strokeWidth={2} />
+                Delete
+              </button>
+              <button
+                type="button"
+                aria-label="Cancel"
+                onClick={onCancel}
+                className="flex items-center justify-center"
+                style={{
+                  background: "#F0EFE5",
+                  border: "1px solid #DCDAC9",
+                  borderRadius: 14,
+                  color: "#3E4339",
+                  cursor: "pointer",
+                  fontFamily: "Inter, system-ui, sans-serif",
+                  fontSize: 16,
+                  fontWeight: 600,
+                  height: 52,
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="flex items-center justify-center" style={{ paddingBottom: 9, paddingTop: 8 }}>
+              <span style={{ background: "#1F221B", borderRadius: 999, height: 5, width: 140 }} />
+            </div>
+          </>
+        ) : (
+          <div style={{ alignItems: "center", display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              aria-label="Cancel"
+              onClick={onCancel}
+              className="flex items-center justify-center"
+              style={{
+                background: "#F0EFE5",
+                border: "1px solid #DCDAC9",
+                borderRadius: 9,
+                color: "#3E4339",
+                cursor: "pointer",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 14,
+                fontWeight: 600,
+                height: 40,
+                padding: "0 18px",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              aria-label="Delete"
+              disabled={deleting}
+              onClick={onConfirm}
+              className="flex items-center justify-center"
+              style={{
+                background: "#2A2E22",
+                border: 0,
+                borderRadius: 9,
+                color: "#F8F7EF",
+                cursor: deleting ? "not-allowed" : "pointer",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: 14,
+                fontWeight: 600,
+                gap: 8,
+                height: 40,
+                opacity: deleting ? 0.68 : 1,
+                padding: "0 18px",
+              }}
+            >
+              <Trash2Icon aria-hidden="true" size={15} strokeWidth={2} />
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+    </dialog>
   );
 }
 
