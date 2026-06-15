@@ -60,7 +60,10 @@ export default async function RootLayout({
   const visitorCountry = getPostHogVisitorCountry(await headers());
 
   return (
-    <ClerkProvider>
+    <ClerkProvider
+      signInUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL ?? "/sign-in"}
+      signUpUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL ?? "/sign-up"}
+    >
       <html
         lang="en"
         data-posthog-visitor-country={visitorCountry ?? undefined}
