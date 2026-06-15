@@ -61,6 +61,7 @@ export interface CreateSessionOptions {
   name: string;
   cwd?: string;
   layout?: string;
+  profile?: "desktop" | "mobile";
   cmd?: string;
 }
 
@@ -321,7 +322,15 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       let tempLayoutDir: string | undefined;
       let retainedRegistered = false;
       try {
-        if (options.cmd) {
+        if (options.profile === "mobile") {
+          tempLayoutDir = await mkdtemp(join(tmpdir(), "matrix-zellij-layout-"));
+          const layoutPath = join(tempLayoutDir, "layout.kdl");
+          const configPath = join(tempLayoutDir, "config.kdl");
+          await writeFile(configPath, mobileSessionConfig(), { mode: 0o600 });
+          await writeFile(layoutPath, mobileSessionLayout(options.cwd, options.cmd), { mode: 0o600 });
+          args.unshift("--config", configPath);
+          args.push("--new-session-with-layout", layoutPath);
+        } else if (options.cmd) {
           tempLayoutDir = await mkdtemp(join(tmpdir(), "matrix-zellij-layout-"));
           const layoutPath = join(tempLayoutDir, "layout.kdl");
           await writeFile(layoutPath, initialCommandLayout(options.cmd, options.cwd), { mode: 0o600 });
@@ -518,6 +527,37 @@ function initialCommandLayout(command: string, cwd?: string): string {
 ${argLine}    }
   }
 }
+`;
+}
+
+function mobileSessionLayout(cwd?: string, command?: string): string {
+  const paneAttrs = [
+    cwd ? `cwd=${kdlString(cwd)}` : null,
+    "borderless=true",
+  ];
+  let argLine = "";
+  if (command) {
+    const [binary, ...args] = splitCommand(command);
+    paneAttrs.push(`command=${kdlString(binary)}`);
+    argLine = args.length > 0
+      ? `      args ${args.map(kdlString).join(" ")}\n`
+      : "";
+  }
+  return `layout {
+  pane ${paneAttrs.filter(Boolean).join(" ")} {
+${argLine}    }
+  pane size=1 borderless=true {
+    plugin location="compact-bar"
+  }
+}
+`;
+}
+
+function mobileSessionConfig(): string {
+  return `show_startup_tips false
+show_release_notes false
+pane_frames false
+simplified_ui true
 `;
 }
 

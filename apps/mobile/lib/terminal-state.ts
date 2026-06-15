@@ -57,6 +57,7 @@ const MIN_TERMINAL_FONT_SCALE = 0.85;
 const MAX_TERMINAL_FONT_SCALE = 1.3;
 const SAFE_TERMINAL_SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_ZELLIJ_SESSION_NAME = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
 export const initialTerminalState: TerminalState = {
   status: "idle",
@@ -131,21 +132,34 @@ export function terminalReducer(
 }
 
 export function isSafeSessionId(value: string): boolean {
-  return SAFE_TERMINAL_SESSION_ID.test(value);
+  return SAFE_TERMINAL_SESSION_ID.test(value) || SAFE_ZELLIJ_SESSION_NAME.test(value);
 }
 
 export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
+  const entries = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { sessions?: unknown }).sessions)
+      ? (value as { sessions: unknown[] }).sessions
+      : [];
+  return entries.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const candidate = entry as Record<string, unknown>;
-    if (typeof candidate.sessionId !== "string" || !isSafeSessionId(candidate.sessionId)) {
+    const sessionId = typeof candidate.sessionId === "string"
+      ? candidate.sessionId
+      : typeof candidate.name === "string"
+        ? candidate.name
+        : null;
+    if (!sessionId || !isSafeSessionId(sessionId)) {
       return [];
     }
     const session: MobileTerminalSession = {
-      sessionId: candidate.sessionId,
+      sessionId,
       cwd: typeof candidate.cwd === "string" ? candidate.cwd : "~",
-      state: typeof candidate.state === "string" ? candidate.state : "running",
+      state: typeof candidate.state === "string"
+        ? candidate.state
+        : typeof candidate.status === "string"
+          ? candidate.status
+          : "running",
     };
     if (typeof candidate.createdAt === "string") session.createdAt = candidate.createdAt;
     if (typeof candidate.lastAttachedAt === "string") session.lastAttachedAt = candidate.lastAttachedAt;

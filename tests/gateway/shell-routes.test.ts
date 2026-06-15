@@ -71,6 +71,46 @@ describe("gateway shell routes", () => {
     expect(registry.create).toHaveBeenCalledWith({ name: "main", cwd: "~/projects" });
   });
 
+  it("accepts a validated mobile profile for compact Zellij session creation", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "mobile-main" })),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "mobile-main", cwd: "projects", profile: "mobile" }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(registry.create).toHaveBeenCalledWith({
+      name: "mobile-main",
+      cwd: "projects",
+      profile: "mobile",
+    });
+  });
+
+  it("rejects unknown shell session profiles at the route boundary", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: "mobile-main" })),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "mobile-main", profile: "wide" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(registry.create).not.toHaveBeenCalled();
+  });
+
   it("runs non-interactive commands through a bounded JSON route", async () => {
     const registry = {
       list: vi.fn(async () => []),

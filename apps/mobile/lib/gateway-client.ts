@@ -125,6 +125,11 @@ export class GatewayClient {
     return `${url}/ws/terminal`;
   }
 
+  get terminalSessionWsUrl(): string {
+    const url = this.baseUrl.replace(/^http/, "ws");
+    return `${url}/ws/terminal/session`;
+  }
+
   setWebSocketToken(token: string | null, expiresAt?: number): void {
     const previous = this.wsToken;
     if (token) {
@@ -325,6 +330,25 @@ export class GatewayClient {
     );
   }
 
+  openTerminalSessionWebSocket(session: string, token?: string | null): WebSocket {
+    if (!isSafeSessionId(session)) {
+      throw new Error("Invalid terminal session ID");
+    }
+    if (token || this.token) {
+      assertSecureTokenTransport(this.baseUrl);
+    }
+    const params = new URLSearchParams({ session });
+    if (token) params.set("token", token);
+    const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
+    return new WebSocketWithOptions(
+      `${this.terminalSessionWsUrl}?${params.toString()}`,
+      [],
+      this.token
+        ? { headers: { Authorization: `Bearer ${this.token}` } }
+        : undefined,
+    );
+  }
+
   async healthCheck(): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     try {
       const res = await this.fetchGateway("/health");
@@ -457,6 +481,30 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/terminal/sessions unavailable");
       return [];
+    }
+  }
+
+  async createMobileTerminalSession(input: { name: string; cwd?: string }): Promise<string | null> {
+    if (!isSafeSessionId(input.name)) return null;
+    try {
+      const body = {
+        name: input.name,
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+        profile: "mobile",
+      };
+      const res = await this.fetchGateway("/api/terminal/sessions", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] terminal session create unavailable", res.status);
+        return null;
+      }
+      const data = (await res.json()) as { name?: unknown };
+      return typeof data.name === "string" && isSafeSessionId(data.name) ? data.name : input.name;
+    } catch (err: unknown) {
+      console.warn("[mobile] terminal session create unavailable", err instanceof Error ? err.message : String(err));
+      return null;
     }
   }
 
