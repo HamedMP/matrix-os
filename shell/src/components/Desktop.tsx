@@ -2049,6 +2049,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                         close: () => wmCloseWindow(win.id),
                         minimize: () => animateMinimize(win.id),
                         toggleFullscreen: () => wmToggleFullscreen(win.id),
+                        dragHandleProps: {
+                          onPointerDown: (event) => onDragStart(win.id, event),
+                          onPointerMove: onDragMove,
+                          onPointerUp: onDragEnd,
+                          onPointerCancel: onDragEnd,
+                        },
                       }}
                     />
                   ) : win.path === "__workspace__" ? (

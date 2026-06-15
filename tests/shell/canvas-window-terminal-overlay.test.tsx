@@ -95,8 +95,57 @@ describe("CanvasWindow terminal interactivity", () => {
         close: expect.any(Function),
         minimize: expect.any(Function),
         toggleFullscreen: expect.any(Function),
+        dragHandleProps: expect.objectContaining({
+          onPointerDown: expect.any(Function),
+          onPointerMove: expect.any(Function),
+          onPointerUp: expect.any(Function),
+          onPointerCancel: expect.any(Function),
+          onDoubleClick: expect.any(Function),
+        }),
       }),
     }));
+  });
+
+  it("moves terminal Canvas windows through the delegated Terminal chrome drag handle", () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: null,
+      fullscreenWindowId: null,
+    });
+    render(<CanvasWindow win={terminalWindow} />);
+
+    const props = terminalRender.mock.lastCall?.[0] as {
+      windowControls: {
+        dragHandleProps: {
+          onPointerDown: (event: unknown) => void;
+          onPointerMove: (event: unknown) => void;
+          onPointerUp: () => void;
+        };
+      };
+    };
+    const target = { setPointerCapture: vi.fn() };
+    props.windowControls.dragHandleProps.onPointerDown({
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      clientX: 100,
+      clientY: 120,
+      pointerId: 1,
+      target,
+    });
+    props.windowControls.dragHandleProps.onPointerMove({
+      clientX: 132,
+      clientY: 148,
+    });
+    props.windowControls.dragHandleProps.onPointerUp();
+
+    expect(useWindowManager.getState().getWindow("win-terminal")).toMatchObject({
+      x: 52,
+      y: 58,
+    });
   });
 
   it("keeps the click shield for iframe app windows", () => {

@@ -17,6 +17,7 @@ interface SessionRegistryRoutes {
     cmd?: string;
   }): Promise<unknown>;
   delete(name: string, options?: { force?: boolean }): Promise<void>;
+  rename?(name: string, nextName: string): Promise<unknown>;
   updateUiState?(name: string, input: {
     placement?: "active" | "background";
     lastSeenSeq?: number | null;
@@ -88,6 +89,9 @@ const SessionUiStateBodySchema = z.object({
   lastSeenSeq: z.number().int().nonnegative().nullable().optional(),
   visualStatus: z.enum(["running", "finished", "idle", "waiting"]).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0);
+const SessionRenameBodySchema = z.object({
+  name: SafeSessionNameSchema,
+}).strict();
 
 function safeCwdSchema() {
   return z.string().min(1).max(1024)
@@ -98,6 +102,7 @@ function safeCwdSchema() {
 export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
+  const sessionRenameBodyLimit = bodyLimit({ maxSize: 1024 });
   const uiStateBodyLimit = bodyLimit({ maxSize: 1024 });
   const preferencesBodyLimit = bodyLimit({ maxSize: 4096 });
   const workspaceBodyLimit = bodyLimit({ maxSize: 8192 });
@@ -147,6 +152,20 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         force: new URL(c.req.url).searchParams.get("force") === "1",
       });
       return c.json({ ok: true });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.patch("/sessions/:name", sessionRenameBodyLimit, async (c) => {
+    try {
+      if (!deps.registry.rename) return unavailable(c, "session_rename_unavailable");
+      const body = SessionRenameBodySchema.parse(await c.req.json());
+      const session = await deps.registry.rename(
+        SafeSessionNameSchema.parse(c.req.param("name")),
+        body.name,
+      );
+      return c.json({ session });
     } catch (err) {
       return safeError(c, err);
     }

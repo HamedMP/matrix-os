@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
 const paneGridSpy = vi.fn();
@@ -225,13 +225,95 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    expect(screen.queryByText("matrix shell connect")).toBeNull();
+    const row = screen.getByRole("button", { name: "Open matrix-main" }).closest(".group");
+    expect(row).toBeTruthy();
+    fireEvent.mouseEnter(row!);
+    const actions = screen.getByTestId("terminal-session-actions-main");
+    expect(within(actions).getByText("matrix shell connect")).toBeTruthy();
+    expect(within(actions).getByText("main")).toBeTruthy();
+    expect(actions.style.gap).toBe("25px");
+
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
       await Promise.resolve();
     });
 
     expect(writeText).toHaveBeenCalledWith("mos shell attach main");
-    expect(screen.queryByText("matrix shell connect")).toBeNull();
+  });
+
+  it("renames sessions from the Paper pencil affordance", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", attachedClients: 1, tabs: [{ idx: 0, name: "main", focused: true }] },
+            ],
+          }),
+        } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions/main") && init?.method === "PATCH") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            session: {
+              name: "review-main",
+              status: "active",
+              placement: "active",
+              attachCommand: "mos shell attach review-main",
+              attachedClients: 1,
+              tabs: [{ idx: 0, name: "main", focused: true }],
+            },
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = screen.getByRole("button", { name: "Open matrix-main" }).closest(".group");
+    expect(row).toBeTruthy();
+    fireEvent.mouseEnter(row!);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Rename matrix-main" }));
+      await Promise.resolve();
+    });
+
+    const input = screen.getByRole("textbox", { name: "Session name for matrix-main" });
+    fireEvent.change(input, { target: { value: "review-main" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("button", { name: "Open review-main" })).toBeTruthy();
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        url: expect.stringContaining("/api/terminal/sessions/main"),
+        init: expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ name: "review-main" }),
+        }),
+      }),
+    ]));
   });
 
   it("persists Paper active and background placement toggles through the gateway", async () => {
@@ -488,12 +570,15 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    expect(screen.getByTestId("terminal-drawer-collapse-icon").querySelector('path[d="m11 17-5-5 5-5"]')).toBeTruthy();
+
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
     const rail = screen.getByTestId("terminal-collapsed-rail");
     expect(rail.style.width).toBe("76px");
     expect(rail.className).not.toContain("absolute");
     expect(screen.getByRole("button", { name: "Expand sessions drawer" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-drawer-expand-icon").querySelector('path[d="m6 17 5-5-5-5"]')).toBeTruthy();
     expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
   });
 

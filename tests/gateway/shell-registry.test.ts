@@ -182,6 +182,54 @@ describe("shell registry", () => {
     ]);
   });
 
+  it("renames live sessions while preserving durable UI state and scrollback", async () => {
+    const root = await tempRoot();
+    const live = new Set(["main"]);
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      renameSession: vi.fn(async (name: string, nextName: string) => {
+        live.delete(name);
+        live.add(nextName);
+      }),
+    };
+    const scrollbackStore = {
+      latestSeq: vi.fn(async (name: string) => (name === "review-main" ? 9 : null)),
+      cleanup: vi.fn(async () => undefined),
+      rename: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({
+      homePath: root,
+      adapter,
+      maxSessions: 4,
+      scrollbackStore: scrollbackStore as never,
+    });
+
+    await registry.updateUiState("main", {
+      placement: "background",
+      lastSeenSeq: 3,
+      visualStatus: "finished",
+    });
+
+    await expect(registry.rename("main", "review-main")).resolves.toMatchObject({
+      name: "review-main",
+      placement: "background",
+      latestSeq: 9,
+      lastSeenSeq: 3,
+      unread: true,
+      visualStatus: "finished",
+      attachCommand: "mos shell attach review-main",
+    });
+
+    expect(adapter.renameSession).toHaveBeenCalledWith("main", "review-main");
+    expect(scrollbackStore.rename).toHaveBeenCalledWith("main", "review-main");
+    const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
+    const sessions = JSON.parse(raw).sessions;
+    expect(sessions.main).toBeUndefined();
+    expect(sessions["review-main"].placement).toBe("background");
+  });
+
   it("connects by adopting an orphan active zellij session", async () => {
     const root = await tempRoot();
     const adapter = {

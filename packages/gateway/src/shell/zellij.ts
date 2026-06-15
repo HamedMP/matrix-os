@@ -84,6 +84,7 @@ export interface ZellijAdapter {
   listSessions(): Promise<string[]>;
   createSession(options: CreateSessionOptions): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
+  renameSession(name: string, nextName: string): Promise<void>;
   validateLayout(path: string): Promise<void>;
   attachSession(name: string, options?: AttachOptions): ShellAttachProcess;
   listTabs(name: string): Promise<unknown[]>;
@@ -436,6 +437,14 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       const args = ["delete-session", name];
       if (options.force) args.push("--force");
       await run(args);
+    },
+    async renameSession(name, nextName) {
+      await run(["--session", name, "action", "rename-session", nextName]);
+      const retained = retainedCreatePtys.get(name);
+      if (retained) {
+        retainedCreatePtys.delete(name);
+        retainedCreatePtys.set(nextName, retained);
+      }
     },
     async validateLayout(path) {
       await run(["setup", "--check", "--layout", path], 5_000);

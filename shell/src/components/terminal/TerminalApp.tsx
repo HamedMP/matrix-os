@@ -1,14 +1,17 @@
 "use client";
 
-import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEventHandler } from "react";
 import {
   BotIcon,
+  ChevronsLeftIcon,
+  ChevronsRightIcon,
   ClipboardPasteIcon,
+  CopyIcon,
   FilesIcon,
   FolderIcon,
   KeyboardIcon,
-  PanelLeftCloseIcon,
   PanelLeftOpenIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   Rows2Icon,
@@ -128,6 +131,7 @@ const SHELL_CARD_NAME_BUTTON_STYLE: CSSProperties = {
 };
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
+const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
 const PROJECT_BRANCH_BADGE_STYLE: CSSProperties = {
   padding: "1px 5px",
@@ -239,6 +243,18 @@ function setPaneSessionId(node: PaneNode, paneId: string, sessionId: string): Pa
 
   const left = setPaneSessionId(node.children[0], paneId, sessionId);
   const right = setPaneSessionId(node.children[1], paneId, sessionId);
+  if (left === node.children[0] && right === node.children[1]) {
+    return node;
+  }
+  return { ...node, children: [left, right] };
+}
+
+function renameSessionInTree(node: PaneNode, fromSessionId: string, toSessionId: string): PaneNode {
+  if (node.type === "pane") {
+    return node.sessionId === fromSessionId ? { ...node, sessionId: toSessionId } : node;
+  }
+  const left = renameSessionInTree(node.children[0], fromSessionId, toSessionId);
+  const right = renameSessionInTree(node.children[1], fromSessionId, toSessionId);
   if (left === node.children[0] && right === node.children[1]) {
     return node;
   }
@@ -398,6 +414,16 @@ export interface TerminalWindowControls {
   close?: () => void;
   minimize?: () => void;
   toggleFullscreen?: () => void;
+  dragHandleProps?: TerminalWindowDragHandleProps;
+}
+
+interface TerminalWindowDragHandleProps {
+  onPointerDown?: PointerEventHandler<HTMLElement>;
+  onPointerMove?: PointerEventHandler<HTMLElement>;
+  onPointerUp?: PointerEventHandler<HTMLElement>;
+  onPointerCancel?: PointerEventHandler<HTMLElement>;
+  onMouseDown?: MouseEventHandler<HTMLElement>;
+  onDoubleClick?: MouseEventHandler<HTMLElement>;
 }
 
 interface TerminalAppProps {
@@ -818,6 +844,19 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, label } : t));
   };
 
+  const renameShellSession = (fromSessionId: string, toSessionId: string) => {
+    setTabs(prev => prev.map((tab) => {
+      const nextTree = renameSessionInTree(tab.paneTree, fromSessionId, toSessionId);
+      const nextLabel =
+        tab.label === fromSessionId || tab.label === formatShellDisplayName(fromSessionId)
+          ? formatShellDisplayName(toSessionId)
+          : tab.label;
+      return nextTree === tab.paneTree && nextLabel === tab.label
+        ? tab
+        : { ...tab, label: nextLabel, paneTree: nextTree };
+    }));
+  };
+
   const reorderTabs = (from: number, to: number) => {
     setTabs(prev => {
       const arr = [...prev];
@@ -898,7 +937,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
-    addTab, addSessionTab, createShellSessionTab, backgroundShellSession, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
+    addTab, addSessionTab, createShellSessionTab, backgroundShellSession, closeTab, setActiveTab: setActiveTabId, renameTab, renameShellSession, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
   };
@@ -1001,6 +1040,7 @@ interface TerminalAppContextType {
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   renameTab: (tabId: string, label: string) => void;
+  renameShellSession: (fromSessionId: string, toSessionId: string) => void;
   reorderTabs: (from: number, to: number) => void;
   splitPane: (paneId: string, dir: "horizontal" | "vertical") => void;
   closePane: (paneId: string) => void;
@@ -1107,6 +1147,8 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
           e.currentTarget.style.opacity = "1";
         }
       }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
       onClick={onClick}
       title={title}
       aria-label={ariaLabel}
@@ -1136,7 +1178,12 @@ function ThemePickerButton() {
   }, [open]);
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div
+      ref={wrapRef}
+      style={{ position: "relative" }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
       <ToolbarBtn onClick={() => setOpen((o) => !o)} title="Terminal preferences">
         <IconPalette />
       </ToolbarBtn>
@@ -1149,14 +1196,33 @@ function ThemePickerButton() {
   );
 }
 
+function isTerminalChromeControl(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest("button,input,textarea,select,a,[role='button']"));
+}
+
 function TerminalWorkspaceChrome() {
   const ctx = useTerminalAppContext();
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
   const activeName = activeTab?.label === DEFAULT_SHELL_SESSION_NAME ? "matrix-main" : activeTab?.label ?? "Terminal";
+  const dragHandleProps = ctx.windowControls?.dragHandleProps;
+  const handleDragPointerDownCapture: PointerEventHandler<HTMLElement> = (event) => {
+    if (ctx.mobile || isTerminalChromeControl(event.target)) return;
+    dragHandleProps?.onPointerDown?.(event);
+  };
+  const handleDragMouseDownCapture: MouseEventHandler<HTMLElement> = (event) => {
+    if (ctx.mobile || isTerminalChromeControl(event.target)) return;
+    dragHandleProps?.onMouseDown?.(event);
+  };
 
   return (
     <div
-      className="shrink-0"
+      className="shrink-0 select-none"
+      onPointerDownCapture={handleDragPointerDownCapture}
+      onPointerMove={dragHandleProps?.onPointerMove}
+      onPointerUp={dragHandleProps?.onPointerUp}
+      onPointerCancel={dragHandleProps?.onPointerCancel}
+      onMouseDownCapture={handleDragMouseDownCapture}
+      onDoubleClick={dragHandleProps?.onDoubleClick}
       style={{
         alignItems: "center",
         background: "#15180F",
@@ -1167,6 +1233,8 @@ function TerminalWorkspaceChrome() {
         justifyContent: "space-between",
         padding: ctx.mobile ? "0 12px" : "0 20px",
         minWidth: 0,
+        cursor: dragHandleProps && !ctx.mobile ? "grab" : undefined,
+        touchAction: dragHandleProps && !ctx.mobile ? "none" : undefined,
       }}
     >
       <div className="flex min-w-0 items-center" style={{ gap: ctx.mobile ? 10 : 16 }}>
@@ -1279,6 +1347,8 @@ function TerminalTrafficButton({
         event.stopPropagation();
         onClick?.();
       }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
       style={{
         background: color,
         border: 0,
@@ -1307,6 +1377,8 @@ function ChromeIconButton({
       aria-label={label}
       title={label}
       onClick={onClick}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
       className="flex items-center justify-center"
       style={{
         background: "#20241C",
@@ -2131,6 +2203,43 @@ function LocalTerminalSidebar() {
     }
   };
 
+  const renameManagedShell = async (shell: ShellSessionSummary, nextNameRaw: string): Promise<boolean> => {
+    const nextName = nextNameRaw.trim();
+    if (nextName === shell.name) return true;
+    if (!SHELL_SESSION_NAME_PATTERN.test(nextName)) {
+      setShellsError("Use lowercase letters, numbers, and hyphens");
+      return false;
+    }
+    setShellsError(null);
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(shell.name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nextName }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        setShellsError("Failed to rename session");
+        return false;
+      }
+      const data = (await res.json()) as { session?: ShellSessionSummary };
+      const renamedShell: ShellSessionSummary = data.session?.name
+        ? data.session
+        : {
+            ...shell,
+            name: nextName,
+            attachCommand: `mos shell attach ${nextName}`,
+          };
+      setShells((prev) => prev.map((item) => item.name === shell.name ? renamedShell : item));
+      ctx.renameShellSession(shell.name, renamedShell.name);
+      return true;
+    } catch (err: unknown) {
+      console.warn("Failed to rename shell session:", err instanceof Error ? err.message : err);
+      setShellsError("Could not rename session");
+      return false;
+    }
+  };
+
   const patchShellUiState = async (name: string, patch: ShellUiStatePatch) => {
     setShellsError(null);
     const previousValues: ShellUiStatePatch = {};
@@ -2430,7 +2539,7 @@ function LocalTerminalSidebar() {
                     width: 40,
                   }}
                 >
-                  <PanelLeftCloseIcon size={17} strokeWidth={1.9} />
+                  <ChevronsLeftIcon data-testid="terminal-drawer-collapse-icon" size={17} strokeWidth={2} />
                 </button>
               </>
             )}
@@ -2486,6 +2595,7 @@ function LocalTerminalSidebar() {
             foreground
             onOpen={openActiveShell}
             onToggle={moveShellToBackground}
+            onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell) => void deleteManagedShell(shell.name)}
           />
         )}
@@ -2498,6 +2608,7 @@ function LocalTerminalSidebar() {
             foreground={false}
             onOpen={makeShellActive}
             onToggle={makeShellActive}
+            onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell) => void deleteManagedShell(shell.name)}
           />
         )}
@@ -2604,7 +2715,7 @@ function CollapsedSessionsRail({
         M
       </div>
       <CollapsedRailButton label="Expand sessions drawer" onClick={onExpand}>
-        <PanelLeftOpenIcon size={16} strokeWidth={1.9} />
+        <ChevronsRightIcon data-testid="terminal-drawer-expand-icon" size={17} strokeWidth={2} />
       </CollapsedRailButton>
       <CollapsedRailButton label="New session" onClick={onNew} strong>
         +
@@ -2704,9 +2815,9 @@ function CollapsedRailButton({
         cursor: "pointer",
         fontSize: strong ? 24 : 14,
         fontWeight: 700,
-        height: 40,
+        height: 38,
         lineHeight: 1,
-        width: 40,
+        width: 38,
       }}
     >
       {children}
@@ -2722,6 +2833,7 @@ function ShellSessionGroup({
   foreground,
   onOpen,
   onToggle,
+  onRename,
   onDelete,
 }: {
   label: "Active" | "Background";
@@ -2731,6 +2843,7 @@ function ShellSessionGroup({
   foreground: boolean;
   onOpen: (shell: ShellSessionSummary) => void;
   onToggle: (shell: ShellSessionSummary) => void;
+  onRename: (shell: ShellSessionSummary, nextName: string) => Promise<boolean>;
   onDelete: (shell: ShellSessionSummary) => void;
 }) {
   return (
@@ -2762,6 +2875,7 @@ function ShellSessionGroup({
           deleting={deletingShellNames.includes(shell.name)}
           onOpen={() => onOpen(shell)}
           onToggle={() => onToggle(shell)}
+          onRename={(nextName) => onRename(shell, nextName)}
           onDelete={() => onDelete(shell)}
         />
       ))}
@@ -2775,6 +2889,7 @@ function ShellCard({
   deleting,
   onOpen,
   onToggle,
+  onRename,
   onDelete,
 }: {
   shell: ShellSessionSummary;
@@ -2782,6 +2897,7 @@ function ShellCard({
   deleting?: boolean;
   onOpen: () => void;
   onToggle: () => void;
+  onRename: (nextName: string) => Promise<boolean>;
   onDelete: () => void;
 }) {
   const tabs = shell.tabs ?? [];
@@ -2790,7 +2906,20 @@ function ShellCard({
   const [copied, setCopied] = useState(false);
   const displayName = formatShellDisplayName(shell.name);
   const [actionsVisible, setActionsVisible] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState(shell.name);
+  const [renameSaving, setRenameSaving] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const showActions = foreground && (actionsVisible || copied);
+  const showRenameControl = foreground && (actionsVisible || renaming);
+  const renameControlLabel = `Rename ${displayName}`;
+
+  useEffect(() => {
+    if (!renaming) return;
+    renameInputRef.current?.focus();
+    renameInputRef.current?.select();
+  }, [renaming]);
+
   const copyAttachCommand = async () => {
     try {
       await copyTextToClipboard(shellAttachCommand(shell));
@@ -2799,6 +2928,27 @@ function ShellCard({
     } catch (err: unknown) {
       console.warn("Failed to copy shell connect command:", err instanceof Error ? err.message : err);
     }
+  };
+  const commitRename = async () => {
+    const nextName = renameDraft.trim();
+    if (!nextName || renameSaving) return;
+    if (nextName === shell.name) {
+      setRenaming(false);
+      return;
+    }
+    setRenameSaving(true);
+    const renamed = await onRename(nextName).catch((err: unknown) => {
+      console.warn("Failed to commit shell session rename:", err instanceof Error ? err.message : err);
+      return false;
+    });
+    if (renamed) {
+      setRenaming(false);
+    }
+    setRenameSaving(false);
+  };
+  const cancelRename = () => {
+    setRenameDraft(shell.name);
+    setRenaming(false);
   };
   return (
     <div
@@ -2832,28 +2982,98 @@ function ShellCard({
             flexShrink: 0,
             ...statusDotStyle,
           }}
-        />
-        <button
-          type="button"
-          aria-label={`Open ${displayName}`}
-          className="min-w-0 truncate"
-          onClick={onOpen}
-          style={{
-            background: "transparent",
-            border: 0,
-            color: foreground ? "#31362D" : "#5F6258",
-            cursor: "pointer",
-            flex: "1 1 auto",
-            fontFamily: "var(--font-mono, ui-monospace, monospace)",
-            fontSize: 14,
-            fontWeight: 700,
-            lineHeight: "18px",
-            padding: 0,
-            textAlign: "left",
-          }}
-        >
-          {displayName}
-        </button>
+          />
+        <div className="flex min-w-0 items-center" style={{ flex: "1 1 auto", gap: 6 }}>
+          {renaming ? (
+            <input
+              ref={renameInputRef}
+              aria-label={`Session name for ${displayName}`}
+              value={renameDraft}
+              disabled={renameSaving}
+              onChange={(event) => setRenameDraft(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void commitRename();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelRename();
+                }
+              }}
+              style={{
+                background: "#FFFDF7",
+                border: "1px solid #D6D5C4",
+                borderRadius: 6,
+                color: "#31362D",
+                flex: "1 1 auto",
+                fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                fontSize: 14,
+                fontWeight: 700,
+                height: 24,
+                lineHeight: "18px",
+                minWidth: 0,
+                outline: "none",
+                padding: "0 6px",
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              aria-label={`Open ${displayName}`}
+              className="min-w-0 truncate"
+              onClick={onOpen}
+              style={{
+                background: "transparent",
+                border: 0,
+                color: foreground ? "#31362D" : "#5F6258",
+                cursor: "pointer",
+                flex: "1 1 auto",
+                fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                fontSize: 14,
+                fontWeight: 700,
+                lineHeight: "18px",
+                padding: 0,
+                textAlign: "left",
+              }}
+            >
+              {displayName}
+            </button>
+          )}
+          {foreground && (
+            <button
+              type="button"
+              aria-label={renameControlLabel}
+              title={renameControlLabel}
+              disabled={renameSaving}
+              onClick={(event) => {
+                event.stopPropagation();
+                setRenameDraft(shell.name);
+                setRenaming(true);
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+              className="flex items-center justify-center"
+              style={{
+                background: "#F0EFE5",
+                border: "1px solid #E4E2D2",
+                borderRadius: 6,
+                color: "#8A8B7C",
+                cursor: renameSaving ? "not-allowed" : "pointer",
+                flexShrink: 0,
+                height: 22,
+                opacity: showRenameControl ? 1 : 0,
+                transition: "opacity 120ms ease",
+                width: 22,
+              }}
+            >
+              <PencilIcon size={12} strokeWidth={2} />
+            </button>
+          )}
+        </div>
         <button
           type="button"
           aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
@@ -2882,14 +3102,14 @@ function ShellCard({
       </div>
       {foreground && (
         <div
+          data-testid={`terminal-session-actions-${shell.name}`}
           className="flex items-center"
           style={{
-            gap: 7,
+            gap: 25,
             maxHeight: showActions ? 28 : 0,
             opacity: showActions ? 1 : 0,
             overflow: "hidden",
             paddingLeft: 17,
-            pointerEvents: showActions ? "auto" : "none",
             transition: "max-height 150ms ease, opacity 120ms ease",
           }}
         >
@@ -2910,17 +3130,21 @@ function ShellCard({
               flex: "1 1 auto",
               fontFamily: "var(--font-mono, ui-monospace, monospace)",
               fontSize: 12,
-              gap: 5,
+              gap: 7,
               height: 28,
               minWidth: 0,
               padding: "0 8px 0 10px",
             }}
           >
-            <span style={{ color: "#A8A899", flexShrink: 0 }}>›</span>
-            <span className="truncate" style={{ minWidth: 0 }}>
-              {copied ? "Copied" : "Copy local attach command"}
+            <span className="truncate" style={{ color: copied ? "#4F8A55" : "#8A8B7C", minWidth: 0 }}>
+              {copied ? "Command copied" : showActions ? (
+                <>
+                  <span>matrix shell connect</span>
+                  <span style={{ color: "#B0AF9F" }}> {shell.name}</span>
+                </>
+              ) : null}
             </span>
-            <ClipboardPasteIcon size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
+            <CopyIcon size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
           </button>
           <button
             type="button"

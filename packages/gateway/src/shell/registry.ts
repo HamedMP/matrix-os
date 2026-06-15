@@ -13,6 +13,7 @@ export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
+  renameSession?(name: string, nextName: string): Promise<void>;
 }
 
 const ShellSessionSchema = z.object({
@@ -215,6 +216,72 @@ export class ShellRegistry {
       };
       file.sessions[safeName] = next;
       await this.write(file);
+      return this.decorateSession(next);
+    });
+  }
+
+  async rename(name: string, nextName: string): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const safeNextName = validateSessionName(nextName);
+      if (!this.options.adapter.renameSession) {
+        throw shellError("session_rename_unavailable", "Request failed", 503);
+      }
+
+      const file = await this.read();
+      const live = new Set(await this.options.adapter.listSessions());
+      if (!live.has(safeName)) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      if (safeName === safeNextName) {
+        const now = new Date().toISOString();
+        const session = {
+          ...(file.sessions[safeName] ?? this.adoptSession(safeName, now)),
+          status: "active" as const,
+        };
+        file.sessions[safeName] = session;
+        await this.write(file);
+        return this.decorateSession(session);
+      }
+      if (live.has(safeNextName) || file.sessions[safeNextName]) {
+        throw shellError("session_exists", "Session already exists", 409);
+      }
+
+      const now = new Date().toISOString();
+      const existing = file.sessions[safeName] ?? this.adoptSession(safeName, now);
+      const next: PersistedShellSession = {
+        ...existing,
+        name: safeNextName,
+        status: "active",
+        updatedAt: now,
+      };
+      delete file.sessions[safeName];
+      file.sessions[safeNextName] = next;
+
+      await this.options.adapter.renameSession(safeName, safeNextName);
+      let scrollbackRenamed = false;
+      try {
+        await this.options.scrollbackStore?.rename(safeName, safeNextName);
+        scrollbackRenamed = true;
+        await this.write(file);
+      } catch (err: unknown) {
+        await this.options.adapter.renameSession(safeNextName, safeName).catch((rollbackErr: unknown) => {
+          console.warn(
+            "[shell] failed to rollback renamed zellij session:",
+            rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+          );
+        });
+        if (scrollbackRenamed) {
+          await this.options.scrollbackStore?.rename(safeNextName, safeName).catch((rollbackErr: unknown) => {
+            console.warn(
+              "[shell] failed to rollback renamed scrollback:",
+              rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+            );
+          });
+        }
+        throw err;
+      }
+
       return this.decorateSession(next);
     });
   }

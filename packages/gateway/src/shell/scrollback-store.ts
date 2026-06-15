@@ -111,6 +111,26 @@ export class ScrollbackStore {
     });
   }
 
+  async rename(fromName: string, toName: string): Promise<void> {
+    await this.withWriteLock(async () => {
+      const fromPath = this.pathForSession(fromName);
+      const toPath = this.pathForSession(toName);
+      await mkdir(dirname(toPath), { recursive: true, mode: 0o700 });
+      try {
+        await rename(fromPath, toPath);
+      } catch (err: unknown) {
+        if (
+          err instanceof Error &&
+          "code" in err &&
+          (err as NodeJS.ErrnoException).code === "ENOENT"
+        ) {
+          return;
+        }
+        throw err;
+      }
+    });
+  }
+
   private async enforceLimit(path: string): Promise<void> {
     const info = await stat(path);
     if (info.size <= this.maxBytesPerSession) {
