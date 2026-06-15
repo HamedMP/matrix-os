@@ -386,6 +386,8 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           args.push("--new-session-with-layout", layoutPath);
         } else if (options.layout) {
           args.push("--layout", options.layout);
+        } else if (zellijConfigPaths) {
+          args.push("--new-session-with-layout", zellijConfigPaths.layoutFile);
         }
 
         let pty: ShellAttachProcess;
@@ -579,6 +581,13 @@ function initialCommandLayout(command: string, cwd?: string): string {
     ? `      args ${args.map(kdlString).join(" ")}\n`
     : "";
   return `layout {
+  default_tab_template {
+    children
+    pane size=1 borderless=true {
+      plugin location="zellij:compact-bar"
+    }
+  }
+
   tab name="main" {
     pane ${paneAttrs} {
 ${argLine}    }

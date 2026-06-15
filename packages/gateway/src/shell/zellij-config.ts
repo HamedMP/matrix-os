@@ -1,5 +1,7 @@
 import { join, resolve } from "node:path";
 
+export const MATRIX_ZELLIJ_LAYOUT_NAME = "matrix";
+
 export type MatrixZellijConfigPaths = {
   dir: string;
   file: string;
@@ -10,7 +12,7 @@ export type MatrixZellijConfigPaths = {
   layoutFile: string;
 };
 
-export const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS keeps Zellij chrome compact; the browser shell renders sessions and actions.
+export const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS minimal Zellij layout, shared by desktop and mobile clients.
 layout {
   default_tab_template {
     children
@@ -80,26 +82,53 @@ export function matrixZellijConfigPaths(homePath: string): MatrixZellijConfigPat
 
 export function renderMatrixZellijConfig(configPaths: MatrixZellijConfigPaths): string {
   return `// Matrix OS generated shell config.
+// Paper shell themes: dark=matrix-dark, light=matrix-light, matrix=matrix.
 pane_frames false
 simplified_ui true
 hide_session_name true
-default_layout "matrix"
+default_layout "${MATRIX_ZELLIJ_LAYOUT_NAME}"
 default_shell ${JSON.stringify(configPaths.shellFile)}
 theme "matrix-dark"
 
 themes {
   matrix-dark {
-    fg 201 199 183
-    bg 28 32 25
-    black 21 24 15
-    red 214 111 97
-    green 156 183 122
-    yellow 210 179 95
-    blue 140 199 190
-    magenta 207 120 53
-    cyan 140 199 190
-    white 248 247 239
+    fg 191 191 191
+    bg 12 12 12
+    black 12 12 12
+    red 216 94 94
+    green 10 209 139
+    yellow 201 162 74
+    blue 106 160 255
+    magenta 181 140 255
+    cyan 0 229 192
+    white 240 239 229
     orange 207 120 53
+  }
+  matrix-light {
+    fg 60 56 54
+    bg 251 241 199
+    black 251 241 199
+    red 204 36 29
+    green 121 116 14
+    yellow 181 118 20
+    blue 69 133 136
+    magenta 177 98 134
+    cyan 104 157 106
+    white 40 40 40
+    orange 175 58 3
+  }
+  matrix {
+    fg 47 191 85
+    bg 2 10 2
+    black 2 10 2
+    red 47 191 85
+    green 57 255 106
+    yellow 91 240 138
+    blue 31 176 78
+    magenta 57 255 106
+    cyan 57 255 106
+    white 216 255 217
+    orange 91 240 138
   }
 }
 `;

@@ -122,6 +122,8 @@ describe("zellij-runtime", () => {
     expect(promptLabel).toContain("handle.json");
     expect(config).toContain('theme "matrix-dark"');
     expect(config).toContain("matrix-dark {");
+    expect(config).toContain("matrix-light {");
+    expect(config).toContain("matrix {");
     expect(defaultLayout).toContain('plugin location="zellij:compact-bar"');
     expect(sessionLayout).toContain('plugin location="zellij:compact-bar"');
     expect(spawnPty).toHaveBeenCalledWith(
