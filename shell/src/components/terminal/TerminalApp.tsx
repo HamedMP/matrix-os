@@ -2815,6 +2815,7 @@ function CollapsedRailGroup({
               height: COLLAPSED_RAIL_ITEM_SIZE,
               lineHeight: "14px",
               opacity: muted ? 0.82 : 1,
+              overflow: "visible",
               width: COLLAPSED_RAIL_ITEM_SIZE,
             }}
           >
@@ -2827,11 +2828,13 @@ function CollapsedRailGroup({
                 ...getShellStatusDotStyle(shell),
                 border: "2px solid #E9E9D8",
                 borderRadius: 999,
+                boxSizing: "border-box",
                 height: 12,
                 position: "absolute",
                 right: -3,
                 top: -3,
                 width: 12,
+                zIndex: 1,
               }}
             />
           </button>

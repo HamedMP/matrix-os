@@ -686,6 +686,14 @@ describe("TerminalApp", () => {
       expect(control.style.height).toBe("40px");
       expect(control.style.flexShrink).toBe("0");
     }
+    const matrixRailButton = screen.getByRole("button", { name: "Open matrix-main" });
+    const matrixRailDot = screen.getByTestId("terminal-session-status-main");
+    expect(matrixRailButton.style.overflow).toBe("visible");
+    expect(matrixRailDot.style.top).toBe("-3px");
+    expect(matrixRailDot.style.right).toBe("-3px");
+    expect(matrixRailDot.style.borderTopWidth).toBe("2px");
+    expect(matrixRailDot.style.borderTopColor).toBe("rgb(233, 233, 216)");
+    expect(matrixRailDot.style.zIndex).toBe("1");
 
     expect(screen.getByRole("button", { name: "Open matrix-main" }).textContent).toBe("mma");
     expect(screen.getByRole("button", { name: "Open claude-review" }).textContent).toBe("cre");
