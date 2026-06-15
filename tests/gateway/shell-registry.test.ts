@@ -144,6 +144,26 @@ describe("shell registry", () => {
     expect(JSON.parse(raw).sessions.main.placement).toBe("background");
   });
 
+  it("rejects UI state updates for sessions absent from metadata and live sessions", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => []),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+
+    await expect(registry.updateUiState("ghost", { placement: "active" })).rejects.toMatchObject({
+      code: "session_not_found",
+      status: 404,
+    });
+
+    await expect(readFile(join(root, "system", "shell-sessions.json"), "utf-8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(adapter.listSessions).toHaveBeenCalled();
+  });
+
   it("uses waiting and idle status dots from durable metadata", async () => {
     const root = await tempRoot();
     const adapter = {

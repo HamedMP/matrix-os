@@ -344,7 +344,7 @@ function unavailable(c: Context, code: string) {
 }
 
 function safeError(c: Context, err: unknown) {
-  if (err instanceof Error && err.message === "Payload Too Large") {
+  if (hasHttpStatus(err, 413) || isBodyLimitError(err)) {
     return c.json(
       { error: { code: "payload_too_large", message: "Request failed" } },
       413,
@@ -369,6 +369,19 @@ function safeError(c: Context, err: unknown) {
   return c.json(
     { error: { code: shellErr.code, message: shellErr.safeMessage } },
     (shellErr.status ?? 500) as 500,
+  );
+}
+
+function isBodyLimitError(err: unknown) {
+  return err instanceof Error && err.name === "BodyLimitError";
+}
+
+function hasHttpStatus(err: unknown, status: number) {
+  return (
+    err instanceof Error &&
+    "status" in err &&
+    typeof (err as { status?: unknown }).status === "number" &&
+    (err as { status: number }).status === status
   );
 }
 

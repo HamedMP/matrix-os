@@ -198,7 +198,14 @@ export class ShellRegistry {
       const safeName = validateSessionName(name);
       const file = await this.read();
       const now = new Date().toISOString();
-      const existing = file.sessions[safeName] ?? this.adoptSession(safeName, now);
+      let existing = file.sessions[safeName];
+      if (!existing) {
+        const live = new Set(await this.options.adapter.listSessions());
+        if (!live.has(safeName)) {
+          throw shellError("session_not_found", "Session not found", 404);
+        }
+        existing = this.adoptSession(safeName, now);
+      }
       const next: PersistedShellSession = {
         ...existing,
         updatedAt: now,
