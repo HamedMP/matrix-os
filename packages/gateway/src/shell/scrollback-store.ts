@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
@@ -6,6 +6,14 @@ import { validateSessionName } from "./names.js";
 import type { ReplayEvent } from "./replay-buffer.js";
 
 export type ScrollbackRecord = Extract<ReplayEvent, { type: "output" | "block-mark" }>;
+type StoredScrollbackRecord = ScrollbackRecord & { at?: string };
+
+export interface ScrollbackActivity {
+  latestSeq: number | null;
+  latestOutputAt: string | null;
+  commandRunning: boolean | null;
+  latestCommandMark: Extract<ScrollbackRecord, { type: "block-mark" }>["mark"] | null;
+}
 
 const Osc133MarkSchema = z.discriminatedUnion("code", [
   z.object({ code: z.literal("A"), kind: z.literal("prompt-start") }),
@@ -57,10 +65,11 @@ export class ScrollbackStore {
     }
     await this.withWriteLock(async () => {
       const path = this.pathForSession(name);
+      const at = new Date().toISOString();
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       await appendFile(
         path,
-        records.map((record) => JSON.stringify(record)).join("\n") + "\n",
+        records.map((record) => JSON.stringify({ ...record, at })).join("\n") + "\n",
         { mode: 0o600 },
       );
       await this.enforceLimit(path);
@@ -100,6 +109,81 @@ export class ScrollbackStore {
         (err as NodeJS.ErrnoException).code === "ENOENT"
       ) {
         return null;
+      }
+      throw err;
+    }
+  }
+
+  async latestActivity(name: string): Promise<ScrollbackActivity> {
+    try {
+      const handle = await open(this.pathForSession(name), "r");
+      try {
+        const info = await handle.stat();
+        let position = info.size;
+        let text = "";
+        let bytesRead = 0;
+        const maxScanBytes = Math.min(info.size, 256 * 1024);
+        while (position > 0 && bytesRead < maxScanBytes) {
+          const length = Math.min(64 * 1024, position, maxScanBytes - bytesRead);
+          position -= length;
+          bytesRead += length;
+          const buffer = Buffer.alloc(length);
+          await handle.read(buffer, 0, length, position);
+          text = `${buffer.toString("utf-8")}${text}`;
+        }
+
+        const activity: ScrollbackActivity = {
+          latestSeq: null,
+          latestOutputAt: null,
+          commandRunning: null,
+          latestCommandMark: null,
+        };
+        const fallbackAt = info.mtime.toISOString();
+        const lines = text.split("\n").filter(Boolean);
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+          let record: StoredScrollbackRecord;
+          try {
+            record = JSON.parse(lines[index]!) as StoredScrollbackRecord;
+          } catch (err: unknown) {
+            if (!(err instanceof SyntaxError)) {
+              throw err;
+            }
+            continue;
+          }
+          if (activity.latestSeq === null) {
+            activity.latestSeq = record.seq;
+          }
+          if (record.type === "output" && activity.latestOutputAt === null) {
+            activity.latestOutputAt = record.at ?? fallbackAt;
+          }
+          if (record.type === "block-mark" && activity.latestCommandMark === null) {
+            activity.latestCommandMark = record.mark;
+            activity.commandRunning = record.mark.kind === "command-start" || record.mark.kind === "command-executed";
+          }
+          if (
+            activity.latestSeq !== null &&
+            activity.latestOutputAt !== null &&
+            activity.latestCommandMark !== null
+          ) {
+            break;
+          }
+        }
+        return activity;
+      } finally {
+        await handle.close();
+      }
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return {
+          latestSeq: null,
+          latestOutputAt: null,
+          commandRunning: null,
+          latestCommandMark: null,
+        };
       }
       throw err;
     }

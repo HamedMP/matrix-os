@@ -4,10 +4,11 @@ import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { shellError } from "./errors.js";
 import { resolveShellCwd, validateLayoutName, validateSessionName } from "./names.js";
-import type { ScrollbackStore } from "./scrollback-store.js";
+import type { ScrollbackActivity, ScrollbackStore } from "./scrollback-store.js";
 
 const ShellPlacementSchema = z.enum(["active", "background"]);
 const ShellVisualStatusSchema = z.enum(["running", "finished", "idle", "waiting"]);
+const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
@@ -320,16 +321,11 @@ export class ShellRegistry {
   }
 
   private async decorateSession(session: PersistedShellSession): Promise<ShellSession> {
-    const latestSeq = await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
+    const activity = await this.options.scrollbackStore?.latestActivity?.(session.name);
+    const latestSeq = activity?.latestSeq ?? await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
     const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
-    const visualStatus = session.visualStatus ?? (
-      session.status === "active"
-        ? "running"
-        : unread
-          ? "finished"
-          : "idle"
-    );
+    const visualStatus = this.deriveVisualStatus(session, unread, activity);
     return {
       ...session,
       placement: session.placement ?? "active",
@@ -339,6 +335,29 @@ export class ShellRegistry {
       visualStatus,
       attachCommand: `mos shell attach ${session.name}`,
     };
+  }
+
+  private deriveVisualStatus(
+    session: PersistedShellSession,
+    unread: boolean,
+    activity?: ScrollbackActivity,
+  ): ShellVisualStatus {
+    if (session.visualStatus === "waiting") {
+      return "waiting";
+    }
+    if (session.status !== "active") {
+      return unread ? "finished" : "idle";
+    }
+    if (activity?.commandRunning === true) {
+      return "running";
+    }
+    if (activity?.commandRunning === false) {
+      return unread ? "finished" : "idle";
+    }
+    if (activity?.latestOutputAt && isRecentShellOutput(activity.latestOutputAt)) {
+      return "running";
+    }
+    return unread ? "finished" : "idle";
   }
 
   private async markMissingMetadataExited(
@@ -396,4 +415,12 @@ export class ShellRegistry {
     );
     return run;
   }
+}
+
+function isRecentShellOutput(value: string): boolean {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+  return Date.now() - timestamp <= SHELL_RUNNING_FALLBACK_WINDOW_MS;
 }

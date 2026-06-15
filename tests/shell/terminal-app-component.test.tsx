@@ -378,6 +378,58 @@ describe("TerminalApp", () => {
     expect(uiStateCalls.filter((call) => call.url.includes("/api/terminal/sessions/docs/ui-state"))).toHaveLength(1);
   });
 
+  it("renders Paper status dot colors and pulses only for running sessions", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "running", status: "active", placement: "active", latestSeq: 7, lastSeenSeq: 7, unread: false, visualStatus: "running", attachCommand: "mos shell attach running", tabs: [] },
+              { name: "finished", status: "active", placement: "active", latestSeq: 9, lastSeenSeq: 4, unread: true, visualStatus: "finished", attachCommand: "mos shell attach finished", tabs: [] },
+              { name: "idle", status: "active", placement: "active", latestSeq: 2, lastSeenSeq: 2, unread: false, visualStatus: "idle", attachCommand: "mos shell attach idle", tabs: [] },
+              { name: "waiting", status: "active", placement: "background", latestSeq: 3, lastSeenSeq: 3, unread: false, visualStatus: "waiting", attachCommand: "mos shell attach waiting", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const running = screen.getByTestId("terminal-session-status-running");
+    const finished = screen.getByTestId("terminal-session-status-finished");
+    const idle = screen.getByTestId("terminal-session-status-idle");
+    const waiting = screen.getByTestId("terminal-session-status-waiting");
+
+    expect(running.style.background).toBe("rgb(95, 184, 95)");
+    expect(running.style.boxShadow).toContain("rgba(95,184,95,0.24)");
+    expect(running.classList.contains("terminal-session-status-dot--running")).toBe(true);
+    expect(finished.style.background).toBe("rgb(46, 107, 58)");
+    expect(finished.style.boxShadow).toBe("none");
+    expect(finished.classList.contains("terminal-session-status-dot--running")).toBe(false);
+    expect(idle.style.background).toBe("rgb(169, 170, 154)");
+    expect(idle.style.boxShadow).toBe("none");
+    expect(idle.classList.contains("terminal-session-status-dot--running")).toBe(false);
+    expect(waiting.style.background).toBe("rgb(224, 161, 46)");
+    expect(waiting.style.boxShadow).toContain("rgba(224,161,46,0.25)");
+    expect(waiting.classList.contains("terminal-session-status-dot--running")).toBe(false);
+  });
+
   it("keeps successful session updates when another optimistic UI patch rolls back", async () => {
     let resolveMarkSeen: ((response: Response) => void) | undefined;
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {

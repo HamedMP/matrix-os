@@ -13,6 +13,7 @@ async function tempRoot() {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -122,14 +123,14 @@ describe("shell registry", () => {
         latestSeq: 12,
         lastSeenSeq: 4,
         unread: true,
-        visualStatus: "running",
+        visualStatus: "finished",
         attachCommand: "mos shell attach main",
       },
       {
         name: "deploy-logs",
         placement: "active",
         unread: false,
-        visualStatus: "running",
+        visualStatus: "idle",
       },
       {
         name: "review-done",
@@ -142,6 +143,80 @@ describe("shell registry", () => {
 
     const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
     expect(JSON.parse(raw).sessions.main.placement).toBe("background");
+  });
+
+  it("derives Paper status dots from OSC marks, unread output, and waiting metadata", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-15T12:00:00.000Z"));
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => [
+        "quiet",
+        "unread-done",
+        "osc-running",
+        "osc-done",
+        "waiting",
+        "legacy-running",
+      ]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const latestSeqByName = new Map([
+      ["quiet", null],
+      ["unread-done", 8],
+      ["osc-running", 14],
+      ["osc-done", 21],
+      ["waiting", 3],
+      ["legacy-running", 5],
+    ]);
+    const scrollbackStore = {
+      latestSeq: vi.fn(async (name: string) => latestSeqByName.get(name) ?? null),
+      latestActivity: vi.fn(async (name: string) => {
+        if (name === "osc-running") {
+          return {
+            latestSeq: 14,
+            latestOutputAt: "2026-06-15T11:59:58.000Z",
+            commandRunning: true,
+            latestCommandMark: { code: "B", kind: "command-start" },
+          };
+        }
+        if (name === "osc-done") {
+          return {
+            latestSeq: 21,
+            latestOutputAt: "2026-06-15T11:59:59.000Z",
+            commandRunning: false,
+            latestCommandMark: { code: "D", kind: "command-finished", exitCode: 0 },
+          };
+        }
+        return {
+          latestSeq: latestSeqByName.get(name) ?? null,
+          latestOutputAt: null,
+          commandRunning: null,
+          latestCommandMark: null,
+        };
+      }),
+      cleanup: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({
+      homePath: root,
+      adapter,
+      maxSessions: 8,
+      scrollbackStore: scrollbackStore as never,
+    });
+
+    await registry.updateUiState("unread-done", { lastSeenSeq: 2 });
+    await registry.updateUiState("osc-done", { lastSeenSeq: 20 });
+    await registry.updateUiState("waiting", { visualStatus: "waiting" });
+    await registry.updateUiState("legacy-running", { lastSeenSeq: 1, visualStatus: "running" });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "quiet", unread: false, visualStatus: "idle" },
+      { name: "unread-done", latestSeq: 8, lastSeenSeq: 2, unread: true, visualStatus: "finished" },
+      { name: "osc-running", unread: false, visualStatus: "running" },
+      { name: "osc-done", latestSeq: 21, lastSeenSeq: 20, unread: true, visualStatus: "finished" },
+      { name: "waiting", visualStatus: "waiting" },
+      { name: "legacy-running", latestSeq: 5, lastSeenSeq: 1, unread: true, visualStatus: "finished" },
+    ]);
   });
 
   it("rejects UI state updates for sessions absent from metadata and live sessions", async () => {

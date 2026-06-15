@@ -132,6 +132,20 @@ const SHELL_CARD_NAME_BUTTON_STYLE: CSSProperties = {
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const SHELL_STATUS_DOT_CSS = `
+@keyframes terminal-session-status-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
+  50% { box-shadow: 0 0 0 6px rgba(95, 184, 95, 0.10); }
+}
+.terminal-session-status-dot--running {
+  animation: terminal-session-status-pulse 1.35s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-session-status-dot--running {
+    animation: none;
+  }
+}
+`;
 
 const PROJECT_BRANCH_BADGE_STYLE: CSSProperties = {
   padding: "1px 5px",
@@ -951,6 +965,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       aria-label="Terminal"
       onKeyDown={handleKeyDown}
     >
+      <style>{SHELL_STATUS_DOT_CSS}</style>
       <TerminalAppContext.Provider value={storeApi}>
         <TerminalWorkspaceChrome />
         <div className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}>
@@ -2652,7 +2667,7 @@ function getShellVisualStatus(shell: ShellSessionSummary): NonNullable<ShellSess
   if (shell.visualStatus) return shell.visualStatus;
   if (shell.status === "degraded") return "waiting";
   if (shell.status === "exited") return shell.unread ? "finished" : "idle";
-  return shell.unread ? "finished" : "running";
+  return shell.unread ? "finished" : "idle";
 }
 
 function getShellStatusDotStyle(shell: ShellSessionSummary): CSSProperties {
@@ -2664,9 +2679,15 @@ function getShellStatusDotStyle(shell: ShellSessionSummary): CSSProperties {
     return { background: "#E0A12E", boxShadow: "0 0 0 4px rgba(224,161,46,0.25)" };
   }
   if (status === "finished") {
-    return { background: "#2E6B3A", boxShadow: shell.unread ? "0 0 0 4px rgba(46,107,58,0.18)" : "none" };
+    return { background: "#2E6B3A", boxShadow: "none" };
   }
   return { background: "#A9AA9A", boxShadow: "none" };
+}
+
+function getShellStatusDotClassName(shell: ShellSessionSummary): string {
+  return getShellVisualStatus(shell) === "running"
+    ? "terminal-session-status-dot terminal-session-status-dot--running"
+    : "terminal-session-status-dot";
 }
 
 function CollapsedSessionsRail({
@@ -2772,6 +2793,8 @@ function CollapsedRailGroup({
             {initial}
             <span
               aria-hidden="true"
+              className={getShellStatusDotClassName(shell)}
+              data-testid={`terminal-session-status-${shell.name}`}
               style={{
                 ...getShellStatusDotStyle(shell),
                 borderRadius: 999,
@@ -2975,6 +2998,8 @@ function ShellCard({
     >
       <div className="flex items-center" style={{ gap: 10, minHeight: 24 }}>
         <span
+          className={getShellStatusDotClassName(shell)}
+          data-testid={`terminal-session-status-${shell.name}`}
           style={{
             width: foreground ? 7 : 8,
             height: foreground ? 7 : 8,
