@@ -60,10 +60,11 @@ export default async function RootLayout({
   const visitorCountry = getPostHogVisitorCountry(await headers());
 
   return (
-    // signInUrl/signUpUrl pin Clerk's cross-links and redirects to the in-app
-    // routes. Without them Clerk falls back to the instance's Account Portal
-    // (accounts.matrix-os.com), which breaks the in-app signup flow.
-    <ClerkProvider signInUrl="/sign-in" signUpUrl="/sign-up">
+    // ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep
+    // sign-in/up cross-links on the in-app routes. Those vars are baked at
+    // build time (default /sign-in and /sign-up); without them Clerk falls
+    // back to the hosted Account Portal (accounts.matrix-os.com).
+    <ClerkProvider>
       <html
         lang="en"
         data-posthog-visitor-country={visitorCountry ?? undefined}
