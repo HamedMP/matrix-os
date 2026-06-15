@@ -1916,6 +1916,30 @@ function formatShellDisplayName(name: string): string {
   return name === DEFAULT_SHELL_SESSION_NAME ? "matrix-main" : name;
 }
 
+const COLLAPSED_RAIL_ITEM_SIZE = 40;
+
+function formatCollapsedShellLabel(name: string): string {
+  const normalized = formatShellDisplayName(name)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const parts = normalized.split("-").filter(Boolean);
+  const compact = parts.join("");
+  let label = "";
+  if (parts.length >= 2) {
+    label = `${parts[0]?.charAt(0) ?? ""}${parts[1]?.slice(0, 2) ?? ""}`;
+  } else {
+    label = compact.slice(0, 3);
+  }
+  if (label.length >= 3) {
+    return label.slice(0, 3);
+  }
+  const fallback = (compact || "shl").slice(label.length);
+  const padded = `${label}${fallback}`;
+  return padded.padEnd(3, padded.at(-1) ?? "l").slice(0, 3);
+}
+
 function shellConnectCommand(name: string): string {
   return `matrix shell connect ${name}`;
 }
@@ -2720,16 +2744,18 @@ function CollapsedSessionsRail({
       }}
     >
       <div
+        data-testid="terminal-collapsed-brand"
         className="flex items-center justify-center"
         style={{
           background: "#465243",
-          borderRadius: 9,
+          borderRadius: 11,
           color: "#F8F7EF",
+          flexShrink: 0,
           fontFamily: "Orbitron, system-ui, sans-serif",
           fontSize: 15,
           fontWeight: 800,
-          height: 30,
-          width: 30,
+          height: COLLAPSED_RAIL_ITEM_SIZE,
+          width: COLLAPSED_RAIL_ITEM_SIZE,
         }}
         title="matrixos"
       >
@@ -2766,7 +2792,7 @@ function CollapsedRailGroup({
     <div className="flex flex-col items-center" style={{ gap: 9 }}>
       {shells.map((shell) => {
         const displayName = formatShellDisplayName(shell.name);
-        const initial = displayName.replace(/^matrix-/, "").charAt(0).toUpperCase() || "S";
+        const label = formatCollapsedShellLabel(shell.name);
         return (
           <button
             key={shell.name}
@@ -2779,30 +2805,33 @@ function CollapsedRailGroup({
               background: muted ? "#E2E2D0" : "#FFFDF7",
               border: `1px solid ${muted ? "#D4D2C1" : "#D6D5C4"}`,
               borderRadius: 11,
-              boxShadow: muted ? "none" : "0 6px 16px rgba(39,40,34,0.12)",
+              boxShadow: "none",
               color: muted ? "#858578" : "#31362D",
               cursor: "pointer",
+              flexShrink: 0,
               fontFamily: "var(--font-mono, ui-monospace, monospace)",
-              fontSize: 13,
-              fontWeight: 800,
-              height: 42,
+              fontSize: 12,
+              fontWeight: 700,
+              height: COLLAPSED_RAIL_ITEM_SIZE,
+              lineHeight: "14px",
               opacity: muted ? 0.82 : 1,
-              width: 42,
+              width: COLLAPSED_RAIL_ITEM_SIZE,
             }}
           >
-            {initial}
+            {label}
             <span
               aria-hidden="true"
               className={getShellStatusDotClassName(shell)}
               data-testid={`terminal-session-status-${shell.name}`}
               style={{
                 ...getShellStatusDotStyle(shell),
+                border: "2px solid #E9E9D8",
                 borderRadius: 999,
-                bottom: 4,
-                height: 7,
+                height: 12,
                 position: "absolute",
-                right: 4,
-                width: 7,
+                right: -3,
+                top: -3,
+                width: 12,
               }}
             />
           </button>
@@ -2833,14 +2862,15 @@ function CollapsedRailButton({
       style={{
         background: strong ? "#465243" : "#FFFDF7",
         border: strong ? "1px solid #465243" : "1px solid #D6D5C4",
-        borderRadius: 10,
+        borderRadius: strong ? 11 : 10,
         color: strong ? "#F8F7EF" : "#6F7167",
         cursor: "pointer",
+        flexShrink: 0,
         fontSize: strong ? 24 : 14,
         fontWeight: 700,
-        height: 38,
+        height: COLLAPSED_RAIL_ITEM_SIZE,
         lineHeight: 1,
-        width: 38,
+        width: COLLAPSED_RAIL_ITEM_SIZE,
       }}
     >
       {children}

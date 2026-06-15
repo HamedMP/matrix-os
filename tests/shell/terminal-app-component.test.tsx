@@ -632,6 +632,66 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Expand sessions drawer" })).toBeTruthy();
     expect(screen.getByTestId("terminal-drawer-expand-icon").querySelector('path[d="m6 17 5-5-5-5"]')).toBeTruthy();
     expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open matrix-main" }).textContent).toBe("mma");
+  });
+
+  it("uses Paper collapsed rail abbreviations and fixed control sizing", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] } as Response);
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", visualStatus: "running", tabs: [] },
+              { name: "claude-review", status: "active", placement: "active", visualStatus: "finished", tabs: [] },
+              { name: "codex-backend", status: "active", placement: "active", visualStatus: "waiting", tabs: [] },
+              { name: "deploy-logs", status: "active", placement: "background", visualStatus: "running", tabs: [] },
+              { name: "hotfix-auth", status: "active", placement: "background", visualStatus: "idle", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
+
+    const fixedControls = [
+      screen.getByTestId("terminal-collapsed-brand"),
+      screen.getByRole("button", { name: "Expand sessions drawer" }),
+      screen.getByRole("button", { name: "New session" }),
+      screen.getByRole("button", { name: "Open matrix-main" }),
+      screen.getByRole("button", { name: "Open claude-review" }),
+    ];
+    for (const control of fixedControls) {
+      expect(control.style.width).toBe("40px");
+      expect(control.style.height).toBe("40px");
+      expect(control.style.flexShrink).toBe("0");
+    }
+
+    expect(screen.getByRole("button", { name: "Open matrix-main" }).textContent).toBe("mma");
+    expect(screen.getByRole("button", { name: "Open claude-review" }).textContent).toBe("cre");
+    expect(screen.getByRole("button", { name: "Open codex-backend" }).textContent).toBe("cba");
+    expect(screen.getByRole("button", { name: "Open deploy-logs" }).textContent).toBe("dlo");
+    expect(screen.getByRole("button", { name: "Open hotfix-auth" }).textContent).toBe("hau");
   });
 
   it("keeps collapsed rail sessions visible after hiding a filtered drawer", async () => {
