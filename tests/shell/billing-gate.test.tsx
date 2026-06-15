@@ -15,46 +15,59 @@ const navigationState = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs", () => ({
-  SignIn: () => (
-    <div data-testid="sign-in-component">Mock SignIn</div>
-  ),
-  SignUp: () => (
-    <div data-testid="sign-up-component">Mock SignUp</div>
-  ),
-  UserButton: Object.assign(
-    ({ children }: { children?: React.ReactNode }) => (
-      <div data-testid="clerk-user-button">{children}</div>
+function installClerkMock() {
+  vi.doMock("@clerk/nextjs", () => ({
+    SignIn: () => (
+      <div data-testid="sign-in-component">Mock SignIn</div>
     ),
-    {
-      MenuItems: ({ children }: { children?: React.ReactNode }) => (
-        <div data-testid="clerk-user-button-menu">{children}</div>
+    SignUp: () => (
+      <div data-testid="sign-up-component">Mock SignUp</div>
+    ),
+    UserButton: Object.assign(
+      ({ children }: { children?: React.ReactNode }) => (
+        <div data-testid="clerk-user-button">{children}</div>
       ),
-      Link: ({ label }: { label: string }) => (
-        <a href="/runtime">{label}</a>
-      ),
-    },
-  ),
-  useAuth: () => ({
-    isLoaded: clerkState.isLoaded,
-    isSignedIn: clerkState.isSignedIn,
-    userId: clerkState.userId,
-    has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
-    getToken: clerkState.getToken,
-  }),
-  useUser: () => ({
-    user: {
-      fullName: null,
-      username: "test-user",
-      imageUrl: "",
-      primaryEmailAddress: { emailAddress: "test@example.com" },
-    },
-  }),
-  useClerk: () => ({
-    signOut: vi.fn(async () => undefined),
-    openUserProfile: vi.fn(),
-  }),
-}));
+      {
+        MenuItems: ({ children }: { children?: React.ReactNode }) => (
+          <div data-testid="clerk-user-button-menu">{children}</div>
+        ),
+        Link: ({ label }: { label: string }) => (
+          <a href="/runtime">{label}</a>
+        ),
+      },
+    ),
+    useAuth: () => ({
+      isLoaded: clerkState.isLoaded,
+      isSignedIn: clerkState.isSignedIn,
+      userId: clerkState.userId,
+      has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
+      getToken: clerkState.getToken,
+    }),
+    useUser: () => ({
+      isLoaded: clerkState.isLoaded,
+      isSignedIn: clerkState.isSignedIn,
+      user: clerkState.isSignedIn
+        ? {
+            id: clerkState.userId,
+            fullName: null,
+            username: "test-user",
+            imageUrl: "",
+            primaryEmailAddress: { emailAddress: "test@example.com" },
+          }
+        : null,
+    }),
+    useClerk: () => ({
+      signOut: vi.fn(async () => undefined),
+      openUserProfile: vi.fn(),
+    }),
+  }));
+}
+
+async function loadBillingGate() {
+  vi.resetModules();
+  installClerkMock();
+  return await import("../../shell/src/components/BillingGate.js");
+}
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -65,11 +78,13 @@ vi.mock("next/navigation", () => ({
 
 describe("BillingGate", () => {
   beforeEach(async () => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+    installClerkMock();
     const { resetMatrixBillingAccessCacheForTests } = await import(
       "../../shell/src/hooks/useMatrixBillingAccess.js"
     );
     resetMatrixBillingAccessCacheForTests();
-    vi.restoreAllMocks();
     clerkState.getToken.mockResolvedValue("clerk-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
@@ -94,7 +109,7 @@ describe("BillingGate", () => {
     vi.resetModules();
 
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate platformSessionActive>
@@ -114,7 +129,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -137,7 +152,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = plan;
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -157,7 +172,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = "early_adopter";
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -176,7 +191,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -206,7 +221,7 @@ describe("BillingGate", () => {
     vi.resetModules();
 
     const fetchMock = vi.spyOn(globalThis, "fetch");
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -233,7 +248,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -266,7 +281,7 @@ describe("BillingGate", () => {
       );
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -300,7 +315,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = "matrix_starter";
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -343,7 +358,7 @@ describe("BillingGate", () => {
     });
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -398,7 +413,7 @@ describe("BillingGate", () => {
     });
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -436,7 +451,7 @@ describe("BillingGate", () => {
     });
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -457,7 +472,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -476,7 +491,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
@@ -499,7 +514,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     vi.resetModules();
 
-    const { BillingGate } = await import("../../shell/src/components/BillingGate.js");
+    const { BillingGate } = await loadBillingGate();
 
     render(
       <BillingGate>
