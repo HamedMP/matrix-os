@@ -66,27 +66,76 @@ is skipped, and the job fails so the skip is visible. Manual deploy: `gh workflo
 Required repo secrets (beyond the existing release secrets):
 `PREVIEW_CLERK_USER_ID` — the Clerk user that owns preview VPSes.
 
-For richer branch testing flows (staging platform container + feature VPS with
-SSH verification) see the `staging-platform-vps` command, which predates this
-pipeline and remains the manual/deep-debug path.
+To walk the full onboarding/billing flow against branch platform code — a
+four-slice split (staging slot for the shell, an IAM-proxied `preview-platform`
+revision for the journey/reliability API, a local `dev:platform` + Stripe CLI
+for the test-mode checkout/webhook race, and a disposable feature VPS for the
+provisioned hand-off) — see the `staging-platform-vps` command and
+[Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
 
 ## Platform preview revisions
 
 Add the **`preview-platform`** label. The workflow (bound to the GitHub
 `Preview` environment) deploys the platform image to the dedicated
 `matrix-platform-preview` Cloud Run service as a zero-traffic tagged revision
-(`https://pr-<N>---<service-url>`). The service is **IAM-authenticated only**
-— reach it with `gcloud run services proxy matrix-platform-preview --region
-europe-west3` or an identity token. It runs as the dedicated
+(`https://pr-<N>---<service-url>`). It runs as the dedicated
 `matrix-platform-preview-runner` SA, which can read only: the **staging**
 database (`platform-database-url-staging` — previews share it; Neon branch
 per PR is deferred, spec 093), preview-generated platform/JWT/edge-router
-secrets, the Clerk keys, and the R2 bundles credentials (required by
-`CUSTOMER_VPS_ENABLED=true` boot validation). No Hetzner token is mounted, so
-a preview platform cannot provision real VPSes. On PR close the workflow
-removes the `pr-<N>` tag and deletes its revisions, mirroring the VPS
-teardown model. Production `CLOUD_RUN_SERVICE`, its runtime SA, and its
-secrets are never referenced.
+secrets, the Clerk keys, the R2 bundles credentials (required by
+`CUSTOMER_VPS_ENABLED=true` boot validation), and **Stripe TEST-mode** secrets.
+Production `CLOUD_RUN_SERVICE`, its runtime SA, its database, and live Stripe
+keys are never referenced. No Hetzner token is mounted, so a preview platform
+cannot provision real VPSes. On PR close the workflow removes the `pr-<N>` tag
+and deletes its revisions, mirroring the VPS teardown model.
+
+**Browser-reachable onboarding/billing.** The service runs with public ingress
+(`--allow-unauthenticated`, exactly like production — the app enforces its own
+Clerk/JWT auth, the operator API stays gated by the preview `PLATFORM_SECRET`)
+and is fronted by **`https://preview.matrix-os.com`**. So a labelled PR can be
+walked end to end in a browser before merge: sign in → plan → Stripe **test**
+checkout (`4242 4242 4242 4242`) → settling → journey. Origins/redirects
+resolve to the preview host (`MATRIX_APP_URL`/`PLATFORM_PUBLIC_URL`).
+
+Previews are still per-PR tagged, zero-traffic revisions, so point the host at
+the PR you want to walk, then reset:
+
+```bash
+gcloud run services update-traffic matrix-platform-preview \
+  --region europe-west3 --to-tags pr-<N>=100      # walk this PR
+```
+
+The host serves whichever PR tag currently holds traffic, so switching to
+another PR is just another `--to-tags pr-<M>=100` (no separate reset needed).
+Avoid `--to-latest` here — on this service "latest" is the most recently
+*deployed* PR revision, not a stable base, so it would leave the host pinned to
+whatever deployed last. To park the host on a known-good target, point traffic
+at an explicit revision/tag you designate as the resting state.
+
+Provisioning the boot→ready hand-off in the browser is still out of scope (no
+Hetzner token on preview); enabling it is a deliberate follow-up (a
+preview-scoped Hetzner token + VPS reaping). For that slice today, use the
+feature-VPS path in [Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
+
+### One-time infrastructure setup
+
+The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
+(run by an owner with the relevant access — the workflow only deploys):
+
+1. **Stripe test secrets** in Secret Manager (test mode only):
+   `stripe-secret-key-test`, `stripe-webhook-secret-test`,
+   `stripe-price-matrix-{starter,builder,max}-{monthly,annual}-test`.
+2. **Routing** `preview.matrix-os.com` → the `matrix-platform-preview` run.app
+   origin (`matrix-platform-preview-<hash>-ey.a.run.app`) via Cloudflare, the
+   **same mechanism app/api.matrix-os.com use** (Cloud Run domain mappings are
+   not available in `europe-west3`, so this is Cloudflare-proxied with the
+   run.app Host header, not a GCP domain mapping). Because previews are tagged
+   zero-traffic revisions, also route the PR under test to traffic
+   (`update-traffic --to-tags pr-<N>=100`) so the base origin serves it.
+3. **Stripe test webhook** → `https://preview.matrix-os.com/billing/webhooks/stripe`
+   (`checkout.session.completed`, `.expired`, `customer.subscription.*`); store
+   its signing secret as `stripe-webhook-secret-test`.
+4. Grant `matrix-platform-preview-runner` `secretAccessor` on the new secrets.
 
 ## Centralized logs
 

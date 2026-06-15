@@ -378,7 +378,7 @@ describe('customer VPS host bundle', () => {
 
     expect(syncAgent).toContain('write_symphony_env()');
     expect(syncAgent).toContain('/opt/matrix/env/symphony.env');
-    expect(syncAgent).toContain('sudo install -o root -g matrix -m 0640 "$temp_file" /opt/matrix/env/symphony.env || status=$?');
+    expect(syncAgent).toContain('sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?');
     expect(syncAgent).toContain('rm -f "$temp_file"');
     expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
     expect(syncAgent).toContain('sudo systemctl daemon-reload');

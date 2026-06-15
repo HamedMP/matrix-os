@@ -116,6 +116,11 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(control).toContain("status=stopping");
     expect(control).toContain("\"credentialConfigured\"");
     expect(control).not.toContain("journalctl");
+    // credentialConfigured now reflects the host-verifiable Linear bridge wiring,
+    // not a `*.linear` credential file that nothing on the host ever writes.
+    expect(control).toContain("bridge_configured()");
+    expect(control).not.toContain("*.linear");
+    expect(control).not.toContain("system/symphony/credentials");
     expect(proxy).toContain('app.get("/service"');
     expect(proxy).toContain('app.post("/service/start"');
     expect(proxy).toContain('app.post("/service/stop"');
@@ -131,7 +136,12 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(syncAgent).toContain("printf 'MATRIX_HANDLE=%s\\n'");
     expect(syncAgent).toContain("printf 'PLATFORM_INTERNAL_URL=%s\\n'");
     expect(syncAgent).toContain("printf 'UPGRADE_TOKEN=%s\\n'");
-    expect(syncAgent).toContain("sudo install -o root -g matrix -m 0640 \"$temp_file\" /opt/matrix/env/symphony.env || status=$?");
+    // Operator-set keys (e.g. SYMPHONY_LINEAR_PROJECT_SLUG) must survive updates:
+    // managed keys are rewritten, every other line in the file is preserved.
+    expect(syncAgent).toContain("SYMPHONY_MANAGED_KEYS=\"MATRIX_HANDLE PLATFORM_INTERNAL_URL UPGRADE_TOKEN\"");
+    expect(syncAgent).toContain("preserve_unmanaged_symphony_env()");
+    expect(syncAgent).toContain("preserve_unmanaged_symphony_env \"$SYMPHONY_ENV_FILE\"");
+    expect(syncAgent).toContain("sudo install -o root -g matrix -m 0640 \"$temp_file\" \"$SYMPHONY_ENV_FILE\" || status=$?");
     expect(syncAgent).toContain("rm -f \"$temp_file\"");
     expect(syncAgent).toContain("return \"$status\"");
     expect(syncAgent).toContain("sudo systemctl enable matrix-symphony.service");
@@ -282,7 +292,11 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(linearClient).not.toMatch(/when\s+\w+\s*==\s*Bridge\.credential\(\)/);
     expect(linearClient).not.toContain("when token == Bridge.credential()");
     expect(statusDashboard).not.toContain("when String.length(");
-    expect(presenter).toContain("is_binary(settings.tracker.api_key) and settings.tracker.api_key == Bridge.credential()");
+    // credential_status is derived from the live candidate poll, not env presence:
+    // a successful poll means connected, an explicit "not connected" means setup.
+    expect(presenter).toContain('linear_credential_status(%{tracker: %{status: :ok}}), do: "connected"');
+    expect(presenter).toContain('linear_credential_status(%{tracker: %{status: :setup_required}}), do: "setup_required"');
+    expect(presenter).not.toContain("matrix_linear_bridge_configured?");
     expect(linearClient).toContain("PLATFORM_INTERNAL_URL");
     expect(linearClient).toContain("UPGRADE_TOKEN");
     expect(linearClient).toContain("MATRIX_HANDLE");
@@ -293,5 +307,12 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(linearClient).toContain('service: "linear"');
     expect(linearClient).toContain('action: "graphql"');
     expect(linearClient).toContain(":matrix_linear_bridge_error");
+    // A 404 whose error says "not connected" means Linear is not connected;
+    // classify it distinctly so the orchestrator surfaces "setup_required". Other
+    // 404s (e.g. unknown handle) stay generic so they are not misreported.
+    expect(linearClient).toContain(":linear_not_connected");
+    expect(linearClient).toContain("status: 404, body: %{\"error\" => error}");
+    expect(linearClient).toContain("linear_not_connected_error?");
+    expect(linearClient).toContain('String.contains?(String.downcase(error), "not connected")');
   });
 });

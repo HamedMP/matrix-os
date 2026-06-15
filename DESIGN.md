@@ -1,9 +1,13 @@
 ---
 version: "0.1.0"
-name: "Matrix OS"
+name: "matrix os"
+# Wordmark: always lowercase "matrix os" — never "Matrix OS" or "MatrixOS".
+# Applies to UI wordmarks, marketing copy, titles, and docs. (The repo/dir
+# slug "matrix-os" and the domain matrix-os.com keep their hyphenated form.)
+wordmark: "matrix os"
 tagline: "Technology that understands you."
 description: >
-  Matrix OS is your personal cloud computer — a calm, intelligent space that
+  matrix os is your personal cloud computer — a calm, intelligent space that
   keeps you in flow, wherever you are. The visual language is warm, organic,
   and approachable. It draws from natural materials (forest, sand, terracotta)
   rather than neon/tech aesthetics.
@@ -49,6 +53,16 @@ colors:
   gradient-mid: "#434E3F"
   gradient-light: "#E0E1CA"
   gradient-accent: "#D06F25"
+
+  # OS shell accent. The marketing surfaces use `forest` as primary; the OS shell
+  # (desktop/terminal/mobile) uses a calmer green accent on its own tokens.
+  # Sage-teal #8CC7BE was retired 2026-06-14: the OS accent is now `lichen`
+  # (#9AA48C) in both light and dark, and focus rings use `ember`. Dark-mode
+  # `primary`/`accent` resolve to `lichen`; dark `ring` resolves to `ember`.
+  lichen: "#9AA48C"      # OS shell accent (replaces sage-teal)
+  moss: "#6A8A7A"        # deeper green — gradients, secondary
+  os-accent: "#9AA48C"
+  os-accent-ring: "#D06F25"
 
 typography:
   display:

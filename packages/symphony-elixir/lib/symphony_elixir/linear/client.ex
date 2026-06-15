@@ -472,12 +472,30 @@ defmodule SymphonyElixir.Linear.Client do
     {:ok, %{response | body: data}}
   end
 
+  defp unwrap_matrix_linear_bridge_response({:ok, %{status: 404, body: %{"error" => error}}})
+       when is_binary(error) do
+    # The platform bridge answers 404 for both "service not connected" and other
+    # missing resources (e.g. an unknown handle). Only the former means the owner
+    # must connect Linear; classify it narrowly so unrelated 404s stay generic.
+    if linear_not_connected_error?(error) do
+      Logger.warning("Matrix Linear bridge reports Linear is not connected")
+      {:error, :linear_not_connected}
+    else
+      Logger.warning("Matrix Linear bridge returned a 404 error response")
+      {:error, :matrix_linear_bridge_error}
+    end
+  end
+
   defp unwrap_matrix_linear_bridge_response({:ok, %{body: %{"error" => _error}}}) do
     Logger.warning("Matrix Linear bridge returned an error response")
     {:error, :matrix_linear_bridge_error}
   end
 
   defp unwrap_matrix_linear_bridge_response(other), do: other
+
+  defp linear_not_connected_error?(error) when is_binary(error) do
+    String.contains?(String.downcase(error), "not connected")
+  end
 
   defp decode_linear_response(%{"data" => %{"issues" => %{"nodes" => nodes}}}, assignee_filter) do
     issues =

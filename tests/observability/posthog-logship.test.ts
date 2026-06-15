@@ -19,7 +19,8 @@ describe("PostHog fleet log shipping", () => {
     expect(installer).toContain('headers = { "Authorization" = "Bearer " + sys.env("POSTHOG_PROJECT_TOKEN") }');
 
     expect(installer).toContain('forward_to    = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]');
-    expect(installer).toContain('labels     = { source = "jsonl", handle = "${HANDLE}", env = "${MATRIX_ENV}" }');
+    expect(installer).toContain('path_targets = [{ __path__ = "${MATRIX_HOME_LOGS}/*.jsonl", source = "jsonl", handle = "${HANDLE}", env = "${MATRIX_ENV}" }]');
+    expect(installer).not.toMatch(/loki\.source\.file "kernel_logs" \{[^}]*\n\s+labels\s+=/);
     expect(installer).toContain('forward_to = [loki.write.central.receiver, otelcol.receiver.loki.posthog.receiver]');
   });
 
@@ -30,6 +31,8 @@ describe("PostHog fleet log shipping", () => {
     expect(helper).toContain("printf '%s\\n%s\\n%s\\n' \"$LOGS_INGEST_USER\" \"$LOGS_INGEST_PASSWORD\" \"$POSTHOG_PROJECT_TOKEN\"");
     expect(helper).toContain("IFS= read -r t");
     expect(helper).toContain('POSTHOG_PROJECT_TOKEN=\\"\\$t\\"');
+    expect(helper).toContain("/opt/matrix/bin/matrix-install-logship");
+    expect(helper).not.toContain("/opt/matrix/app/bin/matrix-install-logship");
     expect(helper).not.toContain("POSTHOG_PROJECT_TOKEN='${POSTHOG_PROJECT_TOKEN}'");
   });
 });

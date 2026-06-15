@@ -375,6 +375,7 @@ describe("proxy auth: sign-in redirects", () => {
 
   it("uses the configured public HTTPS app origin for anonymous redirects", async () => {
     vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "pk_test_proxy_auth");
     vi.stubEnv("NEXT_PUBLIC_MATRIX_APP_URL", "https://app.matrix-os.com");
 
     const clerkMiddleware = vi.fn((handler) => async (request: unknown, event: unknown) =>

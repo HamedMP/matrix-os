@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Script from "next/script";
+import { headers } from "next/headers";
 import { BodyOverflow } from "@/components/landing/ScrollScreenshot";
 import { LandingBilling } from "@/components/landing/LandingBilling";
 import { LandingTelemetry } from "@/components/landing/LandingTelemetry";
@@ -38,11 +38,19 @@ export const metadata: Metadata = {
     "Matrix gives background agents their own computer. Run Claude, Codex, Cursor, OpenCode, and Hermes in a private hosted workspace with persistent terminals, repos, previews, and workflows that keep going after your laptop closes.",
 };
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     <div style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: fonts.sans }}>
       {/* react-doctor-disable-next-line react-doctor/no-danger -- jsonLd is JSON.stringify of a static module-scope object (trusted, no user input); standard JSON-LD injection */}
-      <Script id="landing-json-ld" type="application/ld+json" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: jsonLd }} />
+      <script
+        id="landing-json-ld"
+        type="application/ld+json"
+        nonce={nonce}
+        suppressHydrationWarning
+        dangerouslySetInnerHTML={{ __html: jsonLd }}
+      />
       <LandingTelemetry />
       <BodyOverflow />
 

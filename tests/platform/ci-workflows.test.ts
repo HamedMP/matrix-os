@@ -45,6 +45,21 @@ describe('CI workflows', () => {
     expect(readme).toContain('Screenshot workflow removed');
   });
 
+  it('reuses one Docker test image artifact across scenario jobs', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/docker-test.yml'), 'utf8');
+
+    expect(workflow).toContain('name: Upload Docker image artifact');
+    expect(workflow).toContain('name: Download Docker image artifact');
+    expect(workflow).toContain('uses: actions/download-artifact@v7');
+    expect(workflow).not.toContain('uses: actions/download-artifact@v8');
+    expect(workflow).toContain('docker save matrix-os-dev:ci | gzip -1 > /tmp/matrix-os-dev-ci.tar.gz');
+    expect(workflow).toContain('gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load');
+
+    const dockerBuildActionUses = workflow.match(/uses: docker\/build-push-action@v7/g) ?? [];
+    expect(dockerBuildActionUses).toHaveLength(1);
+  });
+
   it('wires every required Stripe price secret into platform Cloud Run', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

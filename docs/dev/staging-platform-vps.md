@@ -1,281 +1,218 @@
 # Staging Platform and Feature VPS Runbook
 
-Use this runbook when a feature needs a real platform process, Stripe test mode,
-or a disposable customer VPS before it merges. The goal is to test production
-runtime behavior without breaking stable bundles, production platform state, or a
-user's primary Matrix computer.
+Use this runbook when a feature needs to be walked **end to end against branch
+platform code** before it merges — especially the onboarding and billing flow
+(sign in -> plan -> Stripe test checkout -> settling -> provision -> boot ->
+ready). It is the manual/deep-debug path. For the standard, automated preview
+flows, start with [Preview Environments](preview-environments.md):
 
-For branch-only customer runtime testing, also see
-[PR and Branch Preview VPS Guide](pr-branch-preview-vps.md). For production
-release fan-out, see [Release Process](releases.md) and
-[Fleet Upgrade Operations](fleet-upgrade-operations.md).
-
-## Architecture
-
-Staging uses three separate pieces:
-
-| Piece | Purpose | Lifetime |
+| You want | Use | Where |
 | --- | --- | --- |
-| Feature worktree | Source code for the branch or stacked PR under test. | Until the PR lands. |
-| Staging platform container | A non-production platform process on the platform Docker network, usually bound to `127.0.0.1:9100`. | While the feature is being tested. |
-| Feature VPS | A real Hetzner customer VPS in a non-primary runtime slot, such as `hamed-billing-staging`. | Delete after validation. |
+| Shell/gateway UI iteration | Staging slot (HMR) | `preview-environments.md` |
+| Bundle on a virgin VPS | `preview-vps` label | `preview-environments.md` |
+| Branch platform API in isolation | `preview-platform` label (Cloud Run) | `preview-environments.md` |
+| **Full onboarding + billing on branch code** | **this runbook** | below |
 
-The staging platform is allowed to use Stripe test-mode keys and staging return
-URLs. It must not be used as the stable-channel publisher for production users.
+## Architecture (read this first)
 
-## Environment Files
+Production Matrix OS is VPS-native per user with the **platform on Cloud Run**.
+There is no local platform Docker container on the ops VPS, and there is no
+single turnkey environment that runs branch platform code with **Stripe test
+mode** against a **non-production database**, browser-reachable. So the full
+onboarding flow is tested as a **pragmatic split** across the tools that each
+cover one slice:
 
-Keep staging secrets outside git. The current convention on the platform host is:
+| Slice (PR area) | Tool | Why |
+| --- | --- | --- |
+| Boot sequence, auth door / origins (shell) | Staging slot (HMR) | Fast, browser-reachable, runs the branch shell. |
+| Journey endpoint + provisioning reliability (platform) | `preview-platform` Cloud Run revision | Branch platform code on the staging DB; reached via an IAM proxy. |
+| Stripe checkout + webhook (billing) | Local platform from the worktree + Stripe CLI | The only place test-mode keys + a forwarded webhook are wired. |
+| Provisioned shell on a real host | Disposable feature VPS | Confirms the boot -> first-run -> ready hand-off on a real customer VPS. |
 
-```text
-/home/deploy/matrix-os/.env.staging-platform
-```
+> Known gap: combining all four into one browser-reachable environment is not
+> wired yet (`preview-platform` is IAM-only and has no Stripe secrets;
+> `preview-vps` provisions against the **production** platform; the GitHub
+> `staging` environment is a no-traffic revision of the production service).
+> Closing it durably means either adding Stripe test secrets to
+> `matrix-platform-preview` and fronting it with auth, or standing up a
+> dedicated isolated staging platform. Until then, use the split below.
 
-Required staging variables:
+## Slice 1 — Shell (boot sequence, auth door, origins)
 
-| Variable | Notes |
-| --- | --- |
-| `PLATFORM_SECRET` | Local operator API bearer token for staging routes. |
-| `CLERK_SECRET_KEY` | Clerk instance used by the staging platform. |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Build-time shell key for branch bundles. |
-| `CUSTOMER_VPS_ENABLED=true` | Required for real feature VPS provisioning. |
-| `HETZNER_API_TOKEN` | Hetzner project token that may create/delete feature VPSes. |
-| `HETZNER_LOCATION` / `HETZNER_SERVER_TYPE` / `HETZNER_IMAGE` / `HETZNER_SSH_KEY_NAME` | Provider defaults for feature VPSes. |
-| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` | Bundle publish and signed download support. |
-| `PLATFORM_PUBLIC_URL` | Staging platform public URL, for example `https://staging-app.matrix-os.com`. |
-| `MATRIX_APP_DOMAIN_HOSTS` | Include staging app hosts; include production app hosts only for a deliberate temporary route. |
-| `MATRIX_BILLING_PROVIDER=stripe` or `MATRIX_STRIPE_BILLING_ENABLED=true` | Enables Stripe-backed billing paths. |
-| `STRIPE_SECRET_KEY` | Stripe test-mode secret key for staging. |
-| `STRIPE_WEBHOOK_SECRET` | Stripe CLI or Dashboard webhook signing secret for staging. |
-| `STRIPE_PRICE_MATRIX_*` | Test-mode Stripe Price IDs for Starter, Builder, and Max monthly/annual prices. |
-| `STRIPE_CHECKOUT_SUCCESS_URL` / `STRIPE_CHECKOUT_CANCEL_URL` / `STRIPE_PORTAL_RETURN_URL` | Return URLs for the feature VPS being tested. |
-| `STAGING_PLATFORM_PORT` | Local staging platform port, usually `9100`. |
-
-Do not copy production Stripe keys into `.env.staging-platform`. Do not copy
-`PLATFORM_JWT_SECRET` or production-only provider secrets onto customer VPSes.
-
-## Start a Staging Platform
-
-1. Build from the feature worktree, not from `main`.
-
-   ```bash
-   cd /home/deploy/matrix-os.worktrees/<feature-worktree>
-   ```
-
-2. Start or restart the staging platform container with the staging env file.
-   The exact compose file may differ by host; the important invariant is that
-   the container joins `matrixos-net`, exposes only a local operator port, and
-   mounts the feature worktree source.
-
-   ```bash
-   docker compose \
-     --env-file /home/deploy/matrix-os/.env.staging-platform \
-     -f /home/deploy/matrix-os/docker-compose.staging.yml \
-     up -d --build
-   ```
-
-3. Verify the local operator API.
-
-   ```bash
-   set -a
-   source /home/deploy/matrix-os/.env.staging-platform
-   set +a
-
-   curl --fail --silent --show-error \
-     -H "Authorization: Bearer $PLATFORM_SECRET" \
-     "http://127.0.0.1:${STAGING_PLATFORM_PORT:-9100}/health"
-   ```
-
-4. If Cloudflare needs a temporary route for browser checkout testing, route only
-   the minimum path needed. Remove it immediately after testing. For example,
-   route `/billing/*` to the staging platform only while validating the branch
-   checkout path, then restore production routing.
-
-## Provision a Feature VPS
-
-Use a unique handle and runtime slot. Never use `primary` for branch testing.
+Claim a staging slot for the feature worktree. Edits hot-reload; no rebuild.
 
 ```bash
-set -a
-source /home/deploy/matrix-os/.env.staging-platform
-set +a
+./scripts/staging-slot.sh up /home/deploy/matrix-os.worktrees/<feature-worktree>
+# -> shell: https://staging-<n>.matrix-os.com  api: https://api-staging-<n>.matrix-os.com
+./scripts/staging-slot.sh down <n>   # release when done — slots are shared
+```
 
-PLATFORM_API_URL="http://127.0.0.1:${STAGING_PLATFORM_PORT:-9100}"
+Walk the sign-in door, redirect/return behavior, and the boot-sequence phases
+the shell renders. See [Preview Environments](preview-environments.md) for slot
+details and log access (`preview-logs.sh --slot <n>`).
+
+## Slice 2 — Platform journey + provisioning reliability
+
+Deploy the branch as a `preview-platform` revision (add the `preview-platform`
+label to the PR, or `gh workflow run preview-platform.yml -f pr=<N>`), then
+reach it through an IAM proxy from a host with `gcloud` access:
+
+```bash
+gcloud run services proxy matrix-platform-preview --region europe-west3 --port 8080
+# then, in another shell, with a bearer for your Clerk user:
+curl -fsS -H "Authorization: Bearer <token>" http://127.0.0.1:8080/api/journey | jq .
+```
+
+The revision runs on the **staging** database, so you can drive the journey
+state machine and the reliability fixes directly:
+
+- **Phase derivation**: seed the staging DB so the user has an active
+  entitlement but no machine, then assert `/api/journey` reports
+  `provisioning`/`first_run`/`ready` as the machine progresses.
+- **Stuck-row reconciliation / TTL**: insert a `user_machines` row stuck mid
+  provision (or let a registration token expire) and confirm the reconciler
+  marks it failed, reaps the server, and unblocks re-provisioning.
+- **Lapsed entitlement**: expire the entitlement and confirm the journey routes
+  back to `plan_required` rather than serving a dead machine.
+
+Connect to the staging DB through the dedicated staging postgres container on
+the ops VPS (database `matrixos_staging`). Never seed or mutate the production
+platform database for testing.
+
+## Slice 3 — Stripe checkout + webhook (test mode)
+
+Run the platform locally from the feature worktree with test-mode billing, and
+forward Stripe webhooks to it with the Stripe CLI. Keep all secrets in
+`.env.staging-platform` (test-mode keys only — never production Stripe keys):
+
+```bash
+cd /home/deploy/matrix-os.worktrees/<feature-worktree>
+set -a; source /home/deploy/matrix-os/.env.staging-platform; set +a
+
+# 1) forward webhooks; copy the printed whsec_... into STRIPE_WEBHOOK_SECRET
+stripe listen --forward-to "localhost:${PLATFORM_PORT:-9000}/billing/webhooks/stripe"
+
+# 2) in another shell (same env), run only the platform
+bun run dev:platform
+```
+
+Drive a checkout for a test plan, pay with `4242 4242 4242 4242`, and confirm:
+
+- the checkout attempt is recorded `open`, then flips to `paid` on
+  `checkout.session.completed`;
+- a success redirect that **beats** the webhook lands the journey in
+  `payment_settling` (not back at the billing wall) and advances once the
+  webhook arrives — the checkout-success-vs-webhook race;
+- `checkout.session.expired` resolves the attempt to `expired`.
+
+## Slice 4 — Disposable feature VPS
+
+Provision a non-primary feature VPS bound to **your** Clerk user so you can open
+it in a browser with your normal login. Provision through the platform operator
+API (use the platform instance that owns the test — production operator API for
+a bundle-only check, or your local/preview platform when the VPS must talk to
+branch platform code). Never use the `primary` runtime slot for branch testing.
+
+```bash
+set -a; source /home/deploy/matrix-os/.env.staging-platform; set +a
+PLATFORM_API_URL="<platform-operator-base-url>"
 
 curl --fail --silent --show-error \
   -X POST "${PLATFORM_API_URL%/}/containers/provision" \
   -H "Authorization: Bearer $PLATFORM_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
-    "handle": "alice-feature-staging",
-    "clerkUserId": "user_REPLACE_ME",
-    "displayName": "alice-feature-staging",
-    "runtimeSlot": "alice-feature-staging"
+    "handle": "<feature-handle>",
+    "clerkUserId": "<your-clerk-user-id>",
+    "displayName": "<feature-handle>",
+    "runtimeSlot": "<feature-handle>"
   }'
 ```
 
-Open the feature runtime at:
-
-```text
-https://app.matrix-os.com/vm/<feature-handle>
-```
-
-If the staging platform owns the checkout route temporarily, the shell can still
-be served by the feature VPS while checkout and portal requests go to staging.
-
-## Build and Pin the Feature Bundle
-
-Build an immutable host bundle from the feature worktree:
+Build and pin an immutable host bundle from the feature worktree, then deploy
+that exact version to only the feature handle:
 
 ```bash
-set -a
-source /home/deploy/matrix-os/.env
-set +a
-
+set -a; source /home/deploy/matrix-os/.env; set +a
 VERSION="v$(date -u +%Y.%m.%d)-pr<PR>-<short-feature>-$(git rev-parse --short=9 HEAD)"
 
-HOST_BUNDLE_VERSION="$VERSION" \
-HOST_BUNDLE_CHANNEL=dev \
-MATRIX_BUILD_SHA="$(git rev-parse HEAD)" \
-MATRIX_BUILD_REF="$(git rev-parse --abbrev-ref HEAD)" \
-./scripts/build-host-bundle.sh
+HOST_BUNDLE_VERSION="$VERSION" HOST_BUNDLE_CHANNEL=dev \
+MATRIX_BUILD_SHA="$(git rev-parse HEAD)" MATRIX_BUILD_REF="$(git rev-parse --abbrev-ref HEAD)" \
+  ./scripts/build-host-bundle.sh
+./scripts/publish-release.sh "$VERSION" --channel dev --changelog "Feature preview $(git rev-parse --abbrev-ref HEAD)"
 
-./scripts/publish-release.sh "$VERSION" \
-  --channel dev \
-  --changelog "Feature preview $(git rev-parse --abbrev-ref HEAD)"
-```
-
-Deploy that exact version only to the feature VPS:
-
-```bash
 curl --fail --silent --show-error \
   -X POST "${PLATFORM_API_URL%/}/vps/deploy" \
-  -H "Authorization: Bearer $PLATFORM_SECRET" \
-  -H "Content-Type: application/json" \
-  -d "{\"version\":\"$VERSION\",\"handle\":\"alice-feature-staging\"}"
+  -H "Authorization: Bearer $PLATFORM_SECRET" -H "Content-Type: application/json" \
+  -d "{\"version\":\"$VERSION\",\"handle\":\"<feature-handle>\"}"
 ```
 
-## Verify a Feature VPS
-
-Use the local operator API first:
-
-```bash
-curl --fail --silent --show-error \
-  -H "Authorization: Bearer $PLATFORM_SECRET" \
-  "${PLATFORM_API_URL%/}/vps/fleet" \
-  | jq '.machines[] | select(.handle == "alice-feature-staging") | {handle, machineId, status, healthy, publicIPv4, imageVersion, runtimeVersion}'
-```
-
-Then verify the host directly. The current smoke key is:
+Open the runtime at `https://app.matrix-os.com/vm/<feature-handle>` and verify
+the host directly (gateway is usually `4000`, shell `3000`):
 
 ```bash
-ssh -i ~/.ssh/customer_vps_smoke \
-  -o IdentitiesOnly=yes \
-  -o StrictHostKeyChecking=accept-new \
+ssh -i ~/.ssh/customer_vps_smoke -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
   root@<publicIPv4> \
-  'cat /opt/matrix/app/BUNDLE_VERSION; cat /opt/matrix/release.json; systemctl is-active matrix-gateway matrix-shell matrix-sync-agent; curl -fsS http://127.0.0.1:4000/health; curl -fsS -o /dev/null -w "shell_status=%{http_code}\n" http://127.0.0.1:3000'
+  'cat /opt/matrix/app/BUNDLE_VERSION; systemctl is-active matrix-gateway matrix-shell matrix-sync-agent; curl -fsS http://127.0.0.1:4000/health; curl -fsS -o /dev/null -w "shell_status=%{http_code}\n" http://127.0.0.1:3000'
 ```
 
-Gateway ports are host-bundle conventions, not assumptions from old Docker
-runtime docs: gateway is usually `4000`, shell is usually `3000`.
+## Tear Down
 
-## Tear Down a Feature VPS
-
-Always delete feature VPSes through the platform so Hetzner deletion and platform
-soft-delete metadata stay consistent.
-
-1. Find the machine ID.
-
-   ```bash
-   curl --fail --silent --show-error \
-     -H "Authorization: Bearer $PLATFORM_SECRET" \
-     "${PLATFORM_API_URL%/}/vps/fleet" \
-     | jq '.machines[] | select(.handle == "alice-feature-staging") | {handle, machineId, status, publicIPv4}'
-   ```
-
-2. Delete the feature VPS by machine ID.
-
-   ```bash
-   curl --fail --silent --show-error \
-     -X DELETE "${PLATFORM_API_URL%/}/vps/<machineId>" \
-     -H "Authorization: Bearer $PLATFORM_SECRET"
-   ```
-
-3. Confirm it is deleted or absent from the active fleet.
-
-   ```bash
-   curl --fail --silent --show-error \
-     -H "Authorization: Bearer $PLATFORM_SECRET" \
-     "${PLATFORM_API_URL%/}/vps/fleet" \
-     | jq '.machines[] | select(.handle == "alice-feature-staging") | {handle, machineId, status, deletedAt}'
-   ```
-
-## Stop a Staging Platform
-
-Stop the staging platform container after the feature test is complete:
+Always delete feature VPSes through the platform so Hetzner deletion and
+platform soft-delete metadata stay consistent — never delete directly in
+Hetzner.
 
 ```bash
-docker compose \
-  --env-file /home/deploy/matrix-os/.env.staging-platform \
-  -f /home/deploy/matrix-os/docker-compose.staging.yml \
-  down
+# find the machine, then delete by id
+curl -fsS -H "Authorization: Bearer $PLATFORM_SECRET" "${PLATFORM_API_URL%/}/vps/fleet" \
+  | jq '.machines[] | select(.handle == "<feature-handle>") | {handle, machineId, status, publicIPv4}'
+curl -fsS -X DELETE "${PLATFORM_API_URL%/}/vps/<machineId>" -H "Authorization: Bearer $PLATFORM_SECRET"
 ```
 
-Remove temporary Cloudflare routes that pointed production hostnames or billing
-paths at the staging platform. Restart cloudflared after changing the route
-config and verify production routes are back on the production platform.
+Stop the local billing rig (`Ctrl-C` the `dev:platform` and `stripe listen`
+processes), release any staging slot (`staging-slot.sh down <n>`), and remove
+any temporary Cloudflare route you added, restarting cloudflared and confirming
+production routes are intact.
+
+## Rules
+
+- Keep `/home/deploy/matrix-os` on `main`; do feature work in a manual worktree
+  under `/home/deploy/matrix-os.worktrees/<slug>`.
+- Never seed or mutate the **production** platform database for testing; use the
+  staging database.
+- Never copy production Stripe keys into `.env.staging-platform`. Test-mode keys
+  only.
+- Never use the `primary` runtime slot, and never deploy a feature bundle to the
+  whole fleet.
+- Delete feature VPSes through `DELETE /vps/<machineId>`; remove temporary
+  Cloudflare routes after testing.
 
 ## Production Stripe Checklist
 
-Before promoting Stripe billing to production, the owner must configure the
-production Stripe account and production platform env:
+Before promoting Stripe billing to production, configure the production Stripe
+account and production platform env:
 
-1. Create production Stripe Products and recurring Prices:
-   - Starter monthly and annual.
-   - Builder monthly and annual.
-   - Max monthly and annual.
-   - Extra runtime monthly and annual add-on, if the launch includes multiple
-     machines.
-2. Copy the production Price IDs into the production platform env:
-   - `STRIPE_PRICE_MATRIX_STARTER_MONTHLY`
-   - `STRIPE_PRICE_MATRIX_STARTER_ANNUAL`
-   - `STRIPE_PRICE_MATRIX_BUILDER_MONTHLY`
-   - `STRIPE_PRICE_MATRIX_BUILDER_ANNUAL`
-   - `STRIPE_PRICE_MATRIX_MAX_MONTHLY`
-   - `STRIPE_PRICE_MATRIX_MAX_ANNUAL`
-   - `STRIPE_PRICE_EXTRA_RUNTIME_MONTHLY`
-   - `STRIPE_PRICE_EXTRA_RUNTIME_ANNUAL`
-3. Enable Stripe automatic tax for Checkout and Portal. Add the required tax
-   registrations before taking live payments.
-4. Enable promotion codes in Checkout and Customer Portal. Create launch coupons
-   as Stripe Coupons and Promotion Codes, not Matrix hardcoded discounts.
-5. Configure the production webhook endpoint:
-
-   ```text
-   https://app.matrix-os.com/billing/webhooks/stripe
-   ```
-
-   Subscribe to:
-   - `customer.subscription.created`
-   - `customer.subscription.updated`
-   - `customer.subscription.deleted`
-
+1. Create production Products and recurring Prices (Starter, Builder, Max —
+   monthly and annual; extra-runtime add-on if launching multiple machines).
+2. Copy the production Price IDs into the production platform env
+   (`STRIPE_PRICE_MATRIX_*`, `STRIPE_PRICE_EXTRA_RUNTIME_*`).
+3. Enable automatic tax for Checkout and Portal; add required tax registrations.
+4. Enable promotion codes in Checkout and Customer Portal (Stripe Coupons /
+   Promotion Codes, not hardcoded discounts).
+5. Configure the production webhook endpoint
+   (`https://app.matrix-os.com/billing/webhooks/stripe`) and subscribe to
+   `customer.subscription.created|updated|deleted`.
 6. Store the production webhook signing secret as `STRIPE_WEBHOOK_SECRET`.
-7. Use a restricted production Stripe key for `STRIPE_SECRET_KEY` with only the
-   permissions needed for Customers, Checkout Sessions, Billing Portal Sessions,
-   Subscriptions, Prices, and webhook event signature handling.
-8. Set production return URLs:
-   - `STRIPE_CHECKOUT_SUCCESS_URL=https://app.matrix-os.com/?billing=success&checkout=success`
-   - `STRIPE_CHECKOUT_CANCEL_URL=https://app.matrix-os.com/?billing=canceled`
-   - `STRIPE_PORTAL_RETURN_URL=https://app.matrix-os.com/?billing=portal`
-9. Set `MATRIX_BILLING_PROVIDER=stripe` or
-   `MATRIX_STRIPE_BILLING_ENABLED=true` on production platform.
-10. Rebuild the host bundle after changing any `NEXT_PUBLIC_*` value. Platform
-    runtime-only Stripe variables do not require a shell rebuild, but a stable
-    release should still be built from the merge commit and deployed by version
-    for traceability.
+7. Use a **restricted** production key for `STRIPE_SECRET_KEY` (Customers,
+   Checkout Sessions, Billing Portal Sessions, Subscriptions, Prices, webhook
+   signature handling only).
+8. Set production return URLs (`STRIPE_CHECKOUT_SUCCESS_URL`,
+   `STRIPE_CHECKOUT_CANCEL_URL`, `STRIPE_PORTAL_RETURN_URL`).
+9. Set `MATRIX_BILLING_PROVIDER=stripe` or `MATRIX_STRIPE_BILLING_ENABLED=true`
+   on the production platform.
+10. Rebuild the host bundle after changing any `NEXT_PUBLIC_*` value; build a
+    stable release from the merge commit for traceability.
 
 After production env is set, merge the stack, build a host bundle from `main`,
 publish it, promote it to `stable`, deploy the fleet by `stable`, and verify
 every running VPS reports the stable version.
-
