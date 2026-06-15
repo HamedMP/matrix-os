@@ -92,6 +92,36 @@ describe("zellij-runtime", () => {
     );
   });
 
+  it("writes compact Matrix zellij config and starts with that config environment", async () => {
+    const pty = createPty();
+    const spawnPty = vi.fn(() => pty.process);
+    const runtime = createZellijRuntime({ homePath, runCommand: vi.fn(), spawnPty, startupDelayMs: 1 });
+
+    const started = await runtime.start({ sessionId: "sess_matrix_ui", launch });
+
+    const configDir = join(homePath, "system", "zellij");
+    const configPath = join(configDir, "config.kdl");
+    const config = await readFile(configPath, "utf-8");
+    const defaultLayout = await readFile(join(configDir, "layouts", "matrix.kdl"), "utf-8");
+    const sessionLayout = await readFile(started.layoutPath, "utf-8");
+
+    expect(config).toContain("pane_frames false");
+    expect(config).toContain("simplified_ui true");
+    expect(config).toContain('default_layout "matrix"');
+    expect(defaultLayout).toContain('plugin location="zellij:compact-bar"');
+    expect(sessionLayout).toContain('plugin location="zellij:compact-bar"');
+    expect(spawnPty).toHaveBeenCalledWith(
+      "zellij",
+      ["--session", "matrix-sess_matrix_ui", "--new-session-with-layout", started.layoutPath],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          ZELLIJ_CONFIG_DIR: configDir,
+          ZELLIJ_CONFIG_FILE: configPath,
+        }),
+      }),
+    );
+  });
+
   it("passes only safe process environment keys plus explicit launch env to zellij", async () => {
     vi.stubEnv("DATABASE_URL", "postgres://secret");
     vi.stubEnv("LINEAR_API_KEY", "lin_api_secret");

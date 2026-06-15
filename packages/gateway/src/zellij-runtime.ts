@@ -51,6 +51,26 @@ const ZELLIJ_TIMEOUT_MS = 10_000;
 const ZELLIJ_STARTUP_DELAY_MS = 500;
 const MAX_RETAINED_ZELLIJ_PTYS = 128;
 const RETAINED_PTY_TTL_MS = 4 * 60 * 60 * 1000;
+const MATRIX_ZELLIJ_CONFIG = `// Matrix OS generated workspace config.
+pane_frames false
+simplified_ui true
+default_layout "matrix"
+theme "default"
+`;
+const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS keeps Zellij chrome compact; Matrix shell renders sessions and actions.
+layout {
+  default_tab_template {
+    children
+    pane size=1 borderless=true {
+      plugin location="zellij:compact-bar"
+    }
+  }
+
+  tab name="main" {
+    pane
+  }
+}
+`;
 const SAFE_PROCESS_ENV_KEYS = new Set([
   "COLORTERM",
   "DISPLAY",
@@ -117,6 +137,13 @@ function renderLayout(input: {
   return [
     `// Matrix OS generated layout for ${input.sessionName}`,
     "layout {",
+    "  default_tab_template {",
+    "    children",
+    "    pane size=1 borderless=true {",
+    "      plugin location=\"zellij:compact-bar\"",
+    "    }",
+    "  }",
+    "",
     "  tab name=\"Agent\" {",
     `    pane cwd=${kdlString(input.launch.cwd)} command=${kdlString(input.launch.command)} {`,
     argsLine.trimEnd(),
@@ -127,12 +154,19 @@ function renderLayout(input: {
   ].filter((line) => line.length > 0).join("\n");
 }
 
-function ptyEnv(launchEnv: Record<string, string>): Record<string, string> {
+function ptyEnv(
+  launchEnv: Record<string, string>,
+  zellijConfigPaths: { dir: string; file: string } | null = null,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string" && (SAFE_PROCESS_ENV_KEYS.has(key) || key.startsWith("LC_"))) {
       env[key] = value;
     }
+  }
+  if (zellijConfigPaths) {
+    env.ZELLIJ_CONFIG_DIR = zellijConfigPaths.dir;
+    env.ZELLIJ_CONFIG_FILE = zellijConfigPaths.file;
   }
   return { ...env, ...launchEnv };
 }
@@ -168,7 +202,25 @@ export function createZellijRuntime(options: {
   const retainedPtyTtlMs = options.retainedPtyTtlMs ?? RETAINED_PTY_TTL_MS;
   const nowMs = options.nowMs ?? Date.now;
   const layoutDir = join(homePath, "system", "zellij", "layouts");
+  const configDir = join(homePath, "system", "zellij");
+  const configPath = join(configDir, "config.kdl");
+  const defaultLayoutPath = join(layoutDir, "matrix.kdl");
   const retainedPtys = new Map<string, RetainedPty>();
+  let ensureConfigPromise: Promise<void> | null = null;
+
+  async function ensureMatrixZellijConfig(): Promise<void> {
+    if (!ensureConfigPromise) {
+      ensureConfigPromise = (async () => {
+        await mkdir(layoutDir, { recursive: true });
+        await atomicWriteText(configPath, MATRIX_ZELLIJ_CONFIG);
+        await atomicWriteText(defaultLayoutPath, MATRIX_ZELLIJ_LAYOUT);
+      })().catch((err: unknown) => {
+        ensureConfigPromise = null;
+        throw err;
+      });
+    }
+    await ensureConfigPromise;
+  }
 
   function sweepRetainedPtys(): void {
     const cutoff = nowMs() - retainedPtyTtlMs;
@@ -186,7 +238,7 @@ export function createZellijRuntime(options: {
     }): Promise<ZellijLayoutResult> {
       const name = sessionName(input.sessionId);
       const layoutPath = join(layoutDir, `${input.sessionId}.kdl`);
-      await mkdir(layoutDir, { recursive: true });
+      await ensureMatrixZellijConfig();
       await atomicWriteText(layoutPath, renderLayout({ sessionName: name, launch: input.launch }));
       return { sessionName: name, layoutPath };
     },
@@ -208,7 +260,7 @@ export function createZellijRuntime(options: {
         cols: 120,
         rows: 40,
         cwd: input.launch.cwd,
-        env: ptyEnv(input.launch.env),
+        env: ptyEnv(input.launch.env, { dir: configDir, file: configPath }),
       });
       let exited: { exitCode: number; signal?: number } | null = null;
       ptyProcess.onExit((event: { exitCode: number; signal?: number }) => {

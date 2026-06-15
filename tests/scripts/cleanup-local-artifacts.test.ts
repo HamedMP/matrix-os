@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -47,10 +47,11 @@ describe("cleanup-local-artifacts", () => {
       olderThanDays: 3,
       now,
     });
+    const canonicalOldBundle = await realpath(oldBundle);
 
-    expect(candidates.map((candidate) => candidate.path)).toEqual([oldBundle]);
+    expect(candidates.map((candidate) => candidate.path)).toEqual([canonicalOldBundle]);
     expect(candidates[0]).toMatchObject({
-      path: oldBundle,
+      path: canonicalOldBundle,
       dirEntrySizeBytes: expect.any(Number),
     });
     expect(candidates[0]).not.toHaveProperty("sizeBytes");
@@ -85,8 +86,9 @@ describe("cleanup-local-artifacts", () => {
       now,
       dryRun: false,
     });
+    const canonicalOldBundle = join(await realpath(root), "matrix-os-a", "dist", "host-bundle");
 
-    expect(applied.removed.map((candidate) => candidate.path)).toEqual([oldBundle]);
+    expect(applied.removed.map((candidate) => candidate.path)).toEqual([canonicalOldBundle]);
     await expect(stat(oldBundle)).rejects.toThrow();
     await expect(stat(newBundle)).resolves.toBeTruthy();
   });

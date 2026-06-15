@@ -10,22 +10,32 @@ const clerkState = vi.hoisted(() => ({
   activePlan: null as string | null,
 }));
 
-vi.mock("@clerk/nextjs", () => ({
-  useAuth: () => ({
-    isLoaded: clerkState.isLoaded,
-    isSignedIn: true,
-    userId: clerkState.userId,
-    has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
-  }),
-}));
+function installClerkMock() {
+  vi.doMock("@clerk/nextjs", () => ({
+    useAuth: () => ({
+      isLoaded: clerkState.isLoaded,
+      isSignedIn: true,
+      userId: clerkState.userId,
+      has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
+    }),
+  }));
+}
+
+async function loadBillingSection() {
+  vi.resetModules();
+  installClerkMock();
+  return await import("../../shell/src/components/settings/sections/BillingSection.js");
+}
 
 describe("BillingSection", () => {
   beforeEach(async () => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+    installClerkMock();
     const { resetMatrixBillingAccessCacheForTests } = await import(
       "../../shell/src/hooks/useMatrixBillingAccess.js"
     );
     resetMatrixBillingAccessCacheForTests();
-    vi.restoreAllMocks();
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
         status: 200,
@@ -38,9 +48,7 @@ describe("BillingSection", () => {
     clerkState.isLoaded = false;
     clerkState.activePlan = "matrix_starter";
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
 
@@ -53,9 +61,7 @@ describe("BillingSection", () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
 
@@ -83,9 +89,7 @@ describe("BillingSection", () => {
         }),
       );
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
 
@@ -107,9 +111,7 @@ describe("BillingSection", () => {
       }),
     );
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
@@ -144,9 +146,7 @@ describe("BillingSection", () => {
       }),
     );
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(
       <BillingSection
@@ -176,9 +176,7 @@ describe("BillingSection", () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection mode="provisioning" />);
 
@@ -207,9 +205,7 @@ describe("BillingSection", () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(
       <BillingSection
@@ -237,9 +233,7 @@ describe("BillingSection", () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = plan;
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
 
@@ -285,9 +279,7 @@ describe("BillingSection", () => {
         }),
       );
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
 
@@ -312,9 +304,7 @@ describe("BillingSection", () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = "early_adopter";
 
-    const { BillingSection } = await import(
-      "../../shell/src/components/settings/sections/BillingSection.js"
-    );
+    const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
 
