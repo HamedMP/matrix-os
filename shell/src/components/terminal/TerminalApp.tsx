@@ -2904,7 +2904,7 @@ function LocalTerminalSidebar() {
                 width: ctx.mobile ? 44 : 40,
               }}
             >
-              +
+              <PlusIcon aria-hidden="true" size={ctx.mobile ? 20 : 18} strokeWidth={2.5} />
             </button>
             {!ctx.mobile && (
               <>
@@ -3127,7 +3127,7 @@ function CollapsedSessionsRail({
         <ChevronsRightIcon data-testid="terminal-drawer-expand-icon" size={17} strokeWidth={2} />
       </CollapsedRailButton>
       <CollapsedRailButton label="New session" onClick={onNew} strong>
-        +
+        <PlusIcon aria-hidden="true" data-testid="terminal-collapsed-new-session-icon" size={18} strokeWidth={2.5} />
       </CollapsedRailButton>
       <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
       <CollapsedRailGroup shells={activeShells} onOpen={onOpen} />

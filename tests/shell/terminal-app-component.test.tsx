@@ -773,6 +773,9 @@ describe("TerminalApp", () => {
     expect(matrixRailDot.style.borderTopWidth).toBe("2px");
     expect(matrixRailDot.style.borderTopColor).toBe("rgb(233, 233, 216)");
     expect(matrixRailDot.style.zIndex).toBe("1");
+    const newSessionIcon = screen.getByTestId("terminal-collapsed-new-session-icon");
+    expect(newSessionIcon.getAttribute("width")).toBe("18");
+    expect(newSessionIcon.getAttribute("height")).toBe("18");
 
     expect(screen.getByRole("button", { name: "Open matrix-main" }).textContent).toBe("mma");
     expect(screen.getByRole("button", { name: "Open claude-review" }).textContent).toBe("cre");
