@@ -61,8 +61,12 @@ export default async function RootLayout({
 
   return (
     <ClerkProvider
-      signInUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL ?? "/sign-in"}
-      signUpUrl={process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL ?? "/sign-up"}
+      // Ground Clerk's sign-in/sign-up component cross-links to the app's own
+      // routes; without these, Clerk falls back to its hosted Account Portal
+      // (accounts.matrix-os.com). These paths are fixed app routes
+      // (shell/src/app/sign-in, sign-up).
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
     >
       <html
         lang="en"
