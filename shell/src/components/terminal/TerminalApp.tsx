@@ -3458,14 +3458,14 @@ function ShellCloseConfirmation({
     : {
         background: "#FFFDF7",
         border: "1px solid #E4E2D2",
-        borderRadius: 18,
-        boxShadow: "0 30px 70px rgba(0,0,0,0.37)",
+        borderRadius: 12,
+        boxShadow: "0 26px 64px rgba(0,0,0,0.34)",
         display: "flex",
         flexDirection: "column",
-        gap: 20,
+        gap: 14,
         maxWidth: "calc(100% - 48px)",
-        padding: 28,
-        width: 440,
+        padding: 16,
+        width: 340,
       };
   return (
     <dialog
@@ -3514,29 +3514,29 @@ function ShellCloseConfirmation({
             <span style={{ background: "#D6D5C4", borderRadius: 999, height: 5, width: 42 }} />
           </div>
         ) : null}
-        <div style={{ alignItems: "flex-start", display: "flex", gap: 14 }}>
+        <div style={{ alignItems: "flex-start", display: "flex", gap: mobile ? 14 : 12 }}>
           <div
             className="flex shrink-0 items-center justify-center"
             style={{
               background: "#F0EFE5",
               border: "1px solid #DCDAC9",
-              borderRadius: mobile ? 13 : 12,
+              borderRadius: mobile ? 13 : 10,
               color: "#77786E",
-              height: mobile ? 46 : 44,
-              width: mobile ? 46 : 44,
+              height: mobile ? 46 : 36,
+              width: mobile ? 46 : 36,
             }}
           >
-            <Trash2Icon aria-hidden="true" size={mobile ? 21 : 20} strokeWidth={2} />
+            <Trash2Icon aria-hidden="true" size={mobile ? 21 : 16} strokeWidth={2} />
           </div>
-          <div style={{ display: "flex", flex: "1 1 0%", flexDirection: "column", gap: 6, minWidth: 0, paddingTop: 2 }}>
+          <div style={{ display: "flex", flex: "1 1 0%", flexDirection: "column", gap: mobile ? 6 : 4, minWidth: 0, paddingTop: mobile ? 2 : 0 }}>
             <div
               id={titleId}
               style={{
                 color: "#2A2E22",
                 fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: mobile ? 19 : 18,
+                fontSize: mobile ? 19 : 14,
                 fontWeight: 700,
-                lineHeight: "24px",
+                lineHeight: mobile ? "24px" : "18px",
               }}
             >
               Close this session?
@@ -3545,8 +3545,8 @@ function ShellCloseConfirmation({
               style={{
                 color: "#858578",
                 fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: 14,
-                lineHeight: "20px",
+                fontSize: mobile ? 14 : 11,
+                lineHeight: mobile ? "20px" : "15px",
               }}
             >
               {bodyCopy}
@@ -3561,9 +3561,9 @@ function ShellCloseConfirmation({
             borderRadius: mobile ? 12 : 10,
             display: "flex",
             flexShrink: 0,
-            gap: 10,
-            height: mobile ? 48 : 44,
-            padding: "0 14px",
+            gap: mobile ? 10 : 8,
+            height: mobile ? 48 : 30,
+            padding: mobile ? "0 14px" : "0 10px",
           }}
         >
           <span
@@ -3573,8 +3573,8 @@ function ShellCloseConfirmation({
               ...getShellStatusDotStyle(shell),
               borderRadius: 999,
               flexShrink: 0,
-              height: mobile ? 8 : 7,
-              width: mobile ? 8 : 7,
+              height: mobile ? 8 : 6,
+              width: mobile ? 8 : 6,
             }}
           />
           <span
@@ -3583,9 +3583,9 @@ function ShellCloseConfirmation({
               color: "#31362D",
               flex: "1 1 0%",
               fontFamily: "var(--font-mono, ui-monospace, monospace)",
-              fontSize: mobile ? 15 : 14,
+              fontSize: mobile ? 15 : 11,
               fontWeight: 700,
-              lineHeight: "18px",
+              lineHeight: mobile ? "18px" : "14px",
               minWidth: 0,
             }}
           >
@@ -3596,9 +3596,9 @@ function ShellCloseConfirmation({
               color: "#A09F92",
               flexShrink: 0,
               fontFamily: "Inter, system-ui, sans-serif",
-              fontSize: 12,
+              fontSize: mobile ? 12 : 10,
               fontWeight: 500,
-              lineHeight: "16px",
+              lineHeight: mobile ? "16px" : "12px",
             }}
           >
             {sessionMeta}
@@ -3655,7 +3655,7 @@ function ShellCloseConfirmation({
             </div>
           </>
         ) : (
-          <div style={{ alignItems: "center", display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <div style={{ alignItems: "center", display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button
               type="button"
               aria-label="Cancel"
@@ -3664,14 +3664,14 @@ function ShellCloseConfirmation({
               style={{
                 background: "#F0EFE5",
                 border: "1px solid #DCDAC9",
-                borderRadius: 9,
+                borderRadius: 7,
                 color: "#3E4339",
                 cursor: "pointer",
                 fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: 14,
+                fontSize: 11,
                 fontWeight: 600,
-                height: 40,
-                padding: "0 18px",
+                height: 30,
+                padding: "0 14px",
               }}
             >
               Cancel
@@ -3685,19 +3685,19 @@ function ShellCloseConfirmation({
               style={{
                 background: "#2A2E22",
                 border: 0,
-                borderRadius: 9,
+                borderRadius: 7,
                 color: "#F8F7EF",
                 cursor: deleting ? "not-allowed" : "pointer",
                 fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: 14,
+                fontSize: 11,
                 fontWeight: 600,
-                gap: 8,
-                height: 40,
+                gap: 6,
+                height: 30,
                 opacity: deleting ? 0.68 : 1,
-                padding: "0 18px",
+                padding: "0 14px",
               }}
             >
-              <Trash2Icon aria-hidden="true" size={15} strokeWidth={2} />
+              <Trash2Icon aria-hidden="true" size={13} strokeWidth={2} />
               Delete
             </button>
           </div>

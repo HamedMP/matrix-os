@@ -40,7 +40,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
 ]);
 
 export function normalizeBuiltInAppPath(path: string): string {
-  if (path.startsWith("__terminal__:")) return path;
+  if (path.startsWith("__terminal__:")) return "__terminal__";
   return BUILT_IN_APP_ALIASES.get(path) ?? path;
 }
 

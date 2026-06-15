@@ -844,18 +844,15 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435) and feeds loadModules' deps (also a useEffect dependency); a fresh function each render would re-fire both effects every render
   const openWindow = useCallback((name: string, path: string) => {
-    // Terminal windows get unique paths to allow multiple instances
-    const actualPath = path === "__terminal__"
-      ? `__terminal__:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-      : path;
-
-    // Open without minimizing other windows — allow multiple apps visible
-    wmOpenWindow(name, actualPath, dockXOffset);
+    // Open without minimizing other windows — allow multiple apps visible.
+    // Terminal is a singleton app now; individual shell sessions live inside
+    // its Paper drawer rather than separate OS windows.
+    wmOpenWindow(name, path, dockXOffset);
 
     // In canvas mode, pan to center on the window after it opens/focuses
     if (useDesktopMode.getState().mode === "canvas") {
       requestAnimationFrame(() => {
-        const win = useWindowManager.getState().windows.find((w) => w.path === actualPath);
+        const win = useWindowManager.getState().windows.find((w) => w.path === path);
         if (win) {
           const cRect = useCanvasTransform.getState().containerRect;
           useCanvasTransform.getState().focusOnWindow(
