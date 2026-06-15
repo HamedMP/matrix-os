@@ -2035,6 +2035,14 @@ function LocalTerminalSidebar() {
   const activeShells = renderedShells.filter((shell) => openSessionIds.has(shell.name));
   const backgroundShells = renderedShells.filter((shell) => !openSessionIds.has(shell.name));
   const drawerWidth = ctx.mobile ? "100%" : 392;
+  const openActiveShell = (shell: ShellSessionSummary) => {
+    const existingTab = ctx.tabs.find((tab) => getSessionIds(tab.paneTree).includes(shell.name));
+    if (existingTab) {
+      ctx.setActiveTab(existingTab.id);
+      return;
+    }
+    ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name);
+  };
 
   return (
     <div
@@ -2199,7 +2207,7 @@ function LocalTerminalSidebar() {
             shells={activeShells}
             deletingShellNames={deletingShellNames}
             foreground
-            onOpen={(shell) => ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name)}
+            onOpen={openActiveShell}
             onToggle={(shell) => ctx.backgroundShellSession(shell.name)}
             onDelete={(shell) => void deleteManagedShell(shell.name)}
           />

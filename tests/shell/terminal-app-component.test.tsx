@@ -200,6 +200,36 @@ describe("TerminalApp", () => {
     expect(writeText).toHaveBeenCalledWith("matrix shell connect main");
   });
 
+  it("focuses active shell rows without creating duplicate attached tabs", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fetchMock = vi.mocked(global.fetch);
+    fetchMock.mockClear();
+    const paneRenderCount = paneGridSpy.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+      await Promise.resolve();
+      vi.advanceTimersByTime(600);
+      await Promise.resolve();
+    });
+
+    expect(paneGridSpy.mock.calls).toHaveLength(paneRenderCount);
+    const layoutSaveCalls = fetchMock.mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/layout") && init?.method === "PUT"
+    ));
+    expect(layoutSaveCalls.length).toBeGreaterThan(0);
+    const latestBody = layoutSaveCalls.at(-1)?.[1]?.body;
+    expect(typeof latestBody).toBe("string");
+    expect(JSON.parse(latestBody as string).tabs).toHaveLength(1);
+  });
+
   it("renders a mobile sessions surface with compact foreground and background toggles", async () => {
     render(<TerminalApp mobile />);
 
