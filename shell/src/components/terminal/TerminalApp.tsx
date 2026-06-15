@@ -1754,6 +1754,11 @@ interface ShellSessionSummary {
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
+type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "visualStatus">>;
+type ShellUiStatePatchKey = keyof ShellUiStatePatch;
+
+const SHELL_UI_STATE_PATCH_KEYS: ShellUiStatePatchKey[] = ["placement", "lastSeenSeq", "visualStatus"];
+
 interface WorkspaceSessionSummary {
   id: string;
   kind?: "shell" | "agent";
@@ -1830,6 +1835,35 @@ function shellConnectCommand(name: string): string {
 
 function shellAttachCommand(shell: ShellSessionSummary): string {
   return shell.attachCommand ?? shellConnectCommand(shell.name);
+}
+
+function getShellUiStatePatchKeys(patch: ShellUiStatePatch): ShellUiStatePatchKey[] {
+  return SHELL_UI_STATE_PATCH_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(patch, key));
+}
+
+function deriveShellUnread(shell: ShellSessionSummary): ShellSessionSummary {
+  if (shell.latestSeq === undefined || shell.latestSeq === null || shell.lastSeenSeq === undefined || shell.lastSeenSeq === null) {
+    return shell;
+  }
+  return { ...shell, unread: shell.latestSeq > shell.lastSeenSeq };
+}
+
+function applyShellUiStatePatch(shell: ShellSessionSummary, patch: ShellUiStatePatch): ShellSessionSummary {
+  return deriveShellUnread({ ...shell, ...patch });
+}
+
+function rollbackShellUiStatePatch(
+  shell: ShellSessionSummary,
+  patch: ShellUiStatePatch,
+  previousValues: ShellUiStatePatch,
+): ShellSessionSummary {
+  let next = shell;
+  for (const key of getShellUiStatePatchKeys(patch)) {
+    if (Object.is(next[key], patch[key])) {
+      next = { ...next, [key]: previousValues[key] };
+    }
+  }
+  return deriveShellUnread(next);
 }
 
 function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: WorkspaceSessionSummary[]): boolean {
@@ -2097,20 +2131,23 @@ function LocalTerminalSidebar() {
     }
   };
 
-  const patchShellUiState = async (name: string, patch: Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "visualStatus">>) => {
+  const patchShellUiState = async (name: string, patch: ShellUiStatePatch) => {
     setShellsError(null);
-    const previousShells = shells;
-    setShells((prev) => prev.map((shell) => (
-      shell.name === name
-        ? {
-            ...shell,
-            ...patch,
-            unread: patch.lastSeenSeq !== undefined && shell.latestSeq !== undefined && shell.latestSeq !== null && patch.lastSeenSeq !== null
-              ? shell.latestSeq > patch.lastSeenSeq
-              : shell.unread,
-          }
-        : shell
-    )));
+    const previousValues: ShellUiStatePatch = {};
+    setShells((prev) => prev.map((shell) => {
+      if (shell.name !== name) return shell;
+      for (const key of getShellUiStatePatchKeys(patch)) {
+        previousValues[key] = shell[key];
+      }
+      return applyShellUiStatePatch(shell, patch);
+    }));
+    const rollback = () => {
+      setShells((prev) => prev.map((shell) => (
+        shell.name === name
+          ? rollbackShellUiStatePatch(shell, patch, previousValues)
+          : shell
+      )));
+    };
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}/ui-state`, {
         method: "PATCH",
@@ -2120,7 +2157,7 @@ function LocalTerminalSidebar() {
       });
       if (!res.ok) {
         setShellsError("Failed to update session");
-        setShells(previousShells);
+        rollback();
         return null;
       }
       const data = (await res.json()) as { session?: ShellSessionSummary };
@@ -2128,11 +2165,11 @@ function LocalTerminalSidebar() {
         setShells((prev) => prev.map((shell) => shell.name === data.session!.name ? data.session! : shell));
         return data.session;
       }
-      return shells.find((shell) => shell.name === name) ?? null;
+      return null;
     } catch (err: unknown) {
       console.warn("Failed to update shell session UI state:", err instanceof Error ? err.message : err);
       setShellsError("Could not update session");
-      setShells(previousShells);
+      rollback();
       return null;
     }
   };
@@ -2231,20 +2268,24 @@ function LocalTerminalSidebar() {
       shell.tabs?.map((shellTab) => shellTab.name).join(" "),
     ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter))
     : syntheticShells;
+  const unfilteredRenderedShells = shells.length > 0
+    ? shells
+    : shellsAuthoritative ? [] : syntheticShells;
   const renderedShells = filteredShells.length > 0
     ? filteredShells
     : shellsAuthoritative ? [] : syntheticFilteredShells;
   const activeShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "active");
   const backgroundShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "background");
   const drawerWidth = ctx.mobile ? "100%" : 392;
-  const openActiveShell = (shell: ShellSessionSummary) => {
+  const openActiveShell = (shell: ShellSessionSummary, options: { markSeen?: boolean } = {}) => {
+    const markSeen = options.markSeen !== false;
     const existingTab = ctx.tabs.find((tab) => getSessionIds(tab.paneTree).includes(shell.name));
     if (existingTab) {
       ctx.setActiveTab(existingTab.id);
     } else {
       ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name);
     }
-    if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq) {
+    if (markSeen && shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq) {
       void patchShellUiState(shell.name, { lastSeenSeq: shell.latestSeq });
     }
     if (ctx.mobile) {
@@ -2262,13 +2303,13 @@ function LocalTerminalSidebar() {
       placement: "active",
       ...(shell.latestSeq !== undefined && shell.latestSeq !== null ? { lastSeenSeq: shell.latestSeq } : {}),
     });
-    openActiveShell(shell);
+    openActiveShell(shell, { markSeen: false });
   };
 
   if (!ctx.sidebarOpen && !ctx.mobile) {
     return (
       <CollapsedSessionsRail
-        shells={renderedShells}
+        shells={unfilteredRenderedShells}
         onExpand={() => ctx.setSidebarOpen(true)}
         onNew={() => void createManagedShell()}
         onOpen={makeShellActive}

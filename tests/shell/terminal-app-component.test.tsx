@@ -251,7 +251,7 @@ describe("TerminalApp", () => {
           json: async () => ({
             sessions: [
               { name: "main", status: "active", placement: "active", latestSeq: 7, lastSeenSeq: 4, unread: true, visualStatus: "running", attachCommand: "mos shell attach main", tabs: [] },
-              { name: "docs", status: "active", placement: "background", latestSeq: 11, lastSeenSeq: 11, unread: false, visualStatus: "idle", attachCommand: "mos shell attach docs", tabs: [] },
+              { name: "docs", status: "active", placement: "background", latestSeq: 11, lastSeenSeq: 5, unread: true, visualStatus: "idle", attachCommand: "mos shell attach docs", tabs: [] },
             ],
           }),
         } as Response);
@@ -293,6 +293,74 @@ describe("TerminalApp", () => {
         init: expect.objectContaining({ method: "PATCH", body: JSON.stringify({ placement: "active", lastSeenSeq: 11 }) }),
       }),
     ]));
+    expect(uiStateCalls.filter((call) => call.url.includes("/api/terminal/sessions/docs/ui-state"))).toHaveLength(1);
+  });
+
+  it("keeps successful session updates when another optimistic UI patch rolls back", async () => {
+    let resolveMarkSeen: ((response: Response) => void) | undefined;
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", latestSeq: 7, lastSeenSeq: 4, unread: true, visualStatus: "running", attachCommand: "mos shell attach main", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      if (url.includes("/api/terminal/sessions/main/ui-state")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { placement?: string; lastSeenSeq?: number };
+        if (body.lastSeenSeq === 7 && body.placement === undefined) {
+          return new Promise<Response>((resolve) => {
+            resolveMarkSeen = resolve;
+          });
+        }
+        if (body.placement === "background") {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              session: { name: "main", status: "active", placement: "background", latestSeq: 7, lastSeenSeq: 4, unread: true, visualStatus: "running", attachCommand: "mos shell attach main", tabs: [] },
+            }),
+          } as Response);
+        }
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Move matrix-main to background" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("button", { name: "Make matrix-main active" })).toBeTruthy();
+    expect(resolveMarkSeen).toBeDefined();
+
+    await act(async () => {
+      resolveMarkSeen?.({ ok: false, json: async () => ({}) } as Response);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("button", { name: "Make matrix-main active" })).toBeTruthy();
   });
 
   it("focuses active shell rows without creating duplicate attached tabs", async () => {
@@ -427,6 +495,29 @@ describe("TerminalApp", () => {
     expect(rail.className).not.toContain("absolute");
     expect(screen.getByRole("button", { name: "Expand sessions drawer" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
+  });
+
+  it("keeps collapsed rail sessions visible after hiding a filtered drawer", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search sessions"), { target: { value: "no-matches" } });
+    });
+
+    expect(screen.getByText("No sessions match")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
+    });
+
+    expect(screen.getByTestId("terminal-collapsed-rail")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
   });
 
   it("opens zellij-backed shell sessions from Ctrl+Shift+T", async () => {
