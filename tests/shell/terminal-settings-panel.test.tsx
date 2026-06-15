@@ -9,7 +9,7 @@ import { useTerminalSettings } from "../../shell/src/stores/terminal-settings.js
 describe("TerminalSettingsPanel", () => {
   beforeEach(() => {
     useTerminalSettings.setState({
-      themeId: "system",
+      themeId: "dark",
       fontSize: 13,
       fontFamily: "MesloLGS NF",
       ligatures: true,
@@ -22,11 +22,12 @@ describe("TerminalSettingsPanel", () => {
   it("updates theme and font from the app settings surface", () => {
     render(<TerminalSettingsPanel />);
 
-    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "nord" } });
+    expect(screen.queryByRole("option", { name: "Nord" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "light" } });
     fireEvent.change(screen.getByLabelText("Font"), { target: { value: "Fira Code" } });
 
     expect(useTerminalSettings.getState()).toMatchObject({
-      themeId: "nord",
+      themeId: "light",
       fontFamily: "Fira Code",
     });
   });

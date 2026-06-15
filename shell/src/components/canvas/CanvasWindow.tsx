@@ -81,6 +81,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
   const isIframeWindow = !win.path.startsWith("__");
+  const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
 
@@ -435,6 +436,11 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         <TerminalApp
           mobile={isMobile}
           launchTargetId={win.id}
+          windowControls={{
+            close: () => closeWindow(win.id),
+            minimize: () => minimizeWindow(win.id),
+            toggleFullscreen: () => useWindowManager.getState().toggleFullscreen(win.id),
+          }}
         />
       ) : win.path === "__workspace__" ? (
         <WorkspaceApp />
@@ -489,7 +495,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       style={wrapperStyle}
       onMouseDown={isFullscreen ? undefined : () => focusWindow(win.id)}
     >
-      {!isFullscreen && titleBar}
+      {!isFullscreen && !terminalOwnsChrome && titleBar}
       <div
         className={isFullscreen
           ? "bg-background overflow-hidden"

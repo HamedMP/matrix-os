@@ -6,6 +6,9 @@ import { shellError } from "./errors.js";
 import { resolveShellCwd, validateLayoutName, validateSessionName } from "./names.js";
 import type { ScrollbackStore } from "./scrollback-store.js";
 
+const ShellPlacementSchema = z.enum(["active", "background"]);
+const ShellVisualStatusSchema = z.enum(["running", "finished", "idle", "waiting"]);
+
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
@@ -26,13 +29,30 @@ const ShellSessionSchema = z.object({
   })).default([]),
   attachedClients: z.number().int().nonnegative().default(0),
   lastSeq: z.number().int().nonnegative().optional(),
+  placement: ShellPlacementSchema.default("active"),
+  lastSeenSeq: z.number().int().nonnegative().nullable().default(null),
+  visualStatus: ShellVisualStatusSchema.optional(),
 });
 
 const RegistryFileSchema = z.object({
   sessions: z.record(z.string(), ShellSessionSchema).default({}),
 });
 
-export type ShellSession = z.infer<typeof ShellSessionSchema>;
+type PersistedShellSession = z.infer<typeof ShellSessionSchema>;
+export type ShellPlacement = z.infer<typeof ShellPlacementSchema>;
+export type ShellVisualStatus = z.infer<typeof ShellVisualStatusSchema>;
+export interface ShellSession extends PersistedShellSession {
+  latestSeq: number | null;
+  unread: boolean;
+  visualStatus: ShellVisualStatus;
+  attachCommand: string;
+}
+
+export interface ShellSessionUiStatePatch {
+  placement?: ShellPlacement;
+  lastSeenSeq?: number | null;
+  visualStatus?: ShellVisualStatus;
+}
 
 export interface ShellRegistryOptions {
   homePath: string;
@@ -63,12 +83,12 @@ export class ShellRegistry {
 
       for (const name of live) {
         const existing = file.sessions[name];
-        const session = {
+        const session: PersistedShellSession = {
           ...(existing ?? this.adoptSession(name, now)),
           status: "active" as const,
           updatedAt: existing?.status === "active" ? existing.updatedAt : now,
         };
-        sessions.push(session);
+        sessions.push(await this.decorateSession(session));
         if (!existing || existing.status !== "active") {
           file.sessions[name] = session;
           changed = true;
@@ -95,7 +115,7 @@ export class ShellRegistry {
       }
       const now = new Date().toISOString();
       const existing = file.sessions[safeName];
-      const session = {
+      const session: PersistedShellSession = {
         ...(existing ?? this.adoptSession(safeName, now)),
         status: "active" as const,
         updatedAt: existing?.status === "active" ? existing.updatedAt : now,
@@ -104,7 +124,7 @@ export class ShellRegistry {
         file.sessions[safeName] = session;
         await this.write(file);
       }
-      return session;
+      return this.decorateSession(session);
     });
   }
 
@@ -125,7 +145,7 @@ export class ShellRegistry {
 
       if (live.has(name)) {
         const now = new Date().toISOString();
-        const session: ShellSession = {
+        const session: PersistedShellSession = {
           ...(file.sessions[name] ?? this.adoptSession(name, now)),
           status: "active",
           updatedAt: now,
@@ -133,7 +153,7 @@ export class ShellRegistry {
         };
         file.sessions[name] = session;
         await this.write(file);
-        return session;
+        return this.decorateSession(session);
       }
       if (changed) {
         await this.write(file);
@@ -144,7 +164,7 @@ export class ShellRegistry {
 
       await this.options.adapter.createSession({ name, cwd, layout: layoutName, cmd: input.cmd });
       const now = new Date().toISOString();
-      const session: ShellSession = {
+      const session: PersistedShellSession = {
         name,
         status: "active",
         createdAt: now,
@@ -152,6 +172,8 @@ export class ShellRegistry {
         layoutName,
         tabs: [],
         attachedClients: 0,
+        placement: "active",
+        lastSeenSeq: null,
       };
       file.sessions[name] = session;
 
@@ -167,7 +189,26 @@ export class ShellRegistry {
         throw err;
       }
 
-      return session;
+      return this.decorateSession(session);
+    });
+  }
+
+  async updateUiState(name: string, patch: ShellSessionUiStatePatch): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const file = await this.read();
+      const now = new Date().toISOString();
+      const existing = file.sessions[safeName] ?? this.adoptSession(safeName, now);
+      const next: PersistedShellSession = {
+        ...existing,
+        updatedAt: now,
+        ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
+        ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
+        ...(patch.visualStatus !== undefined ? { visualStatus: patch.visualStatus } : {}),
+      };
+      file.sessions[safeName] = next;
+      await this.write(file);
+      return this.decorateSession(next);
     });
   }
 
@@ -191,7 +232,7 @@ export class ShellRegistry {
     });
   }
 
-  private adoptSession(name: string, now: string): ShellSession {
+  private adoptSession(name: string, now: string): PersistedShellSession {
     return {
       name,
       status: "active",
@@ -199,6 +240,30 @@ export class ShellRegistry {
       updatedAt: now,
       tabs: [],
       attachedClients: 0,
+      placement: "active",
+      lastSeenSeq: null,
+    };
+  }
+
+  private async decorateSession(session: PersistedShellSession): Promise<ShellSession> {
+    const latestSeq = await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
+    const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
+    const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
+    const visualStatus = session.visualStatus ?? (
+      session.status === "active"
+        ? "running"
+        : unread
+          ? "finished"
+          : "idle"
+    );
+    return {
+      ...session,
+      placement: session.placement ?? "active",
+      lastSeenSeq: lastSeenSeq ?? null,
+      latestSeq,
+      unread,
+      visualStatus,
+      attachCommand: `mos shell attach ${session.name}`,
     };
   }
 

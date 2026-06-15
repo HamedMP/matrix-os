@@ -9,7 +9,7 @@ import { useTerminalSettings } from "../../shell/src/stores/terminal-settings.js
 describe("TerminalPreferencesPanel", () => {
   beforeEach(() => {
     useTerminalSettings.setState({
-      themeId: "system",
+      themeId: "dark",
       fontSize: 13,
       fontFamily: "JetBrains Mono",
       ligatures: true,
@@ -24,14 +24,19 @@ describe("TerminalPreferencesPanel", () => {
 
     expect(screen.getByRole("option", { name: "MesloLGS NF" })).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "dracula" } });
+    expect(screen.getByRole("option", { name: "Dark" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Light" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Matrix" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Dracula" })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "matrix" } });
     fireEvent.change(screen.getByLabelText("Font"), { target: { value: "MesloLGS NF" } });
     fireEvent.click(screen.getByLabelText("Ligatures"));
     fireEvent.change(screen.getByLabelText("Cursor"), { target: { value: "bar" } });
     fireEvent.click(screen.getByLabelText("Smooth scroll"));
 
     expect(useTerminalSettings.getState()).toMatchObject({
-      themeId: "dracula",
+      themeId: "matrix",
       fontFamily: "MesloLGS NF",
       ligatures: false,
       cursorStyle: "bar",

@@ -314,6 +314,7 @@ describe("zellij adapter", () => {
 
       expect(config).toContain("pane_frames false");
       expect(config).toContain("simplified_ui true");
+      expect(config).toContain("hide_session_name true");
       expect(config).toContain('default_layout "matrix"');
       expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
       expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
@@ -323,6 +324,8 @@ describe("zellij adapter", () => {
       expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
       expect(bashrc).toContain("\\u:\\w\\$ ");
       expect(promptLabel).toContain("JSON.parse");
+      expect(config).toContain('theme "matrix-dark"');
+      expect(config).toContain("matrix-dark {");
       expect(layout).toContain('plugin location="zellij:compact-bar"');
       expect(layout).not.toContain("tab-bar");
       expect(layout).not.toContain("status-bar");

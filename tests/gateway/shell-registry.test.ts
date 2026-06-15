@@ -92,6 +92,76 @@ describe("shell registry", () => {
     expect(JSON.parse(raw).sessions.main.name).toBe("main");
   });
 
+  it("persists active/background placement and derives unread visual status from scrollback", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["main", "deploy-logs", "review-done"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const scrollbackStore = {
+      latestSeq: vi.fn(async (name: string) => (
+        name === "main" ? 12 : name === "review-done" ? 7 : null
+      )),
+      cleanup: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({
+      homePath: root,
+      adapter,
+      maxSessions: 4,
+      scrollbackStore: scrollbackStore as never,
+    });
+
+    await registry.updateUiState("main", { placement: "background", lastSeenSeq: 4 });
+    await registry.updateUiState("review-done", { lastSeenSeq: 3, visualStatus: "finished" });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      {
+        name: "main",
+        placement: "background",
+        latestSeq: 12,
+        lastSeenSeq: 4,
+        unread: true,
+        visualStatus: "running",
+        attachCommand: "mos shell attach main",
+      },
+      {
+        name: "deploy-logs",
+        placement: "active",
+        unread: false,
+        visualStatus: "running",
+      },
+      {
+        name: "review-done",
+        latestSeq: 7,
+        lastSeenSeq: 3,
+        unread: true,
+        visualStatus: "finished",
+      },
+    ]);
+
+    const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
+    expect(JSON.parse(raw).sessions.main.placement).toBe("background");
+  });
+
+  it("uses waiting and idle status dots from durable metadata", async () => {
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["codex-backend", "shell-main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+
+    await registry.updateUiState("codex-backend", { visualStatus: "waiting" });
+    await registry.updateUiState("shell-main", { visualStatus: "idle" });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "codex-backend", visualStatus: "waiting", unread: false },
+      { name: "shell-main", visualStatus: "idle", unread: false },
+    ]);
+  });
+
   it("connects by adopting an orphan active zellij session", async () => {
     const root = await tempRoot();
     const adapter = {

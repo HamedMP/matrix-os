@@ -394,6 +394,12 @@ function terminalAppDebug(event: string, details: Record<string, unknown>): void
 
 const countPanes = countPanesFromStore;
 
+export interface TerminalWindowControls {
+  close?: () => void;
+  minimize?: () => void;
+  toggleFullscreen?: () => void;
+}
+
 interface TerminalAppProps {
   initialCommand?: string;
   initialLabel?: string;
@@ -401,10 +407,11 @@ interface TerminalAppProps {
   initialSessionId?: string;
   launchTargetId?: string;
   mobile?: boolean;
+  windowControls?: TerminalWindowControls;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal shell component; extraction tracked separately. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
-export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
 
@@ -890,7 +897,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   // Construct store-compatible interface for child components
   const storeApi = {
-    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile,
+    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
     addTab, addSessionTab, createShellSessionTab, backgroundShellSession, closeTab, setActiveTab: setActiveTabId, renameTab, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
@@ -938,6 +945,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                       foreground={terminalForeground}
                       accent={terminalAccent}
                     />
+                    <MobileCommandComposer
+                      onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
+                      background={terminalBackground}
+                      foreground={terminalForeground}
+                      accent={terminalAccent}
+                    />
                     <TerminalKeyBar
                       onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
                       background={terminalBackground}
@@ -980,6 +993,7 @@ interface TerminalAppContextType {
   sidebarSelectedPath: string | null;
   focusedPaneId: string | null;
   mobile: boolean;
+  windowControls?: TerminalWindowControls;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
   createShellSessionTab: (label: string, cwd?: string) => Promise<string | null>;
@@ -1159,9 +1173,21 @@ function TerminalWorkspaceChrome() {
         {!ctx.mobile && (
           <>
             <div className="flex shrink-0 items-center" style={{ gap: 9 }}>
-              <span style={{ background: "#E8796B", borderRadius: 999, height: 13, width: 13 }} />
-              <span style={{ background: "#E5BE5F", borderRadius: 999, height: 13, width: 13 }} />
-              <span style={{ background: "#77B861", borderRadius: 999, height: 13, width: 13 }} />
+              <TerminalTrafficButton
+                label="Close Terminal window"
+                color="#E8796B"
+                onClick={ctx.windowControls?.close}
+              />
+              <TerminalTrafficButton
+                label="Minimize Terminal window"
+                color="#E5BE5F"
+                onClick={ctx.windowControls?.minimize}
+              />
+              <TerminalTrafficButton
+                label="Toggle Terminal fullscreen"
+                color="#77B861"
+                onClick={ctx.windowControls?.toggleFullscreen}
+              />
             </div>
             <span style={{ background: "#2D3127", height: 22, width: 1 }} />
           </>
@@ -1169,7 +1195,7 @@ function TerminalWorkspaceChrome() {
         {ctx.mobile ? (
           <button
             type="button"
-            aria-label="Open sessions"
+            aria-label={ctx.sidebarOpen ? "Hide sessions" : "Back to sessions"}
             onClick={() => ctx.setSidebarOpen((open) => !open)}
             style={{
               alignItems: "center",
@@ -1232,6 +1258,37 @@ function TerminalWorkspaceChrome() {
         <ThemePickerButton />
       </div>
     </div>
+  );
+}
+
+function TerminalTrafficButton({
+  label,
+  color,
+  onClick,
+}: {
+  label: string;
+  color: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick?.();
+      }}
+      style={{
+        background: color,
+        border: 0,
+        borderRadius: 999,
+        cursor: "pointer",
+        height: 13,
+        padding: 0,
+        width: 13,
+      }}
+    />
   );
 }
 
@@ -1593,6 +1650,85 @@ function MobileActionButton({
   );
 }
 
+function MobileCommandComposer({
+  onSend,
+  background,
+  foreground,
+  accent,
+}: {
+  onSend: (data: string) => void;
+  background: string;
+  foreground: string;
+  accent: string;
+}) {
+  const [value, setValue] = useState("");
+  const submit = () => {
+    const command = value.trim();
+    if (!command) return;
+    onSend(`${command}\r`);
+    setValue("");
+  };
+  const border = `color-mix(in srgb, ${foreground} 18%, transparent)`;
+  return (
+    <form
+      aria-label="Mobile command composer"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+      style={{
+        alignItems: "center",
+        background,
+        borderTop: `1px solid ${border}`,
+        display: "flex",
+        flexShrink: 0,
+        gap: 7,
+        padding: "8px 7px",
+      }}
+    >
+      <input
+        aria-label="Command composer"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        placeholder="Type command..."
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        style={{
+          background: `color-mix(in srgb, ${foreground} 8%, transparent)`,
+          border: `1px solid ${border}`,
+          borderRadius: 9,
+          color: foreground,
+          flex: "1 1 auto",
+          fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          fontSize: 13,
+          height: 36,
+          minWidth: 0,
+          padding: "0 10px",
+        }}
+      />
+      <button
+        type="submit"
+        aria-label="Send command"
+        style={{
+          background: accent,
+          border: "1px solid transparent",
+          borderRadius: 9,
+          color: "#15180F",
+          cursor: "pointer",
+          flexShrink: 0,
+          fontSize: 12,
+          fontWeight: 800,
+          height: 36,
+          padding: "0 13px",
+        }}
+      >
+        Send
+      </button>
+    </form>
+  );
+}
+
 interface ProjectInfo {
   name: string;
   path: string;
@@ -1607,8 +1743,14 @@ type SidebarTab = "projects" | "shells" | "sessions" | "files";
 interface ShellSessionSummary {
   name: string;
   status?: "active" | "exited" | "degraded";
+  placement?: "active" | "background";
   updatedAt?: string;
   attachedClients?: number;
+  latestSeq?: number | null;
+  lastSeenSeq?: number | null;
+  unread?: boolean;
+  visualStatus?: "running" | "waiting" | "finished" | "idle";
+  attachCommand?: string;
   tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
@@ -1638,8 +1780,14 @@ function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSumm
     if (
       session.name !== next.name ||
       session.status !== next.status ||
+      session.placement !== next.placement ||
       session.updatedAt !== next.updatedAt ||
-      session.attachedClients !== next.attachedClients
+      session.attachedClients !== next.attachedClients ||
+      session.latestSeq !== next.latestSeq ||
+      session.lastSeenSeq !== next.lastSeenSeq ||
+      session.unread !== next.unread ||
+      session.visualStatus !== next.visualStatus ||
+      session.attachCommand !== next.attachCommand
     ) {
       return false;
     }
@@ -1678,6 +1826,10 @@ function formatShellDisplayName(name: string): string {
 
 function shellConnectCommand(name: string): string {
   return `matrix shell connect ${name}`;
+}
+
+function shellAttachCommand(shell: ShellSessionSummary): string {
+  return shell.attachCommand ?? shellConnectCommand(shell.name);
 }
 
 function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: WorkspaceSessionSummary[]): boolean {
@@ -1867,32 +2019,6 @@ function LocalTerminalSidebar() {
     setTree(prev => updateNode(prev, node.path, { expanded: true, children: children.map((c: TreeNode) => ({ ...c, path: `${node.path}/${c.name}` })) }));
   };
 
-  if (!ctx.sidebarOpen) {
-    return (
-      <div
-        className="absolute left-2 top-2 z-20"
-      >
-        <button
-          type="button"
-          className="flex items-center justify-center rounded cursor-pointer hover:bg-[var(--accent)] transition-colors"
-          style={{
-            width: 30,
-            height: 30,
-            fontSize: 14,
-            background: "var(--card)",
-            color: "var(--foreground)",
-            border: "1px solid var(--border)",
-            boxShadow: "0 8px 18px rgba(0,0,0,0.18)",
-          }}
-          onClick={() => ctx.setSidebarOpen(true)}
-          title="Open sidebar (Ctrl+Shift+B)"
-        >
-          <PanelLeftOpenIcon size={16} strokeWidth={1.8} />
-        </button>
-      </div>
-    );
-  }
-
   const isAtRoot = !rootPath || rootPath === ".";
   const normalizedFilter = filter.trim().toLowerCase();
   const filteredProjects = normalizedFilter
@@ -1968,6 +2094,46 @@ function LocalTerminalSidebar() {
     } finally {
       deletingShellsRef.current!.delete(name);
       setDeletingShellNames(Array.from(deletingShellsRef.current!));
+    }
+  };
+
+  const patchShellUiState = async (name: string, patch: Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "visualStatus">>) => {
+    setShellsError(null);
+    const previousShells = shells;
+    setShells((prev) => prev.map((shell) => (
+      shell.name === name
+        ? {
+            ...shell,
+            ...patch,
+            unread: patch.lastSeenSeq !== undefined && shell.latestSeq !== undefined && shell.latestSeq !== null && patch.lastSeenSeq !== null
+              ? shell.latestSeq > patch.lastSeenSeq
+              : shell.unread,
+          }
+        : shell
+    )));
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(name)}/ui-state`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        setShellsError("Failed to update session");
+        setShells(previousShells);
+        return null;
+      }
+      const data = (await res.json()) as { session?: ShellSessionSummary };
+      if (data.session?.name) {
+        setShells((prev) => prev.map((shell) => shell.name === data.session!.name ? data.session! : shell));
+        return data.session;
+      }
+      return shells.find((shell) => shell.name === name) ?? null;
+    } catch (err: unknown) {
+      console.warn("Failed to update shell session UI state:", err instanceof Error ? err.message : err);
+      setShellsError("Could not update session");
+      setShells(previousShells);
+      return null;
     }
   };
 
@@ -2052,6 +2218,7 @@ function LocalTerminalSidebar() {
       syntheticShells.push({
         name: sessionId,
         status: "active",
+        placement: "active",
         attachedClients: 1,
         tabs: [{ idx: 0, name: "main", focused: true }],
       });
@@ -2067,17 +2234,51 @@ function LocalTerminalSidebar() {
   const renderedShells = filteredShells.length > 0
     ? filteredShells
     : shellsAuthoritative ? [] : syntheticFilteredShells;
-  const activeShells = renderedShells.filter((shell) => openSessionIds.has(shell.name));
-  const backgroundShells = renderedShells.filter((shell) => !openSessionIds.has(shell.name));
+  const activeShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "active");
+  const backgroundShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "background");
   const drawerWidth = ctx.mobile ? "100%" : 392;
   const openActiveShell = (shell: ShellSessionSummary) => {
     const existingTab = ctx.tabs.find((tab) => getSessionIds(tab.paneTree).includes(shell.name));
     if (existingTab) {
       ctx.setActiveTab(existingTab.id);
-      return;
+    } else {
+      ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name);
     }
-    ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name);
+    if (shell.latestSeq !== undefined && shell.latestSeq !== null && shell.lastSeenSeq !== shell.latestSeq) {
+      void patchShellUiState(shell.name, { lastSeenSeq: shell.latestSeq });
+    }
+    if (ctx.mobile) {
+      ctx.setSidebarOpen(false);
+    }
   };
+
+  const moveShellToBackground = (shell: ShellSessionSummary) => {
+    void patchShellUiState(shell.name, { placement: "background" });
+    ctx.backgroundShellSession(shell.name);
+  };
+
+  const makeShellActive = (shell: ShellSessionSummary) => {
+    void patchShellUiState(shell.name, {
+      placement: "active",
+      ...(shell.latestSeq !== undefined && shell.latestSeq !== null ? { lastSeenSeq: shell.latestSeq } : {}),
+    });
+    openActiveShell(shell);
+  };
+
+  if (!ctx.sidebarOpen && !ctx.mobile) {
+    return (
+      <CollapsedSessionsRail
+        shells={renderedShells}
+        onExpand={() => ctx.setSidebarOpen(true)}
+        onNew={() => void createManagedShell()}
+        onOpen={makeShellActive}
+      />
+    );
+  }
+
+  if (!ctx.sidebarOpen) {
+    return null;
+  }
 
   return (
     <div
@@ -2243,7 +2444,7 @@ function LocalTerminalSidebar() {
             deletingShellNames={deletingShellNames}
             foreground
             onOpen={openActiveShell}
-            onToggle={(shell) => ctx.backgroundShellSession(shell.name)}
+            onToggle={moveShellToBackground}
             onDelete={(shell) => void deleteManagedShell(shell.name)}
           />
         )}
@@ -2254,8 +2455,8 @@ function LocalTerminalSidebar() {
             shells={backgroundShells}
             deletingShellNames={deletingShellNames}
             foreground={false}
-            onOpen={(shell) => ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name)}
-            onToggle={(shell) => ctx.addSessionTab(formatShellDisplayName(shell.name), shell.name)}
+            onOpen={makeShellActive}
+            onToggle={makeShellActive}
             onDelete={(shell) => void deleteManagedShell(shell.name)}
           />
         )}
@@ -2291,6 +2492,183 @@ function SidebarRailButton({
       title={label}
     >
       {icon}
+    </button>
+  );
+}
+
+function getShellVisualStatus(shell: ShellSessionSummary): NonNullable<ShellSessionSummary["visualStatus"]> {
+  if (shell.visualStatus) return shell.visualStatus;
+  if (shell.status === "degraded") return "waiting";
+  if (shell.status === "exited") return shell.unread ? "finished" : "idle";
+  return shell.unread ? "finished" : "running";
+}
+
+function getShellStatusDotStyle(shell: ShellSessionSummary): CSSProperties {
+  const status = getShellVisualStatus(shell);
+  if (status === "running") {
+    return { background: "#5FB85F", boxShadow: "0 0 0 4px rgba(95,184,95,0.24)" };
+  }
+  if (status === "waiting") {
+    return { background: "#E0A12E", boxShadow: "0 0 0 4px rgba(224,161,46,0.25)" };
+  }
+  if (status === "finished") {
+    return { background: "#2E6B3A", boxShadow: shell.unread ? "0 0 0 4px rgba(46,107,58,0.18)" : "none" };
+  }
+  return { background: "#A9AA9A", boxShadow: "none" };
+}
+
+function CollapsedSessionsRail({
+  shells,
+  onExpand,
+  onNew,
+  onOpen,
+}: {
+  shells: ShellSessionSummary[];
+  onExpand: () => void;
+  onNew: () => void;
+  onOpen: (shell: ShellSessionSummary) => void;
+}) {
+  const activeShells = shells.filter((shell) => shell.placement !== "background");
+  const backgroundShells = shells.filter((shell) => shell.placement === "background");
+  return (
+    <aside
+      data-testid="terminal-collapsed-rail"
+      className="shrink-0"
+      style={{
+        alignItems: "center",
+        background: "#E9E9D8",
+        borderRight: "1px solid #D6D5C4",
+        color: "#31362D",
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        padding: "16px 0",
+        width: 76,
+      }}
+    >
+      <div
+        className="flex items-center justify-center"
+        style={{
+          background: "#465243",
+          borderRadius: 9,
+          color: "#F8F7EF",
+          fontFamily: "Orbitron, system-ui, sans-serif",
+          fontSize: 15,
+          fontWeight: 800,
+          height: 30,
+          width: 30,
+        }}
+        title="matrixos"
+      >
+        M
+      </div>
+      <CollapsedRailButton label="Expand sessions drawer" onClick={onExpand}>
+        <PanelLeftOpenIcon size={16} strokeWidth={1.9} />
+      </CollapsedRailButton>
+      <CollapsedRailButton label="New session" onClick={onNew} strong>
+        +
+      </CollapsedRailButton>
+      <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
+      <CollapsedRailGroup shells={activeShells} onOpen={onOpen} />
+      {backgroundShells.length > 0 && (
+        <>
+          <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
+          <CollapsedRailGroup shells={backgroundShells} onOpen={onOpen} muted />
+        </>
+      )}
+    </aside>
+  );
+}
+
+function CollapsedRailGroup({
+  shells,
+  onOpen,
+  muted = false,
+}: {
+  shells: ShellSessionSummary[];
+  onOpen: (shell: ShellSessionSummary) => void;
+  muted?: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center" style={{ gap: 9 }}>
+      {shells.map((shell) => {
+        const displayName = formatShellDisplayName(shell.name);
+        const initial = displayName.replace(/^matrix-/, "").charAt(0).toUpperCase() || "S";
+        return (
+          <button
+            key={shell.name}
+            type="button"
+            aria-label={`Open ${displayName}`}
+            title={displayName}
+            onClick={() => onOpen(shell)}
+            className="relative flex items-center justify-center"
+            style={{
+              background: muted ? "#E2E2D0" : "#FFFDF7",
+              border: `1px solid ${muted ? "#D4D2C1" : "#D6D5C4"}`,
+              borderRadius: 11,
+              boxShadow: muted ? "none" : "0 6px 16px rgba(39,40,34,0.12)",
+              color: muted ? "#858578" : "#31362D",
+              cursor: "pointer",
+              fontFamily: "var(--font-mono, ui-monospace, monospace)",
+              fontSize: 13,
+              fontWeight: 800,
+              height: 42,
+              opacity: muted ? 0.82 : 1,
+              width: 42,
+            }}
+          >
+            {initial}
+            <span
+              aria-hidden="true"
+              style={{
+                ...getShellStatusDotStyle(shell),
+                borderRadius: 999,
+                bottom: 4,
+                height: 7,
+                position: "absolute",
+                right: 4,
+                width: 7,
+              }}
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function CollapsedRailButton({
+  label,
+  onClick,
+  children,
+  strong = false,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  strong?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="flex items-center justify-center"
+      style={{
+        background: strong ? "#465243" : "#FFFDF7",
+        border: strong ? "1px solid #465243" : "1px solid #D6D5C4",
+        borderRadius: 10,
+        color: strong ? "#F8F7EF" : "#6F7167",
+        cursor: "pointer",
+        fontSize: strong ? 24 : 14,
+        fontWeight: 700,
+        height: 40,
+        lineHeight: 1,
+        width: 40,
+      }}
+    >
+      {children}
     </button>
   );
 }
@@ -2367,17 +2745,14 @@ function ShellCard({
 }) {
   const tabs = shell.tabs ?? [];
   const focusedTab = tabs.find((tab) => tab.focused) ?? tabs[0];
-  const statusColor =
-    shell.status === "active" || !shell.status
-      ? "#5FB85F"
-      : shell.status === "degraded"
-        ? "#E0A12E"
-        : "#A9AA9A";
+  const statusDotStyle = getShellStatusDotStyle(shell);
   const [copied, setCopied] = useState(false);
   const displayName = formatShellDisplayName(shell.name);
+  const [actionsVisible, setActionsVisible] = useState(false);
+  const showActions = foreground && (actionsVisible || copied);
   const copyAttachCommand = async () => {
     try {
-      await copyTextToClipboard(shellConnectCommand(shell.name));
+      await copyTextToClipboard(shellAttachCommand(shell));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
     } catch (err: unknown) {
@@ -2387,6 +2762,14 @@ function ShellCard({
   return (
     <div
       className="group"
+      onMouseEnter={() => setActionsVisible(true)}
+      onMouseLeave={() => setActionsVisible(false)}
+      onFocus={() => setActionsVisible(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setActionsVisible(false);
+        }
+      }}
       style={{
         background: foreground ? "#FFFDF7" : "#E2E2D0",
         border: `1px solid ${foreground ? "#D6D5C4" : "#D4D2C1"}`,
@@ -2394,9 +2777,9 @@ function ShellCard({
         boxShadow: foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
         display: "flex",
         flexDirection: "column",
-        gap: foreground ? 8 : 0,
+        gap: showActions ? 8 : 0,
         opacity: foreground ? 1 : 0.86,
-        padding: foreground ? 12 : "14px 12px",
+        padding: foreground ? "10px 12px" : "14px 12px",
       }}
     >
       <div className="flex items-center" style={{ gap: 10, minHeight: 24 }}>
@@ -2405,9 +2788,8 @@ function ShellCard({
             width: foreground ? 7 : 8,
             height: foreground ? 7 : 8,
             borderRadius: "50%",
-            background: statusColor,
             flexShrink: 0,
-            boxShadow: shell.status === "active" || !shell.status ? "0 0 0 4px rgba(95,184,95,0.24)" : "none",
+            ...statusDotStyle,
           }}
         />
         <button
@@ -2444,25 +2826,36 @@ function ShellCard({
             cursor: "pointer",
             display: "flex",
             flexShrink: 0,
-            height: 22,
+            height: 18,
             justifyContent: foreground ? "flex-start" : "flex-end",
-            padding: 3,
-            width: foreground ? 48 : 46,
+            padding: 2,
+            width: foreground ? 40 : 38,
           }}
         >
-          {foreground && <span style={{ background: "#4F8A55", borderRadius: 999, height: 16, width: 16 }} />}
-          <span style={{ flex: "1 1 auto", fontSize: 12, fontWeight: 800, lineHeight: "12px", textAlign: "center" }}>
+          {foreground && <span style={{ background: "#4F8A55", borderRadius: 999, height: 12, width: 12 }} />}
+          <span style={{ flex: "1 1 auto", fontSize: 10, fontWeight: 800, lineHeight: "10px", textAlign: "center" }}>
             {foreground ? "ON" : "BG"}
           </span>
-          {!foreground && <span style={{ background: "#F7F6EC", border: "1px solid #D6D5C4", borderRadius: 999, height: 16, width: 16 }} />}
+          {!foreground && <span style={{ background: "#F7F6EC", border: "1px solid #D6D5C4", borderRadius: 999, height: 12, width: 12 }} />}
         </button>
       </div>
       {foreground && (
-        <div className="flex items-center" style={{ gap: 7, paddingLeft: 17 }}>
+        <div
+          className="flex items-center"
+          style={{
+            gap: 7,
+            maxHeight: showActions ? 28 : 0,
+            opacity: showActions ? 1 : 0,
+            overflow: "hidden",
+            paddingLeft: 17,
+            pointerEvents: showActions ? "auto" : "none",
+            transition: "max-height 150ms ease, opacity 120ms ease",
+          }}
+        >
           <button
             type="button"
             aria-label={`Copy connect command for ${displayName}`}
-            title={copied ? "Command copied" : shellConnectCommand(shell.name)}
+            title={copied ? "Command copied" : shellAttachCommand(shell)}
             onClick={() => void copyAttachCommand()}
             className="min-w-0"
             style={{
@@ -2484,8 +2877,7 @@ function ShellCard({
           >
             <span style={{ color: "#A8A899", flexShrink: 0 }}>›</span>
             <span className="truncate" style={{ minWidth: 0 }}>
-              <span>matrix shell connect </span>
-              <strong style={{ color: "#31362D", fontWeight: 700 }}>{shell.name}</strong>
+              {copied ? "Copied" : "Copy local attach command"}
             </span>
             <ClipboardPasteIcon size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
           </button>

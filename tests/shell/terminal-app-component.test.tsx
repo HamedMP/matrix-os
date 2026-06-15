@@ -108,6 +108,26 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("button", { name: /close matrix-sess_run_db0dded67faaca6b/i })).toBeNull();
   });
 
+  it("uses its Paper chrome traffic lights for host window controls", async () => {
+    const close = vi.fn();
+    const minimize = vi.fn();
+    const toggleFullscreen = vi.fn();
+    render(<TerminalApp windowControls={{ close, minimize, toggleFullscreen }} />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Close Terminal window" }));
+    fireEvent.click(screen.getByRole("button", { name: "Minimize Terminal window" }));
+    fireEvent.click(screen.getByRole("button", { name: "Toggle Terminal fullscreen" }));
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(minimize).toHaveBeenCalledOnce();
+    expect(toggleFullscreen).toHaveBeenCalledOnce();
+  });
+
   it("keeps the mobile terminal chrome clear of cwd badges that overlap zellij tabs", async () => {
     render(<TerminalApp mobile />);
 
@@ -189,7 +209,7 @@ describe("TerminalApp", () => {
           ok: true,
           json: async () => ({
             sessions: [
-              { name: "main", status: "active", attachedClients: 1, tabs: [{ idx: 0, name: "main", focused: true }] },
+              { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", attachedClients: 1, tabs: [{ idx: 0, name: "main", focused: true }] },
             ],
           }),
         } as Response);
@@ -210,7 +230,69 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(writeText).toHaveBeenCalledWith("matrix shell connect main");
+    expect(writeText).toHaveBeenCalledWith("mos shell attach main");
+    expect(screen.queryByText("matrix shell connect")).toBeNull();
+  });
+
+  it("persists Paper active and background placement toggles through the gateway", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", latestSeq: 7, lastSeenSeq: 4, unread: true, visualStatus: "running", attachCommand: "mos shell attach main", tabs: [] },
+              { name: "docs", status: "active", placement: "background", latestSeq: 11, lastSeenSeq: 11, unread: false, visualStatus: "idle", attachCommand: "mos shell attach docs", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      if (url.includes("/api/terminal/sessions/") && url.endsWith("/ui-state")) {
+        return Promise.resolve({ ok: true, json: async () => ({ session: {} }) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("main")).toBeTruthy();
+    expect(screen.getByText("docs")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Move matrix-main to background" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Make docs active" }));
+      await Promise.resolve();
+    });
+
+    const uiStateCalls = calls.filter((call) => call.url.includes("/ui-state"));
+    expect(uiStateCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        url: expect.stringContaining("/api/terminal/sessions/main/ui-state"),
+        init: expect.objectContaining({ method: "PATCH", body: JSON.stringify({ placement: "background" }) }),
+      }),
+      expect.objectContaining({
+        url: expect.stringContaining("/api/terminal/sessions/docs/ui-state"),
+        init: expect.objectContaining({ method: "PATCH", body: JSON.stringify({ placement: "active", lastSeenSeq: 11 }) }),
+      }),
+    ]));
   });
 
   it("focuses active shell rows without creating duplicate attached tabs", async () => {
@@ -259,6 +341,32 @@ describe("TerminalApp", () => {
     expect(screen.queryByText("Zellij")).toBeNull();
   });
 
+  it("opens mobile terminal detail with back navigation and command composer", async () => {
+    render(<TerminalApp mobile />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByPlaceholderText("Find a session...")).toBeNull();
+    expect(screen.getByRole("button", { name: "Back to sessions" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Command composer" })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Back to sessions" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
+  });
+
   it("opens zellij-backed shell sessions from the new-session control", async () => {
     render(<TerminalApp />);
 
@@ -304,7 +412,7 @@ describe("TerminalApp", () => {
     expect(screen.getByLabelText("Search sessions")).toBeTruthy();
   });
 
-  it("fully removes the sidebar from layout flow when hidden", async () => {
+  it("renders the Paper collapsed sessions rail in layout flow when hidden", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -314,9 +422,11 @@ describe("TerminalApp", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
-    const openButton = screen.getByTitle("Open sidebar (Ctrl+Shift+B)");
-    expect(openButton.parentElement?.className).toContain("absolute");
-    expect(openButton.parentElement?.style.width).not.toBe("44px");
+    const rail = screen.getByTestId("terminal-collapsed-rail");
+    expect(rail.style.width).toBe("76px");
+    expect(rail.className).not.toContain("absolute");
+    expect(screen.getByRole("button", { name: "Expand sessions drawer" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
   });
 
   it("opens zellij-backed shell sessions from Ctrl+Shift+T", async () => {
@@ -364,7 +474,7 @@ describe("TerminalApp", () => {
       if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ sessions: [{ name: "main", status: "active", attachedClients: 1, tabs: [] }] }),
+        json: async () => ({ sessions: [{ name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", attachedClients: 1, tabs: [] }] }),
         });
       }
       return Promise.resolve({ ok: true, json: async () => ({}) });
@@ -382,7 +492,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("matrix shell connect main");
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("mos shell attach main");
   });
 
   it("does not persist the mobile-forced sidebar state into shared terminal layout", async () => {

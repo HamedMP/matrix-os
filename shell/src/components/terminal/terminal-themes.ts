@@ -204,6 +204,27 @@ const themeMapping: Record<string, string> = {
 };
 
 const terminalThemePresets = {
+  "dark": {
+    label: "Dark",
+    background: "#1C2019",
+    foreground: "#C9C7B7",
+    cursor: "#9CB77A",
+    selectionBackground: "#8CC7BE33",
+  },
+  "light": {
+    label: "Light",
+    background: "#F8F7EF",
+    foreground: "#31362D",
+    cursor: "#CF7835",
+    selectionBackground: "#CF783533",
+  },
+  "matrix": {
+    label: "Matrix",
+    background: "#10170F",
+    foreground: "#DDEDD6",
+    cursor: "#5FB85F",
+    selectionBackground: "#5FB85F33",
+  },
   "one-dark": {
     label: "One Dark",
     background: "#1e2127",
@@ -279,11 +300,9 @@ const terminalThemePresets = {
 >;
 
 export const TERMINAL_THEME_OPTIONS: TerminalThemeOption[] = [
-  { id: "system", label: "Match OS" },
-  ...Object.entries(terminalThemePresets).map(([id, preset]) => ({
-    id: id as Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
-    label: preset.label,
-  })),
+  { id: "dark", label: "Dark" },
+  { id: "light", label: "Light" },
+  { id: "matrix", label: "Matrix" },
 ];
 
 function inferMode(bg: string): "light" | "dark" {
@@ -308,8 +327,16 @@ export function getAnsiPalette(themeSlug: string, backgroundHex: string): AnsiPa
 export function getTerminalThemePreset(
   themeId: Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
 ) {
+  const mappedThemeId =
+    themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light"
+      ? "light"
+      : themeId === "matrix"
+        ? "matrix"
+        : themeId === "dark" || themeId === "light"
+          ? themeId
+          : "dark";
   return {
-    ...terminalThemePresets[themeId],
-    ...palettes[themeId],
+    ...terminalThemePresets[mappedThemeId],
+    ...(mappedThemeId === "light" ? palettes["one-light"] : mappedThemeId === "matrix" ? palettes["one-dark"] : palettes["one-dark"]),
   };
 }

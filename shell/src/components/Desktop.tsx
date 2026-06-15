@@ -1962,6 +1962,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             const isFullscreen = win.id === fullscreenWindowId;
             const isMinimizing = minimizingIds.has(win.id);
             const isHidden = win.minimized && !isMinimizing && !isFullscreen;
+            const terminalOwnsChrome = win.path.startsWith("__terminal__");
 
             // Compute dock target for suck animation
             let dockTargetX = 0;
@@ -2016,7 +2017,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 } as React.CSSProperties}
                 onMouseDown={() => !isFullscreen && wmFocusWindow(win.id)}
               >
-                {!isFullscreen && (
+                {!isFullscreen && !terminalOwnsChrome && (
                 <CardHeader
                   className="flex flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
                   onPointerDown={(e) => onDragStart(win.id, e)}
@@ -2044,6 +2045,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   {win.path.startsWith("__terminal__") ? (
                     <TerminalApp
                       launchTargetId={win.id}
+                      windowControls={{
+                        close: () => wmCloseWindow(win.id),
+                        minimize: () => animateMinimize(win.id),
+                        toggleFullscreen: () => wmToggleFullscreen(win.id),
+                      }}
                     />
                   ) : win.path === "__workspace__" ? (
                     <WorkspaceApp />

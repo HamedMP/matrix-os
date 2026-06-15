@@ -25,23 +25,32 @@ describe("shell preferences", () => {
   it("validates the preferences schema", () => {
     expect(ShellPreferencesSchema.parse({
       themeId: "dracula",
+      shellThemeId: "matrix",
       fontFamily: "MesloLGS NF",
       ligatures: true,
       cursorStyle: "bar",
       smoothScroll: true,
-    })).toMatchObject({ themeId: "dracula", fontFamily: "MesloLGS NF" });
+    })).toMatchObject({ shellThemeId: "matrix", fontFamily: "MesloLGS NF" });
+
+    expect(ShellPreferencesSchema.parse({ themeId: "dracula" })).toMatchObject({
+      shellThemeId: "dark",
+    });
+    expect(ShellPreferencesSchema.parse({ themeId: "one-light" })).toMatchObject({
+      shellThemeId: "light",
+    });
 
     expect(() => ShellPreferencesSchema.parse({ fontFamily: "../bad" })).toThrow();
+    expect(() => ShellPreferencesSchema.parse({ shellThemeId: "dracula" })).toThrow();
   });
 
   it("persists per-session preferences atomically", async () => {
     const root = await tempRoot();
     const store = new ShellPreferencesStore({ homePath: root });
 
-    await store.save("main", { themeId: "nord", fontFamily: "MesloLGS NF" });
+    await store.save("main", { shellThemeId: "matrix", fontFamily: "MesloLGS NF" });
 
     await expect(store.load("main")).resolves.toMatchObject({
-      themeId: "nord",
+      shellThemeId: "matrix",
       fontFamily: "MesloLGS NF",
     });
   });
@@ -81,5 +90,62 @@ describe("shell preferences", () => {
       body: JSON.stringify({ fontFamily: "../bad" }),
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("serves PATCH session UI state with validation and body limits", async () => {
+    const updateUiState = vi.fn(async () => ({
+      name: "main",
+      placement: "background",
+      visualStatus: "waiting",
+      lastSeenSeq: 12,
+      latestSeq: 15,
+      unread: true,
+    }));
+    const app = new Hono();
+    app.route("/api", createShellRoutes({
+      registry: {
+        list: vi.fn(async () => []),
+        create: vi.fn(),
+        delete: vi.fn(),
+        updateUiState,
+      },
+    }));
+
+    const patch = await app.request("/api/sessions/main/ui-state", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        placement: "background",
+        visualStatus: "waiting",
+        lastSeenSeq: 12,
+      }),
+    });
+    expect(patch.status).toBe(200);
+    await expect(patch.json()).resolves.toMatchObject({
+      session: {
+        name: "main",
+        placement: "background",
+        visualStatus: "waiting",
+      },
+    });
+    expect(updateUiState).toHaveBeenCalledWith("main", {
+      placement: "background",
+      visualStatus: "waiting",
+      lastSeenSeq: 12,
+    });
+
+    const invalid = await app.request("/api/sessions/main/ui-state", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ placement: "foreground" }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const tooLarge = await app.request("/api/sessions/main/ui-state", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: "x".repeat(4096) }),
+    });
+    expect(tooLarge.status).toBe(413);
   });
 });

@@ -82,9 +82,26 @@ export function renderMatrixZellijConfig(configPaths: MatrixZellijConfigPaths): 
   return `// Matrix OS generated shell config.
 pane_frames false
 simplified_ui true
+hide_session_name true
 default_layout "matrix"
 default_shell ${JSON.stringify(configPaths.shellFile)}
-theme "default"
+theme "matrix-dark"
+
+themes {
+  matrix-dark {
+    fg 201 199 183
+    bg 28 32 25
+    black 21 24 15
+    red 214 111 97
+    green 156 183 122
+    yellow 210 179 95
+    blue 140 199 190
+    magenta 207 120 53
+    cyan 140 199 190
+    white 248 247 239
+    orange 207 120 53
+  }
+}
 `;
 }
 

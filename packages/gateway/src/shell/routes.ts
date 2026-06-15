@@ -17,6 +17,11 @@ interface SessionRegistryRoutes {
     cmd?: string;
   }): Promise<unknown>;
   delete(name: string, options?: { force?: boolean }): Promise<void>;
+  updateUiState?(name: string, input: {
+    placement?: "active" | "background";
+    lastSeenSeq?: number | null;
+    visualStatus?: "running" | "finished" | "idle" | "waiting";
+  }): Promise<unknown>;
 }
 
 interface ShellWorkspaceRoutes {
@@ -78,6 +83,11 @@ const RunBodySchema = z.object({
   cwd: SafeCwdSchema.optional(),
   timeoutMs: z.number().int().positive().max(30 * 60 * 1000).optional(),
 });
+const SessionUiStateBodySchema = z.object({
+  placement: z.enum(["active", "background"]).optional(),
+  lastSeenSeq: z.number().int().nonnegative().nullable().optional(),
+  visualStatus: z.enum(["running", "finished", "idle", "waiting"]).optional(),
+}).strict().refine((value) => Object.keys(value).length > 0);
 
 function safeCwdSchema() {
   return z.string().min(1).max(1024)
@@ -88,6 +98,7 @@ function safeCwdSchema() {
 export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
+  const uiStateBodyLimit = bodyLimit({ maxSize: 1024 });
   const preferencesBodyLimit = bodyLimit({ maxSize: 4096 });
   const workspaceBodyLimit = bodyLimit({ maxSize: 8192 });
   const layoutBodyLimit = bodyLimit({ maxSize: 128_000 });
@@ -136,6 +147,20 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         force: new URL(c.req.url).searchParams.get("force") === "1",
       });
       return c.json({ ok: true });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.patch("/sessions/:name/ui-state", uiStateBodyLimit, async (c) => {
+    try {
+      if (!deps.registry.updateUiState) return unavailable(c, "session_ui_state_unavailable");
+      const body = SessionUiStateBodySchema.parse(await c.req.json());
+      const session = await deps.registry.updateUiState(
+        SafeSessionNameSchema.parse(c.req.param("name")),
+        body,
+      );
+      return c.json({ session });
     } catch (err) {
       return safeError(c, err);
     }
@@ -319,6 +344,12 @@ function unavailable(c: Context, code: string) {
 }
 
 function safeError(c: Context, err: unknown) {
+  if (err instanceof Error && err.message === "Payload Too Large") {
+    return c.json(
+      { error: { code: "payload_too_large", message: "Request failed" } },
+      413,
+    );
+  }
   if (err instanceof z.ZodError) {
     return c.json(
       { error: { code: "invalid_request", message: "Invalid request" } },
