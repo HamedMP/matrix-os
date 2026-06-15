@@ -58,6 +58,7 @@ describe("shell preferences", () => {
   it("serves GET and PUT preferences routes with validation", async () => {
     const root = await tempRoot();
     const preferences = new ShellPreferencesStore({ homePath: root });
+    const setShellTheme = vi.fn(async () => {});
     const app = new Hono();
     app.route("/api", createShellRoutes({
       registry: {
@@ -66,19 +67,22 @@ describe("shell preferences", () => {
         delete: vi.fn(),
       },
       preferences,
+      shellThemeConfig: { setShellTheme },
     }));
 
     const put = await app.request("/api/sessions/main/preferences", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fontFamily: "MesloLGS NF", cursorStyle: "underline" }),
+      body: JSON.stringify({ shellThemeId: "light", fontFamily: "MesloLGS NF", cursorStyle: "underline" }),
     });
     expect(put.status).toBe(200);
+    expect(setShellTheme).toHaveBeenCalledWith("light");
 
     const get = await app.request("/api/sessions/main/preferences");
     expect(get.status).toBe(200);
     await expect(get.json()).resolves.toMatchObject({
       preferences: {
+        shellThemeId: "light",
         fontFamily: "MesloLGS NF",
         cursorStyle: "underline",
       },

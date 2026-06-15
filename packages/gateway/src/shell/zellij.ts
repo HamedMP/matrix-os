@@ -14,6 +14,7 @@ import {
   matrixTerminalShellScript,
   matrixZellijConfigPaths,
   renderMatrixZellijConfig,
+  type MatrixZellijShellThemeId,
   type MatrixZellijConfigPaths,
 } from "./zellij-config.js";
 
@@ -95,6 +96,7 @@ export interface ZellijAdapter {
   closePane(name: string, pane: string): Promise<unknown>;
   applyLayout(name: string, layout: string): Promise<unknown>;
   dumpLayout(name: string): Promise<unknown>;
+  setShellTheme(themeId: MatrixZellijShellThemeId): Promise<void>;
 }
 
 const SAFE_ATTACH_ENV_KEYS = new Set([
@@ -254,6 +256,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   const retainedCreatePtys = new Map<string, RetainedCreatePty>();
   const zellijConfigPaths = deps.homePath ? matrixZellijConfigPaths(deps.homePath) : null;
   let ensureConfigPromise: Promise<void> | null = null;
+  let shellThemeId: MatrixZellijShellThemeId = "dark";
 
   async function ensureMatrixZellijConfig(): Promise<void> {
     if (!zellijConfigPaths) {
@@ -270,7 +273,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         await chmod(zellijConfigPaths.shellFile, 0o700);
         await atomicWriteText(zellijConfigPaths.bashrcFile, MATRIX_TERMINAL_BASHRC);
         await atomicWriteText(zellijConfigPaths.promptLabelFile, MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT);
-        await atomicWriteText(zellijConfigPaths.file, renderMatrixZellijConfig(zellijConfigPaths));
+        await atomicWriteText(zellijConfigPaths.file, renderMatrixZellijConfig(zellijConfigPaths, shellThemeId));
         await atomicWriteText(zellijConfigPaths.layoutFile, MATRIX_ZELLIJ_LAYOUT);
       })().catch((err: unknown) => {
         ensureConfigPromise = null;
@@ -521,6 +524,11 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     async dumpLayout(name) {
       const kdl = await run(["--session", name, "action", "dump-layout"]);
       return { kdl };
+    },
+    async setShellTheme(themeId) {
+      shellThemeId = themeId;
+      ensureConfigPromise = null;
+      await ensureMatrixZellijConfig();
     },
   };
 }

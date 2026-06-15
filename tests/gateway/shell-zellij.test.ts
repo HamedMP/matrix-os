@@ -324,9 +324,9 @@ describe("zellij adapter", () => {
       expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
       expect(bashrc).toContain("\\u:\\w\\$ ");
       expect(promptLabel).toContain("JSON.parse");
-      expect(config).toContain('theme "matrix-dark"');
-      expect(config).toContain("matrix-dark {");
-      expect(config).toContain("matrix-light {");
+      expect(config).toContain('theme "default"');
+      expect(config).not.toContain("matrix-dark {");
+      expect(config).not.toContain("matrix-light {");
       expect(config).toContain("matrix {");
       expect(layout).toContain('plugin location="zellij:compact-bar"');
       expect(layout).not.toContain("tab-bar");

@@ -245,7 +245,7 @@ describe("TerminalApp", () => {
     }));
   });
 
-  it("opens the advanced shell-theme controls from the Paper theme menu", async () => {
+  it("opens the Paper shell-theme chooser from the Theme menu", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -263,10 +263,12 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("combobox", { name: "Theme" })).toHaveProperty("value", "dark");
-    expect(screen.getByRole("option", { name: "Dark" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Light" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Matrix" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Shell theme" })).toBeTruthy();
+    expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
+    expect(screen.getByText("gruvbox-light")).toBeTruthy();
+    expect(screen.getByText("custom · green on black")).toBeTruthy();
+    expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
+    expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
   });
 
   it("copies Matrix shell connect commands from session rows", async () => {

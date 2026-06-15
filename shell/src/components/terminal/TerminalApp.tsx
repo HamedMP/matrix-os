@@ -30,9 +30,8 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { MATRIX_OS_APP_THEME_OPTIONS, MATRIX_OS_DARK_THEME, MATRIX_OS_LIGHT_THEME } from "@/lib/theme-presets";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
-import { useTerminalSettings } from "@/stores/terminal-settings";
+import { useTerminalSettings, type ShellThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
-import { TerminalPreferencesPanel } from "./preferences-panel";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
@@ -81,6 +80,64 @@ const PAPER_THEME_MENU_STYLE: CSSProperties = {
   width: 280,
   zIndex: 50,
 };
+
+const SHELL_THEME_OPTIONS: Array<{
+  id: ShellThemeId;
+  label: string;
+  badge: "RECOMMENDED" | "NOT FULLY TUNED";
+  badgeTone: "recommended" | "warning";
+  description: string;
+  preview: {
+    background: string;
+    border: string;
+    line: string;
+    dotA: string;
+    dotB: string;
+  };
+}> = [
+  {
+    id: "dark",
+    label: "Dark",
+    badge: "RECOMMENDED",
+    badgeTone: "recommended",
+    description: "Zellij default · best contrast",
+    preview: {
+      background: "#0C0C0C",
+      border: "#15180F",
+      line: "#0AD18B",
+      dotA: "#2BD9D9",
+      dotB: "#F1FA5C",
+    },
+  },
+  {
+    id: "light",
+    label: "Light",
+    badge: "NOT FULLY TUNED",
+    badgeTone: "warning",
+    description: "gruvbox-light",
+    preview: {
+      background: "#FBF1C7",
+      border: "#E4D9B0",
+      line: "#3C3836",
+      dotA: "#79740E",
+      dotB: "#CC241D",
+    },
+  },
+  {
+    id: "matrix",
+    label: "Matrix",
+    badge: "NOT FULLY TUNED",
+    badgeTone: "warning",
+    description: "custom · green on black",
+    preview: {
+      background: "#020A02",
+      border: "#0E5A26",
+      line: "#39FF6A",
+      dotA: "#5BF08A",
+      dotB: "#00CC44",
+    },
+  },
+];
 
 const TAB_ITEM_BASE_STYLE: CSSProperties = {
   borderRadius: 6,
@@ -441,6 +498,38 @@ async function ensureDefaultShellSession(): Promise<boolean> {
 
 function getSafePreferencesSessionName(value: string | null): string | null {
   return value && /^[a-z0-9][a-z0-9-]{0,30}$/.test(value) ? value : null;
+}
+
+function mapTerminalThemeToShellTheme(themeId: TerminalThemeId | undefined): ShellThemeId {
+  if (themeId === "dark" || themeId === "light" || themeId === "matrix") {
+    return themeId;
+  }
+  if (themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light") {
+    return "light";
+  }
+  return "dark";
+}
+
+function loadShellThemePreference(sessionName: string | null, setThemeId: (themeId: TerminalThemeId) => void): void {
+  if (!sessionName || typeof fetch !== "function") {
+    return;
+  }
+  void fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then((res) => res.ok ? res.json() : null)
+    .then((data: unknown) => {
+      if (!data || typeof data !== "object" || !("preferences" in data)) {
+        return;
+      }
+      const next = (data as { preferences?: { shellThemeId?: unknown } }).preferences?.shellThemeId;
+      if (next === "dark" || next === "light" || next === "matrix") {
+        setThemeId(next);
+      }
+    })
+    .catch((err: unknown) => {
+      console.warn("Failed to load shell theme preferences:", err instanceof Error ? err.message : err);
+    });
 }
 
 function terminalAppDebug(event: string, details: Record<string, unknown>): void {
@@ -1193,10 +1282,11 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
 function ThemePickerButton() {
   const ctx = useTerminalAppContext();
   const [open, setOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [shellThemeOpen, setShellThemeOpen] = useState(false);
   const [selectedAppThemeOverride, setSelectedAppThemeOverride] = useState<string | null>(null);
   const [matchSystem, setMatchSystem] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const setTerminalThemeId = useTerminalSettings((s) => s.setThemeId);
   const selectedAppThemeName = selectedAppThemeOverride ?? ctx.themeName;
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
   const focusedPaneId = ctx.focusedPaneId ?? (activeTab ? getFirstPaneId(activeTab.paneTree) : null);
@@ -1235,13 +1325,15 @@ function ThemePickerButton() {
 
   const panel = (
     <ThemePickerPanel
-      advancedOpen={advancedOpen}
       matchSystem={matchSystem}
       mobile={ctx.mobile}
       selectedAppThemeName={selectedAppThemeName}
-      sessionName={sessionName}
-      onAdvancedToggle={() => setAdvancedOpen((current) => !current)}
       onSelectTheme={(theme) => persistTheme(theme, false)}
+      onShellThemeOpen={() => {
+        loadShellThemePreference(sessionName, setTerminalThemeId);
+        setOpen(false);
+        setShellThemeOpen(true);
+      }}
       onSystemTheme={applySystemTheme}
     />
   );
@@ -1263,6 +1355,13 @@ function ThemePickerButton() {
         <span style={{ color: "#CF7835", fontSize: 17, fontWeight: 600, lineHeight: "22px" }}>☼</span>
         <span>Theme</span>
       </button>
+      {shellThemeOpen ? (
+        <ShellThemeChooser
+          mobile={ctx.mobile}
+          sessionName={sessionName}
+          onClose={() => setShellThemeOpen(false)}
+        />
+      ) : null}
       {open && (ctx.mobile ? (
         <div
           aria-label="Theme picker overlay"
@@ -1288,22 +1387,18 @@ function ThemePickerButton() {
 }
 
 function ThemePickerPanel({
-  advancedOpen,
   matchSystem,
   mobile,
   selectedAppThemeName,
-  sessionName,
-  onAdvancedToggle,
   onSelectTheme,
+  onShellThemeOpen,
   onSystemTheme,
 }: {
-  advancedOpen: boolean;
   matchSystem: boolean;
   mobile: boolean;
   selectedAppThemeName: string;
-  sessionName: string | null;
-  onAdvancedToggle: () => void;
   onSelectTheme: (theme: (typeof MATRIX_OS_APP_THEME_OPTIONS)[number]["theme"]) => void;
+  onShellThemeOpen: () => void;
   onSystemTheme: () => void;
 }) {
   const panelStyle: CSSProperties = mobile
@@ -1419,7 +1514,7 @@ function ThemePickerPanel({
       <button
         type="button"
         aria-label="Change shell theme Advanced terminal colors"
-        onClick={onAdvancedToggle}
+        onClick={onShellThemeOpen}
         style={{
           alignItems: "center",
           background: mobile ? "#F2F1E6" : "transparent",
@@ -1452,25 +1547,9 @@ function ThemePickerPanel({
           style={{
             color: mobile ? "#8E8F82" : "#5F6258",
             flexShrink: 0,
-            transform: advancedOpen ? "rotate(90deg)" : "none",
-            transition: "transform 120ms ease",
           }}
         />
       </button>
-
-      {advancedOpen ? (
-        <div
-          style={{
-            background: mobile ? "#FFFFFF" : "#171A13",
-            border: `1px solid ${mobile ? "#DEDCCF" : "#2D3127"}`,
-            borderRadius: 12,
-            marginTop: mobile ? 0 : 2,
-            overflow: "hidden",
-          }}
-        >
-          <TerminalPreferencesPanel sessionName={sessionName} />
-        </div>
-      ) : null}
 
       {mobile ? (
         <div style={{ alignItems: "center", display: "flex", height: 22, justifyContent: "center" }}>
@@ -1478,6 +1557,292 @@ function ThemePickerPanel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ShellThemeChooser({
+  mobile,
+  sessionName,
+  onClose,
+}: {
+  mobile: boolean;
+  sessionName: string | null;
+  onClose: () => void;
+}) {
+  const themeId = useTerminalSettings((s) => s.themeId);
+  const setThemeId = useTerminalSettings((s) => s.setThemeId);
+  const selectedShellThemeId = mapTerminalThemeToShellTheme(themeId);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const dialogNeedsOpenAttribute =
+    typeof globalThis.HTMLDialogElement === "undefined" ||
+    typeof globalThis.HTMLDialogElement.prototype.showModal !== "function";
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog || dialogNeedsOpenAttribute || typeof dialog.showModal !== "function") {
+      return;
+    }
+    if (!dialog.open) {
+      dialog.showModal();
+    }
+    return () => {
+      if (dialog.open) {
+        dialog.close();
+      }
+    };
+  }, [dialogNeedsOpenAttribute]);
+
+  const persistShellTheme = (next: ShellThemeId) => {
+    setThemeId(next);
+    if (!sessionName || typeof fetch !== "function") {
+      return;
+    }
+    const state = useTerminalSettings.getState();
+    void fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        shellThemeId: next,
+        fontFamily: state.fontFamily,
+        ligatures: state.ligatures,
+        cursorStyle: state.cursorStyle,
+        smoothScroll: state.smoothScroll,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err: unknown) => {
+      console.warn("Failed to save shell theme preferences:", err instanceof Error ? err.message : err);
+    });
+  };
+
+  const cardStyle: CSSProperties = mobile
+    ? {
+        background: "#FFFDF7",
+        border: "1px solid #E4E2D2",
+        borderBottom: 0,
+        borderRadius: "26px 26px 0 0",
+        boxShadow: "0 -18px 50px rgba(0, 0, 0, 0.44)",
+        color: "#2F332C",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+        padding: "10px 20px 16px",
+        width: "min(390px, 100%)",
+      }
+    : {
+        background: "#FFFDF7",
+        border: "1px solid #E4E2D2",
+        borderRadius: 18,
+        boxShadow: "0 30px 70px rgba(0, 0, 0, 0.37)",
+        color: "#2F332C",
+        display: "flex",
+        flexDirection: "column",
+        gap: 18,
+        padding: 26,
+        width: 460,
+      };
+
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-label="Shell theme"
+      aria-modal="true"
+      open={dialogNeedsOpenAttribute ? true : undefined}
+      style={{
+        alignItems: mobile ? "flex-end" : "center",
+        background: "rgba(2, 5, 2, 0.58)",
+        border: 0,
+        display: "flex",
+        height: "100dvh",
+        inset: 0,
+        justifyContent: "center",
+        margin: 0,
+        maxHeight: "none",
+        maxWidth: "none",
+        overflow: "hidden",
+        padding: mobile ? 0 : 24,
+        position: "fixed",
+        width: "100vw",
+        zIndex: 95,
+      }}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <button
+        type="button"
+        aria-label="Dismiss shell theme chooser"
+        tabIndex={-1}
+        onClick={onClose}
+        style={{
+          background: "transparent",
+          border: 0,
+          cursor: "default",
+          inset: 0,
+          padding: 0,
+          position: "absolute",
+        }}
+      />
+      <div
+        style={{ ...cardStyle, position: "relative", zIndex: 1 }}
+      >
+        {mobile ? (
+          <div style={{ alignSelf: "center", background: "#D4D4C4", borderRadius: 999, height: 5, width: 42 }} />
+        ) : null}
+        <div style={{ alignItems: "center", display: "flex", gap: 14 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              alignItems: "center",
+              background: "#15180F",
+              borderRadius: 8,
+              color: "#9CB77A",
+              display: "flex",
+              flexShrink: 0,
+              height: mobile ? 42 : 38,
+              justifyContent: "center",
+              width: mobile ? 42 : 38,
+            }}
+          >
+            <SquareTerminalIcon size={mobile ? 20 : 18} strokeWidth={2} />
+          </span>
+          <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+            <span style={{ color: "#20241C", fontSize: mobile ? 17 : 15, fontWeight: 800, lineHeight: mobile ? "22px" : "19px" }}>
+              Shell theme
+            </span>
+            <span style={{ color: "#77786C", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "15px" }}>
+              {mobile
+                ? "Terminal colors. We recommend Dark."
+                : "Colors for the terminal itself. We recommend Dark — agent output, diffs and status read best."}
+            </span>
+          </span>
+        </div>
+
+        <div role="radiogroup" aria-label="Shell theme options" style={{ display: "flex", flexDirection: "column", gap: mobile ? 9 : 8 }}>
+          {SHELL_THEME_OPTIONS.map((option) => {
+            const selected = option.id === selectedShellThemeId;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={`${option.label} ${option.description}`}
+                onClick={() => persistShellTheme(option.id)}
+                style={{
+                  alignItems: "center",
+                  background: selected ? "#F4F3E9" : "#FFFDF7",
+                  border: `1px solid ${selected ? "#D6D5C4" : "#E9E6D8"}`,
+                  borderRadius: mobile ? 14 : 13,
+                  color: "#2F332C",
+                  cursor: "pointer",
+                  display: "flex",
+                  gap: mobile ? 13 : 12,
+                  minHeight: mobile ? 58 : 56,
+                  padding: mobile ? "10px 12px" : "10px 13px",
+                  textAlign: "left",
+                  width: "100%",
+                }}
+              >
+                <ShellThemePreviewIcon option={option} mobile={mobile} />
+                <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 2, minWidth: 0 }}>
+                  <span style={{ alignItems: "center", display: "flex", gap: 8, minWidth: 0 }}>
+                    <span style={{ color: "#20241C", fontSize: mobile ? 14 : 13, fontWeight: 800, lineHeight: "18px" }}>
+                      {option.label}
+                    </span>
+                    <span
+                      style={{
+                        background: option.badgeTone === "recommended" ? "#DDEBCE" : "#F4E4A8",
+                        borderRadius: 4,
+                        color: option.badgeTone === "recommended" ? "#4F8A55" : "#A06F1D",
+                        fontSize: mobile ? 7 : 6,
+                        fontWeight: 800,
+                        letterSpacing: "0.02em",
+                        lineHeight: "10px",
+                        padding: "1px 4px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {option.badge}
+                    </span>
+                  </span>
+                  <span style={{ color: "#77786C", fontSize: mobile ? 11 : 10, lineHeight: mobile ? "15px" : "13px" }}>
+                    {option.description}
+                  </span>
+                </span>
+                {selected ? (
+                  <CheckIcon
+                    size={mobile ? 17 : 15}
+                    strokeWidth={2.4}
+                    style={{ color: "#4F8A55", flexShrink: 0 }}
+                  />
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+
+        <div
+          style={{
+            background: "#F7F1E2",
+            border: "1px solid #ECE2C6",
+            borderRadius: 9,
+            color: "#8A7B52",
+            display: "flex",
+            fontSize: mobile ? 10 : 11,
+            gap: 10,
+            lineHeight: mobile ? "14px" : "16px",
+            padding: mobile ? "10px 12px" : "12px 14px",
+          }}
+        >
+          <span aria-hidden="true" style={{ background: "#D2B35F", borderRadius: 999, flexShrink: 0, width: 3 }} />
+          <span>
+            {mobile
+              ? "Light & Matrix aren't fully tuned — some colors lose contrast. Switch back to Dark if output looks off."
+              : "Light and Matrix aren't fully tuned — some terminal colors lose contrast. Switch back to Dark if output looks off."}
+          </span>
+        </div>
+
+        {mobile ? (
+          <div style={{ alignItems: "center", display: "flex", height: 18, justifyContent: "center" }}>
+            <div style={{ background: "#000000", borderRadius: 999, height: 5, width: 140 }} />
+          </div>
+        ) : null}
+      </div>
+    </dialog>
+  );
+}
+
+function ShellThemePreviewIcon({
+  option,
+  mobile,
+}: {
+  option: (typeof SHELL_THEME_OPTIONS)[number];
+  mobile: boolean;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        alignItems: "center",
+        background: option.preview.background,
+        border: `1px solid ${option.preview.border}`,
+        borderRadius: 6,
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+        gap: mobile ? 5 : 4,
+        height: mobile ? 32 : 28,
+        justifyContent: "center",
+        width: mobile ? 36 : 34,
+      }}
+    >
+      <span style={{ background: option.preview.line, borderRadius: 2, display: "block", height: 3, width: mobile ? 16 : 15 }} />
+      <span style={{ display: "flex", gap: 3 }}>
+        <span style={{ background: option.preview.dotA, borderRadius: 999, display: "block", height: 5, width: 5 }} />
+        <span style={{ background: option.preview.dotB, borderRadius: 999, display: "block", height: 5, width: 5 }} />
+      </span>
+    </span>
   );
 }
 

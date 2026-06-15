@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 
 export const MATRIX_ZELLIJ_LAYOUT_NAME = "matrix";
+export type MatrixZellijShellThemeId = "dark" | "light" | "matrix";
 
 export type MatrixZellijConfigPaths = {
   dir: string;
@@ -80,43 +81,31 @@ export function matrixZellijConfigPaths(homePath: string): MatrixZellijConfigPat
   };
 }
 
-export function renderMatrixZellijConfig(configPaths: MatrixZellijConfigPaths): string {
+export function zellijThemeForShellTheme(themeId: MatrixZellijShellThemeId): "default" | "gruvbox-light" | "matrix" {
+  switch (themeId) {
+    case "light":
+      return "gruvbox-light";
+    case "matrix":
+      return "matrix";
+    case "dark":
+      return "default";
+  }
+}
+
+export function renderMatrixZellijConfig(
+  configPaths: MatrixZellijConfigPaths,
+  themeId: MatrixZellijShellThemeId = "dark",
+): string {
   return `// Matrix OS generated shell config.
-// Paper shell themes: dark=matrix-dark, light=matrix-light, matrix=matrix.
+// Paper shell themes: dark=default, light=gruvbox-light, matrix=matrix.
 pane_frames false
 simplified_ui true
 hide_session_name true
 default_layout "${MATRIX_ZELLIJ_LAYOUT_NAME}"
 default_shell ${JSON.stringify(configPaths.shellFile)}
-theme "matrix-dark"
+theme "${zellijThemeForShellTheme(themeId)}"
 
 themes {
-  matrix-dark {
-    fg 191 191 191
-    bg 12 12 12
-    black 12 12 12
-    red 216 94 94
-    green 10 209 139
-    yellow 201 162 74
-    blue 106 160 255
-    magenta 181 140 255
-    cyan 0 229 192
-    white 240 239 229
-    orange 207 120 53
-  }
-  matrix-light {
-    fg 60 56 54
-    bg 251 241 199
-    black 251 241 199
-    red 204 36 29
-    green 121 116 14
-    yellow 181 118 20
-    blue 69 133 136
-    magenta 177 98 134
-    cyan 104 157 106
-    white 40 40 40
-    orange 175 58 3
-  }
   matrix {
     fg 47 191 85
     bg 2 10 2

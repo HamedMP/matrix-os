@@ -55,6 +55,7 @@ export const ShellPreferencesSchema = z.preprocess((input) => {
 }));
 
 export type ShellPreferences = z.infer<typeof ShellPreferencesSchema>;
+export type ShellThemeId = z.infer<typeof ShellThemeIdSchema>;
 
 export interface ShellPreferencesStoreOptions {
   homePath: string;

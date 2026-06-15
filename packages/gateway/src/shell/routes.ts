@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import { toShellError } from "./errors.js";
 import {
   ShellPreferencesSchema,
+  type ShellThemeId,
   type ShellPreferencesStore,
 } from "./preferences.js";
 import type { ShellCommandRunner } from "./command-runner.js";
@@ -47,12 +48,17 @@ interface ShellBackendHealthRoutes {
   health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
 }
 
+interface ShellThemeConfigRoutes {
+  setShellTheme(themeId: ShellThemeId): Promise<void>;
+}
+
 export interface ShellRouteDeps {
   registry: SessionRegistryRoutes;
   preferences?: ShellPreferencesStore;
   workspace?: ShellWorkspaceRoutes;
   layouts?: ShellLayoutRoutes;
   shellBackend?: ShellBackendHealthRoutes;
+  shellThemeConfig?: ShellThemeConfigRoutes;
   commandRunner?: ShellCommandRunner;
 }
 
@@ -349,6 +355,9 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
         SafeSessionNameSchema.parse(c.req.param("name")),
         ShellPreferencesSchema.parse(await c.req.json()),
       );
+      if (deps.shellThemeConfig) {
+        await deps.shellThemeConfig.setShellTheme(preferences.shellThemeId);
+      }
       return c.json({ preferences });
     } catch (err) {
       return safeError(c, err);

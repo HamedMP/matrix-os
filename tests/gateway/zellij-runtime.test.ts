@@ -120,9 +120,9 @@ describe("zellij-runtime", () => {
     expect(shell).toContain(`node '${promptLabelPath}'`);
     expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
     expect(promptLabel).toContain("handle.json");
-    expect(config).toContain('theme "matrix-dark"');
-    expect(config).toContain("matrix-dark {");
-    expect(config).toContain("matrix-light {");
+    expect(config).toContain('theme "default"');
+    expect(config).not.toContain("matrix-dark {");
+    expect(config).not.toContain("matrix-light {");
     expect(config).toContain("matrix {");
     expect(defaultLayout).toContain('plugin location="zellij:compact-bar"');
     expect(sessionLayout).toContain('plugin location="zellij:compact-bar"');
