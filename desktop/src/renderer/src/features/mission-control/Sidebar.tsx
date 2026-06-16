@@ -64,7 +64,8 @@ function NavRow({
 }
 
 function SidebarAppIcon({ iconUrl, name }: { iconUrl?: string; name: string }) {
-  const url = iconUrl && /^https?:\/\//.test(iconUrl) ? iconUrl : null;
+  const url =
+    iconUrl && (/^https?:\/\//.test(iconUrl) || iconUrl.startsWith("/")) ? iconUrl : null;
   const [failed, setFailed] = useState(false);
   const prev = useRef<string | null>(null);
   if (prev.current !== url) {

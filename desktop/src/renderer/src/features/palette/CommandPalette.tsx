@@ -7,6 +7,7 @@ import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
 import { useTabs } from "../../stores/tabs";
+import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 
 export default function CommandPalette() {
@@ -85,7 +86,16 @@ export default function CommandPalette() {
           >
             <PaletteItem icon={<Plus size={14} />} label="New task" shortcut="C" onSelect={() => run(() => setCreateTaskOpen(true))} />
             <PaletteItem icon={<Kanban size={14} />} label="New project" onSelect={() => run(() => setCreateProjectOpen(true))} />
-            <PaletteItem icon={<Sparkles size={14} />} label="Open chat" onSelect={() => run(() => openTab({ kind: "chat", title: "Hermes", closable: false }))} />
+            <PaletteItem
+              icon={<Sparkles size={14} />}
+              label="Open chat"
+              onSelect={() =>
+                run(() => {
+                  useThreads.getState().setActiveThread(null);
+                  openTab({ kind: "chat", title: "Hermes", closable: false });
+                })
+              }
+            />
             <PaletteItem icon={<MessageSquarePlus size={14} />} label="New agent run" shortcut="⌘J" onSelect={() => run(() => setComposerOpen(true))} />
             <PaletteItem icon={<Home size={14} />} label="Go to Home" onSelect={() => run(() => openTab({ kind: "home", title: "Home", closable: false }))} />
             <PaletteItem icon={<SquareTerminal size={14} />} label="Open Terminal" onSelect={() => run(() => openTab({ kind: "terminals", title: "Terminal" }))} />
