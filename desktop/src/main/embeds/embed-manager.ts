@@ -90,15 +90,24 @@ export class EmbedManager {
     const id = options?.id ?? randomUUID();
     if (this.records.has(id)) throw new Error("embed id already exists");
     const onState = options?.onState ?? (() => undefined);
-    const view = this.createView({ partition, onState });
-    const record: EmbedRecord = {
+    let record: EmbedRecord | null = null;
+    const emitState = (state: "loading" | "ready" | "failed") => {
+      if (state === "loading" && record) record.loadFailed = false;
+      if (state === "failed" && record) {
+        if (record.loadFailed) return;
+        record.loadFailed = true;
+      }
+      onState(state);
+    };
+    const view = this.createView({ partition, onState: emitState });
+    record = {
       id,
       url,
       view,
       live: true,
       loadFailed: false,
       lastUsed: ++this.tick,
-      onState,
+      onState: emitState,
     };
     view.attach();
     view.setBounds(bounds);
@@ -170,7 +179,6 @@ export class EmbedManager {
         "[embed-manager] embed load failed:",
         err instanceof Error ? err.message : String(err),
       );
-      record.loadFailed = true;
       record.onState("failed");
     });
   }

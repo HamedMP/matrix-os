@@ -194,6 +194,30 @@ describe("EmbedManager", () => {
     expect(views[0]?.view.loadedUrls).toEqual(["https://gw.test/apps/notes/"]);
   });
 
+  it("emits one failed state when the adapter reports failure and loadUrl rejects", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const states: string[] = [];
+    const manager = new EmbedManager({
+      createView: ({ onState }) => ({
+        setBounds: () => undefined,
+        loadUrl: async () => {
+          onState("failed");
+          throw new Error("main frame failed");
+        },
+        attach: () => undefined,
+        detach: () => undefined,
+        destroy: () => undefined,
+      }),
+    });
+
+    manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/", {
+      onState: (state) => states.push(state),
+    });
+    await flush();
+
+    expect(states).toEqual(["failed"]);
+  });
+
   it("updates bounds for live embeds", () => {
     const { manager, views } = makeManager();
     const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/");

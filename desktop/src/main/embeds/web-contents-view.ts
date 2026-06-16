@@ -37,7 +37,8 @@ export function createWebContentsView(options: {
   });
   contents.on("did-start-loading", () => options.onState("loading"));
   contents.on("did-finish-load", () => options.onState("ready"));
-  contents.on("did-fail-load", (_e, errorCode) => {
+  contents.on("did-fail-load", (_e, errorCode, _description, _validatedUrl, isMainFrame) => {
+    if (isMainFrame === false) return;
     // -3 is ERR_ABORTED (e.g. a redirect); not a real failure.
     if (errorCode !== -3) options.onState("failed");
   });

@@ -88,8 +88,16 @@ export class EmbedService {
     // and resume the embed. The native principal is never altered here.
     if (this.pendingHostedShells.has(embedId)) {
       const bounds = this.pendingHostedShells.get(embedId)!;
-      const opened = await this.createHostedShellEmbed(this.deps.getGatewayOrigin(), bounds, embedId);
-      if (!opened) return false;
+      const gatewayOrigin = this.deps.getGatewayOrigin();
+      const handoff = await this.performHostedShellHandoff(gatewayOrigin);
+      if (!handoff) {
+        if (this.pendingHostedShells.has(embedId)) {
+          this.deps.emitState(embedId, "auth-required");
+        }
+        return false;
+      }
+      if (!this.pendingHostedShells.has(embedId)) return false;
+      this.attachHostedShellEmbed(gatewayOrigin, bounds, embedId);
       this.pendingHostedShells.delete(embedId);
       this.hostedShellIds.add(embedId);
       this.deps.emitState(embedId, "loading");
@@ -158,12 +166,20 @@ export class EmbedService {
   ): Promise<boolean> {
     const handoff = await this.performHostedShellHandoff(gatewayOrigin);
     if (!handoff) return false;
+    this.attachHostedShellEmbed(gatewayOrigin, bounds, embedId);
+    return true;
+  }
+
+  private attachHostedShellEmbed(
+    gatewayOrigin: string,
+    bounds: Bounds,
+    embedId: string,
+  ): void {
     const url = `${gatewayOrigin}/`;
     this.manager.open("hosted-shell", null, bounds, url, {
       id: embedId,
       onState: (state) => this.deps.emitState(embedId, state),
     });
-    return true;
   }
 
   private async performHostedShellHandoff(gatewayOrigin: string): Promise<boolean> {
