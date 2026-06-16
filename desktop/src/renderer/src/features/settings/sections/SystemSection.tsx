@@ -17,8 +17,10 @@ function gb(bytes: number | undefined): string {
 
 export default function SystemSection() {
   const api = useConnection((s) => s.api);
-  const [info, setInfo] = useState<SystemInfo | null>(null);
-  const [error, setError] = useState(false);
+  const [state, setState] = useState<{ info: SystemInfo | null; error: boolean }>({
+    info: null,
+    error: false,
+  });
 
   useEffect(() => {
     if (!api) return;
@@ -27,8 +29,7 @@ export default function SystemSection() {
       .get<SystemInfo>("/api/system/info")
       .then((d) => {
         if (!cancelled) {
-          setInfo(d);
-          setError(false);
+          setState({ info: d, error: false });
         }
       })
       .catch((err: unknown) => {
@@ -37,7 +38,7 @@ export default function SystemSection() {
           "[settings] load system info failed:",
           err instanceof Error ? err.message : String(err),
         );
-        setError(true);
+        setState((current) => ({ ...current, error: true }));
       });
     return () => { cancelled = true; };
   }, [api]);
@@ -46,14 +47,14 @@ export default function SystemSection() {
     <>
       <SectionHeader title="System" description="Your cloud computer at a glance." />
       <Card>
-        {error ? <Empty text="System info unavailable." /> : (
+        {state.error ? <Empty text="System info unavailable." /> : (
           <>
-            <Row label="OS version" value={info?.version ?? "–"} />
-            <Row label="Release channel" value={info?.release?.channel ?? "–"} />
-            <Row label="Machine" value={info?.runtime?.machineId ?? info?.runtime?.handle ?? "–"} />
-            <Row label="CPU cores" value={info?.resources?.cpuCount ?? "–"} />
-            <Row label="Memory free" value={`${gb(info?.resources?.memoryFree)} of ${gb(info?.resources?.memoryTotal)}`} />
-            <Row label="Disk free" value={`${gb(info?.resources?.diskFree)} of ${gb(info?.resources?.diskTotal)}`} />
+            <Row label="OS version" value={state.info?.version ?? "–"} />
+            <Row label="Release channel" value={state.info?.release?.channel ?? "–"} />
+            <Row label="Machine" value={state.info?.runtime?.machineId ?? state.info?.runtime?.handle ?? "–"} />
+            <Row label="CPU cores" value={state.info?.resources?.cpuCount ?? "–"} />
+            <Row label="Memory free" value={`${gb(state.info?.resources?.memoryFree)} of ${gb(state.info?.resources?.memoryTotal)}`} />
+            <Row label="Disk free" value={`${gb(state.info?.resources?.diskFree)} of ${gb(state.info?.resources?.diskTotal)}`} />
           </>
         )}
       </Card>

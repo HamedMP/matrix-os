@@ -27,20 +27,21 @@ function parse(value: unknown): Integration[] {
 
 export default function IntegrationsSection() {
   const api = useConnection((s) => s.api);
-  const [items, setItems] = useState<Integration[]>([]);
-  const [error, setError] = useState(false);
+  const [state, setState] = useState<{ items: Integration[]; error: boolean }>({
+    items: [],
+    error: false,
+  });
 
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
     api.get<unknown>("/api/integrations").then((res) => {
       if (!cancelled) {
-        setItems(parse(res));
-        setError(false);
+        setState({ items: parse(res), error: false });
       }
     }).catch((err: unknown) => {
       console.warn("[settings] integrations load failed:", err instanceof Error ? err.message : String(err));
-      if (!cancelled) setError(true);
+      if (!cancelled) setState((current) => ({ ...current, error: true }));
     });
     return () => { cancelled = true; };
   }, [api]);
@@ -49,10 +50,10 @@ export default function IntegrationsSection() {
     <>
       <SectionHeader title="Integrations" description="External services your agent can use." />
       <Card>
-        {error ? <Empty text="Integrations unavailable." /> : items.length === 0 ? (
+        {state.error ? <Empty text="Integrations unavailable." /> : state.items.length === 0 ? (
           <Empty text="No integrations connected yet." />
         ) : (
-          items.map((i) => (
+          state.items.map((i) => (
             <div key={i.service} className="flex items-center gap-2 text-sm">
               <StatusDot color={i.connected ? "var(--status-complete)" : "var(--status-todo)"} />
               <span className="flex-1" style={{ color: "var(--text-primary)" }}>{i.label ?? i.service}</span>

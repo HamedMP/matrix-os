@@ -23,20 +23,21 @@ function parse(value: unknown): CronJob[] {
 
 export default function CronSection() {
   const api = useConnection((s) => s.api);
-  const [jobs, setJobs] = useState<CronJob[]>([]);
-  const [error, setError] = useState(false);
+  const [state, setState] = useState<{ jobs: CronJob[]; error: boolean }>({
+    jobs: [],
+    error: false,
+  });
 
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
     api.get<unknown>("/api/cron").then((res) => {
       if (!cancelled) {
-        setJobs(parse(res));
-        setError(false);
+        setState({ jobs: parse(res), error: false });
       }
     }).catch((err: unknown) => {
       console.warn("[settings] cron load failed:", err instanceof Error ? err.message : String(err));
-      if (!cancelled) setError(true);
+      if (!cancelled) setState((current) => ({ ...current, error: true }));
     });
     return () => { cancelled = true; };
   }, [api]);
@@ -45,10 +46,10 @@ export default function CronSection() {
     <>
       <SectionHeader title="Schedules" description="Recurring agent jobs and heartbeats." />
       <Card>
-        {error ? <Empty text="Schedules unavailable." /> : jobs.length === 0 ? (
+        {state.error ? <Empty text="Schedules unavailable." /> : state.jobs.length === 0 ? (
           <Empty text="No scheduled jobs." />
         ) : (
-          jobs.map((j, i) => (
+          state.jobs.map((j, i) => (
             <div key={j.id ?? i} className="flex flex-col gap-0.5 border-b pb-2 last:border-0 last:pb-0" style={{ borderColor: "var(--border-subtle)" }}>
               <div className="flex items-center justify-between">
                 <span className="text-sm" style={{ color: "var(--text-primary)" }}>{j.name ?? j.prompt ?? j.id ?? "Job"}</span>
