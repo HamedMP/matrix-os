@@ -22,7 +22,7 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
 | `embed:retry-auth` | `{embedId}` | `{ok}` \| typed error | at most one auto retry happened already |
 | `notify` | `{threadId, title(≤80), body(≤200), kind}` | `{ok}` | main coalesces per thread |
 | `badge:set` | `{count: int 0-999}` | `{ok}` | dock badge |
-| `shell:open-external` | `{url}` | `{ok}` | https-only allowlist check in main |
+| `shell:open-external` | `{url}` | `{ok}` | main allows only `https:` URLs whose origin is the active gateway origin or an explicit product/repo allowlist entry; scheme-only checks are insufficient |
 | `update:check` | `{}` | `{status}` | no-op without feed |
 
 ## Event channels (main → renderer, one-way)
