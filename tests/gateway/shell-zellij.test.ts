@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +9,7 @@ import {
   createZellijAdapter,
   sanitizeZellijError,
 } from "../../packages/gateway/src/shell/zellij.js";
+import { matrixTerminalShellScript } from "../../packages/gateway/src/shell/zellij-config.js";
 
 function childProcess() {
   return Object.assign(new EventEmitter(), {
@@ -297,12 +298,23 @@ describe("zellij adapter", () => {
       const configDir = join(homePath, "system", "zellij");
       const configPath = join(configDir, "config.kdl");
       const layoutPath = join(configDir, "layouts", "matrix.kdl");
+      const shellPath = join(configDir, "matrix-terminal-shell");
+      const bashrcPath = join(configDir, "bashrc");
       const config = await readFile(configPath, "utf8");
       const layout = await readFile(layoutPath, "utf8");
+      const shell = await readFile(shellPath, "utf8");
+      const bashrc = await readFile(bashrcPath, "utf8");
+      const shellMode = (await stat(shellPath)).mode;
 
       expect(config).toContain("pane_frames false");
       expect(config).toContain("simplified_ui true");
       expect(config).toContain('default_layout "matrix"');
+      expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
+      expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
+      expect(shell).not.toContain("/bin/bash");
+      expect(shellMode & 0o700).toBe(0o700);
+      expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
+      expect(bashrc).toContain("\\u:\\w\\$ ");
       expect(layout).toContain('plugin location="zellij:compact-bar"');
       expect(layout).not.toContain("tab-bar");
       expect(layout).not.toContain("status-bar");
@@ -499,5 +511,13 @@ describe("zellij adapter", () => {
     expect(sanitizeZellijError("bad /home/alice/projects/app and /tmp/file")).toBe(
       "bad [path] and [path]",
     );
+  });
+
+  it("shell-quotes generated bash rcfile paths", () => {
+    const path = `/tmp/matrix "owner"/it'works/bashrc`;
+    const script = matrixTerminalShellScript(path);
+
+    expect(script).toContain(`exec bash --noprofile --rcfile '/tmp/matrix "owner"/it'\\''works/bashrc' -i`);
+    expect(script).not.toContain("/bin/bash");
   });
 });
