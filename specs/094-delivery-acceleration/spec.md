@@ -145,7 +145,9 @@ Root workspace metadata changes (`package.json`, `pnpm-lock.yaml`,
 `pnpm-workspace.yaml`, `.npmrc`) must be dependency-aware fan-out inputs. The router
 must select every lane whose build installs from that workspace metadata, including
 the shell and platform Cloud Run lanes when dependency or lockfile changes can affect
-their images.
+their images, the website/docs lane when `www` installs from the root workspace, and
+the CLI lane when package metadata or lockfile changes affect the published CLI
+artifact.
 `blocked` is a list of lane-safety constraints, not a free-form warning. A non-empty
 `blocked` result must either name a required combined promotion group or abort before
 deployment. Each entry includes the affected lanes, reason, and required action, such
@@ -315,6 +317,12 @@ manifest path and digest. Any mismatch fails closed before applying deltas and e
 recovery: repair `release.json` from the symlink target when the target tree verifies
 against the manifest stored under that release tree, otherwise perform a full-bundle
 reinstall or require operator intervention.
+The same pre-update check must also detect target release directories that exist but are
+not the active version, recorded rollback version, or a verified completed install for
+the requested target. While holding the updater lock, the updater must remove or
+quarantine that orphan before attempting a new staging-to-release promotion for the same
+version, so a crash after promotion but before symlink flip cannot permanently block
+redelivery with `EEXIST` or `ENOTEMPTY`.
 
 Protected owner data remains outside the update set. Incremental updates may replace
 `/opt/matrix/app` only. They must never write owner data under `$MATRIX_HOME`.
@@ -329,7 +337,8 @@ Each lane stores enough metadata to roll back without guessing:
   binding.
 - Customer runtime lane: previous host-bundle version and manifest digest per VPS.
 - Website lane: previous deployment ID.
-- CLI lane: previous npm dist-tag and GitHub release pointer.
+- CLI lane: previous npm dist-tag, GitHub release pointer, and Homebrew tap formula
+  revision when a Homebrew publish is part of the release.
 - Ops lane: previous applied config revision, affected service/unit names, and the
   command or workflow needed to restore the prior config.
 
@@ -445,6 +454,13 @@ Rollback must be a workflow action, not an undocumented operator command.
   release, restore the previous `/opt/matrix/release.json` and installed manifest
   digest via tmp-then-rename while holding the updater lock, restart services, and mark
   the target release failed for that handle.
+- **Activation crashes after staging promotion but before symlink flip**: on the next
+  startup or pre-update pass, treat `/opt/matrix/releases/<version>` as an orphaned
+  target directory when it is not the active version and not the recorded rollback
+  version. While holding the updater lock, verify and either reuse it as the completed
+  target install or quarantine/delete it before creating a fresh staging directory for
+  the same target version. Do not let `EEXIST` or `ENOTEMPTY` at promotion time become
+  a persistent delivery failure.
 - **Service restart or health report times out**: abort the activation completion path,
   roll back to the previous release when activation already happened, release the
   updater lock through the supervisor cleanup path, and report the coarse `restart` or
@@ -471,7 +487,10 @@ Rollback must be a workflow action, not an undocumented operator command.
   PID-file-only lock is not acceptable unless it verifies the recorded PID is still
   alive before treating the lock as active. Startup and failed-update cleanup delete
   abandoned `.staging` directories older than 24h using symlink-safe `lstat()` traversal
-  after confirming no live flock holder owns the update lock.
+  after confirming no live flock holder owns the update lock. The same cleanup pass must
+  handle orphaned release directories that are neither the active version nor the
+  recorded rollback version: verify they are not referenced by `/opt/matrix/release.json`
+  or rollback metadata, then quarantine or delete them while holding the updater lock.
 - Update agents must use bounded download concurrency and timeouts.
 
 ## Integration Wiring
@@ -557,11 +576,16 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
     executable bits match the manifest, and any service-unit or launcher change has
     already forced the full-bundle path.
 13. Activates the staged app tree under the updater lock by flipping `/opt/matrix/app`
-   and writing `/opt/matrix/release.json` via tmp-then-rename. Activation first promotes
+   and writing `/opt/matrix/release.json` via tmp-then-rename. Before promotion,
+   activation checks whether `/opt/matrix/releases/<version>` already exists. If it is
+   the active version with the expected manifest digest, activation is already complete;
+   if it is the recorded rollback version, the updater fails closed instead of deleting
+   rollback state; otherwise it is an orphan from a prior interrupted attempt and must be
+   quarantined or removed while the lock is still held. Activation then promotes
    `/opt/matrix/releases/<version>.staging` to `/opt/matrix/releases/<version>` so the
    installed manifest path recorded in `release.json` is stable. The startup/pre-update
-   consistency check is the recovery mechanism if the process crashes between those
-   filesystem operations.
+   consistency check repeats this orphan handling if the process crashes between
+   promotion and symlink flip.
 14. Restarts affected services while still holding the updater lock with bounded
    per-service restart timeouts and an overall activation timeout, except the updater's
    own process must not be restarted before step 15 completes. If the release changes
