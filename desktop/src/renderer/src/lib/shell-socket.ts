@@ -331,14 +331,17 @@ export class ShellSocket {
         this.handleAttached(frame);
         return;
       case "output":
+        if (this.currentState !== "attached") return;
         this.handleOutput(frame);
         return;
       case "exit":
+        if (this.currentState !== "attached") return;
         this.handleExit(frame);
         return;
       case "pong":
         return;
       case "replay-evicted":
+        if (this.currentState !== "attached") return;
         this.opts.events.onGap();
         return;
       case "error":
@@ -366,6 +369,7 @@ export class ShellSocket {
   }
 
   private handleOutput(frame: Record<string, unknown>): void {
+    if (this.currentState !== "attached") return;
     const seq = frame.seq;
     const data = frame.data;
     if (typeof seq !== "number" || !Number.isFinite(seq) || typeof data !== "string") {
@@ -378,6 +382,7 @@ export class ShellSocket {
   }
 
   private handleExit(frame: Record<string, unknown>): void {
+    if (this.currentState !== "attached") return;
     const code = frame.code;
     if (typeof code !== "number" || !Number.isFinite(code)) {
       console.warn("[shell-socket] ignoring invalid exit frame");

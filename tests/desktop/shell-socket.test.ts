@@ -351,6 +351,24 @@ describe("ShellSocket server frames", () => {
     expect(h.events.gaps).toBe(1);
   });
 
+  it("ignores pre-attach replay frames so reconnect remains a live tail", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.latest().open();
+    h.latest().frame({ type: "output", seq: 41, data: "early" });
+    h.latest().frame({ type: "replay-evicted", fromSeq: 1, nextSeq: 42 });
+    expect(h.events.outputs).toEqual([]);
+    expect(h.events.gaps).toBe(0);
+    expect(h.socket.lastSeq).toBe(0);
+
+    h.latest().serverClose();
+    h.timers.advance(500);
+    expect(h.sockets).toHaveLength(2);
+    expect(h.latest().url).toBe(
+      `wss://app.matrix-os.com/ws/terminal/session?session=main&fromSeq=${LIVE_TAIL_FROM_SEQ}`,
+    );
+  });
+
   it("treats session_not_found, invalid_request, and attach_failed as fatal and never reconnects", () => {
     for (const code of ["session_not_found", "invalid_request", "attach_failed"]) {
       const h = createHarness();
