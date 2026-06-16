@@ -60,13 +60,18 @@ if (!gotLock) {
     return win;
   }
 
-  app.whenReady().then(() => {
-    createWindow();
+  void app
+    .whenReady()
+    .then(() => {
+      createWindow();
 
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      app.on("activate", () => {
+        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      });
+    })
+    .catch((err: unknown) => {
+      logMainError("failed to start app", err);
     });
-  });
 
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
