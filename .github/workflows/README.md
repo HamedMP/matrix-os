@@ -36,6 +36,27 @@ logs and artifacts.
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 | `docker.yml` | Legacy Docker image publishing/deploy path | `v*` tags, manual | Legacy only, not the customer runtime path |
 
+## Delivery Lane Router
+
+Use `scripts/delivery/resolve-lanes.mjs` before lane-specific build or deploy
+jobs. The router accepts either a git diff range:
+
+```bash
+node scripts/delivery/resolve-lanes.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
+```
+
+or explicit operator inputs:
+
+```bash
+node scripts/delivery/resolve-lanes.mjs --selector deploy/shell --tag shell/v2026.06.16.1
+```
+
+It emits a JSON object with `lanes`, `reason`, `requires`, and `blocked`.
+Workflows must fail closed if the script exits non-zero, emits invalid JSON, or
+returns an unknown lane. `runtime/*` tags are intentionally invalid until the
+host-bundle release workflow migrates away from the existing `v*` runtime tag
+contract.
+
 ## Release Rules
 
 The `Host Bundle Release` workflow publishes code that customer VPSes install
