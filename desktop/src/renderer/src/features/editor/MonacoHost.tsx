@@ -41,6 +41,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
         fileRef.current = file;
         const model = getOrCreateModel(path, file.content);
         editor.setModel(model);
+        setDirty(taskId, path, model.getValue() !== file.content);
         const contentSubscription = model.onDidChangeContent(() => {
           setDirty(taskId, path, model.getValue() !== fileRef.current?.content);
         });

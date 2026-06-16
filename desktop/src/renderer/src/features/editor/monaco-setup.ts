@@ -43,7 +43,6 @@ export function getOrCreateModel(path: string, content: string): monaco.editor.I
   if (existing && !existing.isDisposed()) {
     models.delete(path);
     models.set(path, existing);
-    if (existing.getValue() !== content) existing.setValue(content);
     return existing;
   }
   if (models.size >= MODEL_CACHE_CAP) {
