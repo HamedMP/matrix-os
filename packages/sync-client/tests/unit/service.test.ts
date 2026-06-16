@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createSourceDaemonServiceCommand,
   createStandaloneDaemonServiceCommand,
+  escapeSystemdExecArg,
   escapeXml,
   launchdPlist,
   systemdUnit,
@@ -11,6 +12,20 @@ describe("escapeXml", () => {
   it("escapes launchd XML metacharacters in interpolated paths", () => {
     expect(escapeXml(`bad<&>"'path`)).toBe(
       "bad&lt;&amp;&gt;&quot;&apos;path",
+    );
+  });
+});
+
+describe("escapeSystemdExecArg", () => {
+  it("leaves simple systemd ExecStart arguments unquoted", () => {
+    expect(escapeSystemdExecArg("/home/user/.local/bin/matrix")).toBe(
+      "/home/user/.local/bin/matrix",
+    );
+  });
+
+  it("quotes systemd ExecStart arguments that need escaping", () => {
+    expect(escapeSystemdExecArg('/home/User Name/bin/matrix"$\\%')).toBe(
+      '"/home/User Name/bin/matrix\\"$$\\\\%%"',
     );
   });
 });
@@ -33,7 +48,7 @@ describe("daemon service command rendering", () => {
 
   it("points standalone binary installs at the bundled daemon entrypoint", () => {
     const command = createStandaloneDaemonServiceCommand(
-      "/home/user/.local/bin/matrix",
+      "/home/User Name/.local/bin/matrix",
       "/home/user",
     );
     const unit = systemdUnit(command);
@@ -41,9 +56,13 @@ describe("daemon service command rendering", () => {
 
     expect(command.args).toEqual(["__daemon"]);
     expect(unit).toContain("WorkingDirectory=/home/user");
-    expect(unit).toContain("ExecStart=/home/user/.local/bin/matrix __daemon");
+    expect(unit).toContain(
+      'ExecStart="/home/User Name/.local/bin/matrix" __daemon',
+    );
     expect(unit).not.toContain("/daemon/launcher.mjs");
-    expect(plist).toContain("<string>/home/user/.local/bin/matrix</string>");
+    expect(plist).toContain(
+      "<string>/home/User Name/.local/bin/matrix</string>",
+    );
     expect(plist).toContain("<string>__daemon</string>");
   });
 });
