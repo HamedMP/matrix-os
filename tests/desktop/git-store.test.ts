@@ -135,7 +135,7 @@ describe("loadAll", () => {
     expect(state.error).toBeNull();
   });
 
-  it("sets loading while requests are in flight", async () => {
+  it("sets loading without clearing existing surfaces while requests are in flight", async () => {
     const d = deferred<unknown>();
     const get = vi.fn((path: string) => {
       if (path.includes("/branches")) return d.promise;
@@ -152,10 +152,10 @@ describe("loadAll", () => {
 
     const pending = useGit.getState().loadAll(api, "proj");
     expect(useGit.getState().loading).toBe(true);
-    expect(useGit.getState().branches).toEqual([]);
-    expect(useGit.getState().prs).toEqual([]);
-    expect(useGit.getState().worktrees).toEqual([]);
-    expect(useGit.getState().refreshedAt).toBeNull();
+    expect(useGit.getState().branches).toEqual([{ name: "stale" }]);
+    expect(useGit.getState().prs).toEqual([wirePr({ number: 99 })]);
+    expect(useGit.getState().worktrees).toEqual([wireWorktree({ id: "stale_wt" })]);
+    expect(useGit.getState().refreshedAt).toBe(T2);
     d.resolve({ branches: [], refreshedAt: T1 });
     await pending;
     expect(useGit.getState().loading).toBe(false);
@@ -220,7 +220,7 @@ describe("loadAll", () => {
     expect(useGit.getState().loading).toBe(false);
   });
 
-  it("keeps failed surfaces empty after the project-scoped pre-clear and updates the others", async () => {
+  it("keeps stale surfaces visible when refresh fails and updates the others", async () => {
     useGit.setState({ branches: [{ name: "previous" }] });
     const get = routedGet({
       "/branches": new AppError("offline"),
@@ -232,7 +232,7 @@ describe("loadAll", () => {
     await useGit.getState().loadAll(api, "proj");
 
     const state = useGit.getState();
-    expect(state.branches).toEqual([]);
+    expect(state.branches).toEqual([{ name: "previous" }]);
     expect(state.prs).toHaveLength(1);
     expect(state.worktrees).toHaveLength(1);
     expect(state.error).toBe("offline");
@@ -282,7 +282,6 @@ describe("loadPreviews", () => {
     await useGit.getState().loadPreviews(api, "proj");
 
     expect(get).toHaveBeenCalledWith("/api/projects/proj/previews?limit=100");
-    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: null });
     expect(useGit.getState().previews).toEqual([
       {
         id: "prev_1",
@@ -413,7 +412,6 @@ describe("loadPreviews", () => {
     first.resolve({ previews: [wirePreview({ id: "prev_a", taskId: "task_a" })] });
     await firstLoad;
 
-    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: "task_b" });
     expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_b", "prev_a"]);
   });
 
@@ -433,7 +431,6 @@ describe("loadPreviews", () => {
     first.resolve({ previews: [wirePreview({ id: "prev_old", taskId: "task_a" })] });
     await firstLoad;
 
-    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: "task_a" });
     expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_new"]);
   });
 
@@ -458,7 +455,6 @@ describe("loadPreviews", () => {
     });
     await projectLoad;
 
-    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: "task_a" });
     expect(useGit.getState().previews.map((preview) => preview.id)).toEqual([
       "prev_project_a",
       "prev_project_b",

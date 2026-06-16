@@ -45,6 +45,8 @@ export async function startTaskSession(api: ApiClient, input: StartTaskSessionIn
     console.warn("[task-sessions] task link failed after session create:", err instanceof Error ? err.message : String(err));
     if (created.attachName) {
       await useSessions.getState().kill(api, created.attachName);
+    } else {
+      await api.delete(`/api/sessions/${encodeURIComponent(created.sessionId)}`);
     }
     return false;
   }

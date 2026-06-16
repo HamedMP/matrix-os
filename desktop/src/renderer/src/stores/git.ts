@@ -159,7 +159,7 @@ export const useGit = create<GitState>()((set, get) => ({
 
   loadAll: async (api, slug) => {
     const requestSeq = ++loadAllRequestSeq;
-    set({ branches: [], prs: [], worktrees: [], refreshedAt: null, loading: true, error: null });
+    set({ loading: true, error: null });
     const failures: AppErrorCategory[] = [];
     const patch: Partial<GitState> = {};
     let branchRefreshed: string | undefined;

@@ -85,4 +85,33 @@ describe("startTaskSession", () => {
     expect(useBoard.getState().cardsByProject.proj?.some((task) => task.linkedSessionId === "sess_new")).toBe(false);
     expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-task-1?force=1");
   });
+
+  it("stops the workspace session when task linking fails before an attachable session exists", async () => {
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const api = makeApi({
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/terminal/sessions") return { sessions: [] };
+        if (path === "/api/sessions") {
+          return { sessions: [{ id: "sess_new", runtime: {} }], nextCursor: null };
+        }
+        return { tasks: [], nextCursor: null };
+      }),
+      patch: vi.fn().mockRejectedValue(new AppError("server")),
+      delete: del,
+    });
+    useBoard.setState({ cardsByProject: { proj: [card()] } });
+
+    const ok = await startTaskSession(api, {
+      projectSlug: "proj",
+      taskId: "task_a",
+      worktreeId: null,
+      title: "Task A",
+      description: "Fix it",
+      kind: "agent",
+      agent: "claude",
+    });
+
+    expect(ok).toBe(false);
+    expect(del).toHaveBeenCalledWith("/api/sessions/sess_new");
+  });
 });
