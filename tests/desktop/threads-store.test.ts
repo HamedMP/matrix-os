@@ -145,6 +145,19 @@ describe("handleKernelMessage routing", () => {
     expect(getThread(t1.id).sessionId).toBeNull();
     expect(getThread(t2.id).sessionId).toBeNull();
   });
+
+  it("session:switched does not bind to a terminal active thread", () => {
+    const store = useThreads.getState();
+    const terminal = store.startThread({ text: "done", requestId: "r1", now: 1 });
+    const running = store.startThread({ text: "running", requestId: "r2", now: 2 });
+    useThreads.getState().handleKernelMessage({ type: "kernel:result", data: {}, requestId: "r1" });
+    useThreads.getState().setActiveThread(terminal.id);
+
+    useThreads.getState().handleKernelMessage({ type: "session:switched", sessionId: "s-2" });
+
+    expect(getThread(terminal.id).sessionId).toBeNull();
+    expect(getThread(running.id).sessionId).toBe("s-2");
+  });
 });
 
 describe("status transitions", () => {
