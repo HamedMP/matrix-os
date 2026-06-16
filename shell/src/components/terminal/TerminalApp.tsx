@@ -4504,7 +4504,7 @@ function ShellCard({
   return (
     <div
       ref={cardRef}
-      className="group"
+      className="group terminal-session-card"
       data-testid={`terminal-session-card-${shell.name}`}
       onDragOver={(event) => {
         if (!dragging) {
@@ -4518,9 +4518,12 @@ function ShellCard({
         onDrop();
       }}
       onMouseEnter={() => setActionsVisible(true)}
+      onMouseMove={() => setActionsVisible(true)}
+      onMouseOver={() => setActionsVisible(true)}
       onMouseLeave={() => setActionsVisible(false)}
       onPointerEnter={() => setActionsVisible(true)}
       onPointerMove={() => setActionsVisible(true)}
+      onPointerOver={() => setActionsVisible(true)}
       onPointerLeave={() => setActionsVisible(false)}
       onFocus={() => setActionsVisible(true)}
       onBlur={(event) => {
@@ -4745,6 +4748,38 @@ function ShellCard({
               <PencilIcon size={12} strokeWidth={2} />
             </button>
           )}
+          {foreground && !renaming && (
+            <button
+              type="button"
+              aria-label={`Copy connect command for ${displayName}`}
+              title={copied ? "Command copied" : shellAttachCommand(shell)}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (event.detail === 0) {
+                  void copyAttachCommand();
+                }
+              }}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                void copyAttachCommand();
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
+              className="flex items-center justify-center"
+              style={{
+                background: "#F0EFE5",
+                border: "1px solid #E4E2D2",
+                borderRadius: 6,
+                color: "#8A8B7C",
+                cursor: "pointer",
+                flexShrink: 0,
+                height: 22,
+                pointerEvents: "auto",
+                width: 22,
+              }}
+            >
+              <CopyIcon size={12} strokeWidth={2} />
+            </button>
+          )}
         </div>
         <button
           type="button"
@@ -4791,20 +4826,15 @@ function ShellCard({
             transition: "max-height 150ms ease, opacity 120ms ease",
           }}
         >
-          <button
-            type="button"
-            aria-label={`Copy connect command for ${displayName}`}
-            title={copied ? "Command copied" : shellAttachCommand(shell)}
-            onClick={(event) => {
-              event.stopPropagation();
-              void copyAttachCommand();
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-            onMouseDown={(event) => event.stopPropagation()}
-            className="pointer-events-auto min-w-0"
+          <div
+            aria-hidden="true"
+            className="min-w-0"
             style={SHELL_CARD_COPY_BUTTON_STYLE}
           >
-            <span className="truncate" style={{ color: "#8A8B7C", minWidth: 0 }}>
+            <span
+              className="truncate"
+              style={{ color: "#8A8B7C", minWidth: 0 }}
+            >
               {showActions ? (
                 <>
                   <span>matrix shell connect</span>
@@ -4813,7 +4843,7 @@ function ShellCard({
               ) : null}
             </span>
             <CopyIcon size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
-          </button>
+          </div>
           <button
             type="button"
             aria-label={`${deleting ? "Deleting" : "Close"} ${displayName}`}

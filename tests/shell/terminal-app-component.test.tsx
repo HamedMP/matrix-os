@@ -372,7 +372,7 @@ describe("TerminalApp", () => {
     expect(actions.style.gap).toBe("25px");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
       await Promise.resolve();
     });
 
