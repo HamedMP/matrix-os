@@ -131,9 +131,17 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     ok: ctx.embeds.setBounds(embedId, bounds),
   }));
   handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));
-  handle("embed:retry-auth", async ({ embedId }) => ({
-    ok: await ctx.embeds.retryAuth(embedId),
-  }));
+  handle("embed:retry-auth", async ({ embedId }) => {
+    try {
+      return { ok: await ctx.embeds.retryAuth(embedId) };
+    } catch (err: unknown) {
+      console.warn(
+        "[ipc] embed:retry-auth failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { ok: false };
+    }
+  });
 
   handle("update:check", () => ({ status: "disabled" as const }));
 }
