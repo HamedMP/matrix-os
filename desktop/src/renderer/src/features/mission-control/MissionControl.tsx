@@ -26,7 +26,31 @@ export default function MissionControl() {
 
   useEffect(() => {
     if (!api) return;
-    void loadProjects(api);
+    let cancelled = false;
+    void (async () => {
+      await loadProjects(api);
+      if (cancelled) return;
+      const { projects, activeProjectSlug, selectProject } = useBoard.getState();
+      if (activeProjectSlug || projects.length === 0) return;
+      try {
+        await selectProject(api, projects[0].slug);
+      } catch (err: unknown) {
+        if (!cancelled) {
+          console.warn(
+            "[mission-control] select initial project failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+    })().catch((err: unknown) => {
+      console.warn(
+        "[mission-control] load projects failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [api, loadProjects]);
 
   useEffect(() => {
