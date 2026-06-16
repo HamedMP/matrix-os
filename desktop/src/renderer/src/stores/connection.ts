@@ -53,14 +53,30 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
 }));
 
 let wired = false;
+let connectionEventCleanups: Array<() => void> = [];
+
+function refreshFromConnectionEvent(): void {
+  void useConnection
+    .getState()
+    .refresh()
+    .catch((err: unknown) => {
+      console.warn("[connection] failed to refresh after connection event:", err instanceof Error ? err.message : String(err));
+    });
+}
 
 export function wireConnectionEvents(): void {
   if (wired) return;
   wired = true;
-  onEvent("auth:changed", () => {
-    void useConnection.getState().refresh();
-  });
-  onEvent("runtime:changed", () => {
-    void useConnection.getState().refresh();
-  });
+  connectionEventCleanups = [
+    onEvent("auth:changed", refreshFromConnectionEvent),
+    onEvent("runtime:changed", refreshFromConnectionEvent),
+  ];
+}
+
+export function unwireConnectionEvents(): void {
+  for (const cleanup of connectionEventCleanups) {
+    cleanup();
+  }
+  connectionEventCleanups = [];
+  wired = false;
 }

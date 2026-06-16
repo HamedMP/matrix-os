@@ -99,7 +99,6 @@ if (!gotLock) {
 
       const platformHost = process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
 
-<<<<<<< HEAD
       const auth = new AuthService({
         credentialStore,
         platformHost,
@@ -144,9 +143,6 @@ if (!gotLock) {
         onRuntimeChanged: (slot) => sendEvent("runtime:changed", { slot }),
       });
 
-      const savedBounds = await store.get("windowBounds");
-      mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });
-
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
       const persistBounds = () => {
         if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
@@ -163,100 +159,27 @@ if (!gotLock) {
             });
         }, 500);
       };
-      mainWindow.on("resize", persistBounds);
-      mainWindow.on("move", persistBounds);
-      mainWindow.on("closed", () => {
-        if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
-        mainWindow = null;
-      });
+      const openMainWindow = async () => {
+        const savedBounds = await store.get("windowBounds");
+        mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });
+        mainWindow.on("resize", persistBounds);
+        mainWindow.on("move", persistBounds);
+        mainWindow.on("closed", () => {
+          if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
+          mainWindow = null;
+        });
+      };
+
+      await openMainWindow();
 
       app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) {
-          mainWindow = createWindow({ width: 1280, height: 820 });
+          void openMainWindow();
         }
       });
     })
     .catch((err: unknown) => {
       logMainError("failed to start app", err);
-=======
-    const auth = new AuthService({
-      credentialStore,
-      platformHost,
-      openExternal: openExternalHttps,
-      loadProfile: () => store.get("profile"),
-      saveProfile: (profile) => store.set("profile", profile),
-      clearProfile: () => store.delete("profile"),
-      onAuthChanged: (status) => {
-        sendEvent("auth:changed", {
-          signedIn: status.signedIn,
-          ...(status.handle ? { handle: status.handle } : {}),
-        });
-      },
-    });
-    await auth.init();
-
-    // Renderer session gets origin-scoped bearer injection; embed partitions
-    // (separate sessions) never do (lesson L1).
-    installHeaderInjection(
-      session.defaultSession,
-      () => auth.getToken(),
-      () => auth.getGatewayOrigin(),
-    );
-
-    registerIpcHandlers(ipcMain, {
-      auth,
-      store,
-      openExternal: openExternalHttps,
-      setBadgeCount: (count) => {
-        app.setBadgeCount(count);
-      },
-      notify: ({ threadId, title, body }) => {
-        if (!Notification.isSupported()) return;
-        const notification = new Notification({ title, body, silent: false });
-        notification.on("click", () => {
-          mainWindow?.show();
-          mainWindow?.focus();
-          sendEvent("notification:clicked", { threadId });
-        });
-        notification.show();
-      },
-      onRuntimeChanged: (slot) => sendEvent("runtime:changed", { slot }),
-    });
-
-    let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
-    const persistBounds = () => {
-      if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
-      boundsSaveTimer = setTimeout(() => {
-        if (!mainWindow || mainWindow.isDestroyed()) return;
-        const b = mainWindow.getBounds();
-        void store
-          .set("windowBounds", { x: b.x, y: b.y, width: b.width, height: b.height })
-          .catch((err: unknown) => {
-            console.warn(
-              "[main] failed to persist window bounds:",
-              err instanceof Error ? err.message : String(err),
-            );
-          });
-      }, 500);
-    };
-    const openMainWindow = async () => {
-      const savedBounds = await store.get("windowBounds");
-      mainWindow = createWindow(savedBounds ?? { width: 1280, height: 820 });
-      mainWindow.on("resize", persistBounds);
-      mainWindow.on("move", persistBounds);
-      mainWindow.on("closed", () => {
-        if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
-        mainWindow = null;
-      });
-    };
-
-    await openMainWindow();
-
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        void openMainWindow();
-      }
->>>>>>> fed695049 (fix(desktop): harden auth and state core)
     });
 
   app.on("window-all-closed", () => {
