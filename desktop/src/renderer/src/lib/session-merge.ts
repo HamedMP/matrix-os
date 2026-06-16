@@ -15,6 +15,9 @@ export interface WorkspaceSessionDTO {
   name?: string;
   kind?: string;
   agent?: string;
+  projectSlug?: string;
+  taskId?: string | null;
+  worktreeId?: string | null;
   runtime?: { zellijSession?: string | null; status?: string } | null;
   status?: string;
 }
@@ -29,6 +32,9 @@ export interface AttachableSession {
   // (running | waiting | idle | failed | …) that drives the agent-run badge.
   kind?: "shell" | "agent";
   agent?: string;
+  projectSlug?: string;
+  taskId?: string;
+  worktreeId?: string;
   runtimeStatus?: string;
 }
 
@@ -46,10 +52,15 @@ function workspaceStatus(record: WorkspaceSessionDTO): "active" | "exited" {
 
 // Optional workspace metadata, added only when present so plain zellij shells
 // keep their minimal shape.
-function workspaceMeta(record: WorkspaceSessionDTO): Partial<Pick<AttachableSession, "kind" | "agent" | "runtimeStatus">> {
-  const meta: Partial<Pick<AttachableSession, "kind" | "agent" | "runtimeStatus">> = {};
+function workspaceMeta(
+  record: WorkspaceSessionDTO,
+): Partial<Pick<AttachableSession, "kind" | "agent" | "projectSlug" | "taskId" | "worktreeId" | "runtimeStatus">> {
+  const meta: Partial<Pick<AttachableSession, "kind" | "agent" | "projectSlug" | "taskId" | "worktreeId" | "runtimeStatus">> = {};
   if (record.kind === "shell" || record.kind === "agent") meta.kind = record.kind;
   if (typeof record.agent === "string" && record.agent.length > 0) meta.agent = record.agent;
+  if (typeof record.projectSlug === "string" && record.projectSlug.length > 0) meta.projectSlug = record.projectSlug;
+  if (typeof record.taskId === "string" && record.taskId.length > 0) meta.taskId = record.taskId;
+  if (typeof record.worktreeId === "string" && record.worktreeId.length > 0) meta.worktreeId = record.worktreeId;
   const runtimeStatus = record.runtime?.status;
   if (typeof runtimeStatus === "string" && runtimeStatus.length > 0) meta.runtimeStatus = runtimeStatus;
   return meta;

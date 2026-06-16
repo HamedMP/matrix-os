@@ -397,7 +397,7 @@ describe("loadPreviews", () => {
     expect(useGit.getState().previewError).toBe("timeout");
   });
 
-  it("ignores stale preview responses from a previous task scope", async () => {
+  it("allows concurrent preview responses from different scopes", async () => {
     const first = deferred<{ previews: unknown[] }>();
     const second = deferred<{ previews: unknown[] }>();
     const get = vi
@@ -414,7 +414,55 @@ describe("loadPreviews", () => {
     await firstLoad;
 
     expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: "task_b" });
-    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_b"]);
+    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_b", "prev_a"]);
+  });
+
+  it("ignores stale preview responses from an older request for the same scope", async () => {
+    const first = deferred<{ previews: unknown[] }>();
+    const second = deferred<{ previews: unknown[] }>();
+    const get = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const api = makeApi({ get: get as never });
+
+    const firstLoad = useGit.getState().loadPreviews(api, "proj", "task_a");
+    const secondLoad = useGit.getState().loadPreviews(api, "proj", "task_a");
+    second.resolve({ previews: [wirePreview({ id: "prev_new", taskId: "task_a" })] });
+    await secondLoad;
+    first.resolve({ previews: [wirePreview({ id: "prev_old", taskId: "task_a" })] });
+    await firstLoad;
+
+    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: "task_a" });
+    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_new"]);
+  });
+
+  it("does not discard a concurrent project-wide preview response after a task-scoped load starts", async () => {
+    const projectWide = deferred<{ previews: unknown[] }>();
+    const taskScoped = deferred<{ previews: unknown[] }>();
+    const get = vi
+      .fn()
+      .mockReturnValueOnce(projectWide.promise)
+      .mockReturnValueOnce(taskScoped.promise);
+    const api = makeApi({ get: get as never });
+
+    const projectLoad = useGit.getState().loadPreviews(api, "proj");
+    const taskLoad = useGit.getState().loadPreviews(api, "proj", "task_a");
+    taskScoped.resolve({ previews: [wirePreview({ id: "prev_task", taskId: "task_a" })] });
+    await taskLoad;
+    projectWide.resolve({
+      previews: [
+        wirePreview({ id: "prev_project_a", taskId: "task_a" }),
+        wirePreview({ id: "prev_project_b", taskId: "task_b" }),
+      ],
+    });
+    await projectLoad;
+
+    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: "task_a" });
+    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual([
+      "prev_project_a",
+      "prev_project_b",
+    ]);
   });
 });
 

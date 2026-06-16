@@ -104,6 +104,33 @@ function mergePreviewsForScope(existing: Preview[], incoming: Preview[], slug: s
   return [...retained, ...incoming];
 }
 
+const MAX_PREVIEW_REQUEST_SCOPES = 100;
+let previewRequestSeq = 0;
+let previewRequestScopes: string[] = [];
+const previewRequestSeqByScope: Record<string, number> = {};
+
+function previewScopeKey(scope: PreviewScope): string {
+  return `${scope.projectSlug}\0${scope.taskId ?? ""}`;
+}
+
+function markPreviewRequest(scope: PreviewScope): { key: string; seq: number } {
+  const key = previewScopeKey(scope);
+  const seq = ++previewRequestSeq;
+  if (previewRequestSeqByScope[key] === undefined) {
+    previewRequestScopes.push(key);
+    if (previewRequestScopes.length > MAX_PREVIEW_REQUEST_SCOPES) {
+      const expired = previewRequestScopes.shift();
+      if (expired !== undefined) delete previewRequestSeqByScope[expired];
+    }
+  }
+  previewRequestSeqByScope[key] = seq;
+  return { key, seq };
+}
+
+function isLatestPreviewRequest(key: string, seq: number): boolean {
+  return previewRequestSeqByScope[key] === seq;
+}
+
 interface GitState {
   branches: Branch[];
   prs: PullRequest[];
@@ -186,26 +213,21 @@ export const useGit = create<GitState>()((set, get) => ({
 
   loadPreviews: async (api, slug, taskId) => {
     const scope: PreviewScope = { projectSlug: slug, taskId: taskId ?? null };
+    const request = markPreviewRequest(scope);
     const query = taskId ? `?limit=100&taskId=${encodeURIComponent(taskId)}` : "?limit=100";
     set({ previewScope: scope, previewError: null });
     try {
       const res = await api.get<{ previews?: unknown }>(`/api/projects/${slug}/previews${query}`);
       const incoming = parseRows(PreviewSchema, res.previews);
       set((state) => {
-        if (
-          state.previewScope?.projectSlug !== scope.projectSlug ||
-          state.previewScope.taskId !== scope.taskId
-        ) {
+        if (!isLatestPreviewRequest(request.key, request.seq)) {
           return {};
         }
         return { previews: mergePreviewsForScope(state.previews, incoming, slug, taskId), previewError: null };
       });
     } catch (err: unknown) {
       set((state) => {
-        if (
-          state.previewScope?.projectSlug !== scope.projectSlug ||
-          state.previewScope.taskId !== scope.taskId
-        ) {
+        if (!isLatestPreviewRequest(request.key, request.seq)) {
           return {};
         }
         return { previewError: categoryOf(err) };

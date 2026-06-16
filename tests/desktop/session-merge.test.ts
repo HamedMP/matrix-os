@@ -127,9 +127,27 @@ describe("mergeAttachableSessions", () => {
   it("carries agent/kind/runtime status from a workspace record", () => {
     const { sessions } = mergeAttachableSessions(
       [],
-      [{ id: "sess_a", kind: "agent", agent: "claude", runtime: { zellijSession: "z1", status: "waiting" } }],
+      [
+        {
+          id: "sess_a",
+          kind: "agent",
+          agent: "claude",
+          projectSlug: "proj",
+          taskId: "task_a",
+          worktreeId: "wt_1",
+          runtime: { zellijSession: "z1", status: "waiting" },
+        },
+      ],
     );
-    expect(sessions[0]).toMatchObject({ attachName: "z1", kind: "agent", agent: "claude", runtimeStatus: "waiting" });
+    expect(sessions[0]).toMatchObject({
+      attachName: "z1",
+      kind: "agent",
+      agent: "claude",
+      projectSlug: "proj",
+      taskId: "task_a",
+      worktreeId: "wt_1",
+      runtimeStatus: "waiting",
+    });
   });
 
   it("enriches a zellij-sourced session with workspace agent metadata (zellij status still wins)", () => {

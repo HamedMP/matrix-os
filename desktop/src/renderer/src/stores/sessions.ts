@@ -177,6 +177,9 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         const input: SessionCreateInput = { kind: existing.kind };
         const agent = existing.kind === "agent" ? sessionAgent(existing.agent) : undefined;
         if (agent) input.agent = agent;
+        if (existing.projectSlug) input.projectSlug = existing.projectSlug;
+        if (existing.taskId) input.taskId = existing.taskId;
+        if (existing.worktreeId) input.worktreeId = existing.worktreeId;
         const res = await api.post<{
           session?: { id?: unknown; runtime?: { zellijSession?: unknown } | null };
         }>("/api/sessions", input);

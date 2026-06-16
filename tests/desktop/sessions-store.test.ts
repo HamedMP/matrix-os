@@ -193,6 +193,9 @@ describe("useSessions.restart", () => {
           source: "workspace",
           kind: "agent",
           agent: "codex",
+          projectSlug: "proj",
+          taskId: "task_a",
+          worktreeId: "wt_1",
         },
       ],
       aliasMap: { sess_old: "matrix-agent-1" },
@@ -207,7 +210,13 @@ describe("useSessions.restart", () => {
     const restarted = await useSessions.getState().restart(api, "matrix-agent-1");
 
     expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-agent-1?force=1");
-    expect(post).toHaveBeenCalledWith("/api/sessions", { kind: "agent", agent: "codex" });
+    expect(post).toHaveBeenCalledWith("/api/sessions", {
+      kind: "agent",
+      agent: "codex",
+      projectSlug: "proj",
+      taskId: "task_a",
+      worktreeId: "wt_1",
+    });
     expect(restarted).toEqual({ sessionId: "sess_next", attachName: "matrix-agent-2" });
   });
 });
