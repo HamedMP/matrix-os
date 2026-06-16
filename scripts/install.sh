@@ -54,7 +54,7 @@ resolve_version() {
   if [ "$MATRIX_VERSION" != "latest" ]; then
     case "$MATRIX_VERSION" in
       cli-v*) printf '%s' "$MATRIX_VERSION" ;;
-      v*)     printf '%s' "$MATRIX_VERSION" ;;
+      v*)     printf 'cli-v%s' "${MATRIX_VERSION#v}" ;;
       *)      printf 'cli-v%s' "$MATRIX_VERSION" ;;
     esac
     return

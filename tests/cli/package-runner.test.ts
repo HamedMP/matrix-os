@@ -61,6 +61,13 @@ describe("published CLI package runners", () => {
     );
   });
 
+  it("normalizes v-prefixed MATRIX_VERSION pins to CLI release tags", async () => {
+    const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
+
+    expect(script).toMatch(/v\*\)\s+printf 'cli-v%s' "\$\{MATRIX_VERSION#v\}" ;;/);
+    expect(script).toContain('*)      printf \'cli-v%s\' "$MATRIX_VERSION" ;;');
+  });
+
   it("prefers upgrading the existing matrix command path before installing elsewhere", async () => {
     const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
 
