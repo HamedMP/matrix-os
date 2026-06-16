@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
@@ -76,7 +76,9 @@ describe("TerminalView session switching", () => {
   it("clears the ended banner before the next session emits state", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" />);
     const alphaEvents = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
-    alphaEvents.onExit(7);
+    act(() => {
+      alphaEvents.onExit(7);
+    });
 
     expect(screen.getByText("Session exited (code 7).")).toBeTruthy();
 
