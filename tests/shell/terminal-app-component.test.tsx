@@ -372,7 +372,7 @@ describe("TerminalApp", () => {
     expect(actions.style.gap).toBe("25px");
 
     await act(async () => {
-      fireEvent.pointerDown(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
+      fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
       await Promise.resolve();
     });
 
@@ -381,7 +381,7 @@ describe("TerminalApp", () => {
     expect(within(actions).getByText("matrix shell connect")).toBeTruthy();
   });
 
-  it("falls back to execCommand copy and still shows the Paper copy confirmation", async () => {
+  it("copies with the synchronous selection fallback and still shows the Paper copy confirmation", async () => {
     const writeText = vi.fn(async () => {
       throw new Error("clipboard denied");
     });
@@ -430,8 +430,58 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(writeText).toHaveBeenCalledWith("mos shell attach main");
+    expect(writeText).not.toHaveBeenCalled();
     expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Command copied");
+  });
+
+  it("falls back to the Clipboard API when legacy copy returns false", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const execCommand = vi.fn(() => false);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", attachedClients: 1, tabs: [{ idx: 0, name: "main", focused: true }] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
+      await Promise.resolve();
+    });
+
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(writeText).toHaveBeenCalledWith("mos shell attach main");
     expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Command copied");
   });
 
@@ -1242,6 +1292,11 @@ describe("TerminalApp", () => {
   });
 
   it("copies a local CLI attach command when clicking a shell session name", async () => {
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -1278,7 +1333,8 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("mos shell attach main");
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
   });
 
   it("does not persist the mobile-forced sidebar state into shared terminal layout", async () => {

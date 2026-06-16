@@ -272,41 +272,45 @@ function dispatchPaneAction(paneId: string | null, action: NonNullable<TerminalI
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {
-  let clipboardApiError: unknown = null;
-  if (typeof navigator !== "undefined" && navigator.clipboard) {
+  let legacyCopyError: unknown = null;
+  if (typeof document !== "undefined" && typeof document.execCommand === "function") {
+    const previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousSelection = document.getSelection()?.rangeCount ? document.getSelection()?.getRangeAt(0).cloneRange() : null;
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.opacity = "0";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
     try {
-      await navigator.clipboard.writeText(text);
-      return;
+      if (document.execCommand("copy")) {
+        return;
+      }
+      legacyCopyError = new Error("execCommand copy returned false");
     } catch (err: unknown) {
-      clipboardApiError = err;
+      legacyCopyError = err;
+    } finally {
+      textarea.remove();
+      const selection = document.getSelection();
+      if (selection) {
+        selection.removeAllRanges();
+        if (previousSelection) {
+          selection.addRange(previousSelection);
+        }
+      }
+      previousActiveElement?.focus({ preventScroll: true });
     }
   }
-  if (typeof document === "undefined") {
-    throw new Error("Clipboard copy unavailable");
+  if (typeof navigator !== "undefined" && navigator.clipboard) {
+    await navigator.clipboard.writeText(text);
+    return;
   }
-  if (typeof document.execCommand !== "function") {
-    throw new Error(clipboardApiError ? "Clipboard API and legacy copy are unavailable" : "Legacy clipboard copy unavailable");
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.opacity = "0";
-  textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  textarea.setSelectionRange(0, textarea.value.length);
-  let ok = false;
-  try {
-    ok = document.execCommand("copy");
-  } finally {
-    textarea.remove();
-  }
-  if (!ok) {
-    throw new Error("execCommand copy failed");
-  }
+  throw new Error(legacyCopyError instanceof Error ? legacyCopyError.message : "Clipboard copy unavailable");
 }
 
 const DEFAULT_CWD = "projects";
@@ -4400,7 +4404,7 @@ function ShellCard({
   const tabs = shell.tabs ?? [];
   const focusedTab = tabs.find((tab) => tab.focused) ?? tabs[0];
   const statusDotStyle = getShellStatusDotStyle(shell);
-  const [copied, setCopied] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<"copied" | "failed" | null>(null);
   const displayName = formatShellDisplayName(shell.name);
   const [actionsVisible, setActionsVisible] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -4430,16 +4434,24 @@ function ShellCard({
   const copyAttachCommand = async () => {
     try {
       await copyTextToClipboard(shellAttachCommand(shell));
-      setCopied(true);
+      setCopyFeedback("copied");
       if (copiedTimerRef.current !== null) {
         window.clearTimeout(copiedTimerRef.current);
       }
       copiedTimerRef.current = window.setTimeout(() => {
         copiedTimerRef.current = null;
-        setCopied(false);
+        setCopyFeedback(null);
       }, 1600);
     } catch (err: unknown) {
       console.warn("Failed to copy shell connect command:", err instanceof Error ? err.message : err);
+      setCopyFeedback("failed");
+      if (copiedTimerRef.current !== null) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopyFeedback(null);
+      }, 2200);
     }
   };
   const cancelRename = useCallback(() => {
@@ -4752,17 +4764,12 @@ function ShellCard({
             <button
               type="button"
               aria-label={`Copy connect command for ${displayName}`}
-              title={copied ? "Command copied" : shellAttachCommand(shell)}
+              title={copyFeedback === "copied" ? "Command copied" : shellAttachCommand(shell)}
               onClick={(event) => {
-                event.stopPropagation();
-                if (event.detail === 0) {
-                  void copyAttachCommand();
-                }
-              }}
-              onPointerDown={(event) => {
                 event.stopPropagation();
                 void copyAttachCommand();
               }}
+              onPointerDown={(event) => event.stopPropagation()}
               onMouseDown={(event) => event.stopPropagation()}
               className="flex items-center justify-center"
               style={{
@@ -4826,9 +4833,16 @@ function ShellCard({
             transition: "max-height 150ms ease, opacity 120ms ease",
           }}
         >
-          <div
-            aria-hidden="true"
+          <button
+            type="button"
+            aria-label={`Copy Matrix shell connect command for ${displayName}`}
             className="min-w-0"
+            onClick={(event) => {
+              event.stopPropagation();
+              void copyAttachCommand();
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
             style={SHELL_CARD_COPY_BUTTON_STYLE}
           >
             <span
@@ -4843,7 +4857,7 @@ function ShellCard({
               ) : null}
             </span>
             <CopyIcon size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
-          </div>
+          </button>
           <button
             type="button"
             aria-label={`${deleting ? "Deleting" : "Close"} ${displayName}`}
@@ -4860,7 +4874,7 @@ function ShellCard({
           </button>
         </div>
       )}
-      {foreground && copied ? (
+      {foreground && copyFeedback ? (
         <div
           data-testid={`terminal-session-copy-toast-${shell.name}`}
           role="status"
@@ -4884,8 +4898,8 @@ function ShellCard({
             zIndex: 12,
           }}
         >
-          <span aria-hidden="true" style={{ background: "#9CB77A", borderRadius: 999, height: 6, width: 6 }} />
-          <span>Command copied</span>
+          <span aria-hidden="true" style={{ background: copyFeedback === "copied" ? "#9CB77A" : "#D8792C", borderRadius: 999, height: 6, width: 6 }} />
+          <span>{copyFeedback === "copied" ? "Command copied" : "Copy failed"}</span>
         </div>
       ) : null}
       {!foreground && focusedTab ? (
