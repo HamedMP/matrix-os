@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseChannelStatusResponse } from "@desktop/renderer/src/features/settings/sections/ChannelsSection";
+import { parseChannelStatusResponse } from "@desktop/renderer/src/features/settings/sections/channel-status";
 
 describe("parseChannelStatusResponse", () => {
   it("accepts array and record channel status payloads", () => {
