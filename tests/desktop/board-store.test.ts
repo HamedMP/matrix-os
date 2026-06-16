@@ -124,6 +124,20 @@ describe("createProject", () => {
     expect(useBoard.getState().error).toBe("offline");
   });
 
+  it("refreshes projects even when a successful create response is malformed", async () => {
+    const api = makeApi({
+      post: vi.fn().mockResolvedValue({ project: { name: "Missing slug" } }),
+      get: vi.fn().mockResolvedValue({ projects: [{ slug: "my-app", name: "My App" }] }),
+    });
+
+    const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
+
+    expect(project).toBeNull();
+    expect(api.get).toHaveBeenCalledWith("/api/workspace/projects");
+    expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App" }]);
+    expect(useBoard.getState().error).toBe("server");
+  });
+
   it("returns null and sets an error category on failure", async () => {
     const api = makeApi({ post: vi.fn().mockRejectedValue(new AppError("server")) });
     const project = await useBoard.getState().createProject(api, { name: "x", mode: "scratch" });

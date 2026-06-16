@@ -304,7 +304,8 @@ export const useBoard = create<BoardState>()((set, get) => {
         const res = await api.post<{ project: unknown }>("/api/projects", body);
         const parsed = WireProjectSchema.safeParse(res.project);
         if (!parsed.success) {
-          set({ error: "server" });
+          const refreshed = await get().loadProjects(api);
+          set({ error: refreshed ? "server" : get().error });
           return null;
         }
         const project: Project = { slug: parsed.data.slug, name: parsed.data.name };

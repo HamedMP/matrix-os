@@ -1,5 +1,5 @@
 import { FolderPlus, Github } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { useBoard } from "../../stores/board";
@@ -20,11 +20,29 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogClosedRef = useRef(false);
+  const dialogGenerationRef = useRef(0);
 
   const canSubmit = name.trim().length > 0 && (mode === "scratch" || url.trim().length > 0);
 
+  useEffect(() => {
+    dialogGenerationRef.current += 1;
+    dialogClosedRef.current = false;
+    return () => {
+      dialogGenerationRef.current += 1;
+      dialogClosedRef.current = true;
+    };
+  }, []);
+
+  const closeFromUser = useCallback(() => {
+    dialogGenerationRef.current += 1;
+    dialogClosedRef.current = true;
+    onClose();
+  }, [onClose]);
+
   const submit = async () => {
     if (!api || !canSubmit || submitting) return;
+    const submitGeneration = dialogGenerationRef.current;
     setSubmitting(true);
     setError(null);
     try {
@@ -33,17 +51,23 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
         mode,
         ...(mode === "github" ? { url: url.trim() } : {}),
       });
+      if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
       if (!project) {
         setError("Couldn't create the project. Check the name" + (mode === "github" ? " and the GitHub URL." : "."));
         return;
       }
       await selectProject(api, project.slug);
-      onClose();
+      if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
+      closeFromUser();
       openTab({ kind: "board", projectSlug: project.slug, title: project.name || project.slug });
     } catch (err: unknown) {
-      setError(toUserMessage(err));
+      if (!dialogClosedRef.current && dialogGenerationRef.current === submitGeneration) {
+        setError(toUserMessage(err));
+      }
     } finally {
-      setSubmitting(false);
+      if (!dialogClosedRef.current && dialogGenerationRef.current === submitGeneration) {
+        setSubmitting(false);
+      }
     }
   };
 
@@ -111,7 +135,7 @@ function CreateProjectForm({ onClose }: { onClose: () => void }) {
       {error ? <span className="text-xs" style={{ color: "var(--danger)" }}>{error}</span> : null}
 
       <div className="flex justify-end gap-2 pt-1">
-        <Button variant="subtle" onClick={onClose}>Cancel</Button>
+        <Button variant="subtle" onClick={closeFromUser}>Cancel</Button>
         <Button variant="primary" disabled={!canSubmit || submitting} onClick={() => void submit()}>
           {submitting ? "Creating…" : "Create"}
         </Button>
