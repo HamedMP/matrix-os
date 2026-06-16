@@ -366,6 +366,30 @@ describe("AuthService expireSession", () => {
     expect(changes.at(-1)).toMatchObject({ signedIn: false });
   });
 
+  it("still emits signed-out status when credential cleanup fails", async () => {
+    const { auth, store, changes } = makeService({
+      credential: VALID,
+      profile: PROFILE,
+      now: 10_000,
+    });
+    const cleanupError = new Error("credential clear failed");
+    vi.mocked(store.clear).mockRejectedValueOnce(cleanupError);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await auth.init();
+
+      await expect(auth.expireSession()).rejects.toThrow(cleanupError);
+
+      expect(auth.getStatus().signedIn).toBe(false);
+      expect(changes.at(-1)).toMatchObject({
+        signedIn: false,
+        platformHost: "https://app.matrix-os.com",
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("is a no-op when there is no active credential", async () => {
     const { auth, store, changes } = makeService({ credential: null, profile: PROFILE, now: 10_000 });
     await auth.init();
