@@ -48,6 +48,13 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+async function flushAuthFlow(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("AuthService", () => {
   it("treats expired persisted credentials as signed out", async () => {
     const credentialStore = makeCredentialStore(makeCredential({ expiresAt: Date.now() - 1000 }));
@@ -68,6 +75,35 @@ describe("AuthService", () => {
     expect(auth.getToken()).toBeNull();
     expect(credentialStore.cleared).toBe(true);
     expect(clearProfile).toHaveBeenCalledOnce();
+  });
+
+  it("does not throw when expired credential cleanup fails during init", async () => {
+    const credentialStore = makeCredentialStore(makeCredential({ expiresAt: Date.now() - 1000 }));
+    credentialStore.clear = vi.fn(async () => {
+      throw new Error("credential clear failed");
+    });
+    const clearProfile = vi.fn(async () => {
+      throw new Error("profile clear failed");
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const auth = new AuthService({
+      credentialStore,
+      platformHost: "https://app.matrix-os.com",
+      openExternal: vi.fn(async () => undefined),
+      loadProfile: async () => makeProfile(),
+      saveProfile: vi.fn(async () => undefined),
+      clearProfile,
+      onAuthChanged: vi.fn(),
+    });
+
+    await expect(auth.init()).resolves.toBeUndefined();
+
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(auth.getToken()).toBeNull();
+    expect(credentialStore.clear).toHaveBeenCalledOnce();
+    expect(clearProfile).toHaveBeenCalledOnce();
+    expect(console.warn).toHaveBeenCalledWith("[auth] failed to clear expired credential:", "credential clear failed");
+    expect(console.warn).toHaveBeenCalledWith("[auth] failed to clear expired profile:", "profile clear failed");
   });
 
   it("reuses a pending device flow instead of launching parallel poll loops", async () => {
@@ -182,6 +218,64 @@ describe("AuthService", () => {
       runtimeSlot: "primary",
       platformHost: "https://app.matrix-os.com",
     });
+  });
+
+  it("emits signed-in status even when persistence fails after device authorization", async () => {
+    const credentialStore = makeCredentialStore(null);
+    credentialStore.save = vi.fn(async () => {
+      throw new Error("credential save failed");
+    });
+    const saveProfile = vi.fn(async () => {
+      throw new Error("profile save failed");
+    });
+    const onAuthChanged = vi.fn();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/auth/device/code")) {
+        return jsonResponse({
+          deviceCode: "device-1",
+          userCode: "ABCD",
+          verificationUri: "https://app.matrix-os.com/device",
+          expiresIn: 600,
+          interval: 5,
+        });
+      }
+      return jsonResponse({
+        accessToken: "token-1",
+        expiresAt: Date.now() + 60_000,
+        userId: "user-1",
+        handle: "neo",
+      });
+    });
+    const auth = new AuthService({
+      credentialStore,
+      platformHost: "https://app.matrix-os.com",
+      fetchFn,
+      openExternal: vi.fn(async () => undefined),
+      loadProfile: async () => null,
+      saveProfile,
+      clearProfile: vi.fn(async () => undefined),
+      onAuthChanged,
+    });
+
+    await auth.startDeviceFlow();
+    await flushAuthFlow();
+
+    expect(auth.getStatus()).toEqual({
+      signedIn: true,
+      handle: "neo",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+    });
+    expect(auth.poll()).toEqual({ status: "authorized", profile: { handle: "neo", userId: "user-1" } });
+    expect(onAuthChanged).toHaveBeenCalledWith({
+      signedIn: true,
+      handle: "neo",
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+    });
+    expect(console.warn).toHaveBeenCalledWith("[auth] failed to persist credential:", "credential save failed");
+    expect(console.warn).toHaveBeenCalledWith("[auth] failed to persist profile:", "profile save failed");
   });
 
   it("does not start polling when sign-out races an in-flight device-code request", async () => {

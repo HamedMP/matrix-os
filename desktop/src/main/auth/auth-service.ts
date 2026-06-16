@@ -58,8 +58,22 @@ export class AuthService {
     if (this.credential && !this.isCredentialValid(this.credential)) {
       this.credential = null;
       this.profile = null;
-      await this.deps.credentialStore.clear();
-      await this.deps.clearProfile();
+      try {
+        await this.deps.credentialStore.clear();
+      } catch (err: unknown) {
+        console.warn(
+          "[auth] failed to clear expired credential:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      try {
+        await this.deps.clearProfile();
+      } catch (err: unknown) {
+        console.warn(
+          "[auth] failed to clear expired profile:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     }
   }
 
@@ -115,15 +129,31 @@ export class AuthService {
     })
       .then(async (token) => {
         if (nonce !== this.flowNonce) return;
-        this.credential = token;
-        this.profile = {
+        const profile = {
           handle: token.handle,
           userId: token.userId,
           platformHost: baseUrl,
           runtimeSlot: this.profile?.runtimeSlot ?? "primary",
         };
-        await this.deps.credentialStore.save(token);
-        await this.deps.saveProfile(this.profile);
+        this.credential = token;
+        this.profile = profile;
+        try {
+          await this.deps.credentialStore.save(token);
+        } catch (err: unknown) {
+          console.warn(
+            "[auth] failed to persist credential:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        try {
+          await this.deps.saveProfile(profile);
+        } catch (err: unknown) {
+          console.warn(
+            "[auth] failed to persist profile:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        if (nonce !== this.flowNonce) return;
         this.flowState = "authorized";
         this.pendingDeviceCode = null;
         this.deps.onAuthChanged(this.getStatus());
