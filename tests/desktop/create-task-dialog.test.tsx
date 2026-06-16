@@ -112,7 +112,7 @@ describe("CreateTaskDialog", () => {
       return <CreateTaskDialog open={open} onClose={() => setOpen(false)} />;
     }
 
-    const { container } = render(<Harness />);
+    render(<Harness />);
 
     fireEvent.change(screen.getByPlaceholderText("Task title"), {
       target: { value: "Ship desktop" },
@@ -122,7 +122,7 @@ describe("CreateTaskDialog", () => {
       expect(createTask).toHaveBeenCalledOnce();
     });
 
-    const backdrop = container.querySelector(".fixed.inset-0");
+    const backdrop = screen.getByRole("dialog").parentElement;
     expect(backdrop).not.toBeNull();
     fireEvent.mouseDown(backdrop!);
     await waitFor(() => {
