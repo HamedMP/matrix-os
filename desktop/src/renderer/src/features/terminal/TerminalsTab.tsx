@@ -170,7 +170,7 @@ export default function TerminalsTab() {
                         type="button"
                         aria-label="Kill session"
                         title="Kill session"
-                        disabled={busy !== null}
+                        disabled={creating || busy !== null}
                         onClick={() => void killSession(s.attachName)}
                         className="flex h-6 w-6 items-center justify-center rounded opacity-0 transition-opacity group-hover/session:opacity-100 disabled:opacity-40"
                         style={{ color: "var(--text-tertiary)" }}

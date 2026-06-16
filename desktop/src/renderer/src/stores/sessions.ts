@@ -65,7 +65,19 @@ async function deleteWorkspaceSession(api: ApiClient, sessionId: string): Promis
   await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }
 
-let loadSequence = 0;
+async function fetchMergedSessions(api: ApiClient): Promise<{
+  sessions: AttachableSession[];
+  aliasMap: Record<string, string>;
+}> {
+  const [zellijResponse, workspaceResponse] = await Promise.all([
+    api.get<{ sessions: unknown }>("/api/terminal/sessions"),
+    api.get<{ sessions: unknown; nextCursor: string | null }>("/api/sessions"),
+  ]);
+  return mergeAttachableSessions(
+    asArray<ZellijSessionDTO>(zellijResponse.sessions),
+    asArray<WorkspaceSessionDTO>(workspaceResponse.sessions),
+  );
+}
 
 export const useSessions = create<SessionsState>()((set, get) => ({
   sessions: [],
@@ -78,14 +90,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
     const sequence = ++loadSequence;
     set({ loading: true, error: null });
     try {
-      const [zellijResponse, workspaceResponse] = await Promise.all([
-        api.get<{ sessions: unknown }>("/api/terminal/sessions"),
-        api.get<{ sessions: unknown; nextCursor: string | null }>("/api/sessions"),
-      ]);
-      const merged = mergeAttachableSessions(
-        asArray<ZellijSessionDTO>(zellijResponse.sessions),
-        asArray<WorkspaceSessionDTO>(workspaceResponse.sessions),
-      );
+      const merged = await fetchMergedSessions(api);
       if (sequence !== loadSequence) return;
       set({
         sessions: merged.sessions,
@@ -137,25 +142,38 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           ? res.session.runtime.zellijSession
           : null;
       // Reload so the merged aliasMap resolves the new session's zellij name
-      // (the attach target). load() clears `loading`; restore `creating`.
-      await get().load(api);
-      const refreshError = get().error;
-      if (!sessionId) {
-        set({ creating: false, error: refreshError });
+      // (the attach target). Keep this snapshot local so a concurrent external
+      // load cannot preempt the return value for the just-created session.
+      const sequence = ++loadSequence;
+      let merged: Awaited<ReturnType<typeof fetchMergedSessions>>;
+      try {
+        merged = await fetchMergedSessions(api);
+      } catch (err: unknown) {
+        if (sessionId) {
+          await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`).catch((cleanupErr: unknown) => {
+            console.warn(
+              "[sessions] Failed to clean up created session after refresh failure:",
+              cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+            );
+          });
+        }
+        console.error("[sessions] Failed to refresh sessions after create:", err);
+        set({ creating: false, error: err instanceof AppError ? err.category : "server" });
         return null;
       }
-      if (refreshError) {
-        await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`).catch((err: unknown) => {
-          console.warn(
-            "[sessions] Failed to clean up created session after refresh failure:",
-            err instanceof Error ? err.message : String(err),
-          );
+      if (sequence === loadSequence) {
+        set({
+          sessions: merged.sessions,
+          aliasMap: merged.aliasMap,
+          loading: false,
+          creating: false,
+          error: null,
         });
-        set({ creating: false, error: refreshError });
-        return null;
+      } else {
+        set({ creating: false, error: null });
       }
-      set({ creating: false, error: null });
-      return { sessionId, attachName: get().aliasMap[sessionId] ?? directAttachName };
+      if (!sessionId) return null;
+      return { sessionId, attachName: merged.aliasMap[sessionId] ?? directAttachName };
     } catch (err: unknown) {
       console.error("[sessions] Failed to create session:", err);
       set({ creating: false, error: err instanceof AppError ? err.category : "server" });
@@ -199,23 +217,35 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           typeof res.session?.runtime?.zellijSession === "string"
             ? res.session.runtime.zellijSession
             : null;
-        await get().load(api);
-        const refreshError = get().error;
         if (!sessionId) {
-          set({ creating: false, error: refreshError });
+          set({ creating: false, error: null });
           return null;
         }
-        if (refreshError) {
-          await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`).catch((err: unknown) => {
+        const sequence = ++loadSequence;
+        let merged: Awaited<ReturnType<typeof fetchMergedSessions>>;
+        try {
+          merged = await fetchMergedSessions(api);
+        } catch (err: unknown) {
+          await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`).catch((cleanupErr: unknown) => {
             console.warn(
               "[sessions] Failed to clean up restarted session after refresh failure:",
-              err instanceof Error ? err.message : String(err),
+              cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
             );
           });
-          set({ creating: false, error: refreshError });
+          console.error("[sessions] Failed to refresh sessions after restart:", err);
+          set({ creating: false, error: err instanceof AppError ? err.category : "server" });
           return null;
         }
-        const nextAttachName = get().aliasMap[sessionId] ?? directAttachName;
+        if (sequence === loadSequence) {
+          set({
+            sessions: merged.sessions,
+            aliasMap: merged.aliasMap,
+            loading: false,
+            creating: true,
+            error: null,
+          });
+        }
+        const nextAttachName = merged.aliasMap[sessionId] ?? directAttachName;
         let linkError: unknown = null;
         if (existing.projectSlug && existing.taskId) {
           try {

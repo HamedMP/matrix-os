@@ -178,4 +178,24 @@ describe("TerminalsTab", () => {
       await Promise.resolve();
     });
   });
+
+  it("disables kill while a session is being created or restarted", () => {
+    const kill = vi.fn().mockResolvedValue(true);
+    useSessions.setState({
+      sessions: [{ attachName: "main", name: "main", status: "active" }],
+      creating: true,
+      kill,
+    });
+
+    render(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    const killButton = screen.getByRole("button", { name: /kill session/i }) as HTMLButtonElement;
+    expect(killButton.disabled).toBe(true);
+    fireEvent.click(killButton);
+    expect(kill).not.toHaveBeenCalled();
+  });
 });

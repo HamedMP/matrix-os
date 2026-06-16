@@ -18,6 +18,14 @@ function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   } as ApiClient;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 beforeEach(() => {
   useSessions.setState({ sessions: [], aliasMap: {}, loading: false, creating: false, error: null });
   useBoard.setState({
@@ -137,6 +145,34 @@ describe("useSessions.create", () => {
     const created = await useSessions.getState().create(api, { kind: "shell", taskId: "task_a" });
 
     expect(created).toEqual({ sessionId: "sess_new", attachName: "matrix-task-new" });
+  });
+
+  it("resolves the new attach name from its own reload when another load preempts state", async () => {
+    const internalTerminal = deferred<{ sessions: unknown[] }>();
+    const internalWorkspace = deferred<{ sessions: unknown[]; nextCursor: null }>();
+    const post = vi.fn().mockResolvedValue({ session: { id: "sess_new", runtime: {} } });
+    let call = 0;
+    const get = vi.fn((path: string) => {
+      call += 1;
+      if (call === 1 && path === "/api/terminal/sessions") return internalTerminal.promise;
+      if (call === 2 && path === "/api/sessions") return internalWorkspace.promise;
+      if (path === "/api/terminal/sessions") return Promise.resolve({ sessions: [] });
+      return Promise.resolve({ sessions: [], nextCursor: null });
+    });
+    const api = makeApi({ post, get });
+
+    const createPromise = useSessions.getState().create(api, { kind: "shell", taskId: "task_a" });
+    await Promise.resolve();
+    await Promise.resolve();
+    await useSessions.getState().load(api);
+
+    internalTerminal.resolve({ sessions: [{ name: "matrix-task-9", status: "active" }] });
+    internalWorkspace.resolve({
+      sessions: [{ id: "sess_new", runtime: { zellijSession: "matrix-task-9" } }],
+      nextCursor: null,
+    });
+
+    await expect(createPromise).resolves.toEqual({ sessionId: "sess_new", attachName: "matrix-task-9" });
   });
 
   it("surfaces an error category and clears the creating flag on failure", async () => {
