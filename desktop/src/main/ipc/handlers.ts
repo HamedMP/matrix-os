@@ -25,6 +25,8 @@ type Handler<C extends InvokeChannel> = (
   payload: InvokeRequest<C>,
 ) => Promise<InvokeResponse<C>> | InvokeResponse<C>;
 
+const PUBLIC_IPC_ERRORS = new Set(["invalid request", "internal error", "embed unavailable"]);
+
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
@@ -33,7 +35,19 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
         console.warn(`[ipc] rejected malformed request on ${channel}`);
         throw new Error("invalid request");
       }
-      const result = await handler(parsedRequest.data as InvokeRequest<C>);
+      let result: InvokeResponse<C>;
+      try {
+        result = await handler(parsedRequest.data as InvokeRequest<C>);
+      } catch (err: unknown) {
+        console.warn(
+          `[ipc] handler for ${channel} failed:`,
+          err instanceof Error ? err.message : String(err),
+        );
+        if (err instanceof Error && PUBLIC_IPC_ERRORS.has(err.message)) {
+          throw err;
+        }
+        throw new Error("internal error");
+      }
       const parsedResponse = INVOKE_CHANNELS[channel].response.safeParse(result);
       if (!parsedResponse.success) {
         console.warn(`[ipc] handler for ${channel} produced an invalid response`);
