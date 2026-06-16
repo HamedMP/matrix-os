@@ -18,20 +18,34 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
   const [submitting, setSubmitting] = useState(false);
   const [failed, setFailed] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
+  const dialogClosedRef = useRef(false);
+  const dialogGenerationRef = useRef(0);
 
   useEffect(() => {
     if (open) {
+      dialogGenerationRef.current += 1;
+      dialogClosedRef.current = false;
       setTitle("");
       setDescription("");
       setStatus("todo");
       setPriority("normal");
+      setSubmitting(false);
       setFailed(false);
       setTimeout(() => titleRef.current?.focus(), 0);
+    } else {
+      dialogClosedRef.current = true;
     }
   }, [open]);
 
+  const closeFromUser = () => {
+    dialogGenerationRef.current += 1;
+    dialogClosedRef.current = true;
+    onClose();
+  };
+
   const submit = async (openAfter: boolean) => {
     if (!api || !activeSlug || title.trim().length === 0 || submitting) return;
+    const submitGeneration = dialogGenerationRef.current;
     setSubmitting(true);
     setFailed(false);
     const card = await createTask(api, activeSlug, {
@@ -40,6 +54,7 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
       status,
       priority,
     });
+    if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
     setSubmitting(false);
     if (!card) {
       setFailed(true);
@@ -59,7 +74,7 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
   };
 
   return (
-    <Dialog open={open} onClose={onClose} width={520}>
+    <Dialog open={open} onClose={closeFromUser} width={520}>
       <form
         className="flex flex-col gap-3 p-4"
         onSubmit={(e) => {
@@ -121,7 +136,7 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
           className="flex items-center justify-end gap-2 border-t pt-3"
           style={{ borderColor: "var(--border-subtle)" }}
         >
-        <Button variant="ghost" disabled={submitting} onClick={onClose}>
+        <Button variant="ghost" disabled={submitting} onClick={closeFromUser}>
           Cancel
         </Button>
           <Button
