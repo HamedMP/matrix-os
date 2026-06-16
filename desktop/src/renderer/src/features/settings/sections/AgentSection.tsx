@@ -29,7 +29,7 @@ interface AgentCredential {
 interface CredentialStatus {
   systemAgent?: string;
   routingExplanation?: string;
-  agents: AgentCredential[];
+  agents?: AgentCredential[];
 }
 
 const STATUS_COLOR: Record<AgentCredential["status"], string> = {
@@ -296,7 +296,7 @@ function ProvidersCard() {
         <Empty text={error ?? "Checking provider status…"} />
       ) : (
         <div className="flex flex-col gap-2">
-          {status.agents.map((a) => (
+          {(status.agents ?? []).map((a) => (
             <div
               key={a.agent}
               className="flex items-center justify-between rounded-lg border px-3 py-2"
