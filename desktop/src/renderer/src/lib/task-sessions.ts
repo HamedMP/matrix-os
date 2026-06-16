@@ -43,6 +43,9 @@ export async function startTaskSession(api: ApiClient, input: StartTaskSessionIn
     return true;
   } catch (err: unknown) {
     console.warn("[task-sessions] task link failed after session create:", err instanceof Error ? err.message : String(err));
+    if (created.attachName) {
+      await useSessions.getState().kill(api, created.attachName);
+    }
     return false;
   }
 }

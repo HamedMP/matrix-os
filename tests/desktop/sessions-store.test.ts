@@ -252,7 +252,7 @@ describe("useSessions.restart", () => {
     expect(restarted).toEqual({ sessionId: "sess_next", attachName: "matrix-agent-2" });
   });
 
-  it("returns the restarted workspace session when relinking the task fails", async () => {
+  it("cleans up the restarted workspace session when relinking the task fails", async () => {
     const card: Card = {
       id: "task_a",
       projectSlug: "proj",
@@ -286,8 +286,9 @@ describe("useSessions.restart", () => {
       ],
       aliasMap: { sess_old: "matrix-agent-1" },
     });
+    const del = vi.fn().mockResolvedValue({ ok: true });
     const api = makeApi({
-      delete: vi.fn().mockResolvedValue({ ok: true }),
+      delete: del,
       post: vi.fn().mockResolvedValue({
         session: { id: "sess_next", runtime: { zellijSession: "matrix-agent-2" } },
       }),
@@ -297,7 +298,9 @@ describe("useSessions.restart", () => {
 
     const restarted = await useSessions.getState().restart(api, "matrix-agent-1");
 
-    expect(restarted).toEqual({ sessionId: "sess_next", attachName: "matrix-agent-2" });
+    expect(restarted).toBeNull();
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-agent-1?force=1");
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-agent-2?force=1");
     expect(useSessions.getState().creating).toBe(false);
     expect(useSessions.getState().error).toBe("offline");
   });

@@ -56,8 +56,10 @@ afterEach(() => {
 
 describe("startTaskSession", () => {
   it("returns false when task linking fails after creating the session", async () => {
+    const del = vi.fn().mockResolvedValue({ ok: true });
     const api = makeApi({
       patch: vi.fn().mockRejectedValue(new AppError("server")),
+      delete: del,
     });
     useBoard.setState({ cardsByProject: { proj: [card()] } });
 
@@ -81,5 +83,6 @@ describe("startTaskSession", () => {
     });
     expect(useBoard.getState().error).toBe("server");
     expect(useBoard.getState().cardsByProject.proj?.some((task) => task.linkedSessionId === "sess_new")).toBe(false);
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-task-1?force=1");
   });
 });

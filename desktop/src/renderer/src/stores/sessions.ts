@@ -57,6 +57,10 @@ function nextSessionName(): string {
   return `operator-${Date.now().toString(36)}-${suffix}`;
 }
 
+async function deleteAttachableSession(api: ApiClient, attachName: string): Promise<void> {
+  await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
+}
+
 export const useSessions = create<SessionsState>()((set, get) => ({
   sessions: [],
   aliasMap: {},
@@ -155,7 +159,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
 
   kill: async (api, attachName) => {
     try {
-      await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
+      await deleteAttachableSession(api, attachName);
       await get().load(api);
       return true;
     } catch (err: unknown) {
@@ -170,7 +174,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
     try {
       const existing = get().sessions.find((session) => session.attachName === attachName) ?? null;
       try {
-        await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
+        await deleteAttachableSession(api, attachName);
       } catch (err: unknown) {
         if (!(err instanceof AppError && err.category === "notFound")) throw err;
       }
@@ -205,6 +209,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           set({ creating: false, error: refreshError });
           return null;
         }
+        const nextAttachName = get().aliasMap[sessionId] ?? directAttachName;
         let linkError: unknown = null;
         if (existing.projectSlug && existing.taskId) {
           try {
@@ -216,8 +221,20 @@ export const useSessions = create<SessionsState>()((set, get) => ({
             linkError = err;
           }
         }
-        set({ creating: false, error: linkError instanceof AppError ? linkError.category : linkError ? "server" : null });
-        return { sessionId, attachName: get().aliasMap[sessionId] ?? directAttachName };
+        if (linkError) {
+          if (nextAttachName) {
+            try {
+              await deleteAttachableSession(api, nextAttachName);
+              await get().load(api);
+            } catch (cleanupErr: unknown) {
+              console.error("[sessions] Failed to clean up unlinked restarted session:", cleanupErr);
+            }
+          }
+          set({ creating: false, error: linkError instanceof AppError ? linkError.category : "server" });
+          return null;
+        }
+        set({ creating: false, error: null });
+        return { sessionId, attachName: nextAttachName };
       }
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name: attachName });
       const restarted = typeof response.name === "string" && response.name.trim() ? response.name.trim() : attachName;
