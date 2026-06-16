@@ -12,6 +12,14 @@ vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => (
   default: ({ sessionName }: { sessionName: string }) => <div>Terminal {sessionName}</div>,
 }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("TerminalsTab", () => {
   beforeEach(() => {
     useConnection.setState({
@@ -25,6 +33,8 @@ describe("TerminalsTab", () => {
       sessions: [],
       error: null,
       load: vi.fn().mockResolvedValue(undefined),
+      kill: vi.fn().mockResolvedValue(true),
+      restart: vi.fn().mockResolvedValue(null),
     });
   });
 
@@ -138,5 +148,34 @@ describe("TerminalsTab", () => {
 
     await screen.findByText("Terminal next");
     expect(screen.queryByText("Terminal main")).toBeNull();
+  });
+
+  it("disables restart while a kill operation is in flight", async () => {
+    const killed = deferred<boolean>();
+    const kill = vi.fn(() => killed.promise);
+    const restart = vi.fn().mockResolvedValue({ attachName: "main", name: "main", status: "active" });
+    useSessions.setState({
+      sessions: [{ attachName: "main", name: "main", status: "exited", source: "workspace" }],
+      kill,
+      restart,
+    });
+
+    render(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /kill session/i }));
+
+    const restartButton = await screen.findByRole("button", { name: /restart session/i });
+    expect((restartButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(restartButton);
+    expect(restart).not.toHaveBeenCalled();
+
+    await act(async () => {
+      killed.resolve(true);
+      await Promise.resolve();
+    });
   });
 });

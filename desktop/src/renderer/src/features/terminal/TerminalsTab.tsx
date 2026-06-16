@@ -106,7 +106,7 @@ export default function TerminalsTab() {
   };
 
   const restartSession = async (attachName: string) => {
-    if (!api || creating) return;
+    if (!api || creating || busy !== null) return;
     const restarted = await restart(api, attachName);
     if (restarted?.attachName) setSelected(restarted.attachName);
   };
@@ -162,7 +162,7 @@ export default function TerminalsTab() {
                         <span className="truncate font-mono text-[10px]" style={{ color: "var(--text-tertiary)" }}>{s.name}</span>
                       </button>
                       {exited ? (
-                        <IconButton label="Restart session" disabled={creating} onClick={() => void restartSession(s.attachName)}>
+                        <IconButton label="Restart session" disabled={creating || busy !== null} onClick={() => void restartSession(s.attachName)}>
                           <RotateCcw size={12} />
                         </IconButton>
                       ) : null}
