@@ -222,8 +222,10 @@ also publishes a manifest:
 
 ```json
 {
+  "manifestVersion": 1,
   "version": "0.4.12",
   "baseVersion": "0.4.11",
+  "objectRoot": "system-bundles/objects/sha256",
   "files": [
     {
       "type": "file",
@@ -249,6 +251,18 @@ also publishes a manifest:
   ]
 }
 ```
+
+The manifest is canonical JSON bytes signed by the release workflow before upload. The
+release registration stores `manifestSha256`, `manifestSignature`, and
+`manifestSigningKeyId` in platform release metadata. The signature uses the platform
+release-signing key over the canonical manifest bytes, including `manifestVersion`,
+`version`, `baseVersion`, `objectRoot`, `files`, `symlinks`, `delete`,
+`requiresFullBundle`, and `protected`. The VPS updater trusts only pinned platform
+release public keys by `manifestSigningKeyId`, rejects unknown or revoked keys, verifies
+the signature, then checks the manifest bytes match `manifestSha256` before parsing
+paths or downloading objects. Per-file `sha256` values verify object contents after
+manifest-level trust has been established; TLS alone is not the manifest integrity
+mechanism.
 
 Manifest `path`, `delete`, and `symlinks[].path` entries are app-root-relative. The
 release staging root is `/opt/matrix/releases/<version>.staging`, the staged app tree is
@@ -284,14 +298,23 @@ downloads only changed content-addressed objects. It stages changes under
 `/opt/matrix/app` symlink after all checks pass. Activation also records
 `/opt/matrix/release.json` with the target version, manifest digest, activated path,
 rollback version, and timestamp via tmp-then-rename while holding the updater lock.
+The verified manifest is staged at
+`/opt/matrix/releases/<version>.staging/manifest.json` and becomes immutable
+release-owned state at `/opt/matrix/releases/<version>/manifest.json` when activation
+promotes the staging tree. The active release metadata in `/opt/matrix/release.json`
+points to that final manifest path and repeats its digest. The previous active manifest
+path is retained in rollback metadata so delta comparison, split-brain repair, and
+rollback never depend on only a digest without the corresponding manifest bytes. A
+separate convenience symlink `/opt/matrix/current-manifest.json` may point at the active
+release manifest, but it is not the source of truth.
 Because `release.json` rename and symlink flip are separate filesystem operations and
 cannot be committed atomically together, the lock is only a concurrency guard. The
 updater also runs a startup and pre-update consistency check: compare
 `/opt/matrix/release.json` with `/opt/matrix/app/BUNDLE_VERSION` and the installed
-manifest digest. Any mismatch fails closed before applying deltas and enters recovery:
-repair `release.json` from the symlink target when the target tree verifies against a
-known installed manifest, otherwise perform a full-bundle reinstall or require operator
-intervention.
+manifest path and digest. Any mismatch fails closed before applying deltas and enters
+recovery: repair `release.json` from the symlink target when the target tree verifies
+against the manifest stored under that release tree, otherwise perform a full-bundle
+reinstall or require operator intervention.
 
 Protected owner data remains outside the update set. Incremental updates may replace
 `/opt/matrix/app` only. They must never write owner data under `$MATRIX_HOME`.
@@ -520,16 +543,22 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
    true, non-app roots changed, or symlink topology cannot be represented safely and
    policy allows it; otherwise fails before staging.
 8. Downloads changed objects with bounded concurrency and 30s per-object timeouts.
-9. Verifies every object hash and manifest signature/digest.
+9. Verifies the canonical manifest bytes against the platform release metadata:
+   `manifestSha256`, `manifestSignature`, and a pinned `manifestSigningKeyId`. Only
+   after manifest-level verification succeeds does the updater parse entries and verify
+   every downloaded object hash.
 10. Stages app files under `/opt/matrix/releases/<version>.staging/app`.
 11. Runs preflight checks: staged root ownership and mode are correct, free disk margin
     remains above the configured threshold, `BUNDLE_VERSION` matches the target version,
-    manifest digest metadata is present, protected owner-data paths are absent from the
-    staged tree, symlinks resolve inside the staged release tree, executable bits match
-    the manifest, and any service-unit or launcher change has already forced the
-    full-bundle path.
+    the verified manifest is present at
+    `/opt/matrix/releases/<version>.staging/manifest.json`, protected owner-data paths
+    are absent from the staged tree, symlinks resolve inside the staged release tree,
+    executable bits match the manifest, and any service-unit or launcher change has
+    already forced the full-bundle path.
 12. Activates the staged app tree under the updater lock by flipping `/opt/matrix/app`
-   and writing `/opt/matrix/release.json` via tmp-then-rename. The startup/pre-update
+   and writing `/opt/matrix/release.json` via tmp-then-rename. Activation first promotes
+   `/opt/matrix/releases/<version>.staging` to `/opt/matrix/releases/<version>` so the
+   installed manifest path recorded in `release.json` is stable. The startup/pre-update
    consistency check is the recovery mechanism if the process crashes between those
    filesystem operations.
 13. Restarts affected services while still holding the updater lock with bounded
@@ -572,7 +601,8 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 ### Phase 3: Add incremental host-bundle manifests
 
 - Publish file manifests next to every host bundle.
-- Teach release registration to store manifest digest and object root.
+- Teach release registration to store manifest digest, manifest signature, signing key
+  id, and object root.
 - Implement VPS-side staging, verification, atomic activation, health report, and
   rollback.
 - Keep full-bundle fallback until incremental update has proved stable across canary
