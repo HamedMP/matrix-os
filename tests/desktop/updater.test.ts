@@ -30,6 +30,7 @@ vi.mock("electron-updater", () => ({ autoUpdater: updaterMock.autoUpdater }));
 
 beforeEach(() => {
   process.env.OPERATOR_UPDATE_FEED = "https://updates.example.com";
+  delete process.env.MATRIX_DESKTOP_UPDATE_CHANNEL;
   electronMock.app.isPackaged = true;
   updaterMock.handlers.clear();
   updaterMock.autoUpdater.autoDownload = false;
@@ -80,6 +81,21 @@ describe("createUpdater", () => {
     expect(updater.status()).toBe("error");
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it("passes the resolved prerelease channel to the GitHub provider", async () => {
+    delete process.env.OPERATOR_UPDATE_FEED;
+    process.env.MATRIX_DESKTOP_UPDATE_CHANNEL = "beta";
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+
+    expect(updaterMock.autoUpdater.setFeedURL).toHaveBeenCalledWith({
+      provider: "github",
+      owner: "HamedMP",
+      repo: "matrix-os",
+      channel: "beta",
+    });
   });
 
   it("stays disabled when the app is not packaged", async () => {

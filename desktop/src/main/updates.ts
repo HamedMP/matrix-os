@@ -56,6 +56,7 @@ export function createUpdater(events: UpdateEvents): Updater {
             provider: "github",
             owner: feed.owner,
             repo: feed.repo,
+            ...(feed.channel === "stable" ? {} : { channel: feed.channel }),
           });
         }
         for (const eventName of UPDATER_EVENT_NAMES) {
