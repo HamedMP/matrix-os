@@ -1,10 +1,35 @@
-import { appendFile, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { z } from "zod/v4";
 import { validateSessionName } from "./names.js";
 import type { ReplayEvent } from "./replay-buffer.js";
 
 export type ScrollbackRecord = Extract<ReplayEvent, { type: "output" | "block-mark" }>;
+
+const Osc133MarkSchema = z.discriminatedUnion("code", [
+  z.object({ code: z.literal("A"), kind: z.literal("prompt-start") }),
+  z.object({ code: z.literal("B"), kind: z.literal("command-start") }),
+  z.object({ code: z.literal("C"), kind: z.literal("command-executed") }),
+  z.object({
+    code: z.literal("D"),
+    kind: z.literal("command-finished"),
+    exitCode: z.number().int().nullable(),
+  }),
+]);
+
+const ScrollbackRecordSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("output"),
+    seq: z.number().int().nonnegative(),
+    data: z.string(),
+  }),
+  z.object({
+    type: z.literal("block-mark"),
+    seq: z.number().int().nonnegative(),
+    mark: Osc133MarkSchema,
+  }),
+]);
 
 export interface ScrollbackStoreOptions {
   homePath: string;
@@ -23,7 +48,7 @@ export class ScrollbackStore {
   }
 
   pathForSession(name: string): string {
-    return join(this.scrollbackDir, `${validateSessionName(name)}.ndjson`);
+    return this.pathForValidatedSession(validateSessionName(name));
   }
 
   async append(name: string, records: ScrollbackRecord[]): Promise<void> {
@@ -43,12 +68,11 @@ export class ScrollbackStore {
   }
 
   async readSince(name: string, fromSeq: number): Promise<ScrollbackRecord[]> {
+    const safeName = validateSessionName(name);
     try {
-      const raw = await readFile(this.pathForSession(name), "utf-8");
-      return raw
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as ScrollbackRecord)
+      const raw = await readFile(this.pathForValidatedSession(safeName), "utf-8");
+      const parsed = parseScrollbackLines(raw.split("\n"), safeName);
+      return parsed.records
         .filter((record) => record.seq >= fromSeq)
         .sort((a, b) => a.seq - b.seq);
     } catch (err: unknown) {
@@ -64,28 +88,11 @@ export class ScrollbackStore {
   }
 
   async latestSeq(name: string): Promise<number | null> {
+    const safeName = validateSessionName(name);
     try {
-      const handle = await open(this.pathForSession(name), "r");
-      try {
-        const info = await handle.stat();
-        let position = info.size;
-        let text = "";
-        while (position > 0) {
-          const length = Math.min(64 * 1024, position);
-          position -= length;
-          const buffer = Buffer.alloc(length);
-          await handle.read(buffer, 0, length, position);
-          text = `${buffer.toString("utf-8")}${text}`;
-          const lines = text.split("\n").filter(Boolean);
-          if (lines.length > 0 && (position === 0 || text.includes("\n"))) {
-            const record = JSON.parse(lines.at(-1)!) as ScrollbackRecord;
-            return record.seq;
-          }
-        }
-        return null;
-      } finally {
-        await handle.close();
-      }
+      const raw = await readFile(this.pathForValidatedSession(safeName), "utf-8");
+      const parsed = parseScrollbackLines(raw.split("\n"), safeName);
+      return parsed.records.at(-1)?.seq ?? null;
     } catch (err: unknown) {
       if (
         err instanceof Error &&
@@ -142,4 +149,40 @@ export class ScrollbackStore {
     );
     await run;
   }
+
+  private pathForValidatedSession(name: string): string {
+    return join(this.scrollbackDir, `${name}.ndjson`);
+  }
+}
+
+function parseScrollbackLines(lines: string[], session: string): { records: ScrollbackRecord[]; malformed: number } {
+  const records: ScrollbackRecord[] = [];
+  let malformed = 0;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    try {
+      const parsed = ScrollbackRecordSchema.safeParse(JSON.parse(line));
+      if (parsed.success) {
+        records.push(parsed.data);
+      } else {
+        malformed += 1;
+      }
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.warn("[shell] unexpected scrollback parse failure:", {
+          session,
+          error: err instanceof Error ? err.name : typeof err,
+        });
+      }
+      malformed += 1;
+    }
+  }
+  if (malformed > 0) {
+    console.warn("[shell] skipped malformed scrollback records:", {
+      session,
+      count: malformed,
+    });
+  }
+  return { records, malformed };
 }

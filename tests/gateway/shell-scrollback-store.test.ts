@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ScrollbackStore } from "../../packages/gateway/src/shell/scrollback-store.js";
 import { ShellReplayBuffer } from "../../packages/gateway/src/shell/replay-buffer.js";
 
@@ -15,6 +15,7 @@ async function tempRoot() {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  vi.restoreAllMocks();
 });
 
 describe("scrollback store", () => {
@@ -74,5 +75,47 @@ describe("scrollback store", () => {
     await expect(readFile(store.pathForSession("main"), "utf-8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("skips malformed scrollback records when replaying a session", async () => {
+    const root = await tempRoot();
+    const store = new ScrollbackStore({ homePath: root });
+    const path = store.pathForSession("main");
+    await mkdir(join(root, "system", "scrollback"), { recursive: true });
+    await writeFile(path, [
+      JSON.stringify({ type: "output", seq: 1, data: "one" }),
+      "{\"type\":\"output\",\"seq\":",
+      JSON.stringify({ type: "output", seq: 3, data: "three" }),
+      "",
+    ].join("\n"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(store.readSince("main", 0)).resolves.toEqual([
+      { type: "output", seq: 1, data: "one" },
+      { type: "output", seq: 3, data: "three" },
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      "[shell] skipped malformed scrollback records:",
+      expect.objectContaining({ session: "main", count: 1 }),
+    );
+  });
+
+  it("uses the newest valid sequence when the scrollback tail is malformed", async () => {
+    const root = await tempRoot();
+    const store = new ScrollbackStore({ homePath: root });
+    const path = store.pathForSession("main");
+    await mkdir(join(root, "system", "scrollback"), { recursive: true });
+    await writeFile(path, [
+      JSON.stringify({ type: "output", seq: 8, data: "ready" }),
+      "{\"type\":\"output\",\"seq\":",
+      "",
+    ].join("\n"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(store.latestSeq("main")).resolves.toBe(8);
+    expect(warn).toHaveBeenCalledWith(
+      "[shell] skipped malformed scrollback records:",
+      expect.objectContaining({ session: "main", count: 1 }),
+    );
   });
 });
