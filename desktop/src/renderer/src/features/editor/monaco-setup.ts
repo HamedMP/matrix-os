@@ -39,6 +39,22 @@ const models = new Map<string, monaco.editor.ITextModel>();
 const modelBaselines = new Map<string, string>();
 const MODEL_CACHE_CAP = 32;
 
+function isModelClean(path: string, model: monaco.editor.ITextModel): boolean {
+  const baseline = modelBaselines.get(path);
+  return baseline === undefined || model.getValue() === baseline;
+}
+
+function evictOldestCleanModel(): void {
+  for (const [path, model] of models) {
+    if (model.isDisposed() || isModelClean(path, model)) {
+      model.dispose();
+      models.delete(path);
+      modelBaselines.delete(path);
+      return;
+    }
+  }
+}
+
 export function getOrCreateModel(path: string, content: string): monaco.editor.ITextModel {
   const existing = models.get(path);
   if (existing && !existing.isDisposed()) {
@@ -56,12 +72,7 @@ export function getOrCreateModel(path: string, content: string): monaco.editor.I
     modelBaselines.delete(path);
   }
   if (models.size >= MODEL_CACHE_CAP) {
-    const oldest = models.keys().next().value as string | undefined;
-    if (oldest) {
-      models.get(oldest)?.dispose();
-      models.delete(oldest);
-      modelBaselines.delete(oldest);
-    }
+    evictOldestCleanModel();
   }
   const model = monaco.editor.createModel(content, undefined, monaco.Uri.file(path));
   models.set(path, model);
