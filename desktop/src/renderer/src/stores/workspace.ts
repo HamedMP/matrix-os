@@ -114,6 +114,10 @@ interface WorkspacePersistence {
 
 let persistence: WorkspacePersistence | null = null;
 
+interface WriteLayoutOptions {
+  persist?: boolean;
+}
+
 function persistLayout(taskId: string, layout: PanelLayout): void {
   if (!persistence) return;
   persistence.saveLayout(taskId, layout).catch((err: unknown) => {
@@ -131,15 +135,15 @@ interface WorkspaceState {
   focusTask(taskId: string, now?: number): void;
   closeTask(taskId: string): void;
   togglePanel(taskId: string, panel: PanelKind, now?: number): void;
-  setPanelSizes(taskId: string, sizes: Record<PanelKind, number>, now?: number): void;
+  setPanelSizes(taskId: string, sizes: Record<PanelKind, number>, now?: number, options?: WriteLayoutOptions): void;
   movePanel(taskId: string, panel: PanelKind, direction: "left" | "right", now?: number): void;
   layoutFor(taskId: string): PanelLayout;
 }
 
 export const useWorkspace = create<WorkspaceState>()((set, get) => {
-  function writeLayout(taskId: string, layout: PanelLayout): void {
+  function writeLayout(taskId: string, layout: PanelLayout, options: WriteLayoutOptions = {}): void {
     set((state) => ({ layouts: { ...state.layouts, [taskId]: layout } }));
-    persistLayout(taskId, layout);
+    if (options.persist !== false) persistLayout(taskId, layout);
   }
 
   return {
@@ -209,7 +213,7 @@ export const useWorkspace = create<WorkspaceState>()((set, get) => {
       writeLayout(taskId, { ...layout, visible, sizes, touchedAt: now });
     },
 
-    setPanelSizes: (taskId, sizes, now = Date.now()) => {
+    setPanelSizes: (taskId, sizes, now = Date.now(), options) => {
       const layout = get().layouts[taskId] ?? defaultLayout(now);
       const next = { ...layout.sizes };
       for (const kind of PANEL_KINDS) {
@@ -219,7 +223,7 @@ export const useWorkspace = create<WorkspaceState>()((set, get) => {
           ? Math.max(value, PANEL_MIN_PCT[kind])
           : Math.max(value, 0);
       }
-      writeLayout(taskId, { ...layout, sizes: next, touchedAt: now });
+      writeLayout(taskId, { ...layout, sizes: next, touchedAt: now }, options);
     },
 
     movePanel: (taskId, panel, direction, now = Date.now()) => {

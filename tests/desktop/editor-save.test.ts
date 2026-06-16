@@ -136,14 +136,16 @@ describe("saveFile", () => {
     expect(stat).toHaveBeenCalledTimes(1);
   });
 
-  it("does not stat after writing when the gateway omits write mtime", async () => {
-    const stat = vi.fn().mockResolvedValue({ mtime: MODIFIED_MS });
+  it("refreshes the baseline after writing when the gateway omits write mtime", async () => {
+    const stat = vi.fn()
+      .mockResolvedValueOnce({ mtime: MODIFIED_MS })
+      .mockResolvedValueOnce({ mtime: MODIFIED_MS + 5_000 });
     const files = makeFiles({ stat, write: vi.fn().mockResolvedValue({ mtime: null }) });
     await expect(saveFile(files, opened, "new content")).resolves.toEqual({
       ok: true,
-      newMtime: MODIFIED_MS,
+      newMtime: MODIFIED_MS + 5_000,
     });
-    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledTimes(2);
   });
 
   it("treats null mtimes as conflict-free only when both sides are null", async () => {

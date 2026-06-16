@@ -25,7 +25,13 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
   const layouts = useWorkspace((s) => s.layouts);
   const setPanelSizes = useWorkspace((s) => s.setPanelSizes);
   const containerRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<{ left: PanelKind; right: PanelKind; startX: number; startSizes: Record<PanelKind, number> } | null>(null);
+  const dragState = useRef<{
+    left: PanelKind;
+    right: PanelKind;
+    startX: number;
+    startSizes: Record<PanelKind, number>;
+    latestSizes: Record<PanelKind, number> | null;
+  } | null>(null);
 
   const layout: PanelLayout = useMemo(() => layouts[taskId] ?? defaultLayout(), [layouts, taskId]);
   const visiblePanels = useMemo(
@@ -42,6 +48,7 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
         right,
         startX: e.clientX,
         startSizes: { ...layout.sizes },
+        latestSizes: null,
       };
     },
     [layout.sizes],
@@ -60,18 +67,22 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
       const minLeft = PANEL_MIN_PCT[drag.left];
       const minRight = PANEL_MIN_PCT[drag.right];
       const clamped = Math.max(minLeft - leftStart, Math.min(deltaPct, rightStart - minRight));
-      setPanelSizes(taskId, {
+      const nextSizes = {
         ...drag.startSizes,
         [drag.left]: leftStart + clamped,
         [drag.right]: rightStart - clamped,
-      });
+      };
+      drag.latestSizes = nextSizes;
+      setPanelSizes(taskId, nextSizes, Date.now(), { persist: false });
     },
     [setPanelSizes, taskId],
   );
 
   const onDividerUp = useCallback(() => {
+    const drag = dragState.current;
     dragState.current = null;
-  }, []);
+    if (drag?.latestSizes) setPanelSizes(taskId, drag.latestSizes);
+  }, [setPanelSizes, taskId]);
 
   if (visiblePanels.length === 0) {
     return (

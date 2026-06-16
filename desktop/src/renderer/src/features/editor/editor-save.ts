@@ -93,7 +93,9 @@ export async function saveFile(
   // the only conflict-free null pairing. Network errors propagate as AppError.
   if (serverMtime !== file.loadedMtime) return { ok: false, reason: "conflict" };
   const { mtime: newMtime } = await files.write(file.path, content);
-  return { ok: true, newMtime: newMtime ?? serverMtime };
+  if (newMtime !== null) return { ok: true, newMtime };
+  const { mtime: refreshedMtime } = await files.stat(file.path);
+  return { ok: true, newMtime: refreshedMtime };
 }
 
 export async function saveFileOverwrite(

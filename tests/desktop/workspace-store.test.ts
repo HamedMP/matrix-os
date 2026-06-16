@@ -215,6 +215,43 @@ describe("persistence", () => {
     expect(persistence.saveLayout).toHaveBeenCalledTimes(3);
   });
 
+  it("can defer panel size persistence during resize previews until the final commit", async () => {
+    const persistence = makePersistence();
+    useWorkspace.getState().configure(persistence);
+    useWorkspace.getState().togglePanel("task_a", "editor", 1_000);
+    await flushMicrotasks();
+    persistence.saveLayout.mockClear();
+
+    useWorkspace
+      .getState()
+      .setPanelSizes(
+        "task_a",
+        { terminal: 65, editor: 35, git: 0, browser: 0, artifacts: 0, processes: 0 },
+        2_000,
+        { persist: false },
+      );
+    await flushMicrotasks();
+    expect(useWorkspace.getState().layouts["task_a"]!.sizes).toMatchObject({
+      terminal: 65,
+      editor: 35,
+    });
+    expect(persistence.saveLayout).not.toHaveBeenCalled();
+
+    useWorkspace
+      .getState()
+      .setPanelSizes(
+        "task_a",
+        { terminal: 65, editor: 35, git: 0, browser: 0, artifacts: 0, processes: 0 },
+        3_000,
+      );
+    await flushMicrotasks();
+    expect(persistence.saveLayout).toHaveBeenCalledTimes(1);
+    const [taskKey, layout] = persistence.saveLayout.mock.calls[0] as [string, PanelLayout];
+    expect(taskKey).toBe("task_a");
+    expect(layout.sizes).toMatchObject({ terminal: 65, editor: 35 });
+    expect(layout.touchedAt).toBe(3_000);
+  });
+
   it("logs and does not throw when persistence fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
