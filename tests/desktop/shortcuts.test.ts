@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  handleCycleTabShortcut,
   handleCloseTabShortcut,
   handleMenuNavigate,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
@@ -39,6 +40,44 @@ describe("handleCloseTabShortcut", () => {
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(closeTab).toHaveBeenCalledWith("task");
+  });
+});
+
+describe("handleCycleTabShortcut", () => {
+  it("focuses the first tab on forward cycle when no tab is active", () => {
+    const preventDefault = vi.fn();
+    const focusTab = vi.fn();
+
+    handleCycleTabShortcut(
+      { preventDefault },
+      {
+        activeTabId: null,
+        tabs: [{ id: "one" }, { id: "two" }],
+        focusTab,
+      },
+      1,
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(focusTab).toHaveBeenCalledWith("one");
+  });
+
+  it("focuses the last tab on reverse cycle when no tab is active", () => {
+    const preventDefault = vi.fn();
+    const focusTab = vi.fn();
+
+    handleCycleTabShortcut(
+      { preventDefault },
+      {
+        activeTabId: null,
+        tabs: [{ id: "one" }, { id: "two" }],
+        focusTab,
+      },
+      -1,
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(focusTab).toHaveBeenCalledWith("two");
   });
 });
 

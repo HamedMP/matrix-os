@@ -6,23 +6,28 @@ import { parseChannelStatusResponse, type ChannelStatus } from "./channel-status
 
 export default function ChannelsSection() {
   const api = useConnection((s) => s.api);
-  const [state, setState] = useState<{ channels: ChannelStatus[]; error: boolean }>({
+  const [state, setState] = useState<{ channels: ChannelStatus[]; error: boolean; loading: boolean }>({
     channels: [],
     error: false,
+    loading: Boolean(api),
   });
 
   useEffect(() => {
-    if (!api) return;
+    if (!api) {
+      setState((current) => ({ ...current, loading: false }));
+      return;
+    }
     let cancelled = false;
+    setState((current) => ({ ...current, error: false, loading: true }));
     api
       .get<unknown>("/api/channels/status")
       .then((res) => {
         if (cancelled) return;
-        setState({ channels: parseChannelStatusResponse(res), error: false });
+        setState({ channels: parseChannelStatusResponse(res), error: false, loading: false });
       })
       .catch((err: unknown) => {
         console.warn("[settings] channels load failed:", err instanceof Error ? err.message : String(err));
-        if (!cancelled) setState((current) => ({ ...current, error: true }));
+        if (!cancelled) setState((current) => ({ ...current, error: true, loading: false }));
       });
     return () => { cancelled = true; };
   }, [api]);
@@ -31,7 +36,7 @@ export default function ChannelsSection() {
     <>
       <SectionHeader title="Channels" description="Messaging surfaces connected to your agent." />
       <Card>
-        {state.error ? <Empty text="Channels unavailable." /> : state.channels.length === 0 ? (
+        {state.loading ? <Empty text="Loading channels..." /> : state.error ? <Empty text="Channels unavailable." /> : state.channels.length === 0 ? (
           <Empty text="No channels configured yet." />
         ) : (
           state.channels.map((c) => (

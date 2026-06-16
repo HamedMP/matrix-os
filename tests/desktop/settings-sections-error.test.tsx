@@ -21,6 +21,16 @@ function makeApi(response: unknown, reject = false) {
   } as never;
 }
 
+function makePendingApi() {
+  return {
+    get: vi.fn(() => new Promise(() => undefined)),
+    post: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+    putText: vi.fn(),
+  } as never;
+}
+
 describe("settings data sections", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -82,5 +92,33 @@ describe("settings data sections", () => {
       expect(screen.queryByText(unavailable)).toBeNull();
       expect(screen.queryByText(visible)).not.toBeNull();
     });
+  });
+
+  it.each([
+    {
+      name: "channels",
+      Component: ChannelsSection,
+      loading: "Loading channels...",
+      empty: "No channels configured yet.",
+    },
+    {
+      name: "integrations",
+      Component: IntegrationsSection,
+      loading: "Loading integrations...",
+      empty: "No integrations connected yet.",
+    },
+    {
+      name: "cron",
+      Component: CronSection,
+      loading: "Loading schedules...",
+      empty: "No scheduled jobs.",
+    },
+  ])("shows loading instead of empty state while $name load is pending", ({ Component, loading, empty }) => {
+    useConnection.setState({ api: makePendingApi() });
+
+    render(<Component />);
+
+    expect(screen.queryByText(loading)).not.toBeNull();
+    expect(screen.queryByText(empty)).toBeNull();
   });
 });

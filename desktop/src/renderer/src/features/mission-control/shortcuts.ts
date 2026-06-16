@@ -10,6 +10,12 @@ interface CloseTabShortcutState {
   closeTab(id: string): void;
 }
 
+interface CycleTabShortcutState {
+  activeTabId: string | null;
+  tabs: Array<{ id: string }>;
+  focusTab(id: string): void;
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
@@ -51,6 +57,21 @@ export function handleCloseTabShortcut(
   if (tab?.closable) {
     tabs.closeTab(tabs.activeTabId);
   }
+}
+
+export function handleCycleTabShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+  tabs: CycleTabShortcutState,
+  direction: 1 | -1,
+): void {
+  if (tabs.tabs.length <= 1) return;
+  event.preventDefault();
+  const idx = tabs.tabs.findIndex((t) => t.id === tabs.activeTabId);
+  const nextIndex = idx === -1
+    ? direction === 1 ? 0 : tabs.tabs.length - 1
+    : (idx + direction + tabs.tabs.length) % tabs.tabs.length;
+  const next = tabs.tabs[nextIndex];
+  if (next) tabs.focusTab(next.id);
 }
 
 export function useGlobalShortcuts(): void {
@@ -101,11 +122,7 @@ export function useGlobalShortcuts(): void {
       }
       // Cycle tabs with Ctrl+Tab / Ctrl+Shift+Tab.
       if (e.ctrlKey && e.key === "Tab" && tabs.tabs.length > 1) {
-        e.preventDefault();
-        const idx = tabs.tabs.findIndex((t) => t.id === tabs.activeTabId);
-        const delta = e.shiftKey ? -1 : 1;
-        const next = tabs.tabs[(idx + delta + tabs.tabs.length) % tabs.tabs.length];
-        if (next) tabs.focusTab(next.id);
+        handleCycleTabShortcut(e, tabs, e.shiftKey ? -1 : 1);
         return;
       }
       if (!meta && key === "c" && !isTypingTarget(e.target)) {

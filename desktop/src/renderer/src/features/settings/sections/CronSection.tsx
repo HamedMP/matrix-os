@@ -23,21 +23,26 @@ function parse(value: unknown): CronJob[] {
 
 export default function CronSection() {
   const api = useConnection((s) => s.api);
-  const [state, setState] = useState<{ jobs: CronJob[]; error: boolean }>({
+  const [state, setState] = useState<{ jobs: CronJob[]; error: boolean; loading: boolean }>({
     jobs: [],
     error: false,
+    loading: Boolean(api),
   });
 
   useEffect(() => {
-    if (!api) return;
+    if (!api) {
+      setState((current) => ({ ...current, loading: false }));
+      return;
+    }
     let cancelled = false;
+    setState((current) => ({ ...current, error: false, loading: true }));
     api.get<unknown>("/api/cron").then((res) => {
       if (!cancelled) {
-        setState({ jobs: parse(res), error: false });
+        setState({ jobs: parse(res), error: false, loading: false });
       }
     }).catch((err: unknown) => {
       console.warn("[settings] cron load failed:", err instanceof Error ? err.message : String(err));
-      if (!cancelled) setState((current) => ({ ...current, error: true }));
+      if (!cancelled) setState((current) => ({ ...current, error: true, loading: false }));
     });
     return () => { cancelled = true; };
   }, [api]);
@@ -46,7 +51,7 @@ export default function CronSection() {
     <>
       <SectionHeader title="Schedules" description="Recurring agent jobs and heartbeats." />
       <Card>
-        {state.error ? <Empty text="Schedules unavailable." /> : state.jobs.length === 0 ? (
+        {state.loading ? <Empty text="Loading schedules..." /> : state.error ? <Empty text="Schedules unavailable." /> : state.jobs.length === 0 ? (
           <Empty text="No scheduled jobs." />
         ) : (
           state.jobs.map((j, i) => (

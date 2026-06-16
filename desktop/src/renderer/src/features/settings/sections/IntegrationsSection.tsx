@@ -27,21 +27,26 @@ function parse(value: unknown): Integration[] {
 
 export default function IntegrationsSection() {
   const api = useConnection((s) => s.api);
-  const [state, setState] = useState<{ items: Integration[]; error: boolean }>({
+  const [state, setState] = useState<{ items: Integration[]; error: boolean; loading: boolean }>({
     items: [],
     error: false,
+    loading: Boolean(api),
   });
 
   useEffect(() => {
-    if (!api) return;
+    if (!api) {
+      setState((current) => ({ ...current, loading: false }));
+      return;
+    }
     let cancelled = false;
+    setState((current) => ({ ...current, error: false, loading: true }));
     api.get<unknown>("/api/integrations").then((res) => {
       if (!cancelled) {
-        setState({ items: parse(res), error: false });
+        setState({ items: parse(res), error: false, loading: false });
       }
     }).catch((err: unknown) => {
       console.warn("[settings] integrations load failed:", err instanceof Error ? err.message : String(err));
-      if (!cancelled) setState((current) => ({ ...current, error: true }));
+      if (!cancelled) setState((current) => ({ ...current, error: true, loading: false }));
     });
     return () => { cancelled = true; };
   }, [api]);
@@ -50,7 +55,7 @@ export default function IntegrationsSection() {
     <>
       <SectionHeader title="Integrations" description="External services your agent can use." />
       <Card>
-        {state.error ? <Empty text="Integrations unavailable." /> : state.items.length === 0 ? (
+        {state.loading ? <Empty text="Loading integrations..." /> : state.error ? <Empty text="Integrations unavailable." /> : state.items.length === 0 ? (
           <Empty text="No integrations connected yet." />
         ) : (
           state.items.map((i) => (
