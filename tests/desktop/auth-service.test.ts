@@ -106,6 +106,46 @@ describe("AuthService", () => {
     expect(console.warn).toHaveBeenCalledWith("[auth] failed to clear expired profile:", "profile clear failed");
   });
 
+  it("emits signed-out status when an in-memory credential expires mid-session", async () => {
+    const now = Date.now();
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(now);
+    const credentialStore = makeCredentialStore(makeCredential({ expiresAt: now + 1000 }));
+    const clearProfile = vi.fn(async () => undefined);
+    const onAuthChanged = vi.fn();
+    const auth = new AuthService({
+      credentialStore,
+      platformHost: "https://app.matrix-os.com",
+      openExternal: vi.fn(async () => undefined),
+      loadProfile: async () => makeProfile(),
+      saveProfile: vi.fn(async () => undefined),
+      clearProfile,
+      onAuthChanged,
+    });
+    await auth.init();
+    expect(auth.getStatus().signedIn).toBe(true);
+
+    dateNow.mockReturnValue(now + 2000);
+
+    expect(auth.getStatus()).toEqual({
+      signedIn: false,
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+    });
+    expect(auth.getToken()).toBeNull();
+    expect(onAuthChanged).toHaveBeenCalledTimes(1);
+    expect(onAuthChanged).toHaveBeenCalledWith({
+      signedIn: false,
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(credentialStore.cleared).toBe(true);
+    expect(clearProfile).toHaveBeenCalledOnce();
+
+    dateNow.mockRestore();
+  });
+
   it("reuses a pending device flow instead of launching parallel poll loops", async () => {
     const credentialStore = makeCredentialStore(null);
     let codeRequests = 0;

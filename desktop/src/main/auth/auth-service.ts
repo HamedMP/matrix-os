@@ -78,7 +78,8 @@ export class AuthService {
   }
 
   getToken(): string | null {
-    if (!this.credential || !this.isCredentialValid(this.credential)) return null;
+    this.expireCredentialIfNeeded();
+    if (!this.credential) return null;
     return this.credential.accessToken;
   }
 
@@ -87,6 +88,11 @@ export class AuthService {
   }
 
   getStatus(): AuthStatus {
+    this.expireCredentialIfNeeded();
+    return this.currentStatus();
+  }
+
+  private currentStatus(): AuthStatus {
     const signedIn = this.credential !== null && this.isCredentialValid(this.credential);
     return {
       signedIn,
@@ -232,5 +238,27 @@ export class AuthService {
 
   private isCredentialValid(credential: StoredCredential): boolean {
     return credential.expiresAt > Date.now();
+  }
+
+  private expireCredentialIfNeeded(): void {
+    if (!this.credential || this.isCredentialValid(this.credential)) return;
+    this.flowNonce += 1;
+    this.pendingDeviceCode = null;
+    this.credential = null;
+    this.profile = null;
+    this.flowState = "idle";
+    this.deps.onAuthChanged(this.currentStatus());
+    void this.deps.credentialStore.clear().catch((err: unknown) => {
+      console.warn(
+        "[auth] failed to clear expired credential:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+    void this.deps.clearProfile().catch((err: unknown) => {
+      console.warn(
+        "[auth] failed to clear expired profile:",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
   }
 }
