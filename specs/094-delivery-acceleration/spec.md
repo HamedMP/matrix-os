@@ -217,6 +217,8 @@ Each lane stores enough metadata to roll back without guessing:
 - Customer runtime lane: previous host-bundle version and manifest digest per VPS.
 - Website lane: previous deployment ID.
 - CLI lane: previous npm dist-tag and GitHub release pointer.
+- Ops lane: previous applied config revision, affected service/unit names, and the
+  command or workflow needed to restore the prior config.
 
 Rollback must be a workflow action, not an undocumented operator command.
 
@@ -277,6 +279,10 @@ Rollback must be a workflow action, not an undocumented operator command.
   back to the previously recorded revision and fail the workflow.
 - **Incremental update verification fails**: keep the current `/opt/matrix/app` symlink,
   delete the staging directory, and report failure to platform.
+- **Incremental manifest base mismatch**: if the installed manifest/version does not
+  match `manifest.baseVersion`, do not apply file deltas. Fall back to a full-bundle
+  install when allowed by the release policy, or fail before staging with an explicit
+  base-mismatch error.
 - **Activation succeeds but service health fails**: flip symlink back to the previous
   release, restart services, and mark the target release failed for that handle.
 - **Manifest references a missing object**: fail before activation; release publication
@@ -334,20 +340,26 @@ Minimum smoke checks:
   through platform to target VPS, websocket auth path.
 - `www`: docs route, homepage route, canonical headers.
 - `cli`: install, login/device auth smoke, version command, package dist-tag.
+- `ops`: target config checksum, affected systemd/container unit health, log/metric
+  ingestion continuity for the changed component, and rollback command dry-run.
 
 ### Runtime updater
 
 The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit. It:
 
 1. Fetches target release metadata from platform.
-2. Downloads manifest and changed objects.
-3. Verifies every object hash and manifest signature/digest.
-4. Stages app files under `/opt/matrix/releases/<version>.staging`.
-5. Runs preflight checks.
-6. Atomically writes `/opt/matrix/release.json` via tmp-then-rename and activates the
+2. Downloads manifest metadata and compares `manifest.baseVersion` with the installed
+   version from `/opt/matrix/release.json` and the installed manifest digest.
+3. Falls back to full-bundle install when the base mismatches and policy allows it;
+   otherwise fails before staging.
+4. Downloads changed objects.
+5. Verifies every object hash and manifest signature/digest.
+6. Stages app files under `/opt/matrix/releases/<version>.staging`.
+7. Runs preflight checks.
+8. Atomically writes `/opt/matrix/release.json` via tmp-then-rename and activates the
    release by flipping `/opt/matrix/app` to the staged app tree in one critical section.
-7. Restarts affected services.
-8. Reports installed version and health back to platform.
+9. Restarts affected services.
+10. Reports installed version and health back to platform.
 
 ## Phased Plan
 
@@ -386,9 +398,9 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 - Keep full-bundle fallback until incremental update has proved stable across canary
   and beta channels.
 - Test checkpoint: `bun run test`, an updater integration test that stages a synthetic
-  manifest, rejects path traversal/missing hashes, flips the app symlink atomically,
-  atomically updates `/opt/matrix/release.json`, reports health to a test platform
-  endpoint, and manually verifies rollback on a disposable VPS.
+  manifest, rejects base-version mismatches/path traversal/missing hashes, flips the
+  app symlink atomically, atomically updates `/opt/matrix/release.json`, reports health
+  to a test platform endpoint, and manually verifies rollback on a disposable VPS.
 
 ### Phase 4: Delivery dashboard and SLOs
 
