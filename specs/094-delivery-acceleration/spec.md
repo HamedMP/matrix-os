@@ -160,12 +160,16 @@ has already passed PR review and focused tests.
 Required sequence:
 
 1. Confirm the PR is merged to `main` and record the merge SHA.
-2. Build only the lane-specific artifact for that SHA.
-3. Deploy as a no-traffic candidate revision.
-4. Smoke the candidate URL with production-equivalent headers/secrets.
-5. Promote candidate to 100% traffic.
-6. Verify live service revision/image/artifact digest.
-7. Query logs for the incident signature for at least one retry window.
+2. Capture the current live rollback target before building: Cloud Run revision and
+   image digest for platform/shell lanes, installed version and manifest digest for
+   runtime lanes, deployment ID for website, dist-tag/release pointer for CLI, or ops
+   config revision for ops.
+3. Build only the lane-specific artifact for that SHA.
+4. Deploy as a no-traffic candidate revision.
+5. Smoke the candidate URL with production-equivalent headers/secrets.
+6. Promote candidate to 100% traffic.
+7. Verify live service revision/image/artifact digest.
+8. Query logs for the incident signature for at least one retry window.
 
 Fast hotfix is not a local-machine deploy. It still runs through a workflow or a
 checked-in script with the same environment variables and smoke checks as CI.
