@@ -25,12 +25,20 @@ export function createWebContentsView(options: {
 
   // Block any navigation outside the allowlist; route external links to the
   // system browser.
-  contents.on("will-navigate", (event, url) => {
+  const blockExternalNavigation = (event: unknown, maybeUrl: unknown) => {
+    const url = typeof maybeUrl === "string" ? maybeUrl : typeof event === "string" ? event : null;
+    const preventDefault =
+      event && typeof event === "object" && "preventDefault" in event
+        ? (event as { preventDefault?: unknown }).preventDefault
+        : null;
+    if (!url || typeof preventDefault !== "function") return;
     if (!isNavigationAllowed(url, options.allowedOrigins)) {
-      event.preventDefault();
+      preventDefault.call(event);
       if (url.startsWith("https://")) void shell.openExternal(url);
     }
-  });
+  };
+  contents.on("will-navigate", blockExternalNavigation);
+  contents.on("will-redirect", blockExternalNavigation);
   contents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) void shell.openExternal(url);
     return { action: "deny" };
