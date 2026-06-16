@@ -41,7 +41,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
         const model = getOrCreateModel(path, file.content);
         editor.setModel(model);
         model.onDidChangeContent(() => {
-          setDirty(path, model.getValue() !== fileRef.current?.content);
+          setDirty(taskId, path, model.getValue() !== fileRef.current?.content);
         });
       })
       .catch((err: unknown) => {
@@ -53,7 +53,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       editorRef.current = null;
       editor.dispose();
     };
-  }, [api, path, setDirty]);
+  }, [api, path, setDirty, taskId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -76,7 +76,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       const result = await saveFile(createFilesApi(api), file, content);
       if (result.ok) {
         fileRef.current = { ...file, content, loadedMtime: result.newMtime };
-        setDirty(path, false);
+        setDirty(taskId, path, false);
         setConflict(false);
       } else {
         setConflict(true);
@@ -98,7 +98,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
     try {
       const newMtime = await saveFileOverwrite(createFilesApi(api), path, content);
       fileRef.current = { path, content, loadedMtime: newMtime };
-      setDirty(path, false);
+      setDirty(taskId, path, false);
       setConflict(false);
     } catch (err: unknown) {
       console.warn("[editor] overwrite failed:", err instanceof Error ? err.message : String(err));
@@ -112,7 +112,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       const file = await openFile(createFilesApi(api), path);
       fileRef.current = file;
       editorRef.current.getModel()?.setValue(file.content);
-      setDirty(path, false);
+      setDirty(taskId, path, false);
       setConflict(false);
     } catch (err: unknown) {
       setLoadError(toUserMessage(err));

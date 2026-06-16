@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useEditorTabs } from "@desktop/renderer/src/features/editor/editor-tabs-store";
 
 beforeEach(() => {
-  useEditorTabs.setState({ tabsByTask: {}, activePathByTask: {}, dirtyPaths: [] });
+  useEditorTabs.setState({ tabsByTask: {}, activePathByTask: {}, dirtyPathsByTask: {} });
 });
 
 describe("useEditorTabs", () => {
@@ -12,15 +12,16 @@ describe("useEditorTabs", () => {
     store.openTab("task_a", "src/shared.ts");
     store.openTab("task_b", "src/b.ts");
     store.openTab("task_b", "src/shared.ts");
-    store.setDirty("src/a.ts", true);
-    store.setDirty("src/shared.ts", true);
-    store.setDirty("src/b.ts", true);
+    store.setDirty("task_a", "src/a.ts", true);
+    store.setDirty("task_a", "src/shared.ts", true);
+    store.setDirty("task_b", "src/b.ts", true);
+    store.setDirty("task_b", "src/shared.ts", true);
 
     store.closeTask("task_a");
 
     const state = useEditorTabs.getState();
     expect(state.tabsByTask).toEqual({ task_b: ["src/b.ts", "src/shared.ts"] });
     expect(state.activePathByTask).toEqual({ task_b: "src/shared.ts" });
-    expect(state.dirtyPaths).toEqual(["src/shared.ts", "src/b.ts"]);
+    expect(state.dirtyPathsByTask).toEqual({ task_b: ["src/b.ts", "src/shared.ts"] });
   });
 });

@@ -22,28 +22,49 @@ export default function QuickOpen() {
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeqRef = useRef(0);
 
   useEffect(() => {
     if (open) {
       setQuery("");
       setResults([]);
       setSelected(0);
-      setTimeout(() => inputRef.current?.focus(), 0);
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = setTimeout(() => {
+        focusTimerRef.current = null;
+        inputRef.current?.focus();
+      }, 0);
     }
+    return () => {
+      if (focusTimerRef.current) {
+        clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+      }
+    };
   }, [open]);
 
   useEffect(() => {
-    if (!open || !api || query.trim().length === 0) {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    const searchSeq = searchSeqRef.current + 1;
+    searchSeqRef.current = searchSeq;
+    const trimmedQuery = query.trim();
+    if (!open || !api || trimmedQuery.length === 0) {
       setResults([]);
       return;
     }
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    let cancelled = false;
     debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
       api
         .get<{ results?: unknown; entries?: unknown }>(
-          `/api/files/search?q=${encodeURIComponent(query.trim())}&limit=${MAX_RESULTS}`,
+          `/api/files/search?q=${encodeURIComponent(trimmedQuery)}&limit=${MAX_RESULTS}`,
         )
         .then((res) => {
+          if (cancelled || searchSeqRef.current !== searchSeq) return;
           const raw = Array.isArray(res.results)
             ? res.results
             : Array.isArray(res.entries)
@@ -60,12 +81,17 @@ export default function QuickOpen() {
           setSelected(0);
         })
         .catch((err: unknown) => {
+          if (cancelled || searchSeqRef.current !== searchSeq) return;
           console.warn("[quick-open] search failed:", err instanceof Error ? err.message : String(err));
           setResults([]);
         });
     }, SEARCH_DEBOUNCE_MS);
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      cancelled = true;
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
     };
   }, [api, open, query]);
 

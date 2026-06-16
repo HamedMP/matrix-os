@@ -6,18 +6,18 @@ const MAX_TABS_PER_TASK = 16;
 interface EditorTabsState {
   tabsByTask: Record<string, string[]>;
   activePathByTask: Record<string, string | null>;
-  dirtyPaths: string[];
+  dirtyPathsByTask: Record<string, string[]>;
   openTab: (taskId: string, path: string) => void;
   setActive: (taskId: string, path: string) => void;
   closeTab: (taskId: string, path: string) => void;
-  setDirty: (path: string, dirty: boolean) => void;
+  setDirty: (taskId: string, path: string, dirty: boolean) => void;
   closeTask: (taskId: string) => void;
 }
 
 export const useEditorTabs = create<EditorTabsState>()((set) => ({
   tabsByTask: {},
   activePathByTask: {},
-  dirtyPaths: [],
+  dirtyPathsByTask: {},
 
   openTab: (taskId, path) =>
     set((state) => {
@@ -46,31 +46,38 @@ export const useEditorTabs = create<EditorTabsState>()((set) => ({
       return {
         tabsByTask: { ...state.tabsByTask, [taskId]: tabs },
         activePathByTask: { ...state.activePathByTask, [taskId]: active },
-        dirtyPaths: state.dirtyPaths.filter((p) => p !== path),
+        dirtyPathsByTask: {
+          ...state.dirtyPathsByTask,
+          [taskId]: (state.dirtyPathsByTask[taskId] ?? []).filter((p) => p !== path),
+        },
       };
     }),
 
-  setDirty: (path, dirty) =>
-    set((state) => ({
-      dirtyPaths: dirty
-        ? state.dirtyPaths.includes(path)
-          ? state.dirtyPaths
-          : [...state.dirtyPaths, path].slice(-64)
-        : state.dirtyPaths.filter((p) => p !== path),
-    })),
+  setDirty: (taskId, path, dirty) =>
+    set((state) => {
+      const dirtyPaths = state.dirtyPathsByTask[taskId] ?? [];
+      const nextDirtyPaths = dirty
+        ? dirtyPaths.includes(path)
+          ? dirtyPaths
+          : [...dirtyPaths, path].slice(-64)
+        : dirtyPaths.filter((p) => p !== path);
+      return {
+        dirtyPathsByTask: { ...state.dirtyPathsByTask, [taskId]: nextDirtyPaths },
+      };
+    }),
 
   closeTask: (taskId) =>
     set((state) => {
-      const closingPaths = new Set(state.tabsByTask[taskId] ?? []);
       const tabsByTask = { ...state.tabsByTask };
       const activePathByTask = { ...state.activePathByTask };
+      const dirtyPathsByTask = { ...state.dirtyPathsByTask };
       delete tabsByTask[taskId];
       delete activePathByTask[taskId];
-      const remainingOpenPaths = new Set(Object.values(tabsByTask).flat());
+      delete dirtyPathsByTask[taskId];
       return {
         tabsByTask,
         activePathByTask,
-        dirtyPaths: state.dirtyPaths.filter((path) => !closingPaths.has(path) || remainingOpenPaths.has(path)),
+        dirtyPathsByTask,
       };
     }),
 }));

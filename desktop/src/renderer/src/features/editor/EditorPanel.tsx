@@ -12,7 +12,7 @@ export default function EditorPanel({ taskId }: { taskId: string }) {
   const activePath = useEditorTabs((s) => s.activePathByTask[taskId] ?? null);
   const setActive = useEditorTabs((s) => s.setActive);
   const closeTab = useEditorTabs((s) => s.closeTab);
-  const dirtyPaths = useEditorTabs((s) => s.dirtyPaths);
+  const dirtyPaths = useEditorTabs((s) => s.dirtyPathsByTask[taskId] ?? []);
 
   if (tabs.length === 0) {
     return (
