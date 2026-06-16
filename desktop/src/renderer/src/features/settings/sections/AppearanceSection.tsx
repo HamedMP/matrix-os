@@ -11,7 +11,7 @@ function isTheme(value: unknown): value is Theme {
 
 function resolveTheme(theme: Theme): "dark" | "light" {
   if (theme !== "system") return theme;
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
 }
 
 function applyThemeToDocument(theme: Theme): void {

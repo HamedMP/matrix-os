@@ -8,7 +8,7 @@ import {
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { MatrixMark } from "../../design/BrandPanel";
 import { IconButton } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
@@ -74,14 +74,10 @@ export default function Sidebar() {
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const [projectsOpen, setProjectsOpen] = useState(true);
-  const [displayName, setDisplayName] = useState<string | null>(null);
-
-  useEffect(() => {
-    setDisplayName(handle ? `@${handle}` : null);
-  }, [handle]);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const terminalTabs = tabs.filter((t) => t.kind === "terminal");
+  const displayName = handle ? `@${handle}` : "Signed in";
   const width = collapsed ? 56 : 240;
 
   return (
@@ -186,7 +182,7 @@ export default function Sidebar() {
           </button>
           {!collapsed ? (
             <>
-              <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)" }}>{displayName ?? "Signed in"}</span>
+              <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)" }}>{displayName}</span>
               <IconButton label="Collapse sidebar" onClick={toggleSidebar}>
                 <PanelLeftClose size={15} />
               </IconButton>

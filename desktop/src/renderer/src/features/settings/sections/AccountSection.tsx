@@ -19,7 +19,17 @@ export default function AccountSection() {
           <Button variant="subtle" onClick={() => void invoke("shell:open-external", { url: manageUrl })}>
             Manage account
           </Button>
-          <Button variant="danger" onClick={() => void signOut()}>
+          <Button
+            variant="danger"
+            onClick={() => {
+              void signOut().catch((err: unknown) => {
+                console.warn(
+                  "[settings] sign-out failed:",
+                  err instanceof Error ? err.message : String(err),
+                );
+              });
+            }}
+          >
             Sign out
           </Button>
         </div>
