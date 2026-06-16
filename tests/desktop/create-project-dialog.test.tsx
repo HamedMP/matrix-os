@@ -22,7 +22,7 @@ describe("CreateProjectDialog", () => {
       projects: [],
       activeProjectSlug: null,
       cardsByProject: {},
-      firstLoadPending: false,
+      firstLoadByProject: {},
       refreshing: false,
       error: null,
     });
