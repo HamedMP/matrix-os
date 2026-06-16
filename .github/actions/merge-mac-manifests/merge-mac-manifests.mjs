@@ -17,6 +17,7 @@ function withoutFilesBlock(text) {
 
 const directory = process.env.INPUT_DIRECTORY;
 const output = process.env.INPUT_OUTPUT || "latest-mac.yml";
+const channel = process.env.INPUT_CHANNEL || "";
 
 if (!directory) {
   throw new Error("directory input is required");
@@ -24,7 +25,10 @@ if (!directory) {
 
 const names = await readdir(directory);
 const manifestNames = names
-  .filter((name) => name.endsWith("-mac.yml") || name === "latest-mac.yml")
+  .filter((name) => {
+    if (channel) return name.endsWith(`-${channel}-mac.yml`);
+    return /^(arm64|x64)-mac\.yml$/.test(name) || name === "latest-mac.yml";
+  })
   .sort((a, b) => a.localeCompare(b));
 if (manifestNames.length < 2) {
   throw new Error(`expected at least 2 mac manifests in ${directory}, found ${manifestNames.length}`);

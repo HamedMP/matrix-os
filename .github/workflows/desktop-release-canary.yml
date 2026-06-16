@@ -69,6 +69,13 @@ jobs:
         with:
           directory: desktop-release
 
+      - name: Merge canary macOS update manifests
+        uses: ./.github/actions/merge-mac-manifests
+        with:
+          directory: desktop-release
+          output: canary-mac.yml
+          channel: canary
+
       - name: Generate release manifest
         run: |
           node scripts/release/generate-desktop-release-manifest.mjs desktop-release desktop-canary "${{ needs.prepare.outputs.version }}" canary "$GITHUB_SHA"

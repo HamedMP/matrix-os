@@ -8,6 +8,10 @@ inputs:
     description: Manifest filename to write.
     required: false
     default: latest-mac.yml
+  channel:
+    description: Optional prerelease channel manifest suffix to merge, such as beta or canary.
+    required: false
+    default: ""
 runs:
   using: node20
   main: merge-mac-manifests.mjs

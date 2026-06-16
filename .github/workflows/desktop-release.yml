@@ -114,6 +114,14 @@ jobs:
         with:
           directory: desktop-release
 
+      - name: Merge channel macOS update manifests
+        if: ${{ needs.prepare.outputs.channel != 'stable' }}
+        uses: ./.github/actions/merge-mac-manifests
+        with:
+          directory: desktop-release
+          output: ${{ needs.prepare.outputs.channel }}-mac.yml
+          channel: ${{ needs.prepare.outputs.channel }}
+
       - name: Generate release manifest
         env:
           TAG: ${{ needs.prepare.outputs.tag }}

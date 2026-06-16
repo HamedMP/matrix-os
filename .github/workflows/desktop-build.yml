@@ -105,10 +105,18 @@ jobs:
 
       - name: Rename mac update manifest for arch
         shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
           mv desktop/dist/latest-mac.yml "desktop/dist/${{ matrix.arch }}-mac.yml"
-          find desktop/dist -maxdepth 1 -type f -name '*-mac.yml' ! -name '${{ matrix.arch }}-mac.yml' -delete
+          if [ "$CHANNEL" != "stable" ] && [ -f "desktop/dist/${CHANNEL}-mac.yml" ]; then
+            mv "desktop/dist/${CHANNEL}-mac.yml" "desktop/dist/${{ matrix.arch }}-${CHANNEL}-mac.yml"
+          fi
+          find desktop/dist -maxdepth 1 -type f -name '*-mac.yml' \
+            ! -name '${{ matrix.arch }}-mac.yml' \
+            ! -name '${{ matrix.arch }}-${CHANNEL}-mac.yml' \
+            -delete
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v6
