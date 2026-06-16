@@ -39,7 +39,6 @@ jobs:
     with:
       channel: canary
       version: ${{ needs.prepare.outputs.version }}
-      version_suffix: ${{ needs.prepare.outputs.suffix }}
       artifact_prefix: ${{ needs.prepare.outputs.artifact_prefix }}
       retention_days: 7
     secrets: inherit

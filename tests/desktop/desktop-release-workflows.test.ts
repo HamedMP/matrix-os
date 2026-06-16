@@ -29,6 +29,7 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('echo "version=$BASE_VERSION-$SUFFIX" >> "$GITHUB_OUTPUT"');
     expect(workflow).toContain('${{ needs.prepare.outputs.version }}" canary "$GITHUB_SHA"');
     expect(workflow).not.toContain('${{ needs.prepare.outputs.suffix }}" canary "$GITHUB_SHA"');
+    expect(workflow).not.toContain("version_suffix:");
   });
 
   it("patches exact release versions and validates notarization inputs before packaging", () => {
@@ -71,6 +72,13 @@ describe("desktop release workflows", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("ignores an existing latest-mac manifest when merging stable arch manifests", () => {
+    const script = readFileSync(join(root, ".github/actions/merge-mac-manifests/merge-mac-manifests.mjs"), "utf8");
+
+    expect(script).toContain("return /^(arm64|x64)-mac\\.yml$/.test(name);");
+    expect(script).not.toContain('name === "latest-mac.yml"');
   });
 
   it("merges prerelease mac channel manifests separately from latest manifests", () => {

@@ -27,7 +27,7 @@ const names = await readdir(directory);
 const manifestNames = names
   .filter((name) => {
     if (channel) return name.endsWith(`-${channel}-mac.yml`);
-    return /^(arm64|x64)-mac\.yml$/.test(name) || name === "latest-mac.yml";
+    return /^(arm64|x64)-mac\.yml$/.test(name);
   })
   .sort((a, b) => a.localeCompare(b));
 if (manifestNames.length < 2) {
