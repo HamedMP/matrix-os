@@ -70,7 +70,12 @@ export default defineConfig({
     exclude: ["tests/**/*.integration.ts", "node_modules", "dist", ".next"],
     coverage: {
       provider: "v8",
-      include: ["packages/kernel/src/**", "packages/gateway/src/**", "packages/platform/src/**"],
+      include: [
+        "packages/kernel/src/**",
+        "packages/gateway/src/**",
+        "packages/platform/src/**",
+        "desktop/src/renderer/src/**",
+      ],
       exclude: ["**/*.test.ts", "**/*.test.tsx", "**/*.integration.ts"],
       thresholds: {
         statements: 99,
