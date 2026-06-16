@@ -663,10 +663,20 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    expect(screen.getByTestId("terminal-session-row-main").getAttribute("aria-current")).toBe("true");
+    expect(screen.getByTestId("terminal-session-row-docs").getAttribute("aria-current")).toBeNull();
+    expect(screen.getByTestId("terminal-session-row-main").getAttribute("data-selected")).toBe("true");
+    expect(screen.getByTestId("terminal-session-row-docs").getAttribute("data-selected")).toBe("false");
+
     await act(async () => {
       fireEvent.click(screen.getByTestId("terminal-session-row-docs"));
       await Promise.resolve();
     });
+
+    expect(screen.getByTestId("terminal-session-row-main").getAttribute("aria-current")).toBeNull();
+    expect(screen.getByTestId("terminal-session-row-docs").getAttribute("aria-current")).toBe("true");
+    expect(screen.getByTestId("terminal-session-row-main").getAttribute("data-selected")).toBe("false");
+    expect(screen.getByTestId("terminal-session-row-docs").getAttribute("data-selected")).toBe("true");
 
     expect(calls).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -939,7 +949,10 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Expand sessions drawer" })).toBeTruthy();
     expect(screen.getByTestId("terminal-drawer-expand-icon").querySelector('path[d="m6 17 5-5-5-5"]')).toBeTruthy();
     expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Open matrix-main" }).textContent).toBe("mma");
+    const matrixRailButton = screen.getByRole("button", { name: "Open matrix-main" });
+    expect(matrixRailButton.textContent).toBe("mma");
+    expect(matrixRailButton.getAttribute("aria-current")).toBe("true");
+    expect(matrixRailButton.getAttribute("data-selected")).toBe("true");
   });
 
   it("uses Paper collapsed rail abbreviations and fixed control sizing", async () => {

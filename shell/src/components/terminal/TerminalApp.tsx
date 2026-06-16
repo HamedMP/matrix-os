@@ -204,6 +204,23 @@ const SHELL_CARD_NAME_BUTTON_STYLE: CSSProperties = {
   cursor: "copy",
 };
 
+const SHELL_CARD_COPY_BUTTON_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "#EFEEE2",
+  border: "1px solid #DCDAC9",
+  borderRadius: 7,
+  color: "#8A8B7C",
+  cursor: "copy",
+  display: "flex",
+  flex: "1 1 auto",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontSize: 12,
+  gap: 7,
+  height: 28,
+  minWidth: 0,
+  padding: "0 8px 0 10px",
+};
+
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const SHELL_STATUS_DOT_CSS = `
@@ -3149,6 +3166,15 @@ function LocalTerminalSidebar() {
     : shellsAuthoritative ? [] : syntheticFilteredShells;
   const activeShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "active");
   const backgroundShells = renderedShells.filter((shell) => (shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")) === "background");
+  const activeTerminalTab = ctx.tabs.find((terminalTab) => terminalTab.id === ctx.activeTabId) ?? ctx.tabs[0];
+  const selectedPaneId = activeTerminalTab
+    ? ctx.focusedPaneId && hasPaneId(activeTerminalTab.paneTree, ctx.focusedPaneId)
+      ? ctx.focusedPaneId
+      : getFirstPaneId(activeTerminalTab.paneTree)
+    : null;
+  const selectedShellName = activeTerminalTab && selectedPaneId
+    ? getPaneSessionId(activeTerminalTab.paneTree, selectedPaneId)
+    : null;
   const drawerWidth = ctx.mobile ? "100%" : 392;
   const openActiveShell = (shell: ShellSessionSummary, options: { markSeen?: boolean } = {}) => {
     const markSeen = options.markSeen !== false;
@@ -3201,6 +3227,7 @@ function LocalTerminalSidebar() {
       <>
         <CollapsedSessionsRail
           shells={unfilteredRenderedShells}
+          selectedShellName={selectedShellName}
           onExpand={() => ctx.setSidebarOpen(true)}
           onNew={() => void createManagedShell()}
           onOpen={makeShellActive}
@@ -3378,6 +3405,7 @@ function LocalTerminalSidebar() {
             shells={activeShells}
             deletingShellNames={deletingShellNames}
             foreground
+            selectedShellName={selectedShellName}
             onOpen={openActiveShell}
             onToggle={moveShellToBackground}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
@@ -3391,6 +3419,7 @@ function LocalTerminalSidebar() {
             shells={backgroundShells}
             deletingShellNames={deletingShellNames}
             foreground={false}
+            selectedShellName={selectedShellName}
             onOpen={makeShellActive}
             onToggle={makeShellActive}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
@@ -3763,11 +3792,13 @@ function getShellStatusDotClassName(shell: ShellSessionSummary): string {
 
 function CollapsedSessionsRail({
   shells,
+  selectedShellName,
   onExpand,
   onNew,
   onOpen,
 }: {
   shells: ShellSessionSummary[];
+  selectedShellName: string | null;
   onExpand: () => void;
   onNew: () => void;
   onOpen: (shell: ShellSessionSummary) => void;
@@ -3815,11 +3846,11 @@ function CollapsedSessionsRail({
         <PlusIcon aria-hidden="true" data-testid="terminal-collapsed-new-session-icon" size={18} strokeWidth={2.5} />
       </CollapsedRailButton>
       <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
-      <CollapsedRailGroup shells={activeShells} onOpen={onOpen} />
+      <CollapsedRailGroup shells={activeShells} selectedShellName={selectedShellName} onOpen={onOpen} />
       {backgroundShells.length > 0 && (
         <>
           <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
-          <CollapsedRailGroup shells={backgroundShells} onOpen={onOpen} muted />
+          <CollapsedRailGroup shells={backgroundShells} selectedShellName={selectedShellName} onOpen={onOpen} muted />
         </>
       )}
     </aside>
@@ -3828,10 +3859,12 @@ function CollapsedSessionsRail({
 
 function CollapsedRailGroup({
   shells,
+  selectedShellName,
   onOpen,
   muted = false,
 }: {
   shells: ShellSessionSummary[];
+  selectedShellName: string | null;
   onOpen: (shell: ShellSessionSummary) => void;
   muted?: boolean;
 }) {
@@ -3840,19 +3873,22 @@ function CollapsedRailGroup({
       {shells.map((shell) => {
         const displayName = formatShellDisplayName(shell.name);
         const label = formatCollapsedShellLabel(shell.name);
+        const selected = shell.name === selectedShellName;
         return (
           <button
             key={shell.name}
             type="button"
             aria-label={`Open ${displayName}`}
+            aria-current={selected ? "true" : undefined}
+            data-selected={selected ? "true" : "false"}
             title={displayName}
             onClick={() => onOpen(shell)}
             className="relative flex items-center justify-center"
             style={{
-              background: muted ? "#E2E2D0" : "#FFFDF7",
-              border: `1px solid ${muted ? "#D4D2C1" : "#D6D5C4"}`,
+              background: selected ? "#FFFDF7" : muted ? "#E2E2D0" : "#FFFDF7",
+              border: `1px solid ${selected ? "#9CB77A" : muted ? "#D4D2C1" : "#D6D5C4"}`,
               borderRadius: 11,
-              boxShadow: "none",
+              boxShadow: selected ? "0 0 0 3px rgba(156,183,122,0.22), 0 8px 18px rgba(39,40,34,0.16)" : "none",
               color: muted ? "#858578" : "#31362D",
               cursor: "pointer",
               flexShrink: 0,
@@ -3934,6 +3970,7 @@ function ShellSessionGroup({
   shells,
   deletingShellNames,
   foreground,
+  selectedShellName,
   onOpen,
   onToggle,
   onRename,
@@ -3944,6 +3981,7 @@ function ShellSessionGroup({
   shells: ShellSessionSummary[];
   deletingShellNames: string[];
   foreground: boolean;
+  selectedShellName: string | null;
   onOpen: (shell: ShellSessionSummary) => void;
   onToggle: (shell: ShellSessionSummary) => void;
   onRename: (shell: ShellSessionSummary, nextName: string) => Promise<boolean>;
@@ -3976,6 +4014,7 @@ function ShellSessionGroup({
           shell={shell}
           foreground={foreground}
           deleting={deletingShellNames.includes(shell.name)}
+          selected={shell.name === selectedShellName}
           onOpen={() => onOpen(shell)}
           onToggle={() => onToggle(shell)}
           onRename={(nextName) => onRename(shell, nextName)}
@@ -3990,6 +4029,7 @@ function ShellCard({
   shell,
   foreground,
   deleting,
+  selected,
   onOpen,
   onToggle,
   onRename,
@@ -3998,6 +4038,7 @@ function ShellCard({
   shell: ShellSessionSummary;
   foreground: boolean;
   deleting?: boolean;
+  selected: boolean;
   onOpen: () => void;
   onToggle: () => void;
   onRename: (nextName: string) => Promise<boolean>;
@@ -4106,10 +4147,12 @@ function ShellCard({
         }
       }}
       style={{
-        background: foreground ? "#FFFDF7" : "#E2E2D0",
-        border: `1px solid ${foreground ? "#D6D5C4" : "#D4D2C1"}`,
+        background: selected ? "#FFFDF7" : foreground ? "#FFFDF7" : "#E2E2D0",
+        border: `1px solid ${selected ? "#9CB77A" : foreground ? "#D6D5C4" : "#D4D2C1"}`,
         borderRadius: 10,
-        boxShadow: foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
+        boxShadow: selected
+          ? "0 0 0 3px rgba(156,183,122,0.18), 0 14px 30px rgba(39,40,34,0.18)"
+          : foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
         display: "flex",
         flexDirection: "column",
@@ -4119,11 +4162,28 @@ function ShellCard({
         position: "relative",
       }}
     >
+      {selected && (
+        <span
+          aria-hidden="true"
+          style={{
+            background: "#465243",
+            borderRadius: 999,
+            bottom: 12,
+            left: -1,
+            position: "absolute",
+            top: 12,
+            width: 3,
+            zIndex: 2,
+          }}
+        />
+      )}
       {!renaming && !deleting && (
         <button
           type="button"
           data-testid={`terminal-session-row-${shell.name}`}
+          aria-current={selected ? "true" : undefined}
           aria-label={`Show ${displayName} session`}
+          data-selected={selected ? "true" : "false"}
           onClick={handleCardClick}
           style={{
             background: "transparent",
@@ -4304,22 +4364,7 @@ function ShellCard({
             onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => event.stopPropagation()}
             className="pointer-events-auto min-w-0"
-            style={{
-              alignItems: "center",
-              background: "#EFEEE2",
-              border: "1px solid #DCDAC9",
-              borderRadius: 7,
-              color: "#8A8B7C",
-              cursor: "copy",
-              display: "flex",
-              flex: "1 1 auto",
-              fontFamily: "var(--font-mono, ui-monospace, monospace)",
-              fontSize: 12,
-              gap: 7,
-              height: 28,
-              minWidth: 0,
-              padding: "0 8px 0 10px",
-            }}
+            style={SHELL_CARD_COPY_BUTTON_STYLE}
           >
             <span className="truncate" style={{ color: copied ? "#4F8A55" : "#8A8B7C", minWidth: 0 }}>
               {copied ? "Command copied" : showActions ? (
