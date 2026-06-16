@@ -280,7 +280,7 @@ export class ShellSocket {
   }
 
   private scheduleReconnect(): void {
-    if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
+    if (this.reconnectCancelled()) return;
     // Attach-lifecycle timers belong to the connection that just dropped.
     if (this.settleTimer !== null) {
       this.clearT(this.settleTimer);
@@ -297,14 +297,18 @@ export class ShellSocket {
     this.setState(
       this.failedAttempts >= CONNECTION_LOST_AFTER_FAILURES ? "connection-lost" : "reconnecting",
     );
-    if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
+    if (this.reconnectCancelled()) return;
     this.failedAttempts += 1;
     if (this.reconnectTimer !== null) this.clearT(this.reconnectTimer);
     this.reconnectTimer = this.setT(() => {
       this.reconnectTimer = null;
-      if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
+      if (this.reconnectCancelled()) return;
       this.openSocket(true);
     }, delay);
+  }
+
+  private reconnectCancelled(): boolean {
+    return this.disposed || this.currentState === "ended" || this.currentState === "fatal";
   }
 
   private handleMessage(data: unknown): void {
