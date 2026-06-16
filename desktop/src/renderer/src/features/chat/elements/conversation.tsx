@@ -70,5 +70,6 @@ export function ConversationContent({ children }: { children: ReactNode }) {
 }
 
 export function ConversationEmptyState({ children }: { children: ReactNode }) {
+  if (children === null || children === undefined || children === false) return null;
   return <div className="flex h-full flex-col items-center justify-center">{children}</div>;
 }
