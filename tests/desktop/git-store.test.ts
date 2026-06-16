@@ -161,6 +161,65 @@ describe("loadAll", () => {
     expect(useGit.getState().loading).toBe(false);
   });
 
+  it("ignores stale loadAll results when project switches resolve out of order", async () => {
+    const projectABranches = deferred<unknown>();
+    const projectAPrs = deferred<unknown>();
+    const projectAWorktrees = deferred<unknown>();
+    const get = vi.fn((path: string) => {
+      if (path.includes("/api/projects/project-a/branches")) return projectABranches.promise;
+      if (path.includes("/api/projects/project-a/prs")) return projectAPrs.promise;
+      if (path.includes("/api/projects/project-a/worktrees")) return projectAWorktrees.promise;
+      if (path.includes("/api/projects/project-b/branches")) {
+        return Promise.resolve({ branches: [wireBranch({ name: "project-b-main" })], refreshedAt: T2 });
+      }
+      if (path.includes("/api/projects/project-b/prs")) {
+        return Promise.resolve({ prs: [wirePr({ number: 22, title: "Project B" })], refreshedAt: T2 });
+      }
+      if (path.includes("/api/projects/project-b/worktrees")) {
+        return Promise.resolve({ worktrees: [wireWorktree({ id: "wt_project_b", projectSlug: "project-b" })] });
+      }
+      throw new Error(`unmocked path: ${path}`);
+    });
+    const api = makeApi({ get: get as never });
+
+    const stale = useGit.getState().loadAll(api, "project-a");
+    const fresh = useGit.getState().loadAll(api, "project-b");
+    await fresh;
+
+    expect(useGit.getState().branches).toEqual([{ name: "project-b-main", current: true, default: true }]);
+    expect(useGit.getState().prs).toEqual([
+      {
+        number: 22,
+        title: "Project B",
+        author: "hamed",
+        headRef: "fix/things",
+        baseRef: "main",
+        state: "OPEN",
+      },
+    ]);
+    expect(useGit.getState().worktrees).toEqual([
+      {
+        id: "wt_project_b",
+        projectSlug: "project-b",
+        path: "/home/matrix/worktrees/wt_abc123def456",
+        sourceBranch: "main",
+        currentBranch: "fix/things",
+        dirtyState: "clean",
+        createdAt: T1,
+      },
+    ]);
+
+    projectABranches.resolve({ branches: [wireBranch({ name: "project-a-main" })], refreshedAt: T1 });
+    projectAPrs.resolve({ prs: [wirePr({ number: 11, title: "Project A" })], refreshedAt: T1 });
+    projectAWorktrees.resolve({ worktrees: [wireWorktree({ id: "wt_project_a", projectSlug: "project-a" })] });
+    await stale;
+
+    expect(useGit.getState().branches).toEqual([{ name: "project-b-main", current: true, default: true }]);
+    expect(useGit.getState().prs[0]?.number).toBe(22);
+    expect(useGit.getState().worktrees[0]?.projectSlug).toBe("project-b");
+    expect(useGit.getState().loading).toBe(false);
+  });
+
   it("keeps failed surfaces empty after the project-scoped pre-clear and updates the others", async () => {
     useGit.setState({ branches: [{ name: "previous" }] });
     const get = routedGet({

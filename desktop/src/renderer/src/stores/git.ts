@@ -91,6 +91,8 @@ function parseRows<T>(schema: z.ZodType<T>, rows: unknown): T[] {
   return out;
 }
 
+let loadAllRequestSeq = 0;
+
 interface GitState {
   branches: Branch[];
   prs: PullRequest[];
@@ -116,6 +118,7 @@ export const useGit = create<GitState>()((set, get) => ({
   error: null,
 
   loadAll: async (api, slug) => {
+    const requestSeq = ++loadAllRequestSeq;
     set({ branches: [], prs: [], worktrees: [], refreshedAt: null, loading: true, error: null });
     const failures: AppErrorCategory[] = [];
     const patch: Partial<GitState> = {};
@@ -155,11 +158,16 @@ export const useGit = create<GitState>()((set, get) => ({
       })(),
     ]);
 
-    set({
-      ...patch,
-      refreshedAt: prRefreshed ?? branchRefreshed ?? get().refreshedAt,
-      loading: false,
-      error: failures.length > 0 ? worstCategory(failures) : null,
+    set((state) => {
+      if (requestSeq !== loadAllRequestSeq) {
+        return {};
+      }
+      return {
+        ...patch,
+        refreshedAt: prRefreshed ?? branchRefreshed ?? state.refreshedAt,
+        loading: false,
+        error: failures.length > 0 ? worstCategory(failures) : null,
+      };
     });
   },
 
