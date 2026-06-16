@@ -29,6 +29,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
     const files = createFilesApi(api);
     let disposed = false;
     const host = hostRef.current;
+    let contentSubscription: { dispose(): void } | null = null;
 
     const editor = monaco.editor.create(host, {
       theme: "operator-dark",
@@ -47,19 +48,21 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
         const baselineKey = fileBaselineKey(taskId, path);
         const model = getOrCreateModel(taskId, path, file.content);
         const hasUnsavedModel = model.getValue() !== file.content;
-        const baseline = hasUnsavedModel
-          ? (fileBaselines.get(baselineKey) ?? { ...file, loadedMtime: null })
-          : file;
+        const previousBaseline = fileBaselines.get(baselineKey);
+        const baseline = hasUnsavedModel ? (previousBaseline ?? { ...file, loadedMtime: null }) : file;
         fileRef.current = baseline;
         if (!hasUnsavedModel) {
           fileBaselines.set(baselineKey, file);
+          setConflict(false);
+        } else if (previousBaseline && previousBaseline.loadedMtime !== file.loadedMtime) {
+          setConflict(true);
+          setSaveError(null);
         }
         editor.setModel(model);
         setDirty(taskId, path, model.getValue() !== baseline.content);
-        const contentSubscription = model.onDidChangeContent(() => {
+        contentSubscription = model.onDidChangeContent(() => {
           setDirty(taskId, path, model.getValue() !== fileRef.current?.content);
         });
-        editor.onDidDispose(() => contentSubscription.dispose());
       })
       .catch((err: unknown) => {
         if (!disposed) setLoadError(toUserMessage(err));
@@ -67,6 +70,8 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
 
     return () => {
       disposed = true;
+      contentSubscription?.dispose();
+      contentSubscription = null;
       editorRef.current = null;
       editor.dispose();
     };

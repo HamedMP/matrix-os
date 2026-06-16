@@ -107,6 +107,8 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
               onPointerDown={(e) => onDividerDown(visiblePanels[index - 1]!, panel, e)}
               onPointerMove={onDividerMove}
               onPointerUp={onDividerUp}
+              onPointerCancel={onDividerUp}
+              onLostPointerCapture={onDividerUp}
             />
           ) : null}
           <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={PANEL_TITLES[panel]}>
