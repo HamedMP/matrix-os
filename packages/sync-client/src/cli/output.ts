@@ -29,12 +29,17 @@ export function formatCliErrorMessage(code: string, message?: string): string {
   return message ?? GENERIC_MESSAGES[code] ?? "Request failed";
 }
 
-export function formatCliError(code: string, message?: string): string {
+export function formatCliError(
+  code: string,
+  message?: string,
+  details?: Record<string, unknown>,
+): string {
   return JSON.stringify({
     v: CLI_OUTPUT_VERSION,
     error: {
       code,
       message: formatCliErrorMessage(code, message),
+      ...details,
     },
   });
 }

@@ -190,8 +190,12 @@ export const loginCommand = defineCommand({
       // (no gateway yet), so `mos sync` won't point at a guessed gateway.
       const journey = await fetchJourney(platformUrl, auth.accessToken);
       const guidance = journeyGuidance(journey);
+      const guidanceMessage = guidance.lines.reduce(
+        (message, line) => (message ? `${message} ${line}` : line),
+        "",
+      );
       if (json) {
-        console.log(formatCliSuccess({
+        console.error(formatCliError("login_failed", guidanceMessage, {
           authenticated: true,
           connected: false,
           journey: journey ?? null,

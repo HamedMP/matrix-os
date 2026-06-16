@@ -60,10 +60,22 @@ const AUTH = {
   handle: "alice",
 };
 
-async function runLogin(): Promise<void> {
+async function runLogin(args: Record<string, unknown> = {}): Promise<void> {
   const mod = await import("../../src/cli/commands/login.js");
   // citty commands expose a `run` fn; we pass no args so the non-dev path runs.
-  await mod.loginCommand.run!({ args: { dev: false } } as never);
+  await mod.loginCommand.run!({ args: { dev: false, ...args } } as never);
+}
+
+function lastJsonError(): {
+  code: string;
+  message: string;
+  authenticated?: boolean;
+  connected?: boolean;
+  journey?: unknown;
+  suggestedCommand?: string | null;
+} {
+  const errArg = (console.error as unknown as { mock: { calls: string[][] } }).mock.calls.at(-1)?.[0];
+  return JSON.parse(errArg as string).error;
 }
 
 beforeEach(() => {
@@ -80,25 +92,54 @@ beforeEach(() => {
   // side-effect calls, not stdout.
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
+  process.exitCode = 0;
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  process.exitCode = 0;
 });
 
 describe("loginCommand /api/me handling", () => {
-  it("clears auth and does NOT save config when /api/me returns 404", async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response("not found", { status: 404 }),
-    );
+  it("preserves auth and does NOT save config when /api/me returns 404", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/api/me")) return new Response("not found", { status: 404 });
+      return new Response(
+        JSON.stringify({ phase: "provisioning", detail: "d", nextAction: { kind: "wait" } }),
+        { status: 200 },
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     await runLogin();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(clearProfileAuthMock).toHaveBeenCalledTimes(1);
-    expect(clearProfileAuthMock).toHaveBeenCalledWith("cloud");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(clearProfileAuthMock).not.toHaveBeenCalled();
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("emits JSON error output when /api/me returns 404 in --json mode", async () => {
+    const journey = { phase: "plan_required", detail: "d", nextAction: { kind: "open_plans", url: "https://app.matrix-os.com/?plans=1" } };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/api/me")) return new Response("not found", { status: 404 });
+      return new Response(JSON.stringify(journey), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runLogin({ json: true });
+
+    expect(process.exitCode).toBe(1);
+    expect(console.log).not.toHaveBeenCalled();
+    expect(lastJsonError()).toMatchObject({
+      code: "login_failed",
+      authenticated: true,
+      connected: false,
+      journey,
+      suggestedCommand: "setup",
+    });
+    expect(lastJsonError().message).toContain("Choose a plan");
+    expect(clearProfileAuthMock).not.toHaveBeenCalled();
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
