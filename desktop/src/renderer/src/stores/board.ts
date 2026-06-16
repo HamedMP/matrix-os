@@ -343,7 +343,11 @@ export const useBoard = create<BoardState>()((set, get) => {
 
     linkSession: (api, slug, taskId, fields) => {
       const before = get().cardsByProject[slug]?.find((card) => card.id === taskId);
-      if (!before) return Promise.resolve();
+      if (!before) {
+        const err = new AppError("server");
+        set({ error: err.category });
+        return Promise.reject(err);
+      }
       patchCard(slug, taskId, (card) => ({
         ...card,
         ...(fields.linkedSessionId !== undefined ? { linkedSessionId: fields.linkedSessionId } : {}),
