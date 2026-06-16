@@ -48,7 +48,6 @@ export default function StartSessionControls({
 }) {
   const api = useConnection((s) => s.api);
   const creating = useSessions((s) => s.creating);
-  const createError = useSessions((s) => s.createError);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
 
@@ -76,7 +75,7 @@ export default function StartSessionControls({
     }
   };
 
-  const shownError = error ?? createError;
+  const shownError = error;
   const errorLabel = startSessionErrorLabel(shownError, compact);
 
   return (

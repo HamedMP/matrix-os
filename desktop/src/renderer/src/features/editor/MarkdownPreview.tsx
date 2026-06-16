@@ -9,21 +9,29 @@ type PreviewState =
   | { path: string; status: "ready"; content: string }
   | { path: string; status: "error"; error: string };
 
+export function safeUrlTransform(url: string): string {
+  try {
+    const parsed = new URL(url, "https://matrix.local");
+    if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:") {
+      return url;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
 // Read-only rendered markdown for .md/.mdx files. Reuses the chat response prose
 // styling so docs read like docs instead of raw CodeMirror text. Toggle to Code
 // in the editor header to edit.
 export default function MarkdownPreview({ path }: { path: string }) {
   const api = useConnection((s) => s.api);
   const [state, setState] = useState<PreviewState>(() => ({ path, status: "loading" }));
-
-  let preview = state;
-  if (state.path !== path) {
-    preview = { path, status: "loading" };
-    setState(preview);
-  }
+  const preview: PreviewState = state.path === path ? state : { path, status: "loading" };
 
   useEffect(() => {
-    if (!api) return;
+    setState({ path, status: "loading" });
+    if (!api) return undefined;
     let cancelled = false;
     const requestedPath = path;
     void openFile(createFilesApi(api), path)
@@ -52,7 +60,7 @@ export default function MarkdownPreview({ path }: { path: string }) {
         style={{ color: "var(--text-primary)" }}
         data-selectable
       >
-        <ReactMarkdown>{preview.content}</ReactMarkdown>
+        <ReactMarkdown urlTransform={safeUrlTransform}>{preview.content}</ReactMarkdown>
       </div>
     </div>
   );

@@ -32,6 +32,8 @@ interface FileTreeState {
   roots: FileEntry[] | null;
   childrenByPath: Record<string, FileEntry[]>;
   expanded: Record<string, boolean>;
+  loadingRoots: boolean;
+  loadingPaths: Record<string, boolean>;
   loadRoots(api: ApiClient, force?: boolean): Promise<void>;
   toggle(api: ApiClient, path: string): Promise<void>;
 }
@@ -45,15 +47,19 @@ export const useFileTree = create<FileTreeState>()((set, get) => ({
   roots: null,
   childrenByPath: {},
   expanded: {},
+  loadingRoots: false,
+  loadingPaths: {},
 
   loadRoots: async (api, force = false) => {
     if (get().roots !== null && !force) return;
+    if (get().loadingRoots) return;
+    set({ loadingRoots: true });
     try {
       const roots = await listDir(api, "");
-      set({ roots });
+      set({ roots, loadingRoots: false });
     } catch (err: unknown) {
       console.warn("[files] root list failed:", err instanceof Error ? err.message : String(err));
-      set({ roots: null });
+      set({ roots: null, loadingRoots: false });
     }
   },
 
@@ -62,9 +68,14 @@ export const useFileTree = create<FileTreeState>()((set, get) => ({
     set((s) => ({ expanded: { ...s.expanded, [path]: open } }));
     // Lazy-load children once, then keep them cached across collapse/expand.
     if (open && get().childrenByPath[path] === undefined) {
+      if (get().loadingPaths[path]) return;
+      set((s) => ({ loadingPaths: { ...s.loadingPaths, [path]: true } }));
       try {
         const children = await listDir(api, path);
-        set((s) => ({ childrenByPath: { ...s.childrenByPath, [path]: children } }));
+        set((s) => ({
+          childrenByPath: { ...s.childrenByPath, [path]: children },
+          loadingPaths: { ...s.loadingPaths, [path]: false },
+        }));
       } catch (err: unknown) {
         console.warn("[files] list failed:", err instanceof Error ? err.message : String(err));
         set((s) => {
@@ -73,6 +84,7 @@ export const useFileTree = create<FileTreeState>()((set, get) => ({
           return {
             childrenByPath,
             expanded: { ...s.expanded, [path]: false },
+            loadingPaths: { ...s.loadingPaths, [path]: false },
           };
         });
       }
