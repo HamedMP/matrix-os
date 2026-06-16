@@ -140,6 +140,14 @@ jobs:
       - uses: actions/checkout@v6
         if: needs.changes.outputs.should_run == 'true'
 
+      - name: Free runner disk before Docker load
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af || true
+          df -h
+
       - name: Download Docker image artifact
         if: needs.changes.outputs.should_run == 'true'
         uses: actions/download-artifact@v7
@@ -198,6 +206,13 @@ jobs:
           path: /tmp/docker-test-logs/
           retention-days: 7
 
+      - name: Cleanup Docker disk
+        if: always()
+        run: |
+          docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml down -v --remove-orphans || true
+          docker system prune -af --volumes || true
+          df -h
+
   docker-scenarios:
     name: Docker Scenario Tests (${{ matrix.scenario }})
     needs: [changes, docker-build]
@@ -206,6 +221,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         # multi-user and resource-limits remain excluded because they need
         # dedicated profile/resource setup outside this parallel smoke matrix.
@@ -218,6 +234,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Free runner disk before Docker load
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af || true
+          df -h
 
       - name: Download Docker image artifact
         uses: actions/download-artifact@v7
@@ -270,3 +293,10 @@ jobs:
           name: docker-test-logs-${{ matrix.scenario }}
           path: /tmp/docker-test-logs/
           retention-days: 7
+
+      - name: Cleanup Docker disk
+        if: always()
+        run: |
+          docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml down -v --remove-orphans || true
+          docker system prune -af --volumes || true
+          df -h
