@@ -243,10 +243,39 @@ interface SocialFollowsTable {
   created_at: string;
 }
 
+interface BillingCheckoutAttemptsTable {
+  id: string;
+  clerk_user_id: string;
+  stripe_session_id: string;
+  status: string;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+interface OnboardingFirstRunTable {
+  clerk_user_id: string;
+  completed_at: string;
+  goal: string | null;
+  steps: string;
+  source: string;
+}
+
+interface OnboardingJourneyEventsTable {
+  id: string;
+  clerk_user_id: string;
+  from_phase: string | null;
+  to_phase: string;
+  detail: string | null;
+  at: string;
+}
+
 export interface PlatformDatabase {
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  billing_checkout_attempts: BillingCheckoutAttemptsTable;
+  onboarding_first_run: OnboardingFirstRunTable;
+  onboarding_journey_events: OnboardingJourneyEventsTable;
   host_bundle_releases: HostBundleReleasesTable;
   host_bundle_channels: HostBundleChannelsTable;
   host_bundle_release_channels: HostBundleReleaseChannelsTable;
@@ -348,6 +377,42 @@ export interface UserMachineRecord {
   failureCode: string | null;
   failureAt: string | null;
   attempt: number;
+}
+
+export type BillingCheckoutAttemptStatus = 'open' | 'paid' | 'expired' | 'abandoned';
+
+export interface BillingCheckoutAttemptRecord {
+  id: string;
+  clerkUserId: string;
+  stripeSessionId: string;
+  status: BillingCheckoutAttemptStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface OnboardingFirstRunRecord {
+  clerkUserId: string;
+  completedAt: string;
+  goal: string | null;
+  steps: Record<string, unknown>;
+  source: string;
+}
+
+export interface NewOnboardingFirstRun {
+  clerkUserId: string;
+  completedAt: string;
+  goal?: string | null;
+  steps?: Record<string, unknown>;
+  source: string;
+}
+
+export interface OnboardingJourneyEventRecord {
+  id: string;
+  clerkUserId: string;
+  fromPhase: string | null;
+  toPhase: string;
+  detail: string | null;
+  at: string;
 }
 
 export interface HostBundleReleaseRecord {
@@ -610,6 +675,42 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_clerk_slot_status ON user_machines(clerk_user_id, runtime_slot, status)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_hetzner ON user_machines(hetzner_server_id)`.execute(db);
+
+  // Onboarding journey (spec 092): server-owned signup-to-ready state. Schema is
+  // uniformly TEXT/uuid/ISO-string to match the rest of this file (no jsonb/serial).
+  await sql`
+    CREATE TABLE IF NOT EXISTS billing_checkout_attempts (
+      id TEXT PRIMARY KEY,
+      clerk_user_id TEXT NOT NULL,
+      stripe_session_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL,
+      resolved_at TEXT
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_checkout_attempts_clerk_created ON billing_checkout_attempts(clerk_user_id, created_at)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS onboarding_first_run (
+      clerk_user_id TEXT PRIMARY KEY,
+      completed_at TEXT NOT NULL,
+      goal TEXT,
+      steps TEXT NOT NULL DEFAULT '{}',
+      source TEXT NOT NULL
+    )
+  `.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS onboarding_journey_events (
+      id TEXT PRIMARY KEY,
+      clerk_user_id TEXT NOT NULL,
+      from_phase TEXT,
+      to_phase TEXT NOT NULL,
+      detail TEXT,
+      at TEXT NOT NULL
+    )
+  `.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_journey_events_clerk_at ON onboarding_journey_events(clerk_user_id, at)`.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS billing_customers (
@@ -2139,6 +2240,268 @@ export async function listStaleUserMachines(
     .limit(limit)
     .execute();
   return rows.map(mapUserMachine);
+}
+
+// ---------------------------------------------------------------------------
+// Onboarding journey (spec 092)
+// ---------------------------------------------------------------------------
+
+function isCheckoutAttemptStatus(value: string): value is BillingCheckoutAttemptStatus {
+  return value === 'open' || value === 'paid' || value === 'expired' || value === 'abandoned';
+}
+
+function mapCheckoutAttempt(row: BillingCheckoutAttemptsTable): BillingCheckoutAttemptRecord {
+  return {
+    id: row.id,
+    clerkUserId: row.clerk_user_id,
+    stripeSessionId: row.stripe_session_id,
+    status: isCheckoutAttemptStatus(row.status) ? row.status : 'open',
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+  };
+}
+
+export async function insertCheckoutAttempt(
+  db: PlatformDB,
+  record: { id: string; clerkUserId: string; stripeSessionId: string; createdAt: string },
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('billing_checkout_attempts')
+    .values({
+      id: record.id,
+      clerk_user_id: record.clerkUserId,
+      stripe_session_id: record.stripeSessionId,
+      status: 'open',
+      created_at: record.createdAt,
+      resolved_at: null,
+    })
+    .onConflict((oc) => oc.column('stripe_session_id').doNothing())
+    .execute();
+}
+
+export async function getLatestCheckoutAttempt(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<BillingCheckoutAttemptRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_checkout_attempts')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst();
+  return row ? mapCheckoutAttempt(row) : undefined;
+}
+
+/**
+ * The attempt that governs payment settling: a confirmed `paid` attempt always
+ * wins over a newer still-`open` one, so a paying user who opens a second
+ * checkout before activation is never bounced back to plan selection. Terminal
+ * (`expired`/`abandoned`) attempts never sustain settling and are excluded.
+ */
+export async function getSettlingCheckoutAttempt(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<BillingCheckoutAttemptRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('billing_checkout_attempts')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('status', 'in', ['paid', 'open'])
+    .orderBy(sql`CASE status WHEN 'paid' THEN 0 ELSE 1 END`)
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst();
+  return row ? mapCheckoutAttempt(row) : undefined;
+}
+
+/** Resolves an open checkout attempt by Stripe session id. Only transitions
+ * `open` rows so a later/duplicate webhook cannot rewrite a terminal state. */
+export async function resolveCheckoutAttempt(
+  db: PlatformDB,
+  stripeSessionId: string,
+  status: 'paid' | 'expired',
+  resolvedAt: string,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('billing_checkout_attempts')
+    .set({ status, resolved_at: resolvedAt })
+    .where('stripe_session_id', '=', stripeSessionId)
+    .where('status', '=', 'open')
+    .execute();
+}
+
+/** Sweeps stale `open` attempts to `abandoned` (resource-cleanup janitor). */
+export async function sweepStaleCheckoutAttempts(
+  db: PlatformDB,
+  olderThanIso: string,
+  resolvedAt: string,
+  limit: number,
+): Promise<number> {
+  await db.ready;
+  const stale = await db.executor
+    .selectFrom('billing_checkout_attempts')
+    .select('id')
+    .where('status', '=', 'open')
+    .where('created_at', '<', olderThanIso)
+    .limit(limit)
+    .execute();
+  if (stale.length === 0) return 0;
+  const updated = await db.executor
+    .updateTable('billing_checkout_attempts')
+    .set({ status: 'abandoned', resolved_at: resolvedAt })
+    .where('id', 'in', stale.map((r) => r.id))
+    // Re-check status in the UPDATE: a concurrent webhook may have resolved the
+    // row to paid/expired between the SELECT and here; never overwrite it.
+    .where('status', '=', 'open')
+    .returning('id')
+    .execute();
+  return updated.length;
+}
+
+function parseFirstRunSteps(raw: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch (err: unknown) {
+    // Corrupt persisted JSON → treat as no steps rather than failing the read.
+    void err;
+    return {};
+  }
+}
+
+function mapFirstRun(row: OnboardingFirstRunTable): OnboardingFirstRunRecord {
+  return {
+    clerkUserId: row.clerk_user_id,
+    completedAt: row.completed_at,
+    goal: row.goal,
+    steps: parseFirstRunSteps(row.steps),
+    source: row.source,
+  };
+}
+
+export async function getOnboardingFirstRun(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<OnboardingFirstRunRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('onboarding_first_run')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .executeTakeFirst();
+  return row ? mapFirstRun(row) : undefined;
+}
+
+/** Authoritative write-behind from the gateway: latest completion wins. */
+export async function upsertOnboardingFirstRun(
+  db: PlatformDB,
+  record: NewOnboardingFirstRun,
+): Promise<void> {
+  await db.ready;
+  const values = {
+    clerk_user_id: record.clerkUserId,
+    completed_at: record.completedAt,
+    goal: record.goal ?? null,
+    steps: JSON.stringify(record.steps ?? {}),
+    source: record.source,
+  };
+  await db.executor
+    .insertInto('onboarding_first_run')
+    .values(values)
+    .onConflict((oc) =>
+      oc.column('clerk_user_id').doUpdateSet({
+        completed_at: values.completed_at,
+        goal: values.goal,
+        steps: values.steps,
+        source: values.source,
+      }),
+    )
+    .execute();
+}
+
+/** Best-effort legacy backfill: only fills a missing record, never overwrites
+ * an authoritative gateway write-behind (spec 092 R4). */
+export async function insertOnboardingFirstRunIfAbsent(
+  db: PlatformDB,
+  record: NewOnboardingFirstRun,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('onboarding_first_run')
+    .values({
+      clerk_user_id: record.clerkUserId,
+      completed_at: record.completedAt,
+      goal: record.goal ?? null,
+      steps: JSON.stringify(record.steps ?? {}),
+      source: record.source,
+    })
+    .onConflict((oc) => oc.column('clerk_user_id').doNothing())
+    .execute();
+}
+
+/** Running machines whose owner has no first-run record yet (backfill candidates). */
+export async function listRunningMachinesMissingFirstRun(
+  db: PlatformDB,
+  limit: number,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll('user_machines')
+    .leftJoin('onboarding_first_run', 'onboarding_first_run.clerk_user_id', 'user_machines.clerk_user_id')
+    .where('user_machines.status', '=', 'running')
+    .where('user_machines.deleted_at', 'is', null)
+    .where('onboarding_first_run.clerk_user_id', 'is', null)
+    .orderBy('user_machines.provisioned_at')
+    .limit(limit)
+    .execute();
+  return rows.map(mapUserMachine);
+}
+
+export async function getLatestJourneyEvent(
+  db: PlatformDB,
+  clerkUserId: string,
+): Promise<OnboardingJourneyEventRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('onboarding_journey_events')
+    .selectAll()
+    .where('clerk_user_id', '=', clerkUserId)
+    .orderBy('at', 'desc')
+    .executeTakeFirst();
+  return row
+    ? {
+        id: row.id,
+        clerkUserId: row.clerk_user_id,
+        fromPhase: row.from_phase,
+        toPhase: row.to_phase,
+        detail: row.detail,
+        at: row.at,
+      }
+    : undefined;
+}
+
+export async function appendJourneyEvent(
+  db: PlatformDB,
+  record: { id: string; clerkUserId: string; fromPhase: string | null; toPhase: string; detail: string | null; at: string },
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .insertInto('onboarding_journey_events')
+    .values({
+      id: record.id,
+      clerk_user_id: record.clerkUserId,
+      from_phase: record.fromPhase,
+      to_phase: record.toPhase,
+      detail: record.detail,
+      at: record.at,
+    })
+    .execute();
 }
 
 export async function allocatePort(db: PlatformDB, basePort: number, handle: string): Promise<number> {
