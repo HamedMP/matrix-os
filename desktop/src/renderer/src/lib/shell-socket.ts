@@ -364,8 +364,8 @@ export class ShellSocket {
     }
     this.failedAttempts = 0;
     this.flushPendingInput();
-    this.setState("attached");
     this.scheduleAttachTimers();
+    this.setState("attached");
   }
 
   private handleOutput(frame: Record<string, unknown>): void {
@@ -388,8 +388,10 @@ export class ShellSocket {
       console.warn("[shell-socket] ignoring invalid exit frame");
       return;
     }
-    this.endSession();
+    this.teardownSocket();
+    this.clearAllTimers();
     this.opts.events.onExit(code);
+    this.setState("ended");
   }
 
   private handleErrorFrame(frame: Record<string, unknown>): void {

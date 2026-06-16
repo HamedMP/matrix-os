@@ -336,6 +336,27 @@ describe("ShellSocket server frames", () => {
     expect(closedDuringExit).toBe(true);
   });
 
+  it("notifies onExit before the ended state callback", () => {
+    const order: string[] = [];
+    const h = createHarness({
+      events: {
+        onState: (state) => {
+          order.push(`state:${state}`);
+        },
+        onOutput: () => undefined,
+        onGap: () => undefined,
+        onExit: (code) => {
+          order.push(`exit:${code}`);
+        },
+      },
+    });
+    connectAndAttach(h);
+
+    h.latest().frame({ type: "exit", code: 7 });
+
+    expect(order).toEqual(["state:connecting", "state:attached", "exit:7", "state:ended"]);
+  });
+
   it("ignores pong frames", () => {
     const h = createHarness();
     connectAndAttach(h);
@@ -752,6 +773,28 @@ describe("ShellSocket detach and dispose", () => {
     expect(h.timers.pendingCount).toBe(0);
     h.timers.advance(120_000);
     expect(h.sockets).toHaveLength(1);
+  });
+
+  it("clears attach timers when attached callback detaches immediately", () => {
+    let h!: Harness;
+    h = createHarness({
+      events: {
+        onState: (state, detail) => {
+          h.events.states.push(detail === undefined ? { state } : { state, detail });
+          if (state === "attached") h.socket.detach();
+        },
+        onOutput: (data, seq) => h.events.outputs.push({ data, seq }),
+        onGap: () => {
+          h.events.gaps += 1;
+        },
+        onExit: (code) => h.events.exits.push(code),
+      },
+    });
+
+    connectAndAttach(h);
+
+    expect(h.socket.state).toBe("ended");
+    expect(h.timers.pendingCount).toBe(0);
   });
 
   it("detach during a pending reconnect sends a detach frame through a cleanup attach", () => {
