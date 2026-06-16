@@ -48,7 +48,7 @@ bar: PR review, smoke checks, rollback, and live verification.
 |---|---|---|---|
 | Pre-VPS app shell (`app.matrix-os.com` auth, billing, onboarding, runtime picker) | Full `matrix-platform` Cloud Run image | Dedicated app-shell deploy unit or cached shell-only image layer | `deploy/shell`, `shell/v*`, path changes under `shell/**` that affect pre-VPS routes |
 | Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**` |
-| Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, `runtime/v*`, path changes under `packages/gateway/**`, `packages/kernel/**`, `home/**` |
+| Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `packages/gateway/**`, `packages/kernel/**`, `home/**` |
 | Website/docs | Vercel/site deploy | Independent website/docs lane | `deploy/www`, path changes under `www/**` |
 | CLI | npm/GitHub/Homebrew release | Independent CLI lane | `deploy/cli`, `cli/v*`, path changes under CLI package/scripts |
 | Observability/ops | Ad hoc scripts or platform image side effects | Explicit ops lane with scoped smoke | `deploy/ops`, path changes under `packages/observability/**`, ops distro files |
@@ -62,13 +62,21 @@ source commit.
 
 - `platform/vYYYY.MM.DD.N` deploys the platform API lane.
 - `shell/vYYYY.MM.DD.N` deploys the pre-VPS app-shell lane.
-- `runtime/vX.Y.Z` builds and publishes a customer host-bundle release.
+- `vX.Y.Z` remains the canonical customer host-bundle release tag in Phase 1.
 - `www/vYYYY.MM.DD.N` deploys the website/docs lane.
 - `cli/vX.Y.Z` publishes CLI artifacts.
 
 Tags must never infer broad deployment. A `shell/*` tag cannot deploy customer VPSes,
-and a `runtime/*` tag cannot redeploy Cloud Run unless explicitly paired with a separate
-platform tag.
+and a customer runtime tag cannot redeploy Cloud Run unless explicitly paired with a
+separate platform tag.
+
+### Runtime tag migration
+
+The live host-bundle workflow already uses `v*` tags and promotes `canary` by default.
+Phase 1 must preserve that behavior. A future `runtime/vX.Y.Z` namespace may be added
+only after the release workflow, docs, and channel-promotion runbooks are migrated in
+one PR. Until that migration lands, `runtime/*` is invalid and must fail closed instead
+of silently doing nothing.
 
 ### Labels and workflow dispatch
 
@@ -108,6 +116,9 @@ a base SHA and head SHA, reads changed paths, and emits a JSON decision:
 Workflows call this script before building. A lane can be selected by path filters,
 operator tag, PR label, or manual dispatch. Manual selection must be included in the
 workflow summary so reviewers can see when an operator overrode the automatic router.
+If the router throws, exits non-zero, emits invalid JSON, or emits a lane outside the
+enum, the workflow aborts before build/deploy and prints an actionable error. It must
+never fall through to a permissive default lane.
 
 ### Split pre-VPS app shell from platform API
 
@@ -251,6 +262,9 @@ Rollback must be a workflow action, not an undocumented operator command.
 
 - **Automatic lane detection misses a dependency**: manual labels/tags can force a
   broader lane. The router emits reasons and changed path evidence in workflow output.
+- **Lane router fails or emits invalid output**: fail closed before build/deploy. The
+  workflow must not default to `platform`, `runtime`, or "all lanes" because that can
+  silently ship the wrong surface.
 - **Two deploys race**: lane workflows use concurrency groups per environment and lane.
   Production `shell` and `platform` lanes serialize independently unless they target
   the same Cloud Run service.
@@ -342,6 +356,9 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
   build outputs where possible.
 - Add a documented fast hotfix workflow dispatch using the existing full image but with
   explicit SHA, candidate smoke, promotion, and rollback metadata.
+- Test checkpoint: `bun run test`, a router unit suite covering path/tag/dispatch
+  decisions and fail-closed invalid output, and a manual Cloud Run dry-run/preview
+  verification that proves billing-owned shell URLs render the billing gate marker.
 
 ### Phase 2: Split the pre-VPS app shell lane
 
@@ -350,6 +367,10 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 - Keep platform API and billing/provisioning routes in the platform lane.
 - Verify billing/signup/onboarding hotfixes can ship without rebuilding customer
   runtime or unrelated platform packages.
+- Test checkpoint: `bun run test`, integration smoke that routes app-domain pre-VPS
+  requests through app-shell to platform API without exposing service secrets, and a
+  manual candidate-revision verification for `/sign-in`, `/?billing=setup`, checkout
+  return, and runtime picker paths.
 
 ### Phase 3: Add incremental host-bundle manifests
 
@@ -359,6 +380,10 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
   rollback.
 - Keep full-bundle fallback until incremental update has proved stable across canary
   and beta channels.
+- Test checkpoint: `bun run test`, an updater integration test that stages a synthetic
+  manifest, rejects path traversal/missing hashes, flips the app symlink atomically,
+  reports health to a test platform endpoint, and manually verifies rollback on a
+  disposable VPS.
 
 ### Phase 4: Delivery dashboard and SLOs
 
@@ -366,6 +391,9 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 - Track artifact build time, deploy time, smoke time, and rollback time.
 - Display current live SHA/version per surface.
 - Alert when an urgent lane exceeds its SLO.
+- Test checkpoint: `bun run test`, dashboard/API contract tests for recorded deploy
+  events and rollback metadata, and a manual verification that a known PR shows
+  merge-to-live timing for each lane it exercised.
 
 ## Success Metrics
 
