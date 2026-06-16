@@ -297,10 +297,12 @@ export class ShellSocket {
     this.setState(
       this.failedAttempts >= CONNECTION_LOST_AFTER_FAILURES ? "connection-lost" : "reconnecting",
     );
+    if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
     this.failedAttempts += 1;
     if (this.reconnectTimer !== null) this.clearT(this.reconnectTimer);
     this.reconnectTimer = this.setT(() => {
       this.reconnectTimer = null;
+      if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
       this.openSocket(true);
     }, delay);
   }

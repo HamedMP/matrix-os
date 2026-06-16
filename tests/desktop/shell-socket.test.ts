@@ -813,6 +813,31 @@ describe("ShellSocket detach and dispose", () => {
     expect(h.sockets).toHaveLength(2);
   });
 
+  it("detach inside reconnecting callback cancels the pending reconnect timer", () => {
+    let h!: Harness;
+    h = createHarness({
+      events: {
+        onState: (state, detail) => {
+          h.events.states.push(detail === undefined ? { state } : { state, detail });
+          if (state === "reconnecting") h.socket.detach();
+        },
+        onOutput: (data, seq) => h.events.outputs.push({ data, seq }),
+        onGap: () => {
+          h.events.gaps += 1;
+        },
+        onExit: (code) => h.events.exits.push(code),
+      },
+    });
+
+    connectAndAttach(h);
+    h.latest().serverClose();
+
+    expect(h.socket.state).toBe("ended");
+    expect(h.sockets).toHaveLength(2);
+    h.timers.advance(120_000);
+    expect(h.sockets).toHaveLength(2);
+  });
+
   it("ignores non-attach frames while cleanup-attaching after end", () => {
     const h = createHarness();
     connectAndAttach(h);
