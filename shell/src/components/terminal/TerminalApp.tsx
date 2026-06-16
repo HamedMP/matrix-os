@@ -3530,13 +3530,13 @@ function NewSessionMenu({
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        gap: 8,
-        padding: 12,
+        gap: 6,
+        padding: 10,
         position: "absolute",
         ...(align === "right"
-          ? { right: 0, top: "calc(100% + 8px)" }
-          : { left: "calc(100% + 10px)", top: 0 }),
-        width: 300,
+          ? { right: -4, top: "calc(100% + 8px)" }
+          : { left: "calc(100% + 8px)", top: 0 }),
+        width: 248,
         zIndex: 70,
       }}
     >
@@ -3562,7 +3562,7 @@ function NewSessionMenu({
         icon={(
           <TerminalIcon
             aria-hidden="true"
-            size={22}
+            size={20}
             strokeWidth={2.1}
             style={{ color: "#465243", flexShrink: 0 }}
           />
@@ -3572,13 +3572,13 @@ function NewSessionMenu({
       <NewSessionMenuItem
         label="Claude Code"
         shortcut="⌘⇧C"
-        icon={<span aria-hidden="true" style={{ background: "#D8792C", borderRadius: 6, flexShrink: 0, height: 19, width: 19 }} />}
+        icon={<span aria-hidden="true" style={{ background: "#D8792C", borderRadius: 5, flexShrink: 0, height: 18, width: 18 }} />}
         onClick={onCreateClaude}
       />
       <NewSessionMenuItem
         label="Codex"
         shortcut="⌘⇧X"
-        icon={<span aria-hidden="true" style={{ background: "#465243", borderRadius: 6, flexShrink: 0, height: 19, width: 19 }} />}
+        icon={<span aria-hidden="true" style={{ background: "#465243", borderRadius: 5, flexShrink: 0, height: 18, width: 18 }} />}
         onClick={onCreateCodex}
       />
     </div>
@@ -3613,9 +3613,9 @@ function NewSessionMenuItem({
         cursor: "pointer",
         display: "flex",
         flexShrink: 0,
-        gap: 14,
-        height: active ? 40 : 38,
-        padding: "0 12px",
+        gap: 10,
+        height: active ? 36 : 34,
+        padding: "0 10px",
         textAlign: "left",
       }}
       onMouseEnter={(event) => {
@@ -3628,11 +3628,12 @@ function NewSessionMenuItem({
       {icon}
       <span
         style={{
-          flex: "1 1 0",
+          flex: "1 1 auto",
           fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 17,
+          fontSize: 16,
           fontWeight: active ? 700 : 600,
-          lineHeight: "22px",
+          lineHeight: "20px",
+          minWidth: 0,
         }}
       >
         {label}
@@ -3640,9 +3641,11 @@ function NewSessionMenuItem({
       <span
         style={{
           color: "#A09F92",
+          flex: "0 0 46px",
           fontFamily: "var(--font-mono, ui-monospace, monospace)",
-          fontSize: 13,
+          fontSize: 12,
           lineHeight: "16px",
+          textAlign: "right",
         }}
       >
         {shortcut}
