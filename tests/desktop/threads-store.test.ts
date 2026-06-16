@@ -118,6 +118,15 @@ describe("handleKernelMessage routing", () => {
     expect(getThread(t.id).sessionId).toBe("s-9");
   });
 
+  it("kernel:init does not bind to an unbound running thread when ambiguous", () => {
+    const store = useThreads.getState();
+    const t1 = store.startThread({ text: "one", requestId: "r1", now: 1 });
+    const t2 = store.startThread({ text: "two", requestId: "r2", now: 2 });
+    useThreads.getState().handleKernelMessage({ type: "kernel:init", sessionId: "s-9" });
+    expect(getThread(t1.id).sessionId).toBeNull();
+    expect(getThread(t2.id).sessionId).toBeNull();
+  });
+
   it("binds sessionId from session:switched to the active thread", () => {
     const store = useThreads.getState();
     const t1 = store.startThread({ text: "one", requestId: "r1", now: 1 });
