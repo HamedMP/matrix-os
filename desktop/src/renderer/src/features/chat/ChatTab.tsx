@@ -3,7 +3,7 @@ import { useState } from "react";
 import { groupMessages } from "../../lib/chat";
 import { useBoard } from "../../stores/board";
 import { useHermesChat, type HermesStatus } from "../../stores/hermes-chat";
-import { Conversation, ConversationContent, ConversationEmptyState } from "./elements/conversation";
+import { Conversation, ConversationContent } from "./elements/conversation";
 import { Message, MessageContent, MessageResponse } from "./elements/message";
 import { PromptInput } from "./elements/prompt-input";
 import { Reasoning } from "./elements/reasoning";
@@ -125,7 +125,6 @@ export default function ChatTab() {
             </Reasoning>
           ) : null}
         </ConversationContent>
-        <ConversationEmptyState>{null}</ConversationEmptyState>
       </Conversation>
       <div className="mx-auto w-full max-w-[760px] px-5 pb-5">
         <PromptInput
