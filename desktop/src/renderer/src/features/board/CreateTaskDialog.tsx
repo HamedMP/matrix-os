@@ -65,17 +65,30 @@ function CreateTaskForm({ onClose }: { onClose: () => void }) {
     };
   }, [closeFromUser]);
 
+  const logSubmitFailure = useCallback((err: unknown) => {
+    console.warn("[create-task] failed to submit task:", err instanceof Error ? err.message : String(err));
+  }, []);
+
   const submit = async (openAfter: boolean) => {
     if (!api || !activeSlug || title.trim().length === 0 || submitting) return;
     const submitGeneration = dialogGenerationRef.current;
     setSubmitting(true);
     setFailed(false);
-    const card = await createTask(api, activeSlug, {
-      title: title.trim(),
-      description: description.trim() || undefined,
-      status,
-      priority,
-    });
+    let card: Awaited<ReturnType<typeof createTask>>;
+    try {
+      card = await createTask(api, activeSlug, {
+        title: title.trim(),
+        description: description.trim() || undefined,
+        status,
+        priority,
+      });
+    } catch (err: unknown) {
+      logSubmitFailure(err);
+      if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
+      setSubmitting(false);
+      setFailed(true);
+      return;
+    }
     if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
     setSubmitting(false);
     if (!card) {
@@ -91,12 +104,12 @@ function CreateTaskForm({ onClose }: { onClose: () => void }) {
       className="flex flex-col gap-3 p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        void submit(false);
+        void submit(false).catch(logSubmitFailure);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
-          void submit(e.shiftKey);
+          void submit(e.shiftKey).catch(logSubmitFailure);
         }
       }}
     >
@@ -160,7 +173,7 @@ function CreateTaskForm({ onClose }: { onClose: () => void }) {
         <Button
           variant="subtle"
           disabled={submitting || title.trim().length === 0}
-          onClick={() => void submit(true)}
+          onClick={() => void submit(true).catch(logSubmitFailure)}
           title="Create and open (Cmd+Shift+Enter)"
         >
           Create + open
@@ -168,7 +181,7 @@ function CreateTaskForm({ onClose }: { onClose: () => void }) {
         <Button
           variant="primary"
           disabled={submitting || title.trim().length === 0}
-          onClick={() => void submit(false)}
+          onClick={() => void submit(false).catch(logSubmitFailure)}
           title="Create (Cmd+Enter)"
         >
           {submitting ? "Creating…" : "Create"}

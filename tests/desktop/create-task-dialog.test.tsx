@@ -95,4 +95,23 @@ describe("CreateTaskDialog", () => {
 
     expect(navigate).not.toHaveBeenCalled();
   });
+
+  it("restores the dialog when task creation throws", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const createTask = vi.fn().mockRejectedValue(new Error("offline"));
+    useBoard.setState({ createTask });
+
+    render(<CreateTaskDialog open={true} onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Task title"), {
+      target: { value: "Ship desktop" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Couldn't create the task. Please try again.")).toBeTruthy();
+    });
+    expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(console.warn).toHaveBeenCalledWith("[create-task] failed to submit task:", "offline");
+  });
 });
