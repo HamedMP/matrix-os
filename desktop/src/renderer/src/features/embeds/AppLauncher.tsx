@@ -45,7 +45,6 @@ export default function AppLauncher() {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const previousQueryRef = useRef(query);
 
   useEffect(() => {
     if (api) void load(api);
@@ -62,15 +61,7 @@ export default function AppLauncher() {
     return apps.filter((a) => a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q));
   }, [apps, query]);
 
-  // Keep the highlighted index in range as the filter changes.
-  useEffect(() => {
-    if (previousQueryRef.current !== query) {
-      previousQueryRef.current = query;
-      setActive(0);
-      return;
-    }
-    setActive((i) => (i >= filtered.length ? 0 : i));
-  }, [filtered.length, query]);
+  const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
 
   const open = (slug: string, name: string) =>
     openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug) ? { icon: appIconUrl(platformHost, slug)! } : {}) });
@@ -85,7 +76,7 @@ export default function AppLauncher() {
       setActive((i) => (i - 1 + filtered.length) % filtered.length);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const app = filtered[active];
+      const app = filtered[activeIndex];
       if (app) open(app.slug, app.name);
     }
   };
@@ -128,7 +119,10 @@ export default function AppLauncher() {
           <input
             ref={inputRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setActive(0);
+            }}
             onKeyDown={onKeyDown}
             placeholder="Search apps…"
             aria-label="Search apps"
@@ -143,7 +137,7 @@ export default function AppLauncher() {
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3">
             {filtered.map((app, i) => {
-              const highlighted = i === active;
+              const highlighted = i === activeIndex;
               return (
                 <button
                   key={app.slug}
