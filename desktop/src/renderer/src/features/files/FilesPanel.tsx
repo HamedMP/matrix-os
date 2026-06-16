@@ -112,7 +112,7 @@ export default function FilesPanel({ taskId }: { taskId: string }) {
       .then((res) => setRoots(parseEntries(res.entries)))
       .catch((err: unknown) => {
         console.warn("[files] root list failed:", err instanceof Error ? err.message : String(err));
-        setRoots([]);
+        setRoots(null);
       });
   }, [api]);
 

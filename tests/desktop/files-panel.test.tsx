@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FilesPanel from "../../desktop/src/renderer/src/features/files/FilesPanel";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -55,5 +55,30 @@ describe("FilesPanel", () => {
     fireEvent.click(src);
     await screen.findByText("index.ts");
     expect(get).toHaveBeenCalledTimes(3);
+  });
+
+  it("auto-retries root loading when the api reconnects after an initial failure", async () => {
+    const offlineGet = vi.fn().mockRejectedValue(new Error("offline"));
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: { get: offlineGet } as never,
+    });
+
+    render(<FilesPanel taskId="task-1" />);
+
+    await waitFor(() => {
+      expect(offlineGet).toHaveBeenCalledWith("/api/files/list?path=");
+    });
+
+    const onlineGet = vi.fn().mockResolvedValue({ entries: [{ name: "README.md", type: "file" }] });
+    await act(async () => {
+      useConnection.setState({ api: { get: onlineGet } as never });
+    });
+
+    await screen.findByText("README.md");
+    expect(onlineGet).toHaveBeenCalledWith("/api/files/list?path=");
   });
 });
