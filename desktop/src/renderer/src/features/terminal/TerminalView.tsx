@@ -19,13 +19,17 @@ interface TerminalViewProps {
 
 export default function TerminalView({ sessionName, onRecreate }: TerminalViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const [stateSessionName, setStateSessionName] = useState(sessionName);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
 
-  useEffect(() => {
+  if (stateSessionName !== sessionName) {
+    setStateSessionName(sessionName);
     setSocketState("connecting");
     setExitCode(null);
+  }
 
+  useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
