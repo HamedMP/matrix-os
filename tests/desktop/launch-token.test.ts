@@ -53,6 +53,20 @@ describe("LaunchTokenCache", () => {
     expect(cache.get("b")).toBeNull();
   });
 
+  it("evicts stale entries on get before later cap enforcement", () => {
+    let now = 0;
+    const cache = new LaunchTokenCache({ cap: 2, clock: () => now });
+    cache.set("fresh", token(200_000, "/fresh"));
+    cache.set("stale", token(60_000, "/stale"));
+
+    now = 40_000;
+    expect(cache.get("stale")).toBeNull();
+    cache.set("new", token(200_000, "/new"));
+
+    expect(cache.get("fresh")).toEqual(token(200_000, "/fresh"));
+    expect(cache.get("new")).toEqual(token(200_000, "/new"));
+  });
+
   it("refreshes recency and replaces the token on re-set", () => {
     let now = 0;
     const cache = new LaunchTokenCache({ cap: 2, clock: () => now });

@@ -22,7 +22,10 @@ export class LaunchTokenCache {
   get(slug: string): LaunchToken | null {
     const token = this.entries.get(slug);
     if (!token) return null;
-    if (this.clock() > token.expiresAt - TTL_MARGIN_MS) return null;
+    if (this.clock() > token.expiresAt - TTL_MARGIN_MS) {
+      this.entries.delete(slug);
+      return null;
+    }
     // Refresh recency.
     this.entries.delete(slug);
     this.entries.set(slug, token);
