@@ -47,6 +47,7 @@ export class EmbedService {
   private readonly deps: EmbedServiceDeps;
   private readonly pendingHostedShells = new Map<string, Bounds>();
   private readonly pendingApps = new Map<string, PendingAppEmbed>();
+  private readonly pendingActive = new Map<string, boolean>();
   private readonly hostedShellIds = new Set<string>();
 
   constructor(deps: EmbedServiceDeps) {
@@ -80,12 +81,17 @@ export class EmbedService {
   }
 
   setActive(embedId: string, active: boolean): boolean {
-    return this.manager.setActive(embedId, active);
+    const pending = this.pendingHostedShells.has(embedId) || this.pendingApps.has(embedId);
+    if (pending) {
+      this.pendingActive.set(embedId, active);
+    }
+    return this.manager.setActive(embedId, active) || pending;
   }
 
   close(embedId: string): boolean {
     const wasPending = this.pendingHostedShells.delete(embedId);
     const wasPendingApp = this.pendingApps.delete(embedId);
+    this.pendingActive.delete(embedId);
     this.hostedShellIds.delete(embedId);
     return this.manager.close(embedId) || wasPending || wasPendingApp;
   }
@@ -93,6 +99,7 @@ export class EmbedService {
   closeAll(): void {
     this.pendingHostedShells.clear();
     this.pendingApps.clear();
+    this.pendingActive.clear();
     this.hostedShellIds.clear();
     this.tokenCache.clear();
     this.manager.closeAll();
@@ -112,8 +119,10 @@ export class EmbedService {
         return false;
       }
       if (!this.pendingHostedShells.has(embedId)) return false;
-      this.attachHostedShellEmbed(gatewayOrigin, bounds, embedId);
+      const active = this.pendingActive.get(embedId) ?? true;
+      this.attachHostedShellEmbed(gatewayOrigin, bounds, embedId, active);
       this.pendingHostedShells.delete(embedId);
+      this.pendingActive.delete(embedId);
       this.hostedShellIds.add(embedId);
       this.deps.emitState(embedId, "loading");
       return true;
@@ -125,7 +134,7 @@ export class EmbedService {
         pending.slug,
         pending.bounds,
         embedId,
-        true,
+        this.pendingActive.get(embedId) ?? true,
         () => this.pendingApps.has(embedId),
       );
       if (!opened) {
@@ -133,6 +142,7 @@ export class EmbedService {
         return false;
       }
       this.pendingApps.delete(embedId);
+      this.pendingActive.delete(embedId);
       this.deps.emitState(embedId, "loading");
       return true;
     }
@@ -177,19 +187,21 @@ export class EmbedService {
     const embedId = randomUUID();
     const opened = await this.createHostedShellEmbed(gatewayOrigin, bounds, embedId, active);
     if (!opened) {
-      this.rememberPendingHostedShell(embedId, bounds);
+      this.rememberPendingHostedShell(embedId, bounds, active);
       return { embedId, state: "auth-required" };
     }
     this.hostedShellIds.add(embedId);
     return { embedId, state: "loading" };
   }
 
-  private rememberPendingHostedShell(embedId: string, bounds: Bounds): void {
+  private rememberPendingHostedShell(embedId: string, bounds: Bounds, active: boolean): void {
     this.pendingHostedShells.set(embedId, bounds);
+    this.pendingActive.set(embedId, active);
     while (this.pendingHostedShells.size > MAX_PENDING_HOSTED_SHELLS) {
       const oldest = this.pendingHostedShells.keys().next().value as string | undefined;
       if (!oldest) break;
       this.pendingHostedShells.delete(oldest);
+      this.pendingActive.delete(oldest);
     }
   }
 
@@ -235,18 +247,20 @@ export class EmbedService {
     const embedId = randomUUID();
     const opened = await this.createAppEmbed(gatewayOrigin, slug, bounds, embedId, active);
     if (!opened) {
-      this.rememberPendingApp(embedId, { slug, bounds });
+      this.rememberPendingApp(embedId, { slug, bounds }, active);
       return { embedId, state: "auth-required" };
     }
     return { embedId, state: "loading" };
   }
 
-  private rememberPendingApp(embedId: string, pending: PendingAppEmbed): void {
+  private rememberPendingApp(embedId: string, pending: PendingAppEmbed, active: boolean): void {
     this.pendingApps.set(embedId, pending);
+    this.pendingActive.set(embedId, active);
     while (this.pendingApps.size > MAX_PENDING_APPS) {
       const oldest = this.pendingApps.keys().next().value as string | undefined;
       if (!oldest) break;
       this.pendingApps.delete(oldest);
+      this.pendingActive.delete(oldest);
     }
   }
 
