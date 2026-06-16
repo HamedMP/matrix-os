@@ -5,6 +5,7 @@ describe("SocketHealth", () => {
     vi.useFakeTimers();
   });
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -152,6 +153,75 @@ describe("SocketHealth", () => {
       vi.advanceTimersByTime(5_000);  // timeout
 
       expect(deadCount).toBe(1);
+      health.stop();
+    });
+
+    it("does not declare the socket dead from a background-tab pong timeout", async () => {
+      const { createSocketHealth } = await import("../../shell/src/lib/socket-health.js");
+      let deadCount = 0;
+      const sent: string[] = [];
+      vi.stubGlobal("document", { visibilityState: "hidden" });
+      const health = createSocketHealth({
+        pingIntervalMs: 30_000,
+        pongTimeoutMs: 5_000,
+        send: (data) => sent.push(data),
+        onDead: () => { deadCount++; },
+      });
+
+      health.pingNow();
+      vi.advanceTimersByTime(5_000);
+
+      expect(sent).toEqual(['{"type":"ping"}']);
+      expect(deadCount).toBe(0);
+
+      vi.stubGlobal("document", { visibilityState: "visible" });
+      health.pingNow();
+      vi.advanceTimersByTime(5_000);
+
+      expect(sent).toEqual(['{"type":"ping"}', '{"type":"ping"}']);
+      expect(deadCount).toBe(1);
+      health.stop();
+    });
+
+    it("does not declare the socket dead when the tab is hidden after a visible ping", async () => {
+      const { createSocketHealth } = await import("../../shell/src/lib/socket-health.js");
+      let deadCount = 0;
+      vi.stubGlobal("document", { visibilityState: "visible" });
+      const health = createSocketHealth({
+        pingIntervalMs: 30_000,
+        pongTimeoutMs: 5_000,
+        send: () => {},
+        onDead: () => { deadCount++; },
+      });
+
+      health.pingNow();
+      vi.stubGlobal("document", { visibilityState: "hidden" });
+      vi.advanceTimersByTime(5_000);
+
+      expect(deadCount).toBe(0);
+      health.stop();
+    });
+
+    it("deduplicates immediate pings while hidden but probes again when visible", async () => {
+      const { createSocketHealth } = await import("../../shell/src/lib/socket-health.js");
+      const sent: string[] = [];
+      vi.stubGlobal("document", { visibilityState: "hidden" });
+      const health = createSocketHealth({
+        pingIntervalMs: 30_000,
+        pongTimeoutMs: 5_000,
+        send: (data) => sent.push(data),
+        onDead: () => {},
+      });
+
+      health.pingNow();
+      health.pingNow();
+
+      expect(sent).toEqual(['{"type":"ping"}']);
+
+      vi.stubGlobal("document", { visibilityState: "visible" });
+      health.pingNow();
+
+      expect(sent).toEqual(['{"type":"ping"}', '{"type":"ping"}']);
       health.stop();
     });
   });
