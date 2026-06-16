@@ -10,6 +10,33 @@ vi.mock("electron", () => ({
 const BOUNDS: Bounds = { x: 0, y: 0, width: 800, height: 600 };
 
 describe("EmbedService", () => {
+  it("keeps retry auth recoverable when a pending app launch url fails origin checks", async () => {
+    const emitState = vi.fn();
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState,
+    });
+    const internals = service as unknown as {
+      pendingApps: Map<string, { slug: string; bounds: Bounds }>;
+      fetchLaunchToken: (gatewayOrigin: string, slug: string) => Promise<{ launchUrl: string; expiresAt: number } | null>;
+      manager: { open: (kind: string, slug: string | null, bounds: Bounds, url: string, options: unknown) => string };
+    };
+    const open = vi.spyOn(internals.manager, "open").mockReturnValue("embed-app");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(internals, "fetchLaunchToken").mockResolvedValue({
+      launchUrl: "https://evil.test/apps/notes/",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    internals.pendingApps.set("embed-app", { slug: "notes", bounds: BOUNDS });
+
+    await expect(service.retryAuth("embed-app")).resolves.toBe(false);
+    expect(open).not.toHaveBeenCalled();
+    expect(emitState).toHaveBeenCalledWith("embed-app", "auth-required");
+  });
+
   it("does not attach a pending app after it closes during retry auth", async () => {
     const emitState = vi.fn();
     const service = new EmbedService({

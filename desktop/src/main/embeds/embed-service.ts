@@ -258,7 +258,10 @@ export class EmbedService {
     if (!cached) return false;
     if (!shouldAttach()) return false;
     const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
-    if (!resolved) throw new Error("app launch url failed origin check");
+    if (!resolved) {
+      console.warn("[embed-service] app launch url failed origin check:", cached.launchUrl);
+      return false;
+    }
     this.manager.open("app", slug, bounds, resolved, {
       id: embedId,
       onState: (state) => this.deps.emitState(embedId, state),
