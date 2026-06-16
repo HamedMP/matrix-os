@@ -1,5 +1,5 @@
 import { useConnection } from "../../stores/connection";
-import { EmbedHost } from "../embeds";
+import EmbedHost from "../embeds/EmbedHost";
 
 // Home is just the user's live hosted Matrix OS shell, full-bleed. Navigation
 // (Chat, Board, Apps, Terminal) lives in the sidebar — no extra chrome here.
