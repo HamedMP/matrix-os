@@ -1,7 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { isStandaloneRuntime, shouldRunStandaloneDaemon } from "../../src/cli/standalone-runtime.js";
 
 describe("isStandaloneRuntime", () => {
+  it("uses the baked standalone marker when no test env is injected", async () => {
+    const previousMarker = process.env.MATRIX_CLI_STANDALONE;
+    process.env.MATRIX_CLI_STANDALONE = "1";
+    vi.resetModules();
+    const module = await import("../../src/cli/standalone-runtime.js");
+
+    try {
+      expect(module.isStandaloneRuntime(undefined, { bun: "1.3.13" })).toBe(true);
+      expect(module.isStandaloneRuntime({}, { bun: "1.3.13" })).toBe(false);
+    } finally {
+      if (previousMarker === undefined) {
+        delete process.env.MATRIX_CLI_STANDALONE;
+      } else {
+        process.env.MATRIX_CLI_STANDALONE = previousMarker;
+      }
+      vi.resetModules();
+    }
+  });
+
   it("requires both the baked standalone env marker and Bun runtime", () => {
     expect(
       isStandaloneRuntime(

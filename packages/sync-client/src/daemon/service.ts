@@ -42,12 +42,12 @@ export function escapeSystemdExecArg(value: string): string {
 }
 
 export function escapeSystemdUnitValue(value: string): string {
-  const escaped = value
-    .replaceAll("\\", "\\\\")
-    .replaceAll('"', '\\"')
-    .replaceAll("%", "%%");
-  if (/^[^\s"\\%]+$/.test(value)) return escaped;
-  return `"${escaped}"`;
+  return Array.from(value, (char) => {
+    if (char === "%") return "%%";
+    if (/^[A-Za-z0-9/:_.-]$/.test(char)) return char;
+    const hex = char.codePointAt(0)?.toString(16).padStart(2, "0");
+    return hex === undefined ? "" : `\\x${hex}`;
+  }).join("");
 }
 
 // Walk up from `daemonPath` to find the directory containing node_modules/tsx.

@@ -2,11 +2,16 @@ type RuntimeVersions = NodeJS.ProcessVersions & {
   bun?: string;
 };
 
+const bakedStandaloneMarker = process.env.MATRIX_CLI_STANDALONE;
+
 export function isStandaloneRuntime(
-  env: NodeJS.ProcessEnv = process.env,
+  env?: NodeJS.ProcessEnv,
   versions: RuntimeVersions = process.versions as RuntimeVersions,
 ): boolean {
-  return env.MATRIX_CLI_STANDALONE === "1" && typeof versions.bun === "string";
+  const standaloneMarker = env === undefined
+    ? bakedStandaloneMarker
+    : env.MATRIX_CLI_STANDALONE;
+  return standaloneMarker === "1" && typeof versions.bun === "string";
 }
 
 export function shouldRunStandaloneDaemon(

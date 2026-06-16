@@ -33,9 +33,9 @@ describe("escapeSystemdExecArg", () => {
 });
 
 describe("escapeSystemdUnitValue", () => {
-  it("escapes systemd specifiers in WorkingDirectory values", () => {
+  it("escapes systemd specifiers and whitespace in WorkingDirectory values", () => {
     expect(escapeSystemdUnitValue("/home/User Name/%h/project")).toBe(
-      '"/home/User Name/%%h/project"',
+      "/home/User\\x20Name/%%h/project",
     );
   });
 });
@@ -82,7 +82,7 @@ describe("daemon service command rendering", () => {
       "/home/User Name/%h",
     );
 
-    expect(systemdUnit(command)).toContain('WorkingDirectory="/home/User Name/%%h"');
+    expect(systemdUnit(command)).toContain("WorkingDirectory=/home/User\\x20Name/%%h");
   });
 });
 
