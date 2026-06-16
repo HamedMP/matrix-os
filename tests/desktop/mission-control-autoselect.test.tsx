@@ -51,6 +51,14 @@ describe("MissionControl initial project selection", () => {
       invoke: vi.fn(async () => ({ value: null })),
       on: vi.fn(() => () => undefined),
     });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
