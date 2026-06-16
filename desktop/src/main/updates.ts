@@ -43,6 +43,7 @@ export function createUpdater(events: UpdateEvents): Updater {
 
   return {
     async check() {
+      if (status === "downloading") return;
       status = "checking";
       try {
         const { autoUpdater } = await import("electron-updater");

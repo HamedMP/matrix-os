@@ -59,6 +59,24 @@ describe("createUpdater", () => {
     expect(updater.status()).toBe("downloading");
   });
 
+  it("does not replace download listeners while an update is downloading", async () => {
+    const onReady = vi.fn();
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady });
+
+    await updater.check();
+    updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
+    updaterMock.autoUpdater.removeAllListeners.mockClear();
+    updaterMock.autoUpdater.checkForUpdates.mockClear();
+
+    await updater.check();
+
+    expect(updaterMock.autoUpdater.removeAllListeners).not.toHaveBeenCalled();
+    expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
+    expect(onReady).toHaveBeenCalledWith("1.2.3");
+    expect(updater.status()).toBe("ready");
+  });
+
   it("reports ready through callbacks instead of check return timing", async () => {
     const onReady = vi.fn();
     const updater = createUpdater({ onAvailable: vi.fn(), onReady });
