@@ -181,9 +181,10 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
 
     switch (event.type) {
       case "kernel:init": {
-        const thread =
-          byRequestId(event.requestId) ??
-          state.threads.find((t) => t.status === "running" && t.sessionId === null);
+        // Match by requestId; otherwise bind only when exactly one running thread
+        // is still awaiting its first session (unambiguous), else drop.
+        const unbound = state.threads.filter((t) => t.status === "running" && t.sessionId === null);
+        const thread = byRequestId(event.requestId) ?? (unbound.length === 1 ? unbound[0] : undefined);
         if (!thread) return {};
         return apply(thread, { sessionId: event.sessionId });
       }
