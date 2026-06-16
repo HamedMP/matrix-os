@@ -50,7 +50,7 @@ bar: PR review, smoke checks, rollback, and live verification.
 | Pre-VPS app shell (`app.matrix-os.com` auth, billing, onboarding, runtime picker) | Full `matrix-platform` Cloud Run image | Dedicated app-shell deploy unit or cached shell-only image layer | `deploy/shell`, `shell/v*`, path changes under `shell/**` that affect pre-VPS routes and shared workspace dependencies consumed by the shell, including frontend-facing `packages/observability/**` modules |
 | Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**`, `packages/clerk-sync/**`, platform-owned observability dependencies, platform-mounted gateway integration routes under `packages/gateway/src/integrations/**`, `Dockerfile.platform`, `cloudbuild.platform.yaml`, `scripts/start-platform-cloud-run.sh`, and `distro/customer-vps/cloud-init.yaml` provisioning inputs |
 | App-domain edge router | Platform image side effects or ad hoc Worker deploy | Explicit edge/router lane, or a required paired shell+platform deploy while the router is embedded | `deploy/edge`, `edge/v*`, path changes under edge/router packages, app-domain route maps, Cloudflare Worker config, or platform route handlers that select pre-VPS shell vs active VPS proxy |
-| Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `shell/**` that affect active VPS shell, `packages/gateway/**`, `packages/kernel/**`, `packages/sync-client/**`, host-bundle-shipped `packages/**`, `home/**`, `skills/**`, shipped helper scripts copied by the host-bundle build, host-bundle publish scripts such as `scripts/host-bundle-release.mjs`, `distro/customer-vps/host-bin/**`, `distro/customer-vps/systemd/**`, and `scripts/build-host-bundle.sh` |
+| Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `shell/**` that affect active VPS shell, `packages/gateway/**`, `packages/kernel/**`, `packages/sync-client/**`, host-bundle-shipped `packages/**`, root package metadata copied into the host bundle (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.npmrc`), `home/**`, `skills/**`, shipped helper scripts copied by the host-bundle build, host-bundle publish scripts such as `scripts/host-bundle-release.mjs`, `distro/customer-vps/host-bin/**`, `distro/customer-vps/systemd/**`, and `scripts/build-host-bundle.sh` |
 | Website/docs | Vercel/site deploy | Independent website/docs lane | `deploy/www`, path changes under `www/**` and shared workspace dependencies consumed by the website, including frontend-facing `packages/observability/**` modules |
 | CLI | npm/GitHub/Homebrew release | Independent CLI lane | `deploy/cli`, `cli-v*`, path changes under CLI package/scripts |
 | Observability/ops | Ad hoc scripts or platform image side effects | Explicit ops lane with scoped smoke | `deploy/ops`, ops distro files, and `packages/observability/**`; observability package changes also fan out to platform, shell, and website lanes when those surfaces consume the changed module |
@@ -164,10 +164,11 @@ The target design creates a separate pre-VPS app-shell deploy unit:
 - **Platform API service**: owns control-plane API, billing webhooks, provisioning,
   fleet state, host-bundle release metadata, and customer routing decisions.
 - **Edge router**: routes app-domain pre-VPS shell requests to the app-shell service,
-  API/control-plane requests to the platform API service, and authenticated active
-  runtime requests to the selected customer VPS proxy. This active-VPS route ownership
-  is part of the split contract; non-API `app.matrix-os.com/*` requests must not fall
-  back to the pre-VPS shell for users with an active machine.
+  API/control-plane requests and platform-owned device-auth routes (`/auth/device*`) to
+  the platform API service, and authenticated active runtime requests to the selected
+  customer VPS proxy. This active-VPS route ownership is part of the split contract;
+  non-API `app.matrix-os.com/*` requests must not fall back to the pre-VPS shell for
+  users with an active machine.
 
 If a full service split is too large for v1, v1 can still improve the current image:
 
@@ -323,6 +324,9 @@ Rollback must be a workflow action, not an undocumented operator command.
 - Host-bundle manifest paths must be normalized app-root-relative paths, must not
   contain `..`, and must target only `/opt/matrix/releases/<version>.staging/app`
   content.
+- Host-bundle manifest delete entries follow the same app-root-relative normalization
+  and `..` rejection as file paths. Deletes are applied only to the staged tree before
+  activation, never directly to the live `/opt/matrix/app` symlink target.
 - Host-bundle manifest entry types are allowlisted: `file`, `directory`, and `symlink`.
   Unknown types fail before download or staging.
 - Host-bundle manifest symlinks must have normalized relative paths and relative targets
@@ -368,6 +372,11 @@ Rollback must be a workflow action, not an undocumented operator command.
 - **Two deploys race**: lane workflows use concurrency groups per environment and lane.
   Production `shell` and `platform` lanes serialize independently unless they target
   the same Cloud Run service.
+- **Phase 1 lanes still share the monolithic platform service**: until app-shell and
+  edge lanes are physically split from `matrix-platform`, their production workflows
+  use one concurrency group per environment and physical deploy target, not only the
+  logical lane name. A shell hotfix and platform API deploy that both target the same
+  Cloud Run service must serialize.
 - **Related lanes promote independently**: when a PR changes an app-shell/API contract,
   edge routing contract, or runtime/platform contract, either the contracts must be
   backward-compatible across old and new revisions or the router must select a combined
@@ -417,10 +426,13 @@ Rollback must be a workflow action, not an undocumented operator command.
   objects are garbage-collected after a grace period.
 - VPS staging directories are bounded: at most one active staging directory per update
   plus the current and previous release directories. The updater takes an exclusive
-  advisory lock before downloading into a staging directory and holds it through service
-  restart. Startup and failed-update cleanup delete abandoned `.staging` directories
-  older than 24h using symlink-safe `lstat()` traversal; active lock holders are never
-  cleaned.
+  `flock(2)` advisory lock on an open file descriptor under `/opt/matrix/releases/`
+  before downloading into a staging directory and holds it through service restart. The
+  kernel releases this lock on process exit, including SIGKILL, OOM, and power loss; a
+  PID-file-only lock is not acceptable unless it verifies the recorded PID is still
+  alive before treating the lock as active. Startup and failed-update cleanup delete
+  abandoned `.staging` directories older than 24h using symlink-safe `lstat()` traversal
+  after confirming no live flock holder owns the update lock.
 - Update agents must use bounded download concurrency and timeouts.
 
 ## Integration Wiring
@@ -455,8 +467,8 @@ Minimum smoke checks:
   serves `data-matrix-billing-gate="true"` and does not serve
   `data-matrix-boot-sequence="true"`; checkout return routes do not call journey boot.
 - `edge`: unauthenticated/no-active-VPS app-domain requests route to app-shell,
-  API/control-plane requests route to platform API, and authenticated active-VPS
-  app-domain requests proxy to the selected customer VPS.
+  API/control-plane and `/auth/device*` requests route to platform API, and
+  authenticated active-VPS app-domain requests proxy to the selected customer VPS.
 - `platform`: `/health`, billing webhook route config, `/api/journey` with test auth,
   release metadata read.
 - `runtime`: `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json` target
@@ -472,8 +484,10 @@ Minimum smoke checks:
 The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit. It:
 
 1. Fetches target release metadata from platform.
-2. Acquires an exclusive advisory lock under `/opt/matrix/releases/`; a second updater
-   waits with a bounded timeout or aborts with a clear structured log.
+2. Acquires an exclusive `flock(2)` advisory lock on an open file descriptor under
+   `/opt/matrix/releases/`; a second updater waits with a bounded timeout or aborts with
+   a clear structured log. If an implementation uses a PID lockfile wrapper, it must
+   validate that the recorded PID is still alive before treating the lock as active.
 3. Runs startup/pre-update consistency checks comparing `/opt/matrix/release.json`,
    `/opt/matrix/app/BUNDLE_VERSION`, and the installed manifest digest; mismatch fails
    closed into the split-brain recovery path before deltas are considered.
