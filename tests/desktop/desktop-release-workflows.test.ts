@@ -15,8 +15,8 @@ describe("desktop release workflows", () => {
     expect(workflow).not.toContain("test -f desktop/dist/*-mac.yml");
     expect(workflow).toContain('mv desktop/dist/latest-mac.yml "desktop/dist/${{ matrix.arch }}-mac.yml"');
     expect(workflow).toContain('mv "desktop/dist/${CHANNEL}-mac.yml" "desktop/dist/${{ matrix.arch }}-${CHANNEL}-mac.yml"');
-    expect(workflow).toContain("! -name '${{ matrix.arch }}-mac.yml'");
-    expect(workflow).toContain("! -name '${{ matrix.arch }}-${CHANNEL}-mac.yml'");
+    expect(workflow).toContain('! -name "${{ matrix.arch }}-mac.yml"');
+    expect(workflow).toContain('! -name "${{ matrix.arch }}-${CHANNEL}-mac.yml"');
     expect(workflow).toContain("desktop/dist/*-mac.yml");
   });
 
