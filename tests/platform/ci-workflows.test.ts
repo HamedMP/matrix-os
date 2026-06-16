@@ -73,6 +73,15 @@ describe('CI workflows', () => {
     }
   });
 
+  it('builds standalone CLI assets before publishing npm in the manual release workflow', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+
+    expect(workflow).toContain('publish-npm:\n    name: Publish npm\n    needs: [test, build-macos, build-binaries]');
+    expect(workflow).toContain('build-binaries:\n    name: Build standalone binaries\n    needs: test');
+    expect(workflow).not.toContain('build-binaries:\n    name: Build standalone binaries\n    needs: publish-npm');
+  });
+
   it('wires every required Stripe price secret into platform Cloud Run', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

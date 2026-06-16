@@ -1,7 +1,13 @@
 import { defineCommand } from "citty";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { loadConfig, saveConfig, defaultSyncPath, generatePeerId } from "../../lib/config.js";
+import {
+  loadConfig,
+  saveConfig,
+  defaultSyncPath,
+  generatePeerId,
+  type SyncConfig,
+} from "../../lib/config.js";
 import {
   isDaemonClientError,
   sendCommand,
@@ -17,9 +23,35 @@ import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 
 const SUBCOMMANDS = new Set(["status", "pause", "resume"]);
+type SyncDaemonRuntime = NonNullable<SyncConfig["syncDaemonRuntime"]>;
 
-function isStandaloneCliRuntime(): boolean {
-  return process.env.MATRIX_CLI_STANDALONE === "1" && typeof process.versions.bun === "string";
+function currentSyncDaemonRuntime(): SyncDaemonRuntime {
+  return process.env.MATRIX_CLI_STANDALONE === "1" && typeof process.versions.bun === "string"
+    ? "standalone"
+    : "source";
+}
+
+export function shouldReuseRunningSyncService({
+  previous,
+  syncPath,
+  gatewayFolder,
+  currentRuntime,
+}: {
+  previous: SyncConfig | null;
+  syncPath: string;
+  gatewayFolder: string;
+  currentRuntime: SyncDaemonRuntime;
+}): boolean {
+  const sameTarget =
+    previous?.syncPath === syncPath &&
+    (previous?.gatewayFolder ?? "") === gatewayFolder;
+  if (!sameTarget) return false;
+
+  // Configs written before standalone binaries existed did not record a daemon
+  // runtime. Those are source/npm services, so a standalone install must force
+  // one service rewrite instead of reusing the old launcher.
+  const previousRuntime = previous?.syncDaemonRuntime ?? "source";
+  return previousRuntime === currentRuntime;
 }
 
 function writeSyncError(err: unknown, json: boolean): void {
@@ -62,6 +94,7 @@ async function runStart(
   await mkdir(syncPath, { recursive: true });
 
   const previous = await loadConfig();
+  const currentRuntime = currentSyncDaemonRuntime();
   const profile = await resolveCliProfile(args);
   const gatewayFolder = folder ?? previous?.gatewayFolder ?? "";
   const config = previous
@@ -84,24 +117,33 @@ async function runStart(
       };
   await saveConfig(config);
 
+  const serviceCommand = currentRuntime === "standalone"
+    ? createStandaloneDaemonServiceCommand()
+    : createSourceDaemonServiceCommand(new URL("../../daemon/launcher.mjs", import.meta.url).pathname);
+
   // Skip the launchctl unload/load bounce if the daemon is already running
-  // and neither the sync path nor the gateway folder changed. Bouncing for
-  // no reason creates a race where `matrix sync status` immediately after
-  // returns "not running" while the socket is being recreated.
-  const sameTarget =
-    previous?.syncPath === syncPath &&
-    (previous?.gatewayFolder ?? "") === gatewayFolder;
-  if (sameTarget && (await isDaemonRunning())) {
+  // and neither the sync target nor the daemon launcher runtime changed.
+  // Bouncing for no reason creates a race where `matrix sync status`
+  // immediately after returns "not running" while the socket is being
+  // recreated.
+  if (
+    (await isDaemonRunning()) &&
+    shouldReuseRunningSyncService({
+      previous,
+      syncPath,
+      gatewayFolder,
+      currentRuntime,
+    })
+  ) {
     console.log(`Sync already running for: ${syncPath}`);
     console.log(`Peer ID: ${config.peerId}`);
     if (gatewayFolder) console.log(`Gateway folder: ${gatewayFolder}`);
     return;
   }
 
-  const serviceCommand = isStandaloneCliRuntime()
-    ? createStandaloneDaemonServiceCommand()
-    : createSourceDaemonServiceCommand(new URL("../../daemon/launcher.mjs", import.meta.url).pathname);
   await installService(serviceCommand);
+  const installedConfig = { ...config, syncDaemonRuntime: currentRuntime };
+  await saveConfig(installedConfig);
   await startService();
 
   console.log(`Sync started for: ${syncPath}`);

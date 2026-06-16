@@ -199,11 +199,11 @@ jobs:
 
   publish-npm:
     name: Publish npm
-    needs: [test, build-macos]
+    needs: [test, build-macos, build-binaries]
     # Skipped jobs report as "skipped" in needs.build-macos.result; we want
     # npm publish to continue even when the macOS pkg is disabled, but fail
     # fast if it actually failed.
-    if: ${{ !cancelled() && needs.test.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.test.result == 'success' && needs.build-binaries.result == 'success' && (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -235,8 +235,8 @@ jobs:
 
   build-binaries:
     name: Build standalone binaries
-    needs: publish-npm
-    if: ${{ !cancelled() && needs.publish-npm.result == 'success' }}
+    needs: test
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
