@@ -379,7 +379,20 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    const input = screen.getByRole("textbox", { name: "Session name for matrix-main" });
+    let input = screen.getByRole("textbox", { name: "Session name for matrix-main" });
+    expect(screen.queryByRole("button", { name: "Rename matrix-main" })).toBeNull();
+    await act(async () => {
+      fireEvent.pointerDown(document.body);
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("textbox", { name: "Session name for matrix-main" })).toBeNull();
+
+    fireEvent.mouseEnter(row!);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Rename matrix-main" }));
+      await Promise.resolve();
+    });
+    input = screen.getByRole("textbox", { name: "Session name for matrix-main" });
     fireEvent.change(input, { target: { value: "review-main" } });
     await act(async () => {
       fireEvent.keyDown(input, { key: "Enter" });

@@ -4023,9 +4023,11 @@ function ShellCard({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(shell.name);
   const [renameSaving, setRenameSaving] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameCommittingRef = useRef(false);
   const showActions = foreground && (actionsVisible || copied);
-  const showRenameControl = foreground && (actionsVisible || renaming);
+  const showRenameControl = foreground && actionsVisible && !renaming;
   const renameControlLabel = `Rename ${displayName}`;
 
   useEffect(() => {
@@ -4043,29 +4045,63 @@ function ShellCard({
       console.warn("Failed to copy shell connect command:", err instanceof Error ? err.message : err);
     }
   };
-  const commitRename = async () => {
-    const nextName = renameDraft.trim();
-    if (!nextName || renameSaving) return;
+  const cancelRename = useCallback(() => {
+    setRenameDraft(shell.name);
+    setRenaming(false);
+  }, [shell.name]);
+
+  const commitRename = useCallback(async (draft = renameDraft) => {
+    const nextName = draft.trim();
+    if (!nextName) {
+      cancelRename();
+      return;
+    }
+    if (renameSaving || renameCommittingRef.current) return;
     if (nextName === shell.name) {
       setRenaming(false);
       return;
     }
+    renameCommittingRef.current = true;
     setRenameSaving(true);
-    const renamed = await onRename(nextName).catch((err: unknown) => {
+    let renamed = false;
+    try {
+      renamed = await onRename(nextName);
+    } catch (err: unknown) {
       console.warn("Failed to commit shell session rename:", err instanceof Error ? err.message : err);
-      return false;
-    });
+    }
     if (renamed) {
       setRenaming(false);
     }
+    renameCommittingRef.current = false;
     setRenameSaving(false);
-  };
-  const cancelRename = () => {
-    setRenameDraft(shell.name);
-    setRenaming(false);
-  };
+  }, [cancelRename, onRename, renameDraft, renameSaving, shell.name]);
+
+  const finishRename = useCallback(() => {
+    if (renameCommittingRef.current) return;
+    const nextDraft = renameInputRef.current?.value ?? renameDraft;
+    if (nextDraft.trim() === shell.name || nextDraft.trim().length === 0) {
+      cancelRename();
+      return;
+    }
+    void commitRename(nextDraft);
+  }, [cancelRename, commitRename, renameDraft, shell.name]);
+
+  useEffect(() => {
+    if (!renaming) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && cardRef.current?.contains(target)) {
+        return;
+      }
+      finishRename();
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [finishRename, renaming]);
+
   return (
     <div
+      ref={cardRef}
       className="group"
       onMouseEnter={() => setActionsVisible(true)}
       onMouseLeave={() => setActionsVisible(false)}
@@ -4110,6 +4146,7 @@ function ShellCard({
               onClick={(event) => event.stopPropagation()}
               onPointerDown={(event) => event.stopPropagation()}
               onMouseDown={(event) => event.stopPropagation()}
+              onBlur={finishRename}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
@@ -4160,7 +4197,7 @@ function ShellCard({
               {displayName}
             </button>
           )}
-          {foreground && (
+          {foreground && !renaming && (
             <button
               type="button"
               aria-label={renameControlLabel}
