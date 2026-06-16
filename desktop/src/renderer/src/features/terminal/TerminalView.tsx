@@ -23,6 +23,9 @@ export default function TerminalView({ sessionName, onRecreate }: TerminalViewPr
   const [exitCode, setExitCode] = useState<number | null>(null);
 
   useEffect(() => {
+    setSocketState("connecting");
+    setExitCode(null);
+
     const host = hostRef.current;
     if (!host) return;
 
