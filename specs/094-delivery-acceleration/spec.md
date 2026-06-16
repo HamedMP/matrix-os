@@ -534,39 +534,40 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
    fail closed into the split-brain recovery path before deltas are considered.
 4. Runs the directory-to-symlink bootstrap migration when `/opt/matrix/app` is not yet a
    symlink to a verified release tree.
-5. Downloads manifest metadata and validates every `files[].url`, symlink target, and
-   `requiresFullBundle` condition against the bundle object allowlist, release-tree
-   containment, and redirect/timeout policy.
-6. Compares `manifest.baseVersion` with the installed
-   version from `/opt/matrix/release.json` and the installed manifest digest.
-7. Falls back to full-bundle install when the base mismatches, `requiresFullBundle` is
+5. Downloads the raw manifest bytes with a bounded timeout, without parsing entries or
+   fetching any manifest-referenced objects.
+6. Verifies the canonical manifest bytes against the platform release metadata:
+   `manifestSha256`, `manifestSignature`, and a pinned `manifestSigningKeyId`.
+7. Parses the manifest only after manifest-level verification succeeds, then validates
+   every `files[].url`, symlink target, and `requiresFullBundle` condition against the
+   bundle object allowlist, release-tree containment, and redirect/timeout policy.
+8. Compares `manifest.baseVersion` with the installed version from
+   `/opt/matrix/release.json` and the installed manifest digest.
+9. Falls back to full-bundle install when the base mismatches, `requiresFullBundle` is
    true, non-app roots changed, or symlink topology cannot be represented safely and
    policy allows it; otherwise fails before staging.
-8. Downloads changed objects with bounded concurrency and 30s per-object timeouts.
-9. Verifies the canonical manifest bytes against the platform release metadata:
-   `manifestSha256`, `manifestSignature`, and a pinned `manifestSigningKeyId`. Only
-   after manifest-level verification succeeds does the updater parse entries and verify
-   every downloaded object hash.
-10. Stages app files under `/opt/matrix/releases/<version>.staging/app`.
-11. Runs preflight checks: staged root ownership and mode are correct, free disk margin
+10. Downloads changed objects with bounded concurrency and 30s per-object timeouts and
+    verifies every downloaded object hash against the already-authenticated manifest.
+11. Stages app files under `/opt/matrix/releases/<version>.staging/app`.
+12. Runs preflight checks: staged root ownership and mode are correct, free disk margin
     remains above the configured threshold, `BUNDLE_VERSION` matches the target version,
     the verified manifest is present at
     `/opt/matrix/releases/<version>.staging/manifest.json`, protected owner-data paths
     are absent from the staged tree, symlinks resolve inside the staged release tree,
     executable bits match the manifest, and any service-unit or launcher change has
     already forced the full-bundle path.
-12. Activates the staged app tree under the updater lock by flipping `/opt/matrix/app`
+13. Activates the staged app tree under the updater lock by flipping `/opt/matrix/app`
    and writing `/opt/matrix/release.json` via tmp-then-rename. Activation first promotes
    `/opt/matrix/releases/<version>.staging` to `/opt/matrix/releases/<version>` so the
    installed manifest path recorded in `release.json` is stable. The startup/pre-update
    consistency check is the recovery mechanism if the process crashes between those
    filesystem operations.
-13. Restarts affected services while still holding the updater lock with bounded
+14. Restarts affected services while still holding the updater lock with bounded
    per-service restart timeouts and an overall activation timeout, except the updater's
-   own process must not be restarted before step 14 completes. If the release changes
+   own process must not be restarted before step 15 completes. If the release changes
    `matrix-sync-agent` or the updater wrapper, a dedicated supervisor handoff or deferred
    self-restart marker performs that restart after health reporting.
-14. Reports installed version and health back to platform with a bounded timeout,
+15. Reports installed version and health back to platform with a bounded timeout,
    releases the lock, then runs any deferred updater self-restart through the supervisor.
 
 ## Phased Plan
