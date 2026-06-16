@@ -55,11 +55,18 @@ export function relativeTime(iso: string, now: number): string {
 
 export default function TimelinePanel({ taskId }: { taskId: string }) {
   const api = useConnection((s) => s.api);
+  const [loadedTaskId, setLoadedTaskId] = useState(taskId);
   const [events, setEvents] = useState<TimelineEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const inFlight = useRef(false);
   const requestSeq = useRef(0);
+
+  if (loadedTaskId !== taskId) {
+    setLoadedTaskId(taskId);
+    setEvents(null);
+    setError(null);
+  }
 
   useEffect(() => {
     if (!api) return;

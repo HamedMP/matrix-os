@@ -342,4 +342,55 @@ describe("useSessions.restart", () => {
     expect(useSessions.getState().creating).toBe(false);
     expect(useSessions.getState().error).toBe("offline");
   });
+
+  it("deletes the restarted workspace session when relinking fails before an attach name exists", async () => {
+    const card: Card = {
+      id: "task_a",
+      projectSlug: "proj",
+      title: "Review",
+      description: "",
+      status: "running",
+      priority: "normal",
+      order: 1,
+      parentTaskId: null,
+      linkedSessionId: "sess_old",
+      linkedWorktreeId: "wt_1",
+      previewIds: [],
+      tags: [],
+      updatedAt: null,
+      revision: 1,
+    };
+    useBoard.setState({ cardsByProject: { proj: [card] } });
+    useSessions.setState({
+      sessions: [
+        {
+          name: "Review",
+          attachName: "matrix-agent-1",
+          status: "exited",
+          source: "workspace",
+          kind: "agent",
+          agent: "codex",
+          projectSlug: "proj",
+          taskId: "task_a",
+          worktreeId: "wt_1",
+        },
+      ],
+      aliasMap: { sess_old: "matrix-agent-1" },
+    });
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const api = makeApi({
+      delete: del,
+      post: vi.fn().mockResolvedValue({ session: { id: "sess_next", runtime: {} } }),
+      get: vi.fn().mockResolvedValue({ sessions: [], nextCursor: null }),
+      patch: vi.fn().mockRejectedValue(new AppError("offline")),
+    });
+
+    const restarted = await useSessions.getState().restart(api, "matrix-agent-1");
+
+    expect(restarted).toBeNull();
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-agent-1?force=1");
+    expect(del).toHaveBeenCalledWith("/api/sessions/sess_next");
+    expect(useSessions.getState().creating).toBe(false);
+    expect(useSessions.getState().error).toBe("offline");
+  });
 });

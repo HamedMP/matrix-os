@@ -61,6 +61,10 @@ async function deleteAttachableSession(api: ApiClient, attachName: string): Prom
   await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
 }
 
+async function deleteWorkspaceSession(api: ApiClient, sessionId: string): Promise<void> {
+  await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`);
+}
+
 let loadSequence = 0;
 
 export const useSessions = create<SessionsState>()((set, get) => ({
@@ -230,6 +234,13 @@ export const useSessions = create<SessionsState>()((set, get) => ({
               await get().load(api);
             } catch (cleanupErr: unknown) {
               console.error("[sessions] Failed to clean up unlinked restarted session:", cleanupErr);
+            }
+          } else {
+            try {
+              await deleteWorkspaceSession(api, sessionId);
+              await get().load(api);
+            } catch (cleanupErr: unknown) {
+              console.error("[sessions] Failed to delete unlinked restarted session:", cleanupErr);
             }
           }
           set({ creating: false, error: linkError instanceof AppError ? linkError.category : "server" });
