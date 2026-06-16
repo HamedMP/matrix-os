@@ -120,9 +120,10 @@ const TASKS_PAGE_LIMIT = 100;
 const MAX_TASK_PAGES = 10;
 const MAX_PENDING_TASK_MUTATIONS = 250;
 
-// Per-task in-flight chains so two rapid mutations cannot interleave. Each
-// queued fn handles its own errors (chain never rejects); entries evict
-// themselves once their chain settles, and the live map has a hard cap.
+// Per-task in-flight chains so two rapid mutations cannot interleave. The
+// stored tail never rejects, while the returned promise preserves the caller's
+// success/failure result. Entries evict themselves once their chain settles,
+// and the live map has a hard cap.
 const taskMutationTails = new Map<string, Promise<void>>();
 
 function canEnqueueTaskMutation(taskId: string): boolean {
@@ -134,12 +135,13 @@ function enqueueTaskMutation(taskId: string, fn: () => Promise<void>): Promise<v
     return Promise.reject(new AppError("server"));
   }
   const tail = taskMutationTails.get(taskId) ?? Promise.resolve();
-  const next = tail.then(fn);
-  taskMutationTails.set(taskId, next);
-  void next.finally(() => {
-    if (taskMutationTails.get(taskId) === next) taskMutationTails.delete(taskId);
+  const run = tail.then(fn);
+  const storedTail = run.catch(() => undefined);
+  taskMutationTails.set(taskId, storedTail);
+  void storedTail.finally(() => {
+    if (taskMutationTails.get(taskId) === storedTail) taskMutationTails.delete(taskId);
   });
-  return next;
+  return run;
 }
 
 function taskPath(slug: string, taskId?: string): string {
@@ -359,6 +361,7 @@ export const useBoard = create<BoardState>()((set, get) => {
           patchCard(slug, taskId, () => before);
           await refreshInto(api, slug);
           set({ error: categoryOf(err) });
+          throw err;
         }
       });
     },

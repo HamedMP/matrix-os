@@ -122,7 +122,9 @@ describe("linkSession", () => {
     });
     useBoard.setState({ cardsByProject: { proj: [card({ id: "task_a", linkedSessionId: null })] } });
 
-    await useBoard.getState().linkSession(api, "proj", "task_a", { linkedSessionId: "sess_1" });
+    await expect(
+      useBoard.getState().linkSession(api, "proj", "task_a", { linkedSessionId: "sess_1" }),
+    ).rejects.toBeInstanceOf(AppError);
     expect(useBoard.getState().error).toBe("server");
   });
 });

@@ -335,6 +335,28 @@ describe("loadPreviews", () => {
     });
   });
 
+  it("replaces stale preview records when a preview is reassigned into the loaded scope", async () => {
+    useGit.setState({
+      previews: [
+        {
+          ...wirePreview({ id: "prev_move", taskId: "task_b", label: "Old task" }),
+          updatedAt: T1,
+        },
+      ],
+    });
+    const get = vi.fn().mockResolvedValue({
+      previews: [wirePreview({ id: "prev_move", taskId: "task_a", label: "New task" })],
+      nextCursor: null,
+    });
+    const api = makeApi({ get: get as never });
+
+    await useGit.getState().loadPreviews(api, "proj", "task_a");
+
+    expect(useGit.getState().previews).toMatchObject([
+      { id: "prev_move", taskId: "task_a", label: "New task" },
+    ]);
+  });
+
   it("keeps existing previews and sets the error category on failure", async () => {
     const existing = {
       id: "prev_keep",

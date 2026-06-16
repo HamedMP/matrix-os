@@ -34,10 +34,15 @@ export async function startTaskSession(api: ApiClient, input: StartTaskSessionIn
     ...(prompt ? { prompt } : {}),
   });
   if (!created) return false;
-  await useBoard.getState().linkSession(api, input.projectSlug, input.taskId, {
-    linkedSessionId: created.sessionId,
-    ...(input.worktreeId ? { linkedWorktreeId: input.worktreeId } : {}),
-    status: "running",
-  });
-  return true;
+  try {
+    await useBoard.getState().linkSession(api, input.projectSlug, input.taskId, {
+      linkedSessionId: created.sessionId,
+      ...(input.worktreeId ? { linkedWorktreeId: input.worktreeId } : {}),
+      status: "running",
+    });
+    return true;
+  } catch (err: unknown) {
+    console.warn("[task-sessions] task link failed after session create:", err instanceof Error ? err.message : String(err));
+    return false;
+  }
 }
