@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createSourceDaemonServiceCommand,
   createStandaloneDaemonServiceCommand,
+  escapeSystemdUnitValue,
   escapeSystemdExecArg,
   escapeXml,
   launchdPlist,
@@ -27,6 +28,14 @@ describe("escapeSystemdExecArg", () => {
   it("quotes systemd ExecStart arguments that need escaping", () => {
     expect(escapeSystemdExecArg('/home/User Name/bin/matrix"$\\%')).toBe(
       '"/home/User Name/bin/matrix\\"$$\\\\%%"',
+    );
+  });
+});
+
+describe("escapeSystemdUnitValue", () => {
+  it("escapes systemd specifiers in WorkingDirectory values", () => {
+    expect(escapeSystemdUnitValue("/home/User Name/%h/project")).toBe(
+      '"/home/User Name/%%h/project"',
     );
   });
 });
@@ -65,6 +74,15 @@ describe("daemon service command rendering", () => {
       "<string>/home/User Name/.local/bin/matrix</string>",
     );
     expect(plist).toContain("<string>__daemon</string>");
+  });
+
+  it("escapes standalone working directories before writing systemd units", () => {
+    const command = createStandaloneDaemonServiceCommand(
+      "/home/user/.local/bin/matrix",
+      "/home/User Name/%h",
+    );
+
+    expect(systemdUnit(command)).toContain('WorkingDirectory="/home/User Name/%%h"');
   });
 });
 

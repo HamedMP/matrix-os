@@ -20,15 +20,14 @@ import {
   startService,
 } from "../../daemon/service.js";
 import { resolveCliProfile } from "../profiles.js";
+import { isStandaloneRuntime } from "../standalone-runtime.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 
 const SUBCOMMANDS = new Set(["status", "pause", "resume"]);
 type SyncDaemonRuntime = NonNullable<SyncConfig["syncDaemonRuntime"]>;
 
 function currentSyncDaemonRuntime(): SyncDaemonRuntime {
-  return process.env.MATRIX_CLI_STANDALONE === "1" && typeof process.versions.bun === "string"
-    ? "standalone"
-    : "source";
+  return isStandaloneRuntime() ? "standalone" : "source";
 }
 
 export function shouldReuseRunningSyncService({

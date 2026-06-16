@@ -17,6 +17,7 @@ import { downloadCommand } from "./commands/download.js";
 import { agentCommand } from "./commands/agent.js";
 import { forwardAliasCommand, portCommand } from "./commands/port.js";
 import { normalizeLeadingGlobalFlags } from "./global-flags.js";
+import { shouldRunStandaloneDaemon } from "./standalone-runtime.js";
 import { getCliTelemetry } from "./telemetry.js";
 import { resolveCliVersion } from "./version.js";
 
@@ -53,7 +54,7 @@ const main = defineCommand({
 
 const rawArgs = normalizeLeadingGlobalFlags(process.argv.slice(2));
 
-if (rawArgs[0] === "__daemon") {
+if (shouldRunStandaloneDaemon(rawArgs)) {
   const { startDaemon } = await import("../daemon/index.js");
   await startDaemon();
 } else {

@@ -41,6 +41,15 @@ export function escapeSystemdExecArg(value: string): string {
   }"`;
 }
 
+export function escapeSystemdUnitValue(value: string): string {
+  const escaped = value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("%", "%%");
+  if (/^[^\s"\\%]+$/.test(value)) return escaped;
+  return `"${escaped}"`;
+}
+
 // Walk up from `daemonPath` to find the directory containing node_modules/tsx.
 // launchd/systemd give the spawned process an empty cwd, so node module
 // resolution can't find tsx unless we set WorkingDirectory there.
@@ -108,7 +117,7 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=${command.workingDirectory}
+WorkingDirectory=${escapeSystemdUnitValue(command.workingDirectory)}
 ExecStart=${[command.executable, ...command.args].map(escapeSystemdExecArg).join(" ")}
 Restart=on-failure
 RestartSec=5
