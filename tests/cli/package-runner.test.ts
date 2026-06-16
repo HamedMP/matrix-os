@@ -18,7 +18,8 @@ describe("published CLI package runners", () => {
     );
 
     expect(packageJson.name).toBe("@finnaai/matrix");
-    expect(packageJson.engines.node).toBe(">=24");
+    expect(packageJson.engines.node).toBe(">=20");
+    expect(packageJson.dependencies).not.toHaveProperty("posthog-node");
     expect(packageJson.bin).toEqual({
       matrix: "bin/matrix.mjs",
       matrixos: "bin/matrix.mjs",
@@ -32,8 +33,64 @@ describe("published CLI package runners", () => {
   });
 
   it("reports Node runtime prerequisites before loading the TypeScript CLI", () => {
-    expect(nodeMajor("24.14.1")).toBe(24);
-    expect(isSupportedNodeVersion("24.0.0")).toBe(true);
-    expect(formatUnsupportedNodeError("23.11.0", false)).toContain("Matrix CLI requires Node.js 24 or newer");
+    expect(nodeMajor("20.14.1")).toBe(20);
+    expect(isSupportedNodeVersion("20.0.0")).toBe(true);
+    expect(formatUnsupportedNodeError("19.11.0", false)).toContain("Matrix CLI requires Node.js 20 or newer");
+  });
+
+  it("ships the standalone binary build helper used by the release workflow", async () => {
+    const script = await readFile(
+      resolve(repoRoot, "packages/sync-client/scripts/build-binaries.mjs"),
+      "utf8",
+    );
+
+    expect(script).toContain('run("bun", [');
+    expect(script).toContain('MATRIX_CLI_STANDALONE: "1"');
+  });
+
+  it("installs standalone binary upgrades atomically", async () => {
+    const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
+
+    expect(script).not.toContain('cp "$BIN_PATH" "$INSTALL_DIR/matrix"');
+    expect(script).toContain('TMP_BIN="$INSTALL_DIR/.matrix.tmp.$$"');
+    expect(script).toContain('mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"');
+    expect(script).toContain('sudo mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"');
+    expect(script).toContain('sudo rm -f "$TMP_BIN"');
+    expect(script).toMatch(
+      /if ! sudo mv -f "\$TMP_BIN" "\$INSTALL_DIR\/matrix"; then\n\s+sudo rm -f "\$TMP_BIN"\n\s+return 1\n\s+fi/,
+    );
+  });
+
+  it("normalizes v-prefixed MATRIX_VERSION pins to CLI release tags", async () => {
+    const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
+
+    expect(script).toMatch(/v\*\)\s+printf 'cli-v%s' "\$\{MATRIX_VERSION#v\}" ;;/);
+    expect(script).toContain('*)      printf \'cli-v%s\' "$MATRIX_VERSION" ;;');
+  });
+
+  it("prefers upgrading the existing matrix command path before installing elsewhere", async () => {
+    const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
+
+    expect(script).toContain("existing_matrix_install_dir()");
+    expect(script).toContain('EXISTING_MATRIX="$(command -v matrix 2>/dev/null || true)"');
+    expect(script).toMatch(
+      /elif EXISTING_DIR="\$\(existing_matrix_install_dir\)" && \[ -n "\$EXISTING_DIR" \]; then\n\s+INSTALL_DIR="\$EXISTING_DIR"\n\s+install_binary_unprivileged "\$INSTALL_DIR" \|\| install_binary_with_sudo "\$INSTALL_DIR"/,
+    );
+    expect(script).toContain('PATH_MATRIX="$(command -v matrix 2>/dev/null || true)"');
+  });
+
+  it("preserves the macOS package installer when available", async () => {
+    const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
+    const macosInstaller = script.slice(script.indexOf("install_macos() {"));
+    const installDirBranch = macosInstaller.indexOf('if [ -n "${MATRIX_INSTALL_DIR:-}" ]; then');
+
+    expect(script).toContain('PKG_NAME="MatrixSync-$VERSION.pkg"');
+    expect(installDirBranch).toBeGreaterThan(-1);
+    expect(installDirBranch).toBeLessThan(macosInstaller.indexOf('PKG_PATH="$INSTALL_TMPDIR/$PKG_NAME"'));
+    expect(script).toContain('pkgutil --check-signature "$PKG_PATH"');
+    expect(script).toContain('sudo installer -pkg "$PKG_PATH" -target /');
+    expect(script).toMatch(
+      /macOS package not available for \$TAG; installing CLI-only standalone binary"\n\s+rm -rf "\$INSTALL_TMPDIR"\n\s+install_cli_binary "darwin" "\$TAG"/,
+    );
   });
 });

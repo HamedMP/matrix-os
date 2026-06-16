@@ -49,7 +49,8 @@ All three bin entries are installed: `matrix`, `matrixos`, `mos`.
 
 ## Requirements
 
-- Node.js 24 or newer
+- Node.js 20 or newer for npm package runners and global npm installs
+- No Node.js install is required when using the standalone binary from `get.matrix-os.com`
 - A Matrix OS account — sign up at [app.matrix-os.com](https://app.matrix-os.com)
 
 ## License

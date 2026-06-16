@@ -28,6 +28,7 @@ export const SyncConfigSchema = z.object({
   folders: z.array(z.string()).optional(),
   exclude: z.array(z.string()).optional(),
   pauseSync: z.boolean().default(false),
+  syncDaemonRuntime: z.enum(["source", "standalone"]).optional(),
 });
 
 export type SyncConfig = z.infer<typeof SyncConfigSchema>;

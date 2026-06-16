@@ -16,6 +16,12 @@ function execFileAsync(cmd: string, args: string[]): Promise<void> {
 
 const LABEL = "com.matrixos.sync";
 
+export interface DaemonServiceCommand {
+  executable: string;
+  args: string[];
+  workingDirectory: string;
+}
+
 export function escapeXml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -23,6 +29,31 @@ export function escapeXml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
+}
+
+export function escapeSystemdExecArg(value: string): string {
+  if (/^[^\s"'\\%$]+$/.test(value)) return value;
+  return `"${value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("%", "%%")
+    .replaceAll("$", () => "$$")
+  }"`;
+}
+
+export function escapeSystemdUnitValue(value: string): string {
+  return Array.from(value, (char) => {
+    if (char === "%") return "%%";
+    if (/^[A-Za-z0-9/:_.-]$/.test(char)) return char;
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) return "";
+    if (codePoint > 0x7f) {
+      return codePoint <= 0xffff
+        ? `\\u${codePoint.toString(16).padStart(4, "0")}`
+        : `\\U${codePoint.toString(16).padStart(8, "0")}`;
+    }
+    return `\\x${codePoint.toString(16).padStart(2, "0")}`;
+  }).join("");
 }
 
 // Walk up from `daemonPath` to find the directory containing node_modules/tsx.
@@ -39,7 +70,27 @@ function findRepoRoot(start: string): string {
   return dirname(start);
 }
 
-function launchdPlist(daemonPath: string, logDir: string, workDir: string): string {
+export function createSourceDaemonServiceCommand(daemonPath: string): DaemonServiceCommand {
+  const resolvedDaemonPath = resolve(daemonPath);
+  return {
+    executable: process.execPath,
+    args: [resolvedDaemonPath],
+    workingDirectory: findRepoRoot(resolvedDaemonPath),
+  };
+}
+
+export function createStandaloneDaemonServiceCommand(
+  executable = process.execPath,
+  workingDirectory = homedir(),
+): DaemonServiceCommand {
+  return {
+    executable,
+    args: ["__daemon"],
+    workingDirectory,
+  };
+}
+
+export function launchdPlist(command: DaemonServiceCommand, logDir: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -48,11 +99,11 @@ function launchdPlist(daemonPath: string, logDir: string, workDir: string): stri
   <string>${LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${escapeXml(process.execPath)}</string>
-    <string>${escapeXml(daemonPath)}</string>
+    <string>${escapeXml(command.executable)}</string>
+${command.args.map((arg) => `    <string>${escapeXml(arg)}</string>`).join("\n")}
   </array>
   <key>WorkingDirectory</key>
-  <string>${escapeXml(workDir)}</string>
+  <string>${escapeXml(command.workingDirectory)}</string>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
@@ -65,15 +116,15 @@ function launchdPlist(daemonPath: string, logDir: string, workDir: string): stri
 </plist>`;
 }
 
-function systemdUnit(daemonPath: string, workDir: string): string {
+export function systemdUnit(command: DaemonServiceCommand): string {
   return `[Unit]
 Description=Matrix OS Sync Daemon
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=${workDir}
-ExecStart=${process.execPath} ${daemonPath}
+WorkingDirectory=${escapeSystemdUnitValue(command.workingDirectory)}
+ExecStart=${[command.executable, ...command.args].map(escapeSystemdExecArg).join(" ")}
 Restart=on-failure
 RestartSec=5
 
@@ -82,17 +133,24 @@ WantedBy=default.target
 `;
 }
 
-export async function installService(daemonPath: string): Promise<string> {
+export function linuxStartServiceCommands(): string[][] {
+  return [
+    ["--user", "daemon-reload"],
+    ["--user", "enable", "matrixos-sync.service"],
+    ["--user", "restart", "matrixos-sync.service"],
+  ];
+}
+
+export async function installService(command: DaemonServiceCommand): Promise<string> {
   const os = platform();
   const logDir = join(homedir(), ".matrixos", "logs");
   await mkdir(logDir, { recursive: true });
-  const workDir = findRepoRoot(resolve(daemonPath));
 
   if (os === "darwin") {
     const plistDir = join(homedir(), "Library", "LaunchAgents");
     await mkdir(plistDir, { recursive: true });
     const plistPath = join(plistDir, `${LABEL}.plist`);
-    await writeUtf8FileAtomic(plistPath, launchdPlist(daemonPath, logDir, workDir));
+    await writeUtf8FileAtomic(plistPath, launchdPlist(command, logDir));
     return plistPath;
   }
 
@@ -105,7 +163,7 @@ export async function installService(daemonPath: string): Promise<string> {
     );
     await mkdir(unitDir, { recursive: true });
     const unitPath = join(unitDir, "matrixos-sync.service");
-    await writeUtf8FileAtomic(unitPath, systemdUnit(daemonPath, workDir));
+    await writeUtf8FileAtomic(unitPath, systemdUnit(command));
     return unitPath;
   }
 
@@ -130,18 +188,15 @@ export async function startService(): Promise<void> {
   }
 
   if (os === "linux") {
-    await execFileAsync("systemctl", ["--user", "daemon-reload"]).catch((err: unknown) => {
+    const [daemonReload, enable, restart] = linuxStartServiceCommands();
+    await execFileAsync("systemctl", daemonReload).catch((err: unknown) => {
       console.warn(
         "[sync/service] systemctl daemon-reload failed:",
         err instanceof Error ? err.message : String(err),
       );
     });
-    await execFileAsync("systemctl", [
-      "--user",
-      "enable",
-      "--now",
-      "matrixos-sync.service",
-    ]);
+    await execFileAsync("systemctl", enable);
+    await execFileAsync("systemctl", restart);
     return;
   }
 

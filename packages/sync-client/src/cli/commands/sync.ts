@@ -1,17 +1,57 @@
 import { defineCommand } from "citty";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { loadConfig, saveConfig, defaultSyncPath, generatePeerId } from "../../lib/config.js";
+import {
+  loadConfig,
+  saveConfig,
+  defaultSyncPath,
+  generatePeerId,
+  type SyncConfig,
+} from "../../lib/config.js";
 import {
   isDaemonClientError,
   sendCommand,
   isDaemonRunning,
 } from "../daemon-client.js";
-import { installService, startService } from "../../daemon/service.js";
+import {
+  createSourceDaemonServiceCommand,
+  createStandaloneDaemonServiceCommand,
+  installService,
+  startService,
+} from "../../daemon/service.js";
 import { resolveCliProfile } from "../profiles.js";
+import { isStandaloneRuntime } from "../standalone-runtime.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 
 const SUBCOMMANDS = new Set(["status", "pause", "resume"]);
+type SyncDaemonRuntime = NonNullable<SyncConfig["syncDaemonRuntime"]>;
+
+function currentSyncDaemonRuntime(): SyncDaemonRuntime {
+  return isStandaloneRuntime() ? "standalone" : "source";
+}
+
+export function shouldReuseRunningSyncService({
+  previous,
+  syncPath,
+  gatewayFolder,
+  currentRuntime,
+}: {
+  previous: SyncConfig | null;
+  syncPath: string;
+  gatewayFolder: string;
+  currentRuntime: SyncDaemonRuntime;
+}): boolean {
+  const sameTarget =
+    previous?.syncPath === syncPath &&
+    (previous?.gatewayFolder ?? "") === gatewayFolder;
+  if (!sameTarget) return false;
+
+  // Configs written before standalone binaries existed did not record a daemon
+  // runtime. Those are source/npm services, so a standalone install must force
+  // one service rewrite instead of reusing the old launcher.
+  const previousRuntime = previous?.syncDaemonRuntime ?? "source";
+  return previousRuntime === currentRuntime;
+}
 
 function writeSyncError(err: unknown, json: boolean): void {
   const code = isDaemonClientError(err) ? err.code : "sync_failed";
@@ -53,6 +93,7 @@ async function runStart(
   await mkdir(syncPath, { recursive: true });
 
   const previous = await loadConfig();
+  const currentRuntime = currentSyncDaemonRuntime();
   const profile = await resolveCliProfile(args);
   const gatewayFolder = folder ?? previous?.gatewayFolder ?? "";
   const config = previous
@@ -73,27 +114,34 @@ async function runStart(
         peerId: generatePeerId(),
         pauseSync: false,
       };
-  await saveConfig(config);
+  const serviceCommand = currentRuntime === "standalone"
+    ? createStandaloneDaemonServiceCommand()
+    : createSourceDaemonServiceCommand(new URL("../../daemon/launcher.mjs", import.meta.url).pathname);
 
   // Skip the launchctl unload/load bounce if the daemon is already running
-  // and neither the sync path nor the gateway folder changed. Bouncing for
-  // no reason creates a race where `matrix sync status` immediately after
-  // returns "not running" while the socket is being recreated.
-  const sameTarget =
-    previous?.syncPath === syncPath &&
-    (previous?.gatewayFolder ?? "") === gatewayFolder;
-  if (sameTarget && (await isDaemonRunning())) {
+  // and neither the sync target nor the daemon launcher runtime changed.
+  // Bouncing for no reason creates a race where `matrix sync status`
+  // immediately after returns "not running" while the socket is being
+  // recreated.
+  if (
+    (await isDaemonRunning()) &&
+    shouldReuseRunningSyncService({
+      previous,
+      syncPath,
+      gatewayFolder,
+      currentRuntime,
+    })
+  ) {
+    await saveConfig({ ...config, syncDaemonRuntime: currentRuntime });
     console.log(`Sync already running for: ${syncPath}`);
     console.log(`Peer ID: ${config.peerId}`);
     if (gatewayFolder) console.log(`Gateway folder: ${gatewayFolder}`);
     return;
   }
 
-  // Point launchd/systemd at the .mjs launcher -- it re-execs node with
-  // --import tsx so the .ts daemon entry can be loaded directly. Plain node
-  // can't import .ts files.
-  const daemonPath = new URL("../../daemon/launcher.mjs", import.meta.url).pathname;
-  await installService(daemonPath);
+  await installService(serviceCommand);
+  const installedConfig = { ...config, syncDaemonRuntime: currentRuntime };
+  await saveConfig(installedConfig);
   await startService();
 
   console.log(`Sync started for: ${syncPath}`);
