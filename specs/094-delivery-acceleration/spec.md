@@ -204,11 +204,11 @@ also publishes a manifest:
 The VPS update agent compares the installed manifest with the target manifest and
 downloads only changed content-addressed objects. It stages changes under
 `/opt/matrix/releases/<version>.staging`, verifies hashes, then atomically flips the
-`/opt/matrix/app` symlink after all checks pass. Activation also writes
+`/opt/matrix/app` symlink after all checks pass. Activation also records
 `/opt/matrix/release.json` with the target version, manifest digest, activated path,
-rollback version, and timestamp via tmp-then-rename in the same critical section as the
-symlink flip, so local verification and rollback never read a stale installed version.
-Because `release.json` rename and symlink flip are separate filesystem operations, the
+rollback version, and timestamp via tmp-then-rename while holding the updater lock.
+Because `release.json` rename and symlink flip are separate filesystem operations and
+cannot be committed atomically together, the lock is only a concurrency guard. The
 updater also runs a startup and pre-update consistency check: compare
 `/opt/matrix/release.json` with `/opt/matrix/app/BUNDLE_VERSION` and the installed
 manifest digest. Any mismatch fails closed before applying deltas and enters recovery:
@@ -389,8 +389,10 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 8. Verifies every object hash and manifest signature/digest.
 9. Stages app files under `/opt/matrix/releases/<version>.staging`.
 10. Runs preflight checks.
-11. Writes `/opt/matrix/release.json` via tmp-then-rename and activates the
-   release by flipping `/opt/matrix/app` to the staged app tree in one critical section.
+11. Activates the staged app tree under the updater lock by flipping `/opt/matrix/app`
+   and writing `/opt/matrix/release.json` via tmp-then-rename. The startup/pre-update
+   consistency check is the recovery mechanism if the process crashes between those
+   filesystem operations.
 12. Restarts affected services while still holding the updater lock.
 13. Reports installed version and health back to platform, then releases the lock.
 
