@@ -47,6 +47,10 @@ vi.mock("../../desktop/src/renderer/src/lib/kernel-wiring", () => ({
 
 describe("MissionControl initial project selection", () => {
   beforeEach(() => {
+    vi.stubGlobal("operator", {
+      invoke: vi.fn(async () => ({ value: null })),
+      on: vi.fn(() => () => undefined),
+    });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
