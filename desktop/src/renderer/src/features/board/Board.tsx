@@ -124,11 +124,11 @@ export default function Board({ projectSlug, active = true }: { projectSlug?: st
 
   // Live development state for the card badges (session/branch/dirty/preview).
   useEffect(() => {
-    if (!api || !activeSlug) return;
+    if (!api || !activeSlug || !active) return;
     void sessionsLoad(api);
     void gitLoadAll(api, activeSlug);
     void gitLoadPreviews(api, activeSlug);
-  }, [api, activeSlug, sessionsLoad, gitLoadAll, gitLoadPreviews]);
+  }, [api, active, activeSlug, sessionsLoad, gitLoadAll, gitLoadPreviews]);
 
   const columns = useMemo(() => groupCardsByColumn(cards), [cards]);
 

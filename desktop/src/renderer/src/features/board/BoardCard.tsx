@@ -43,7 +43,18 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
   );
 
   const cardPreviews = useMemo(() => previews.filter((p) => p.taskId === card.id), [previews, card.id]);
-  const previewUrl = cardPreviews.find((p) => typeof p.url === "string" && p.url.length > 0)?.url ?? null;
+  const previewUrl = useMemo(() => {
+    for (const preview of cardPreviews) {
+      if (typeof preview.url !== "string" || preview.url.length === 0) continue;
+      try {
+        const url = new URL(preview.url);
+        if (url.protocol === "https:") return url.toString();
+      } catch (err: unknown) {
+        console.warn("[board] Ignoring invalid preview URL:", err instanceof Error ? err.message : String(err));
+      }
+    }
+    return null;
+  }, [cardPreviews]);
   const previewColor =
     cardPreviews.length === 0
       ? null
@@ -63,7 +74,7 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
 
   const startAgent = (agent: "claude" | "codex") => {
     if (!api) return;
-    void startTaskSession(api, {
+    startTaskSession(api, {
       projectSlug: card.projectSlug,
       taskId: card.id,
       worktreeId: card.linkedWorktreeId,
@@ -71,7 +82,14 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
       description: card.description,
       kind: "agent",
       agent,
-    });
+    }).then(
+      (ok) => {
+        if (!ok) console.warn(`[board] Failed to start ${agent} session for task ${card.id}`);
+      },
+      (err: unknown) => {
+        console.warn("[board] Start agent failed:", err instanceof Error ? err.message : String(err));
+      },
+    );
   };
 
   const menuItems: MenuItem[] = [

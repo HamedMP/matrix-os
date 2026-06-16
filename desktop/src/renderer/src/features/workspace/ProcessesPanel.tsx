@@ -91,6 +91,7 @@ export default function ProcessesPanel() {
     return () => {
       cancelled = true;
       mounted.current = false;
+      inFlight.current = false;
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

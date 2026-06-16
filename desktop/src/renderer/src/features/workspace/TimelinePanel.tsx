@@ -94,6 +94,7 @@ export default function TimelinePanel({ taskId }: { taskId: string }) {
     const timer = setInterval(() => void tick(), POLL_MS);
     return () => {
       cancelled = true;
+      inFlight.current = false;
       clearInterval(timer);
     };
   }, [api, taskId]);
