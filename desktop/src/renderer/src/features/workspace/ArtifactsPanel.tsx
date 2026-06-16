@@ -34,7 +34,9 @@ export default function ArtifactsPanel({
   }, [api, loadPreviews, projectSlug, taskId]);
 
   const scopeMatches = previewScope?.projectSlug === projectSlug && previewScope.taskId === taskId;
-  const scopedPreviews = scopeMatches ? allPreviews.filter((p) => p.taskId === taskId) : [];
+  const scopedPreviews = allPreviews.filter(
+    (preview) => preview.projectSlug === projectSlug && preview.taskId === taskId,
+  );
   const openPreview = (url: string | undefined) => {
     if (canOpenPreviewUrl(url)) void invoke("shell:open-external", { url });
   };
@@ -43,7 +45,7 @@ export default function ArtifactsPanel({
     return (
       <EmptyState
         icon={<Globe size={22} />}
-        headline="Couldn't load artifacts"
+        headline="Couldn't load previews"
         description={categoryMessage(previewError)}
       />
     );
