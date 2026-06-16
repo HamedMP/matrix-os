@@ -200,7 +200,10 @@ also publishes a manifest:
 The VPS update agent compares the installed manifest with the target manifest and
 downloads only changed content-addressed objects. It stages changes under
 `/opt/matrix/releases/<version>.staging`, verifies hashes, then atomically flips the
-`/opt/matrix/app` symlink after all checks pass.
+`/opt/matrix/app` symlink after all checks pass. Activation also writes
+`/opt/matrix/release.json` with the target version, manifest digest, activated path,
+rollback version, and timestamp via tmp-then-rename in the same critical section as the
+symlink flip, so local verification and rollback never read a stale installed version.
 
 Protected owner data remains outside the update set. Incremental updates may replace
 `/opt/matrix/app` only. They must never write owner data under `$MATRIX_HOME`.
@@ -326,7 +329,8 @@ Minimum smoke checks:
   `data-matrix-boot-sequence="true"`; checkout return routes do not call journey boot.
 - `platform`: `/health`, billing webhook route config, `/api/journey` with test auth,
   release metadata read.
-- `runtime`: gateway health, shell health, sync-agent release version, app-domain route
+- `runtime`: `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json` target
+  version, gateway health, shell health, sync-agent release version, app-domain route
   through platform to target VPS, websocket auth path.
 - `www`: docs route, homepage route, canonical headers.
 - `cli`: install, login/device auth smoke, version command, package dist-tag.
@@ -340,7 +344,8 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 3. Verifies every object hash and manifest signature/digest.
 4. Stages app files under `/opt/matrix/releases/<version>.staging`.
 5. Runs preflight checks.
-6. Atomically activates the release.
+6. Atomically writes `/opt/matrix/release.json` via tmp-then-rename and activates the
+   release by flipping `/opt/matrix/app` to the staged app tree in one critical section.
 7. Restarts affected services.
 8. Reports installed version and health back to platform.
 
@@ -382,8 +387,8 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
   and beta channels.
 - Test checkpoint: `bun run test`, an updater integration test that stages a synthetic
   manifest, rejects path traversal/missing hashes, flips the app symlink atomically,
-  reports health to a test platform endpoint, and manually verifies rollback on a
-  disposable VPS.
+  atomically updates `/opt/matrix/release.json`, reports health to a test platform
+  endpoint, and manually verifies rollback on a disposable VPS.
 
 ### Phase 4: Delivery dashboard and SLOs
 
