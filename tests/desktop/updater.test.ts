@@ -6,7 +6,7 @@ const electronMock = vi.hoisted(() => ({
 }));
 
 const updaterMock = vi.hoisted(() => {
-  type UpdateHandler = (info: { version: string }) => void;
+  type UpdateHandler = (info: { version: string } | Error) => void;
   const handlers = new Map<string, UpdateHandler>();
   const autoUpdater = {
     autoDownload: false,
@@ -52,6 +52,7 @@ describe("createUpdater", () => {
     expect(updaterMock.autoUpdater.removeAllListeners).toHaveBeenCalledWith("update-available");
     expect(updaterMock.autoUpdater.removeAllListeners).toHaveBeenCalledWith("update-downloaded");
     expect(updaterMock.autoUpdater.removeAllListeners).toHaveBeenCalledWith("update-not-available");
+    expect(updaterMock.autoUpdater.removeAllListeners).toHaveBeenCalledWith("error");
 
     updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
     expect(onAvailable).toHaveBeenCalledOnce();
@@ -113,6 +114,25 @@ describe("createUpdater", () => {
 
     expect(updater.status()).toBe("error");
     expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("recovers from asynchronous download errors so later checks can retry", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+    updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
+    expect(updater.status()).toBe("downloading");
+
+    updaterMock.handlers.get("error")?.(new Error("download failed"));
+    expect(updater.status()).toBe("error");
+
+    updaterMock.autoUpdater.checkForUpdates.mockClear();
+    await updater.check();
+
+    expect(updaterMock.autoUpdater.checkForUpdates).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith("[updates] download failed:", "download failed");
     warn.mockRestore();
   });
 

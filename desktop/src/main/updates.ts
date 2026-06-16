@@ -21,6 +21,7 @@ const UPDATER_EVENT_NAMES = [
   "update-available",
   "update-downloaded",
   "update-not-available",
+  "error",
 ] as const;
 
 export interface Updater {
@@ -73,6 +74,13 @@ export function createUpdater(events: UpdateEvents): Updater {
         });
         autoUpdater.once("update-not-available", () => {
           status = "up-to-date";
+        });
+        autoUpdater.once("error", (err) => {
+          console.warn(
+            "[updates] download failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+          status = "error";
         });
         await autoUpdater.checkForUpdates();
       } catch (err: unknown) {
