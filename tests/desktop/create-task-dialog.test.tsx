@@ -122,9 +122,13 @@ describe("CreateTaskDialog", () => {
       expect(createTask).toHaveBeenCalledOnce();
     });
 
-    const backdrop = screen.getByRole("dialog").parentElement;
+    const backdrop =
+      document.querySelector<HTMLElement>('div[data-state="open"].fixed.inset-0') ??
+      screen.getByRole("dialog").parentElement;
     expect(backdrop).not.toBeNull();
+    fireEvent.pointerDown(backdrop!);
     fireEvent.mouseDown(backdrop!);
+    fireEvent.click(backdrop!);
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).toBeNull();
     });
