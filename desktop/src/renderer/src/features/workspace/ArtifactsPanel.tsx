@@ -14,13 +14,17 @@ export default function ArtifactsPanel({
 }) {
   const api = useConnection((s) => s.api);
   const previews = useGit((s) => s.previews);
+  const previewScope = useGit((s) => s.previewScope);
   const loadPreviews = useGit((s) => s.loadPreviews);
 
   useEffect(() => {
     if (api) void loadPreviews(api, projectSlug, taskId);
   }, [api, loadPreviews, projectSlug, taskId]);
 
-  if (previews.length === 0) {
+  const scopedPreviews =
+    previewScope?.projectSlug === projectSlug && previewScope.taskId === taskId ? previews : [];
+
+  if (scopedPreviews.length === 0) {
     return (
       <EmptyState
         icon={<Package size={22} />}
@@ -42,7 +46,7 @@ export default function ArtifactsPanel({
           <RefreshCw size={12} />
         </IconButton>
       </div>
-      {previews.slice(0, 50).map((preview) => (
+      {scopedPreviews.slice(0, 50).map((preview) => (
         <button
           key={preview.id}
           type="button"

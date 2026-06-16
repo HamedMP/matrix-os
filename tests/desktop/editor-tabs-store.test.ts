@@ -6,6 +6,21 @@ beforeEach(() => {
 });
 
 describe("useEditorTabs", () => {
+  it("drops dirty flags for paths evicted by the tab cap", () => {
+    const store = useEditorTabs.getState();
+    for (let i = 0; i < 16; i += 1) {
+      store.openTab("task_a", `src/${i}.ts`);
+    }
+    store.setDirty("task_a", "src/0.ts", true);
+    store.setDirty("task_a", "src/15.ts", true);
+
+    store.openTab("task_a", "src/16.ts");
+
+    const state = useEditorTabs.getState();
+    expect(state.tabsByTask.task_a).not.toContain("src/0.ts");
+    expect(state.dirtyPathsByTask.task_a).toEqual(["src/15.ts"]);
+  });
+
   it("clears dirty paths owned by a closed task", () => {
     const store = useEditorTabs.getState();
     store.openTab("task_a", "src/a.ts");

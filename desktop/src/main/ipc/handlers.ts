@@ -86,6 +86,18 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     }
     return { ok: true };
   });
+  handle("state:set-panel-layout", async ({ taskKey, layout }) => {
+    try {
+      await ctx.store.setPanelLayout(taskKey, layout);
+    } catch (err: unknown) {
+      console.warn(
+        "[ipc] state:set-panel-layout rejected:",
+        err instanceof Error ? err.message : String(err),
+      );
+      throw new Error("invalid request");
+    }
+    return { ok: true };
+  });
 
   handle("shell:open-external", async ({ url }) => {
     await ctx.openExternal(url);

@@ -56,6 +56,10 @@ export type Branch = z.infer<typeof BranchSchema>;
 export type PullRequest = z.infer<typeof PrSchema>;
 export type Worktree = z.infer<typeof WorktreeSchema>;
 export type Preview = z.infer<typeof PreviewSchema>;
+interface PreviewScope {
+  projectSlug: string;
+  taskId: string | null;
+}
 
 // Higher = worse; loadAll surfaces the worst category across failing surfaces.
 const SEVERITY: Record<AppErrorCategory, number> = {
@@ -92,6 +96,7 @@ interface GitState {
   prs: PullRequest[];
   worktrees: Worktree[];
   previews: Preview[];
+  previewScope: PreviewScope | null;
   refreshedAt: string | null;
   loading: boolean;
   error: AppErrorCategory | null;
@@ -105,6 +110,7 @@ export const useGit = create<GitState>()((set, get) => ({
   prs: [],
   worktrees: [],
   previews: [],
+  previewScope: null,
   refreshedAt: null,
   loading: false,
   error: null,
@@ -158,12 +164,30 @@ export const useGit = create<GitState>()((set, get) => ({
   },
 
   loadPreviews: async (api, slug, taskId) => {
+    const scope: PreviewScope = { projectSlug: slug, taskId: taskId ?? null };
     const query = taskId ? `?limit=100&taskId=${encodeURIComponent(taskId)}` : "?limit=100";
+    set({ previews: [], previewScope: scope });
     try {
       const res = await api.get<{ previews?: unknown }>(`/api/projects/${slug}/previews${query}`);
-      set({ previews: parseRows(PreviewSchema, res.previews), error: null });
+      set((state) => {
+        if (
+          state.previewScope?.projectSlug !== scope.projectSlug ||
+          state.previewScope.taskId !== scope.taskId
+        ) {
+          return {};
+        }
+        return { previews: parseRows(PreviewSchema, res.previews), error: null };
+      });
     } catch (err: unknown) {
-      set({ error: categoryOf(err) });
+      set((state) => {
+        if (
+          state.previewScope?.projectSlug !== scope.projectSlug ||
+          state.previewScope.taskId !== scope.taskId
+        ) {
+          return {};
+        }
+        return { error: categoryOf(err) };
+      });
     }
   },
 

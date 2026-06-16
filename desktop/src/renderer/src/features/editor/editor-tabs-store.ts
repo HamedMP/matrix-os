@@ -22,12 +22,17 @@ export const useEditorTabs = create<EditorTabsState>()((set) => ({
   openTab: (taskId, path) =>
     set((state) => {
       const existing = state.tabsByTask[taskId] ?? [];
-      const tabs = existing.includes(path)
-        ? existing
-        : [...existing, path].slice(-MAX_TABS_PER_TASK);
+      const nextTabs = existing.includes(path) ? existing : [...existing, path];
+      const tabs = nextTabs.slice(-MAX_TABS_PER_TASK);
+      const evicted = new Set(nextTabs.slice(0, Math.max(0, nextTabs.length - MAX_TABS_PER_TASK)));
+      const dirtyPaths = state.dirtyPathsByTask[taskId] ?? [];
       return {
         tabsByTask: { ...state.tabsByTask, [taskId]: tabs },
         activePathByTask: { ...state.activePathByTask, [taskId]: path },
+        dirtyPathsByTask: {
+          ...state.dirtyPathsByTask,
+          [taskId]: dirtyPaths.filter((dirtyPath) => !evicted.has(dirtyPath)),
+        },
       };
     }),
 

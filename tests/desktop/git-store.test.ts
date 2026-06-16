@@ -213,6 +213,7 @@ describe("loadPreviews", () => {
     await useGit.getState().loadPreviews(api, "proj");
 
     expect(get).toHaveBeenCalledWith("/api/projects/proj/previews?limit=100");
+    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: null });
     expect(useGit.getState().previews).toEqual([
       {
         id: "prev_1",
@@ -238,7 +239,7 @@ describe("loadPreviews", () => {
     expect(get).toHaveBeenCalledWith("/api/projects/proj/previews?limit=100&taskId=task_a");
   });
 
-  it("keeps existing previews and sets the error category on failure", async () => {
+  it("clears stale previews and sets the error category on failure", async () => {
     const existing = {
       id: "prev_keep",
       projectSlug: "proj",
@@ -253,8 +254,28 @@ describe("loadPreviews", () => {
 
     await useGit.getState().loadPreviews(api, "proj");
 
-    expect(useGit.getState().previews).toEqual([existing]);
+    expect(useGit.getState().previews).toEqual([]);
     expect(useGit.getState().error).toBe("timeout");
+  });
+
+  it("ignores stale preview responses from a previous task scope", async () => {
+    const first = deferred<{ previews: unknown[] }>();
+    const second = deferred<{ previews: unknown[] }>();
+    const get = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const api = makeApi({ get: get as never });
+
+    const firstLoad = useGit.getState().loadPreviews(api, "proj", "task_a");
+    const secondLoad = useGit.getState().loadPreviews(api, "proj", "task_b");
+    second.resolve({ previews: [wirePreview({ id: "prev_b", taskId: "task_b" })] });
+    await secondLoad;
+    first.resolve({ previews: [wirePreview({ id: "prev_a", taskId: "task_a" })] });
+    await firstLoad;
+
+    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: "task_b" });
+    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_b"]);
   });
 });
 

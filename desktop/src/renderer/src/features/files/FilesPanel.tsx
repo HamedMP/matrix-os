@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, File, Folder, RefreshCw } from "lucide-react
 import { useCallback, useEffect, useState } from "react";
 import { IconButton } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
+import { useWorkspace } from "../../stores/workspace";
 import { useEditorTabs } from "../editor/editor-tabs-store";
 
 interface Entry {
@@ -121,6 +122,10 @@ export default function FilesPanel({ taskId }: { taskId: string }) {
   const onOpenFile = useCallback(
     (path: string) => {
       openTab(taskId, path);
+      const workspace = useWorkspace.getState();
+      if (!workspace.layoutFor(taskId).visible.editor) {
+        workspace.togglePanel(taskId, "editor");
+      }
     },
     [openTab, taskId],
   );

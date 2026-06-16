@@ -36,12 +36,7 @@ export default function MissionControl() {
         return (result.value as Record<string, never> | null) ?? null;
       },
       saveLayout: async (taskKey, layout) => {
-        const current = await invoke("state:get", { key: "panelLayouts" });
-        const layouts = (current.value as Record<string, unknown> | null) ?? {};
-        await invoke("state:set", {
-          key: "panelLayouts",
-          value: { ...layouts, [taskKey]: layout },
-        });
+        await invoke("state:set-panel-layout", { taskKey, layout });
       },
     });
     void hydrate();

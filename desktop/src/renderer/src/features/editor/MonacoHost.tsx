@@ -14,6 +14,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [conflict, setConflict] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const doSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
@@ -40,9 +41,10 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
         fileRef.current = file;
         const model = getOrCreateModel(path, file.content);
         editor.setModel(model);
-        model.onDidChangeContent(() => {
+        const contentSubscription = model.onDidChangeContent(() => {
           setDirty(taskId, path, model.getValue() !== fileRef.current?.content);
         });
+        editor.onDidDispose(() => contentSubscription.dispose());
       })
       .catch((err: unknown) => {
         if (!disposed) setLoadError(toUserMessage(err));
@@ -78,12 +80,14 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
         fileRef.current = { ...file, content, loadedMtime: result.newMtime };
         setDirty(taskId, path, false);
         setConflict(false);
+        setSaveError(null);
       } else {
         setConflict(true);
+        setSaveError(null);
       }
     } catch (err: unknown) {
       console.warn("[editor] save failed:", err instanceof Error ? err.message : String(err));
-      setLoadError(toUserMessage(err));
+      setSaveError(toUserMessage(err));
     } finally {
       setSaving(false);
     }
@@ -100,9 +104,10 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       fileRef.current = { path, content, loadedMtime: newMtime };
       setDirty(taskId, path, false);
       setConflict(false);
+      setSaveError(null);
     } catch (err: unknown) {
       console.warn("[editor] overwrite failed:", err instanceof Error ? err.message : String(err));
-      setLoadError(toUserMessage(err));
+      setSaveError(toUserMessage(err));
     }
   }
 
@@ -114,6 +119,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       editorRef.current.getModel()?.setValue(file.content);
       setDirty(taskId, path, false);
       setConflict(false);
+      setSaveError(null);
     } catch (err: unknown) {
       setLoadError(toUserMessage(err));
     }
@@ -132,6 +138,14 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={hostRef} className="min-h-0 flex-1" data-selectable />
+      {saveError ? (
+        <div
+          className="border-t px-3 py-2 text-xs"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}
+        >
+          {saveError}
+        </div>
+      ) : null}
       {conflict ? <ConflictBar onOverwrite={() => void overwrite()} onReload={() => void reload()} /> : null}
     </div>
   );
