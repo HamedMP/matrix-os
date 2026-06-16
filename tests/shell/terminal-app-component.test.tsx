@@ -632,6 +632,8 @@ describe("TerminalApp", () => {
     const idle = screen.getByTestId("terminal-session-status-idle");
     const waiting = screen.getByTestId("terminal-session-status-waiting");
 
+    expect(screen.getByText("3 attached")).toBeTruthy();
+    expect(screen.getByText("1 detached")).toBeTruthy();
     expect(running.style.background).toBe("rgb(95, 184, 95)");
     expect(running.style.boxShadow).toContain("rgba(95,184,95,0.24)");
     expect(running.classList.contains("terminal-session-status-dot--running")).toBe(true);

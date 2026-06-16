@@ -3385,7 +3385,7 @@ function LocalTerminalSidebar() {
         {!shellsLoading && activeShells.length > 0 && (
           <ShellSessionGroup
             label="Active"
-            meta={`${activeShells.length} running`}
+            meta={`${activeShells.length} attached`}
             shells={activeShells}
             deletingShellNames={deletingShellNames}
             foreground
@@ -3398,7 +3398,7 @@ function LocalTerminalSidebar() {
         {!shellsLoading && renderedShells.length > 0 && (
           <ShellSessionGroup
             label="Background"
-            meta={`${backgroundShells.length} paused`}
+            meta={`${backgroundShells.length} detached`}
             shells={backgroundShells}
             deletingShellNames={deletingShellNames}
             foreground={false}
