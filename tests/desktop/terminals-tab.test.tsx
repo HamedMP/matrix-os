@@ -23,7 +23,6 @@ describe("TerminalsTab", () => {
     });
     useSessions.setState({
       sessions: [],
-      creating: false,
       error: null,
       load: vi.fn().mockResolvedValue(undefined),
     });
