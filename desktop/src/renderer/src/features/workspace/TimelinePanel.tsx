@@ -59,6 +59,7 @@ export default function TimelinePanel({ taskId }: { taskId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const inFlight = useRef(false);
+  const requestSeq = useRef(0);
 
   useEffect(() => {
     if (!api) return;
@@ -66,6 +67,7 @@ export default function TimelinePanel({ taskId }: { taskId: string }) {
     const tick = async () => {
       if (inFlight.current) return;
       inFlight.current = true;
+      const requestId = ++requestSeq.current;
       try {
         const res = await api.get<{ events?: unknown[] }>(
           `/api/workspace/events?taskId=${encodeURIComponent(taskId)}&limit=50`,
@@ -87,13 +89,14 @@ export default function TimelinePanel({ taskId }: { taskId: string }) {
           setEvents((prev) => prev ?? []);
         }
       } finally {
-        inFlight.current = false;
+        if (requestSeq.current === requestId) inFlight.current = false;
       }
     };
     void tick();
     const timer = setInterval(() => void tick(), POLL_MS);
     return () => {
       cancelled = true;
+      requestSeq.current += 1;
       inFlight.current = false;
       clearInterval(timer);
     };

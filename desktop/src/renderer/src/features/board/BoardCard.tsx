@@ -1,5 +1,5 @@
 import { GitBranch, Globe, SquareTerminal } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ContextMenu, StatusDot, type MenuItem } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
 import { startTaskSession } from "../../lib/task-sessions";
@@ -30,6 +30,7 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
   const aliasMap = useSessions((s) => s.aliasMap);
   const worktrees = useGit((s) => s.worktrees);
   const previews = useGit((s) => s.previews);
+  const [startError, setStartError] = useState<string | null>(null);
 
   const sessionLive = useMemo(() => {
     if (!card.linkedSessionId) return false;
@@ -72,30 +73,33 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
     worktree !== null ||
     cardPreviews.length > 0;
 
-  const startAgent = (agent: "claude" | "codex") => {
+  const startAgent = async (agent: "claude" | "codex") => {
     if (!api) return;
-    startTaskSession(api, {
-      projectSlug: card.projectSlug,
-      taskId: card.id,
-      worktreeId: card.linkedWorktreeId,
-      title: card.title,
-      description: card.description,
-      kind: "agent",
-      agent,
-    }).then(
-      (ok) => {
-        if (!ok) console.warn(`[board] Failed to start ${agent} session for task ${card.id}`);
-      },
-      (err: unknown) => {
-        console.warn("[board] Start agent failed:", err instanceof Error ? err.message : String(err));
-      },
-    );
+    setStartError(null);
+    try {
+      const ok = await startTaskSession(api, {
+        projectSlug: card.projectSlug,
+        taskId: card.id,
+        worktreeId: card.linkedWorktreeId,
+        title: card.title,
+        description: card.description,
+        kind: "agent",
+        agent,
+      });
+      if (!ok) {
+        setStartError(`Couldn't start ${agent}.`);
+        console.warn(`[board] Failed to start ${agent} session for task ${card.id}`);
+      }
+    } catch (err: unknown) {
+      setStartError(`Couldn't start ${agent}.`);
+      console.warn("[board] Start agent failed:", err instanceof Error ? err.message : String(err));
+    }
   };
 
   const menuItems: MenuItem[] = [
     { label: "Open", onSelect: openCard },
-    { label: "Start Claude", onSelect: () => startAgent("claude") },
-    { label: "Start Codex", onSelect: () => startAgent("codex") },
+    { label: "Start Claude", onSelect: () => void startAgent("claude") },
+    { label: "Start Codex", onSelect: () => void startAgent("codex") },
     ...(previewUrl
       ? [{ label: "Open preview", onSelect: () => void invoke("shell:open-external", { url: previewUrl }) }]
       : []),
@@ -175,6 +179,11 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
             </span>
           ) : null}
         </div>
+      ) : null}
+      {startError ? (
+        <span className="text-xs" style={{ color: "var(--danger)" }}>
+          {startError}
+        </span>
       ) : null}
     </div>
   );

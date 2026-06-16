@@ -77,10 +77,53 @@ describe("useSessions.create", () => {
     expect(useSessions.getState().error).toBe("offline");
   });
 
+  it("uses the create response attach name when the reload has not indexed the alias yet", async () => {
+    const post = vi.fn().mockResolvedValue({
+      session: { id: "sess_new", runtime: { zellijSession: "matrix-task-new" } },
+    });
+    const get = vi.fn(async (path: string) => {
+      if (path === "/api/terminal/sessions") return { sessions: [] };
+      return { sessions: [], nextCursor: null };
+    });
+    const api = makeApi({ post, get });
+
+    const created = await useSessions.getState().create(api, { kind: "shell", taskId: "task_a" });
+
+    expect(created).toEqual({ sessionId: "sess_new", attachName: "matrix-task-new" });
+  });
+
   it("surfaces an error category and clears the creating flag on failure", async () => {
     const api = makeApi({ post: vi.fn().mockRejectedValue(new AppError("offline")) });
     const created = await useSessions.getState().create(api, { kind: "shell", taskId: "task_a" });
     expect(created).toBeNull();
+    expect(useSessions.getState().creating).toBe(false);
+    expect(useSessions.getState().error).toBe("offline");
+  });
+});
+
+describe("useSessions.restart", () => {
+  it("deletes a restarted workspace session when the refresh fails", async () => {
+    useSessions.setState({
+      sessions: [
+        {
+          name: "task shell",
+          attachName: "matrix-task-old",
+          status: "active",
+          source: "workspace",
+          kind: "shell",
+        },
+      ],
+    });
+    const post = vi.fn().mockResolvedValue({ session: { id: "sess_restart" } });
+    const get = vi.fn().mockRejectedValue(new AppError("offline"));
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const api = makeApi({ post, get, delete: del });
+
+    const restarted = await useSessions.getState().restart(api, "matrix-task-old");
+
+    expect(restarted).toBeNull();
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-task-old?force=1");
+    expect(del).toHaveBeenCalledWith("/api/sessions/sess_restart");
     expect(useSessions.getState().creating).toBe(false);
     expect(useSessions.getState().error).toBe("offline");
   });
@@ -138,5 +181,33 @@ describe("useSessions.restart", () => {
 
     expect(restarted?.attachName).toBe("matrix-task-1");
     expect(post).toHaveBeenCalledWith("/api/terminal/sessions", { name: "matrix-task-1" });
+  });
+
+  it("restarts workspace agent sessions through the session orchestrator", async () => {
+    useSessions.setState({
+      sessions: [
+        {
+          name: "Review",
+          attachName: "matrix-agent-1",
+          status: "exited",
+          source: "workspace",
+          kind: "agent",
+          agent: "codex",
+        },
+      ],
+      aliasMap: { sess_old: "matrix-agent-1" },
+    });
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const post = vi.fn().mockResolvedValue({
+      session: { id: "sess_next", runtime: { zellijSession: "matrix-agent-2" } },
+    });
+    const get = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const api = makeApi({ delete: del, post, get });
+
+    const restarted = await useSessions.getState().restart(api, "matrix-agent-1");
+
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-agent-1?force=1");
+    expect(post).toHaveBeenCalledWith("/api/sessions", { kind: "agent", agent: "codex" });
+    expect(restarted).toEqual({ sessionId: "sess_next", attachName: "matrix-agent-2" });
   });
 });

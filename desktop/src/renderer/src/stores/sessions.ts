@@ -21,6 +21,12 @@ export interface SessionCreateInput {
   prompt?: string;
 }
 
+const SUPPORTED_AGENTS = new Set(["claude", "codex", "opencode", "pi"]);
+
+function sessionAgent(agent: string | undefined): SessionCreateInput["agent"] | undefined {
+  return SUPPORTED_AGENTS.has(agent ?? "") ? (agent as SessionCreateInput["agent"]) : undefined;
+}
+
 export interface CreatedSession {
   sessionId: string;
   attachName: string | null;
@@ -111,8 +117,14 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         return { sessionId: attachName, attachName };
       }
 
-      const res = await api.post<{ session?: { id?: unknown } }>("/api/sessions", input);
+      const res = await api.post<{
+        session?: { id?: unknown; runtime?: { zellijSession?: unknown } | null };
+      }>("/api/sessions", input);
       const sessionId = typeof res.session?.id === "string" ? res.session.id : null;
+      const directAttachName =
+        typeof res.session?.runtime?.zellijSession === "string"
+          ? res.session.runtime.zellijSession
+          : null;
       // Reload so the merged aliasMap resolves the new session's zellij name
       // (the attach target). load() clears `loading`; restore `creating`.
       await get().load(api);
@@ -132,7 +144,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         return null;
       }
       set({ creating: false, error: null });
-      return { sessionId, attachName: get().aliasMap[sessionId] ?? null };
+      return { sessionId, attachName: get().aliasMap[sessionId] ?? directAttachName };
     } catch (err: unknown) {
       console.error("[sessions] Failed to create session:", err);
       set({ creating: false, error: err instanceof AppError ? err.category : "server" });
@@ -155,10 +167,42 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   restart: async (api, attachName) => {
     set({ creating: true });
     try {
+      const existing = get().sessions.find((session) => session.attachName === attachName) ?? null;
       try {
         await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
       } catch (err: unknown) {
         if (!(err instanceof AppError && err.category === "notFound")) throw err;
+      }
+      if (existing?.source === "workspace" && existing.kind) {
+        const input: SessionCreateInput = { kind: existing.kind };
+        const agent = existing.kind === "agent" ? sessionAgent(existing.agent) : undefined;
+        if (agent) input.agent = agent;
+        const res = await api.post<{
+          session?: { id?: unknown; runtime?: { zellijSession?: unknown } | null };
+        }>("/api/sessions", input);
+        const sessionId = typeof res.session?.id === "string" ? res.session.id : null;
+        const directAttachName =
+          typeof res.session?.runtime?.zellijSession === "string"
+            ? res.session.runtime.zellijSession
+            : null;
+        await get().load(api);
+        const refreshError = get().error;
+        if (!sessionId) {
+          set({ creating: false, error: refreshError });
+          return null;
+        }
+        if (refreshError) {
+          await api.delete(`/api/sessions/${encodeURIComponent(sessionId)}`).catch((err: unknown) => {
+            console.warn(
+              "[sessions] Failed to clean up restarted session after refresh failure:",
+              err instanceof Error ? err.message : String(err),
+            );
+          });
+          set({ creating: false, error: refreshError });
+          return null;
+        }
+        set({ creating: false, error: null });
+        return { sessionId, attachName: get().aliasMap[sessionId] ?? directAttachName };
       }
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name: attachName });
       const restarted = typeof response.name === "string" && response.name.trim() ? response.name.trim() : attachName;
