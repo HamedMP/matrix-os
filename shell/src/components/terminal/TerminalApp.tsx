@@ -192,17 +192,6 @@ const SIDEBAR_RAIL_BUTTON_BASE_STYLE: CSSProperties = {
   fontWeight: 700,
 };
 
-const SHELL_CARD_DELETE_BUTTON_STYLE: CSSProperties = {
-  background: "#F0EFE5",
-  border: "1px solid #DCDAC9",
-  borderRadius: 7,
-  color: "#77786E",
-  flexShrink: 0,
-  fontSize: 16,
-  height: 28,
-  width: 28,
-};
-
 const SHELL_CARD_NAME_BUTTON_STYLE: CSSProperties = {
   color: "var(--foreground)",
   fontSize: 13,
@@ -4099,6 +4088,11 @@ function ShellCard({
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [finishRename, renaming]);
 
+  const handleCardClick = () => {
+    if (renaming || renameSaving || deleting) return;
+    onOpen();
+  };
+
   return (
     <div
       ref={cardRef}
@@ -4116,14 +4110,34 @@ function ShellCard({
         border: `1px solid ${foreground ? "#D6D5C4" : "#D4D2C1"}`,
         borderRadius: 10,
         boxShadow: foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
+        cursor: renaming || deleting ? "default" : "pointer",
         display: "flex",
         flexDirection: "column",
         gap: showActions ? 8 : 0,
         opacity: foreground ? 1 : 0.86,
         padding: foreground ? "10px 12px" : "14px 12px",
+        position: "relative",
       }}
     >
-      <div className="flex items-center" style={{ gap: 10, minHeight: 24 }}>
+      {!renaming && !deleting && (
+        <button
+          type="button"
+          data-testid={`terminal-session-row-${shell.name}`}
+          aria-label={`Show ${displayName} session`}
+          onClick={handleCardClick}
+          style={{
+            background: "transparent",
+            border: 0,
+            borderRadius: 10,
+            cursor: "pointer",
+            inset: 0,
+            padding: 0,
+            position: "absolute",
+            zIndex: 0,
+          }}
+        />
+      )}
+      <div className="flex items-center" style={{ gap: 10, minHeight: 24, pointerEvents: "none", position: "relative", zIndex: 1 }}>
         <span
           className={getShellStatusDotClassName(shell)}
           data-testid={`terminal-session-status-${shell.name}`}
@@ -4171,6 +4185,7 @@ function ShellCard({
                 minWidth: 0,
                 outline: "none",
                 padding: "0 6px",
+                pointerEvents: "auto",
               }}
             />
           ) : (
@@ -4178,7 +4193,10 @@ function ShellCard({
               type="button"
               aria-label={`Open ${displayName}`}
               className="min-w-0 truncate"
-              onClick={onOpen}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpen();
+              }}
               style={{
                 background: "transparent",
                 border: 0,
@@ -4191,6 +4209,7 @@ function ShellCard({
                 lineHeight: "18px",
                 minWidth: 0,
                 padding: 0,
+                pointerEvents: "auto",
                 textAlign: "left",
               }}
             >
@@ -4220,6 +4239,7 @@ function ShellCard({
                 flexShrink: 0,
                 height: 22,
                 opacity: showRenameControl ? 1 : 0,
+                pointerEvents: "auto",
                 transition: "opacity 120ms ease",
                 width: 22,
               }}
@@ -4231,7 +4251,12 @@ function ShellCard({
         <button
           type="button"
           aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
-          onClick={onToggle}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
           style={{
             alignItems: "center",
             background: foreground ? "#DDEDD6" : "#D8D7C7",
@@ -4244,6 +4269,7 @@ function ShellCard({
             height: 18,
             justifyContent: foreground ? "flex-start" : "flex-end",
             padding: 2,
+            pointerEvents: "auto",
             width: foreground ? 40 : 38,
           }}
         >
@@ -4257,7 +4283,7 @@ function ShellCard({
       {foreground && (
         <div
           data-testid={`terminal-session-actions-${shell.name}`}
-          className="flex items-center"
+          className="pointer-events-none relative z-[1] flex items-center"
           style={{
             gap: 25,
             maxHeight: showActions ? 28 : 0,
@@ -4271,8 +4297,13 @@ function ShellCard({
             type="button"
             aria-label={`Copy connect command for ${displayName}`}
             title={copied ? "Command copied" : shellAttachCommand(shell)}
-            onClick={() => void copyAttachCommand()}
-            className="min-w-0"
+            onClick={(event) => {
+              event.stopPropagation();
+              void copyAttachCommand();
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            className="pointer-events-auto min-w-0"
             style={{
               alignItems: "center",
               background: "#EFEEE2",
@@ -4303,21 +4334,21 @@ function ShellCard({
           <button
             type="button"
             aria-label={`${deleting ? "Deleting" : "Close"} ${displayName}`}
-            onClick={onDelete}
-            disabled={deleting}
-            className="flex items-center justify-center"
-            style={{
-              ...SHELL_CARD_DELETE_BUTTON_STYLE,
-              cursor: deleting ? "not-allowed" : "pointer",
-              opacity: deleting ? 0.65 : 1,
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete();
             }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            disabled={deleting}
+            className={`pointer-events-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-[#DCDAC9] bg-[#F0EFE5] text-base text-[#77786E] ${deleting ? "cursor-not-allowed opacity-[0.65]" : "cursor-pointer opacity-100"}`}
           >
             ×
           </button>
         </div>
       )}
       {!foreground && focusedTab ? (
-        <div className="truncate" style={{ color: "#858578", fontSize: 13, lineHeight: "16px", marginTop: 2, paddingLeft: 18 }}>
+        <div className="pointer-events-none relative z-[1] truncate" style={{ color: "#858578", fontSize: 13, lineHeight: "16px", marginTop: 2, paddingLeft: 18 }}>
           {focusedTab.name ? `last tab ${focusedTab.name}` : "keeps process alive"}
         </div>
       ) : null}

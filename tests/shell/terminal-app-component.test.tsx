@@ -607,6 +607,62 @@ describe("TerminalApp", () => {
     expect(uiStateCalls.filter((call) => call.url.includes("/api/terminal/sessions/docs/ui-state"))).toHaveLength(1);
   });
 
+  it("opens a shell session when the drawer row surface is clicked", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", latestSeq: 7, lastSeenSeq: 7, unread: false, visualStatus: "idle", attachCommand: "mos shell attach main", tabs: [] },
+              { name: "docs", status: "active", placement: "background", latestSeq: 11, lastSeenSeq: 5, unread: true, visualStatus: "finished", attachCommand: "mos shell attach docs", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      if (url.includes("/api/terminal/sessions/") && url.endsWith("/ui-state")) {
+        return Promise.resolve({ ok: true, json: async () => ({ session: {} }) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("terminal-session-row-docs"));
+      await Promise.resolve();
+    });
+
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        url: expect.stringContaining("/api/terminal/sessions/docs/ui-state"),
+        init: expect.objectContaining({ method: "PATCH", body: JSON.stringify({ placement: "active", lastSeenSeq: 11 }) }),
+      }),
+    ]));
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string };
+    };
+    expect(props.paneTree).toMatchObject({
+      type: "pane",
+      sessionId: "docs",
+    });
+  });
+
   it("renders Paper status dot colors and pulses only for running sessions", async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
