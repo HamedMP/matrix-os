@@ -1517,10 +1517,10 @@ function ThemePickerPanel({
         onClick={onShellThemeOpen}
         style={{
           alignItems: "center",
-          background: mobile ? "#F2F1E6" : "transparent",
-          border: mobile ? "1px solid #DEDCCF" : 0,
+          background: mobile ? "#F2F1E6" : "#1E241B",
+          border: `1px solid ${mobile ? "#DEDCCF" : "#303729"}`,
           borderRadius: 10,
-          color: mobile ? "#77786C" : "#858578",
+          color: mobile ? "#2F332C" : "#EDEBDD",
           cursor: "pointer",
           display: "flex",
           gap: 12,
@@ -1530,14 +1530,21 @@ function ThemePickerPanel({
           width: "100%",
         }}
       >
-        <span style={themeUtilityIconStyle(mobile)}>
-          <SquareTerminalIcon size={mobile ? 18 : 16} strokeWidth={2} />
+        <span
+          style={{
+            ...themeUtilityIconStyle(mobile),
+            background: mobile ? "#FFFFFF" : "#12170F",
+            borderColor: mobile ? "#DEDDD1" : "#3A4233",
+            color: mobile ? "#77786C" : "#D7D4C2",
+          }}
+        >
+          <SquareTerminalIcon size={mobile ? 18 : 16} strokeWidth={2.1} />
         </span>
         <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
-          <span style={{ color: mobile ? "#5F6258" : "#858578", fontSize: mobile ? 14 : 13, fontWeight: 650, lineHeight: mobile ? "18px" : "16px" }}>
+          <span style={{ color: mobile ? "#2F332C" : "#EDEBDD", fontSize: mobile ? 14 : 13, fontWeight: 700, lineHeight: mobile ? "18px" : "16px" }}>
             Change shell theme
           </span>
-          <span style={{ color: mobile ? "#8E8F82" : "#5F6258", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
+          <span style={{ color: mobile ? "#77786C" : "#AFAE9F", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
             Advanced · terminal colors
           </span>
         </span>
@@ -1545,7 +1552,7 @@ function ThemePickerPanel({
           size={mobile ? 18 : 16}
           strokeWidth={2}
           style={{
-            color: mobile ? "#8E8F82" : "#5F6258",
+            color: mobile ? "#77786C" : "#C9C7B7",
             flexShrink: 0,
           }}
         />

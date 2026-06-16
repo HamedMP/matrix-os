@@ -20,6 +20,7 @@ import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./term
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { applyTerminalAppearance } from "./terminal-appearance";
 import { buildTerminalFontStack } from "./terminal-fonts";
+import { sendTerminalResize } from "./terminal-remote-resize";
 import {
   isCanonicalShellSessionId,
   isLegacyPtySessionId,
@@ -501,6 +502,7 @@ export function TerminalPane({
         }
         try {
           fitAddon.fit();
+          sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
           if (isFocusedRef.current) {
             term.focus();
           }
@@ -699,9 +701,7 @@ export function TerminalPane({
             fromSeq: lastSeqRef.current,
           });
           if (isCanonicalShellSession) {
-            if (allowRemoteResizeRef.current) {
-              ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-            }
+            sendTerminalResize(ws, term, allowRemoteResizeRef.current);
             return;
           }
           if (currentSessionId) {
@@ -714,9 +714,7 @@ export function TerminalPane({
             ws.send(JSON.stringify({ type: "attach", cwd }));
           }
 
-          if (allowRemoteResizeRef.current) {
-            ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
-          }
+          sendTerminalResize(ws, term, allowRemoteResizeRef.current);
 
           const startup = sessionIdRef.current
             ? null
@@ -1026,13 +1024,7 @@ export function TerminalPane({
 
       onResizeDisposableRef.current?.dispose();
       onResizeDisposableRef.current = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-        if (!allowRemoteResizeRef.current) {
-          return;
-        }
-        const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "resize", cols, rows }));
-        }
+        sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current);
       });
 
       // Keyboard shortcuts

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
+import { TERMINAL_MIN_WINDOW_HEIGHT, TERMINAL_MIN_WINDOW_WIDTH } from "@/lib/builtin-apps";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 
@@ -35,6 +36,16 @@ const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
 const MAX_CLOSED_ENTRIES = 50;
 const LAYOUT_FETCH_TIMEOUT_MS = 10_000;
+
+function isTerminalWindowPath(path: string): boolean {
+  return path === "__terminal__" || path.startsWith("__terminal__:");
+}
+
+function getMinimumWindowSize(path: string): { width: number; height: number } {
+  return isTerminalWindowPath(path)
+    ? { width: TERMINAL_MIN_WINDOW_WIDTH, height: TERMINAL_MIN_WINDOW_HEIGHT }
+    : { width: MIN_WIDTH, height: MIN_HEIGHT };
+}
 
 interface ClosedLayout {
   x: number;
@@ -135,8 +146,9 @@ function createWindowRecord(
   const saved = state.closedLayouts.get(path);
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const defaultWidth = Math.round(Math.min(1200, Math.max(MIN_WIDTH, vw * 0.6)));
-  const defaultHeight = Math.round(Math.min(900, Math.max(MIN_HEIGHT, vh * 0.7)));
+  const minSize = getMinimumWindowSize(path);
+  const defaultWidth = Math.round(Math.min(1200, Math.max(minSize.width, vw * 0.6)));
+  const defaultHeight = Math.round(Math.min(900, Math.max(minSize.height, vh * 0.7)));
 
   return {
     id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -144,8 +156,8 @@ function createWindowRecord(
     path,
     x: saved?.x ?? fallbackX,
     y: saved?.y ?? fallbackY,
-    width: saved?.width ?? defaultWidth,
-    height: saved?.height ?? defaultHeight,
+    width: Math.max(saved?.width ?? defaultWidth, minSize.width),
+    height: Math.max(saved?.height ?? defaultHeight, minSize.height),
     minimized: false,
     zIndex: state.nextZ,
   };
@@ -294,15 +306,15 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
     resizeWindow: (id, width, height) => {
       set((state) => ({
-        windows: state.windows.map((w) =>
-          w.id === id
-            ? {
-                ...w,
-                width: Math.max(MIN_WIDTH, width),
-                height: Math.max(MIN_HEIGHT, height),
-              }
-            : w,
-        ),
+        windows: state.windows.map((w) => {
+          if (w.id !== id) return w;
+          const minSize = getMinimumWindowSize(w.path);
+          return {
+            ...w,
+            width: Math.max(minSize.width, width),
+            height: Math.max(minSize.height, height),
+          };
+        }),
       }));
     },
 
@@ -340,17 +352,24 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         for (const s of saved) {
           if (s.state === "closed") {
             newClosed.add(s.path);
-            newLayouts.set(s.path, { x: s.x, y: s.y, width: s.width, height: s.height });
+            const minSize = getMinimumWindowSize(s.path);
+            newLayouts.set(s.path, {
+              x: s.x,
+              y: s.y,
+              width: Math.max(s.width, minSize.width),
+              height: Math.max(s.height, minSize.height),
+            });
             continue;
           }
+          const minSize = getMinimumWindowSize(s.path);
           newWindows.push({
             id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             title: s.title,
             path: s.path,
             x: s.x,
             y: s.y,
-            width: s.width,
-            height: s.height,
+            width: Math.max(s.width, minSize.width),
+            height: Math.max(s.height, minSize.height),
             minimized: s.state === "minimized",
             zIndex: z++,
           });

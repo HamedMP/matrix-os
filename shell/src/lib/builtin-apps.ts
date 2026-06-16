@@ -9,6 +9,8 @@ const BUILT_IN_APP_VALUES = [
 ] as const;
 
 export const DEFAULT_PINNED_APPS = Object.freeze([] as string[]);
+export const TERMINAL_MIN_WINDOW_WIDTH = 1040;
+export const TERMINAL_MIN_WINDOW_HEIGHT = 680;
 
 const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["workspace", "__workspace__"],
@@ -55,5 +57,13 @@ export function normalizeBuiltInLayoutWindow(window: LayoutWindow): LayoutWindow
   const path = normalizeBuiltInAppPath(window.path);
   const basePath = path.split(":")[0];
   const title = BUILT_IN_APP_TITLES.get(basePath) ?? window.title;
-  return path === window.path && title === window.title ? window : { ...window, path, title };
+  const width = basePath === "__terminal__"
+    ? Math.max(window.width, TERMINAL_MIN_WINDOW_WIDTH)
+    : window.width;
+  const height = basePath === "__terminal__"
+    ? Math.max(window.height, TERMINAL_MIN_WINDOW_HEIGHT)
+    : window.height;
+  return path === window.path && title === window.title && width === window.width && height === window.height
+    ? window
+    : { ...window, path, title, width, height };
 }
