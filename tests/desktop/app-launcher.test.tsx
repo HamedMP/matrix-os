@@ -78,4 +78,18 @@ describe("AppLauncher", () => {
       });
     });
   });
+
+  it("does not show a no-match state before the app catalog loads", () => {
+    useApps.setState({
+      apps: [],
+      loaded: false,
+      loading: true,
+      error: null,
+    });
+
+    render(<AppLauncher />);
+
+    expect(screen.getByText("Loading apps")).toBeTruthy();
+    expect(screen.queryByText(/No apps match/i)).toBeNull();
+  });
 });

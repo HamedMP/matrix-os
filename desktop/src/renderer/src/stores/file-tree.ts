@@ -53,7 +53,11 @@ export const useFileTree = create<FileTreeState>()((set, get) => ({
   loadRoots: async (api, force = false) => {
     if (get().roots !== null && !force) return;
     if (get().loadingRoots) return;
-    set({ loadingRoots: true });
+    set(
+      force
+        ? { roots: null, childrenByPath: {}, expanded: {}, loadingPaths: {}, loadingRoots: true }
+        : { loadingRoots: true },
+    );
     try {
       const roots = await listDir(api, "");
       set({ roots, loadingRoots: false });

@@ -108,6 +108,16 @@ export default function AppLauncher() {
     );
   }
 
+  if (!loaded && apps.length === 0) {
+    return (
+      <EmptyState
+        icon={<LayoutGrid size={26} />}
+        headline="Loading apps"
+        description="The app catalog will appear here once your computer responds."
+      />
+    );
+  }
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div className="shrink-0 px-6 pt-6 pb-3">

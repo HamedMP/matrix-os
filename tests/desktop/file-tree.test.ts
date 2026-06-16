@@ -64,6 +64,24 @@ describe("useFileTree", () => {
     expect(useFileTree.getState().roots).toEqual([{ name: "README.md", type: "file" }]);
   });
 
+  it("clears cached children and expansion state on forced root refresh", async () => {
+    const get = vi.fn().mockResolvedValue({ entries: [{ name: "README.md", type: "file" }] });
+    const api = makeApi(get as never);
+    useFileTree.setState({
+      roots: [{ name: "src", type: "directory" }],
+      childrenByPath: { src: [{ name: "stale.ts", type: "file" }] },
+      expanded: { src: true },
+      loadingPaths: { src: true },
+    });
+
+    await useFileTree.getState().loadRoots(api, true);
+
+    expect(useFileTree.getState().roots).toEqual([{ name: "README.md", type: "file" }]);
+    expect(useFileTree.getState().childrenByPath).toEqual({});
+    expect(useFileTree.getState().expanded).toEqual({});
+    expect(useFileTree.getState().loadingPaths).toEqual({});
+  });
+
   it("coalesces concurrent child loads for the same directory", async () => {
     const childLoad = deferred<{ entries: unknown[] }>();
     const get = vi.fn(() => childLoad.promise);
