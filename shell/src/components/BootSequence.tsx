@@ -66,14 +66,14 @@ export function BootSequence({
 
 function BootSequenceInner({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
-  const { state, status, refetch } = useJourney({ enabled: isLoaded && isSignedIn });
+  const { state, status, refreshJourney } = useJourney({ enabled: isLoaded && isSignedIn });
   const [working, setWorking] = useState(false);
   const provisionStarted = useRef(false);
 
   const phase = state?.phase;
 
   // Auto-start provisioning once, when entitled but no machine exists yet.
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- a deliberate one-time side effect (guarded by provisionStarted ref + disposed flag): when the journey reports an entitled user with no machine, kick off provisioning, then refetch. This is an effect, not user-event-driven, because it must fire on the derived journey phase, not a click.
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- a deliberate one-time side effect (guarded by provisionStarted ref + disposed flag): when the journey reports an entitled user with no machine, kick off provisioning, then refreshJourney. This is an effect, not user-event-driven, because it must fire on the derived journey phase, not a click.
   useEffect(() => {
     if (status !== "ready" || phase !== "provisioning") return;
     if (state?.nextAction.kind !== "start_provision" || provisionStarted.current) return;
@@ -95,18 +95,17 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       } catch (err: unknown) {
         if (!disposed) provisionStarted.current = false;
         console.warn("[boot] provision start failed", err instanceof Error ? err.name : typeof err);
-      } finally {
-        if (!disposed) refetch();
       }
+      if (!disposed) refreshJourney();
     })();
     return () => {
       disposed = true;
     };
-  }, [status, phase, state?.nextAction.kind, getToken, refetch]);
+  }, [status, phase, state?.nextAction.kind, getToken, refreshJourney]);
 
   async function retryProvision(): Promise<void> {
     setWorking(true);
-    // react-doctor-disable-next-line react-doctor/async-defer-await -- the request must complete before the finally block clears `working` and refetches the journey; the await is the operation being awaited, not a deferrable guard.
+    // react-doctor-disable-next-line react-doctor/async-defer-await -- the request must complete before clearing `working` and refreshing the journey; the await is the operation being awaited, not a deferrable guard.
     try {
       await fetch("/api/journey/retry-provision", {
         method: "POST",
@@ -117,10 +116,9 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       });
     } catch (err: unknown) {
       console.warn("[boot] retry-provision failed", err instanceof Error ? err.name : typeof err);
-    } finally {
-      setWorking(false);
-      refetch();
     }
+    setWorking(false);
+    refreshJourney();
   }
 
   if (!isLoaded) {
@@ -158,7 +156,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       <BootShell>
         <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
         <p className="text-sm">We can’t reach Matrix right now.</p>
-        <button type="button" onClick={refetch} className="inline-flex items-center gap-2 rounded-md border border-forest/20 px-3 py-1.5 text-sm hover:bg-forest/5">
+        <button type="button" onClick={refreshJourney} className="inline-flex items-center gap-2 rounded-md border border-forest/20 px-3 py-1.5 text-sm hover:bg-forest/5">
           <RefreshCwIcon className="size-4" aria-hidden="true" /> Try again
         </button>
       </BootShell>

@@ -39,7 +39,7 @@ export type JourneyStatus = "loading" | "ready" | "unreachable" | "unauthorized"
 export interface UseJourneyResult {
   state: JourneyState | null;
   status: JourneyStatus;
-  refetch: () => void;
+  refreshJourney: () => void;
 }
 
 const JOURNEY_TIMEOUT_MS = 10_000;
@@ -61,8 +61,8 @@ export function useJourney(options: { enabled?: boolean } = {}): UseJourneyResul
   const [nonce, setNonce] = useState(0);
   const activeRef = useRef(true);
 
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the polling useEffect dependency array below and returned to callers (BootSequence effect deps); a stable refetch keeps the poller from re-subscribing every render.
-  const refetch = useCallback(() => setNonce((n) => n + 1), []);
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the polling useEffect dependency array below and returned to callers (BootSequence effect deps); a stable refreshJourney keeps the poller from re-subscribing every render.
+  const refreshJourney = useCallback(() => setNonce((n) => n + 1), []);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this hook IS the journey poller; there is no data-fetching library in the shell. Races/leaks are guarded by activeRef + AbortController + single-timer scheduling, and it self-stops in terminal phases.
   useEffect(() => {
@@ -73,7 +73,7 @@ export function useJourney(options: { enabled?: boolean } = {}): UseJourneyResul
     async function fetchOnce(): Promise<void> {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), JOURNEY_TIMEOUT_MS);
-      // react-doctor-disable-next-line react-doctor/async-defer-await -- ordered flow: the token is needed for the request that follows, and the post-await `activeRef.current` guards discard a response received after unmount/refetch, so these awaits cannot be deferred past them.
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- ordered flow: the token is needed for the request that follows, and the post-await `activeRef.current` guards discard a response received after unmount/refreshJourney, so these awaits cannot be deferred past them.
       try {
         const token = await getToken();
         const res = await fetch("/api/journey", {
@@ -129,5 +129,5 @@ export function useJourney(options: { enabled?: boolean } = {}): UseJourneyResul
     };
   }, [enabled, isLoaded, isSignedIn, getToken, nonce]);
 
-  return { state, status, refetch };
+  return { state, status, refreshJourney };
 }
