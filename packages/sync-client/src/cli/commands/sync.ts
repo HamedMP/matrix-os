@@ -114,8 +114,6 @@ async function runStart(
         peerId: generatePeerId(),
         pauseSync: false,
       };
-  await saveConfig(config);
-
   const serviceCommand = currentRuntime === "standalone"
     ? createStandaloneDaemonServiceCommand()
     : createSourceDaemonServiceCommand(new URL("../../daemon/launcher.mjs", import.meta.url).pathname);

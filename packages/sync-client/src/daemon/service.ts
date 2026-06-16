@@ -45,8 +45,14 @@ export function escapeSystemdUnitValue(value: string): string {
   return Array.from(value, (char) => {
     if (char === "%") return "%%";
     if (/^[A-Za-z0-9/:_.-]$/.test(char)) return char;
-    const hex = char.codePointAt(0)?.toString(16).padStart(2, "0");
-    return hex === undefined ? "" : `\\x${hex}`;
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) return "";
+    if (codePoint > 0x7f) {
+      return codePoint <= 0xffff
+        ? `\\u${codePoint.toString(16).padStart(4, "0")}`
+        : `\\U${codePoint.toString(16).padStart(8, "0")}`;
+    }
+    return `\\x${codePoint.toString(16).padStart(2, "0")}`;
   }).join("");
 }
 

@@ -38,6 +38,12 @@ describe("escapeSystemdUnitValue", () => {
       "/home/User\\x20Name/%%h/project",
     );
   });
+
+  it("uses systemd Unicode escapes for non-ASCII WorkingDirectory values", () => {
+    expect(escapeSystemdUnitValue("/home/Zoë/🚀/%h")).toBe(
+      "/home/Zo\\u00eb/\\U0001f680/%%h",
+    );
+  });
 });
 
 describe("daemon service command rendering", () => {
