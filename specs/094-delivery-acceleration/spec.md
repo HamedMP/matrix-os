@@ -21,8 +21,9 @@ bar: PR review, smoke checks, rollback, and live verification.
 
 ## Goals
 
-1. **Route by affected surface**: platform API, pre-VPS app shell, customer VPS runtime,
-   website/docs, CLI, and observability each get an explicit deploy lane.
+1. **Route by affected surface**: platform API, pre-VPS app shell, app-domain edge
+   routing, customer VPS runtime, website/docs, CLI, and observability each get an
+   explicit deploy lane.
 2. **Ship urgent platform/app-shell fixes in minutes** without rebuilding unrelated
    runtime surfaces.
 3. **Support operator-selected deploy tags** so humans can force a specific lane or
@@ -47,10 +48,11 @@ bar: PR review, smoke checks, rollback, and live verification.
 | Surface | Current path | Target path | Trigger examples |
 |---|---|---|---|
 | Pre-VPS app shell (`app.matrix-os.com` auth, billing, onboarding, runtime picker) | Full `matrix-platform` Cloud Run image | Dedicated app-shell deploy unit or cached shell-only image layer | `deploy/shell`, `shell/v*`, path changes under `shell/**` that affect pre-VPS routes |
-| Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**` |
-| Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `packages/gateway/**`, `packages/kernel/**`, `home/**` |
+| Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**`, `packages/clerk-sync/**`, platform-owned observability dependencies, and `distro/customer-vps/cloud-init.yaml` provisioning inputs |
+| App-domain edge router | Platform image side effects or ad hoc Worker deploy | Explicit edge/router lane, or a required paired shell+platform deploy while the router is embedded | `deploy/edge`, `edge/v*`, path changes under edge/router packages, app-domain route maps, Cloudflare Worker config, or platform route handlers that select pre-VPS shell vs active VPS proxy |
+| Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `shell/**` that affect active VPS shell, `packages/gateway/**`, `packages/kernel/**`, `packages/sync-client/**`, host-bundle-shipped `packages/**`, `home/**`, `distro/customer-vps/host-bin/**`, `distro/customer-vps/systemd/**`, and `scripts/build-host-bundle.sh` |
 | Website/docs | Vercel/site deploy | Independent website/docs lane | `deploy/www`, path changes under `www/**` |
-| CLI | npm/GitHub/Homebrew release | Independent CLI lane | `deploy/cli`, `cli/v*`, path changes under CLI package/scripts |
+| CLI | npm/GitHub/Homebrew release | Independent CLI lane | `deploy/cli`, `cli-v*`, path changes under CLI package/scripts |
 | Observability/ops | Ad hoc scripts or platform image side effects | Explicit ops lane with scoped smoke | `deploy/ops`, path changes under `packages/observability/**`, ops distro files |
 
 ## Operator Tags and Labels
@@ -62,9 +64,12 @@ source commit.
 
 - `platform/vYYYY.MM.DD.N` deploys the platform API lane.
 - `shell/vYYYY.MM.DD.N` deploys the pre-VPS app-shell lane.
+- `edge/vYYYY.MM.DD.N` deploys app-domain router changes when the router is a separate
+  deployable; before that split, edge changes must select the platform lane plus any
+  paired shell/runtime lane needed by the route contract.
 - `vX.Y.Z` remains the canonical customer host-bundle release tag in Phase 1.
 - `www/vYYYY.MM.DD.N` deploys the website/docs lane.
-- `cli/vX.Y.Z` publishes CLI artifacts.
+- `cli-vX.Y.Z` publishes CLI artifacts, matching the existing release workflows.
 
 Tags must never infer broad deployment. A `shell/*` tag cannot deploy customer VPSes,
 and a customer runtime tag cannot redeploy Cloud Run unless explicitly paired with a
@@ -84,6 +89,7 @@ Labels are mutable PR controls. They select previews and optional pre-merge depl
 
 - `deploy-platform-preview`
 - `deploy-shell-preview`
+- `deploy-edge-preview`
 - `preview-vps`
 - `skip-screenshots`
 - `release-candidate`
@@ -96,6 +102,11 @@ Workflow dispatch remains the emergency operator path. It must require:
 - promote yes/no,
 - reason,
 - rollback target when known.
+
+Production dispatch SHAs must be reachable from `main` or from an approved immutable
+release tag. Deploying an unmerged branch SHA is a separate break-glass path that must
+record explicit human approval, bypass rationale, and rollback target in the workflow
+summary.
 
 ## Architecture
 
@@ -114,8 +125,11 @@ a base SHA and head SHA, reads changed paths, and emits a JSON decision:
 ```
 
 Workflows call this script before building. A lane can be selected by path filters,
-operator tag, PR label, or manual dispatch. Manual selection must be included in the
-workflow summary so reviewers can see when an operator overrode the automatic router.
+operator tag, PR label, or manual dispatch. Shell changes are not automatically
+shell-lane-only: shared shell files that are bundled into customer VPSes must select the
+runtime lane too unless the router can prove they affect only pre-VPS routes. Manual
+selection must be included in the workflow summary so reviewers can see when an
+operator overrode the automatic router.
 If the router throws, exits non-zero, emits invalid JSON, or emits a lane outside the
 enum, the workflow aborts before build/deploy and prints an actionable error. It must
 never fall through to a permissive default lane.
@@ -138,8 +152,11 @@ The target design creates a separate pre-VPS app-shell deploy unit:
   VPS. It can call the platform API over an internal URL.
 - **Platform API service**: owns control-plane API, billing webhooks, provisioning,
   fleet state, host-bundle release metadata, and customer routing decisions.
-- **Edge router**: routes app-domain pre-VPS shell requests to the app-shell service
-  and API/control-plane requests to the platform API service.
+- **Edge router**: routes app-domain pre-VPS shell requests to the app-shell service,
+  API/control-plane requests to the platform API service, and authenticated active
+  runtime requests to the selected customer VPS proxy. This active-VPS route ownership
+  is part of the split contract; non-API `app.matrix-os.com/*` requests must not fall
+  back to the pre-VPS shell for users with an active machine.
 
 If a full service split is too large for v1, v1 can still improve the current image:
 
@@ -185,6 +202,7 @@ also publishes a manifest:
   "baseVersion": "0.4.11",
   "files": [
     {
+      "type": "file",
       "path": "app/shell/.next/server/app/page.js",
       "sha256": "...",
       "size": 12345,
@@ -192,7 +210,14 @@ also publishes a manifest:
       "url": "system-bundles/objects/sha256/..."
     }
   ],
+  "symlinks": [
+    {
+      "path": "app/node_modules/@matrix-os/gateway",
+      "target": "../../packages/gateway"
+    }
+  ],
   "delete": [],
+  "requiresFullBundle": false,
   "protected": [
     "/home/matrix/home/system/desktop.json",
     "/home/matrix/home/system/theme.json",
@@ -200,6 +225,15 @@ also publishes a manifest:
   ]
 }
 ```
+
+The v1 incremental manifest may update files and symlinks inside the staged app tree.
+Symlink entries must include an explicit relative target and the resolved target must
+remain inside the staged release tree. If a bundle diff changes non-app roots such as
+`bin`, `runtime`, `systemd`, launchers, or unsupported symlink topology, publication
+must mark `requiresFullBundle: true` and the VPS updater must use the full-bundle path
+before staging. The updater must never write a mixed release where `/opt/matrix/app`
+comes from the target version but `/opt/matrix/bin`, `/opt/matrix/runtime`, or systemd
+units remain from a different target version.
 
 The VPS update agent compares the installed manifest with the target manifest and
 downloads only changed content-addressed objects. It stages changes under
@@ -225,6 +259,8 @@ Each lane stores enough metadata to roll back without guessing:
 
 - Cloud Run lane: previous revision name, image digest, traffic split.
 - App-shell lane: previous artifact version or Cloud Run revision.
+- Edge lane: previous Worker/script version, route-map revision, and active traffic
+  binding.
 - Customer runtime lane: previous host-bundle version and manifest digest per VPS.
 - Website lane: previous deployment ID.
 - CLI lane: previous npm dist-tag and GitHub release pointer.
@@ -242,17 +278,28 @@ Rollback must be a workflow action, not an undocumented operator command.
 | Delivery router script | GitHub Actions checkout or local operator shell | Read-only repo diff | No secrets. Emits lane decisions only. |
 | Cloud Run deploy workflows | GitHub OIDC to GCP | Environment-scoped service account | Production and preview environments use separate GitHub environments. |
 | App-shell internal API calls | Service-to-service identity or shared internal token | Platform API allowlist | Do not expose platform secrets to browser code. |
+| Edge router deploy workflow | GitHub OIDC or provider-scoped deploy token | App-domain route-map deploy permission | Edge secrets stay provider-side; route decisions never trust user-controlled headers. |
 | Host-bundle manifest publish | Existing platform secret / release workflow identity | Release registration route | Manifest registration follows the same auth as full bundle registration. |
 | VPS incremental updater | Existing platform verification token | Per-handle deploy authorization | A VPS may only fetch manifests/releases selected for its handle/channel. |
 | Manual workflow dispatch | GitHub user + environment approval when configured | Lane-specific workflow permissions | Dispatch reason and SHA are recorded in workflow summary. |
 
 ### Input validation
 
-- Lane names are an enum: `platform`, `shell`, `runtime`, `www`, `cli`, `ops`.
+- Lane names are an enum: `platform`, `shell`, `edge`, `runtime`, `www`, `cli`, `ops`.
 - Tag names must match a lane-specific pattern. Unknown tags fail closed.
 - Workflow dispatch SHA must resolve to a commit in the repository.
+- Production workflow dispatch SHA must be reachable from `main` or an approved release
+  tag unless the break-glass path with explicit human approval is used.
 - Host-bundle manifest paths must be normalized relative paths, must not contain `..`,
   and must target only `/opt/matrix/app` staging content.
+- Host-bundle manifest entry types are allowlisted: `file`, `directory`, and `symlink`.
+  Unknown types fail before download or staging.
+- Host-bundle manifest symlinks must have normalized relative paths and relative targets
+  whose resolved target stays inside the staged release tree. Absolute symlink targets,
+  owner-data targets, and targets escaping the release tree are rejected.
+- Host-bundle manifests that touch non-app roots, launchers, service units, or unsupported
+  symlink topology must set `requiresFullBundle: true`; an incremental updater must
+  fail before staging if it cannot honor that fallback.
 - Host-bundle manifest `files[].url` values must be platform-API-relative object paths
   under `system-bundles/objects/sha256/<sha256>` or absolute `https://` URLs whose host
   exactly matches the release metadata's allowlisted bundle object host. Reject URL
@@ -290,6 +337,11 @@ Rollback must be a workflow action, not an undocumented operator command.
 - **Two deploys race**: lane workflows use concurrency groups per environment and lane.
   Production `shell` and `platform` lanes serialize independently unless they target
   the same Cloud Run service.
+- **Related lanes promote independently**: when a PR changes an app-shell/API contract,
+  edge routing contract, or runtime/platform contract, either the contracts must be
+  backward-compatible across old and new revisions or the router must select a combined
+  promotion group with ordered candidate smokes before any lane receives production
+  traffic.
 - **Fast hotfix candidate fails smoke**: do not promote; leave current production
   traffic untouched; workflow prints candidate revision for cleanup.
 - **Cloud Run promotion succeeds but verification fails**: automatically roll traffic
@@ -300,6 +352,10 @@ Rollback must be a workflow action, not an undocumented operator command.
   match `manifest.baseVersion`, do not apply file deltas. Fall back to a full-bundle
   install when allowed by the release policy, or fail before staging with an explicit
   base-mismatch error.
+- **Incremental manifest requires full bundle**: if `requiresFullBundle` is true, a
+  non-app root changed, or symlink topology cannot be represented safely, do not apply
+  partial deltas. Use the full-bundle install path or fail before staging according to
+  release policy.
 - **Runtime metadata split-brain**: if `/opt/matrix/release.json` and
   `/opt/matrix/app/BUNDLE_VERSION` disagree after crash, restart, or before a new
   update, stop incremental updates. Recover by deriving `release.json` from the
@@ -337,6 +393,7 @@ Add or refactor workflows around lanes:
 
 - `.github/workflows/deploy-platform.yml`
 - `.github/workflows/deploy-shell.yml`
+- `.github/workflows/deploy-edge.yml`
 - `.github/workflows/host-bundle-release.yml`
 - `.github/workflows/deploy-www.yml`
 - `.github/workflows/cli-release.yml`
@@ -359,6 +416,9 @@ Minimum smoke checks:
 - `shell`: `/sign-in` serves `data-matrix-auth-shell="true"`; `/?billing=setup`
   serves `data-matrix-billing-gate="true"` and does not serve
   `data-matrix-boot-sequence="true"`; checkout return routes do not call journey boot.
+- `edge`: unauthenticated/no-active-VPS app-domain requests route to app-shell,
+  API/control-plane requests route to platform API, and authenticated active-VPS
+  app-domain requests proxy to the selected customer VPS.
 - `platform`: `/health`, billing webhook route config, `/api/journey` with test auth,
   release metadata read.
 - `runtime`: `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json` target
@@ -379,12 +439,14 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 3. Runs startup/pre-update consistency checks comparing `/opt/matrix/release.json`,
    `/opt/matrix/app/BUNDLE_VERSION`, and the installed manifest digest; mismatch fails
    closed into the split-brain recovery path before deltas are considered.
-4. Downloads manifest metadata and validates every `files[].url` against the bundle
-   object allowlist and redirect/timeout policy.
+4. Downloads manifest metadata and validates every `files[].url`, symlink target, and
+   `requiresFullBundle` condition against the bundle object allowlist, release-tree
+   containment, and redirect/timeout policy.
 5. Compares `manifest.baseVersion` with the installed
    version from `/opt/matrix/release.json` and the installed manifest digest.
-6. Falls back to full-bundle install when the base mismatches and policy allows it;
-   otherwise fails before staging.
+6. Falls back to full-bundle install when the base mismatches, `requiresFullBundle` is
+   true, non-app roots changed, or symlink topology cannot be represented safely and
+   policy allows it; otherwise fails before staging.
 7. Downloads changed objects with bounded concurrency and 30s per-object timeouts.
 8. Verifies every object hash and manifest signature/digest.
 9. Stages app files under `/opt/matrix/releases/<version>.staging`.
@@ -420,9 +482,10 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 - Verify billing/signup/onboarding hotfixes can ship without rebuilding customer
   runtime or unrelated platform packages.
 - Test checkpoint: `bun run test`, integration smoke that routes app-domain pre-VPS
-  requests through app-shell to platform API without exposing service secrets, and a
-  manual candidate-revision verification for `/sign-in`, `/?billing=setup`, checkout
-  return, and runtime picker paths.
+  requests through app-shell to platform API without exposing service secrets, verifies
+  authenticated active-VPS app-domain requests still proxy to the selected runtime, and
+  a manual candidate-revision verification for `/sign-in`, `/?billing=setup`, checkout
+  return, runtime picker, and active-runtime paths.
 
 ### Phase 3: Add incremental host-bundle manifests
 
@@ -433,8 +496,9 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 - Keep full-bundle fallback until incremental update has proved stable across canary
   and beta channels.
 - Test checkpoint: `bun run test`, an updater integration test that stages a synthetic
-  manifest, rejects base-version mismatches/path traversal/bad object URLs/missing
-  hashes, serializes concurrent updates with the updater lock, detects split-brain
+  manifest, rejects base-version mismatches/path traversal/bad object URLs/bad symlink
+  targets/missing hashes, falls back or fails on `requiresFullBundle` and non-app-root
+  changes, serializes concurrent updates with the updater lock, detects split-brain
   `release.json` vs `BUNDLE_VERSION` state, flips the app symlink, updates
   `/opt/matrix/release.json` via tmp-then-rename, reports health to a test platform
   endpoint, cleans abandoned staging directories, and manually verifies rollback on a
