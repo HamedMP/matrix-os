@@ -69,7 +69,11 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
 
   abort: () => {
     const { activeRequestId } = get();
-    if (activeRequestId) abortKernelRequest(activeRequestId);
+    if (!activeRequestId) return;
+    const sent = abortKernelRequest(activeRequestId);
+    if (!sent) {
+      set({ status: "idle", activeRequestId: null });
+    }
   },
 
   newChat: () => {

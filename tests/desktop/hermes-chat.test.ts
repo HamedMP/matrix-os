@@ -47,4 +47,18 @@ describe("useHermesChat", () => {
       }),
     ]);
   });
+
+  it("returns to idle when abort cannot be sent", () => {
+    useHermesChat.getState().send("hello");
+    const requestId = useHermesChat.getState().activeRequestId;
+    kernel.abortKernelRequest.mockReturnValue(false);
+
+    useHermesChat.getState().abort();
+
+    expect(kernel.abortKernelRequest).toHaveBeenCalledWith(requestId);
+    expect(useHermesChat.getState()).toMatchObject({
+      status: "idle",
+      activeRequestId: null,
+    });
+  });
 });
