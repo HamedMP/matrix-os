@@ -114,4 +114,37 @@ describe("startTaskSession", () => {
     expect(ok).toBe(false);
     expect(del).toHaveBeenCalledWith("/api/sessions/sess_new");
   });
+
+  it("returns false when unlinked workspace-session cleanup also fails", async () => {
+    const del = vi.fn().mockRejectedValue(new AppError("offline"));
+    const api = makeApi({
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/terminal/sessions") return { sessions: [] };
+        if (path === "/api/sessions") {
+          return { sessions: [{ id: "sess_new", runtime: {} }], nextCursor: null };
+        }
+        return { tasks: [], nextCursor: null };
+      }),
+      patch: vi.fn().mockRejectedValue(new AppError("server")),
+      delete: del,
+    });
+    useBoard.setState({ cardsByProject: { proj: [card()] } });
+
+    const ok = await startTaskSession(api, {
+      projectSlug: "proj",
+      taskId: "task_a",
+      worktreeId: null,
+      title: "Task A",
+      description: "Fix it",
+      kind: "agent",
+      agent: "claude",
+    });
+
+    expect(ok).toBe(false);
+    expect(del).toHaveBeenCalledWith("/api/sessions/sess_new");
+    expect(console.warn).toHaveBeenCalledWith(
+      "[task-sessions] failed to clean up unlinked session:",
+      "Can't reach Matrix OS. Check your connection.",
+    );
+  });
 });

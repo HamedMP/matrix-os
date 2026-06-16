@@ -30,6 +30,44 @@ beforeEach(() => {
   });
 });
 
+describe("useSessions.load", () => {
+  it("ignores stale slower load results after a newer load finishes", async () => {
+    let resolveFirstTerminal!: (value: { sessions: unknown[] }) => void;
+    let resolveFirstWorkspace!: (value: { sessions: unknown[]; nextCursor: null }) => void;
+    const firstTerminal = new Promise<{ sessions: unknown[] }>((resolve) => {
+      resolveFirstTerminal = resolve;
+    });
+    const firstWorkspace = new Promise<{ sessions: unknown[]; nextCursor: null }>((resolve) => {
+      resolveFirstWorkspace = resolve;
+    });
+    let call = 0;
+    const get = vi.fn((path: string) => {
+      call += 1;
+      if (call === 1) return firstTerminal;
+      if (call === 2) return firstWorkspace;
+      if (path === "/api/terminal/sessions") {
+        return Promise.resolve({ sessions: [{ name: "new-session", status: "active" }] });
+      }
+      return Promise.resolve({ sessions: [], nextCursor: null });
+    });
+    const api = makeApi({ get });
+
+    const staleLoad = useSessions.getState().load(api);
+    const freshLoad = useSessions.getState().load(api);
+    await freshLoad;
+
+    resolveFirstTerminal({ sessions: [{ name: "old-session", status: "active" }] });
+    resolveFirstWorkspace({ sessions: [], nextCursor: null });
+    await staleLoad;
+
+    expect(useSessions.getState().sessions.map((session) => session.attachName)).toEqual([
+      "new-session",
+    ]);
+    expect(useSessions.getState().loading).toBe(false);
+    expect(useSessions.getState().error).toBeNull();
+  });
+});
+
 describe("useSessions.create", () => {
   it("POSTs the session, reloads, and resolves the new attach name", async () => {
     const post = vi.fn().mockResolvedValue({ session: { id: "sess_new" } });

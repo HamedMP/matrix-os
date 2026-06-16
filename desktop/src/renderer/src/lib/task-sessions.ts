@@ -46,7 +46,14 @@ export async function startTaskSession(api: ApiClient, input: StartTaskSessionIn
     if (created.attachName) {
       await useSessions.getState().kill(api, created.attachName);
     } else {
-      await api.delete(`/api/sessions/${encodeURIComponent(created.sessionId)}`);
+      try {
+        await api.delete(`/api/sessions/${encodeURIComponent(created.sessionId)}`);
+      } catch (cleanupErr: unknown) {
+        console.warn(
+          "[task-sessions] failed to clean up unlinked session:",
+          cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+        );
+      }
     }
     return false;
   }

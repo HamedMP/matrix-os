@@ -61,6 +61,8 @@ async function deleteAttachableSession(api: ApiClient, attachName: string): Prom
   await api.delete(`/api/terminal/sessions/${encodeURIComponent(attachName)}?force=1`);
 }
 
+let loadSequence = 0;
+
 export const useSessions = create<SessionsState>()((set, get) => ({
   sessions: [],
   aliasMap: {},
