@@ -272,16 +272,32 @@ function dispatchPaneAction(paneId: string | null, action: NonNullable<TerminalI
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {
+  let clipboardApiError: unknown = null;
   if (typeof navigator !== "undefined" && navigator.clipboard) {
-    await navigator.clipboard.writeText(text);
-    return;
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (err: unknown) {
+      clipboardApiError = err;
+    }
+  }
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard copy unavailable");
+  }
+  if (typeof document.execCommand !== "function") {
+    throw new Error(clipboardApiError ? "Clipboard API and legacy copy are unavailable" : "Legacy clipboard copy unavailable");
   }
   const textarea = document.createElement("textarea");
   textarea.value = text;
+  textarea.setAttribute("readonly", "");
   textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
   textarea.style.opacity = "0";
+  textarea.style.top = "0";
   document.body.appendChild(textarea);
+  textarea.focus();
   textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
   let ok = false;
   try {
     ok = document.execCommand("copy");
@@ -4394,7 +4410,7 @@ function ShellCard({
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommittingRef = useRef(false);
   const copiedTimerRef = useRef<number | null>(null);
-  const showActions = foreground && (actionsVisible || copied);
+  const showActions = foreground && actionsVisible;
   const showRenameControl = foreground && actionsVisible && !renaming;
   const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
   const renameControlLabel = `Rename ${displayName}`;
@@ -4503,6 +4519,9 @@ function ShellCard({
       }}
       onMouseEnter={() => setActionsVisible(true)}
       onMouseLeave={() => setActionsVisible(false)}
+      onPointerEnter={() => setActionsVisible(true)}
+      onPointerMove={() => setActionsVisible(true)}
+      onPointerLeave={() => setActionsVisible(false)}
       onFocus={() => setActionsVisible(true)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -4521,7 +4540,7 @@ function ShellCard({
         cursor: renaming || deleting ? "default" : "pointer",
         display: "flex",
         flexDirection: "column",
-        gap: showActions || copied ? 8 : 0,
+        gap: showActions ? 8 : 0,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: foreground ? "10px 12px" : "14px 12px",
         position: "relative",
@@ -4813,19 +4832,26 @@ function ShellCard({
       )}
       {foreground && copied ? (
         <div
-          data-testid={`terminal-session-copy-feedback-${shell.name}`}
+          data-testid={`terminal-session-copy-toast-${shell.name}`}
           role="status"
+          aria-live="polite"
           className="relative z-[1] flex items-center"
           style={{
             background: "#15180F",
             borderRadius: 7,
+            boxShadow: "0 12px 24px rgba(39,40,34,0.22)",
             color: "#F0EFE5",
             fontFamily: "Inter, system-ui, sans-serif",
             fontSize: 12,
             gap: 8,
             height: 28,
+            left: 12,
             lineHeight: "16px",
             padding: "0 10px",
+            position: "absolute",
+            right: 12,
+            top: "calc(100% + 8px)",
+            zIndex: 12,
           }}
         >
           <span aria-hidden="true" style={{ background: "#9CB77A", borderRadius: 999, height: 6, width: 6 }} />

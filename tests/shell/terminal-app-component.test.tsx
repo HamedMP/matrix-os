@@ -377,8 +377,62 @@ describe("TerminalApp", () => {
     });
 
     expect(writeText).toHaveBeenCalledWith("mos shell attach main");
-    expect(screen.getByTestId("terminal-session-copy-feedback-main").textContent).toContain("Command copied");
+    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Command copied");
     expect(within(actions).getByText("matrix shell connect")).toBeTruthy();
+  });
+
+  it("falls back to execCommand copy and still shows the Paper copy confirmation", async () => {
+    const writeText = vi.fn(async () => {
+      throw new Error("clipboard denied");
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", attachedClients: 1, tabs: [{ idx: 0, name: "main", focused: true }] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.pointerMove(screen.getByTestId("terminal-session-card-main"));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
+      await Promise.resolve();
+    });
+
+    expect(writeText).toHaveBeenCalledWith("mos shell attach main");
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Command copied");
   });
 
   it("reorders active shell sessions with the Paper drag affordance", async () => {
