@@ -47,11 +47,11 @@ bar: PR review, smoke checks, rollback, and live verification.
 
 | Surface | Current path | Target path | Trigger examples |
 |---|---|---|---|
-| Pre-VPS app shell (`app.matrix-os.com` auth, billing, onboarding, runtime picker) | Full `matrix-platform` Cloud Run image | Dedicated app-shell deploy unit or cached shell-only image layer | `deploy/shell`, `shell/v*`, path changes under `shell/**` that affect pre-VPS routes |
-| Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**`, `packages/clerk-sync/**`, platform-owned observability dependencies, and `distro/customer-vps/cloud-init.yaml` provisioning inputs |
+| Pre-VPS app shell (`app.matrix-os.com` auth, billing, onboarding, runtime picker) | Full `matrix-platform` Cloud Run image | Dedicated app-shell deploy unit or cached shell-only image layer | `deploy/shell`, `shell/v*`, path changes under `shell/**` that affect pre-VPS routes and shared workspace dependencies consumed by the shell, including frontend-facing `packages/observability/**` modules |
+| Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**`, `packages/clerk-sync/**`, platform-owned observability dependencies, platform-mounted gateway integration routes under `packages/gateway/src/integrations/**`, and `distro/customer-vps/cloud-init.yaml` provisioning inputs |
 | App-domain edge router | Platform image side effects or ad hoc Worker deploy | Explicit edge/router lane, or a required paired shell+platform deploy while the router is embedded | `deploy/edge`, `edge/v*`, path changes under edge/router packages, app-domain route maps, Cloudflare Worker config, or platform route handlers that select pre-VPS shell vs active VPS proxy |
 | Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `shell/**` that affect active VPS shell, `packages/gateway/**`, `packages/kernel/**`, `packages/sync-client/**`, host-bundle-shipped `packages/**`, `home/**`, `distro/customer-vps/host-bin/**`, `distro/customer-vps/systemd/**`, and `scripts/build-host-bundle.sh` |
-| Website/docs | Vercel/site deploy | Independent website/docs lane | `deploy/www`, path changes under `www/**` |
+| Website/docs | Vercel/site deploy | Independent website/docs lane | `deploy/www`, path changes under `www/**` and shared workspace dependencies consumed by the website, including frontend-facing `packages/observability/**` modules |
 | CLI | npm/GitHub/Homebrew release | Independent CLI lane | `deploy/cli`, `cli-v*`, path changes under CLI package/scripts |
 | Observability/ops | Ad hoc scripts or platform image side effects | Explicit ops lane with scoped smoke | `deploy/ops`, path changes under `packages/observability/**`, ops distro files |
 
@@ -136,6 +136,11 @@ shell-lane-only: shared shell files that are bundled into customer VPSes must se
 runtime lane too unless the router can prove they affect only pre-VPS routes. Manual
 selection must be included in the workflow summary so reviewers can see when an
 operator overrode the automatic router.
+The router must fan out shared workspace dependencies to every consuming lane using an
+explicit dependency map, not only direct path prefixes. For example, gateway integration
+routes mounted by platform select the platform lane, and frontend observability client
+changes select shell and website lanes in addition to ops/platform lanes when consumed
+there.
 If the router throws, exits non-zero, emits invalid JSON, or emits a lane outside the
 enum, the workflow aborts before build/deploy and prints an actionable error. It must
 never fall through to a permissive default lane.
@@ -469,8 +474,12 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
    and writing `/opt/matrix/release.json` via tmp-then-rename. The startup/pre-update
    consistency check is the recovery mechanism if the process crashes between those
    filesystem operations.
-12. Restarts affected services while still holding the updater lock.
-13. Reports installed version and health back to platform, then releases the lock.
+12. Restarts affected services while still holding the updater lock, except the updater's
+   own process must not be restarted before step 13 completes. If the release changes
+   `matrix-sync-agent` or the updater wrapper, a dedicated supervisor handoff or deferred
+   self-restart marker performs that restart after health reporting.
+13. Reports installed version and health back to platform, releases the lock, then runs
+   any deferred updater self-restart through the supervisor.
 
 ## Phased Plan
 
