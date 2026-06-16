@@ -8,6 +8,7 @@ import type { AgentLaunchSpec } from "./agent-launcher.js";
 import { DANGEROUS_CONTROL_CHARS_GLOBAL } from "./prompt-validation.js";
 import {
   MATRIX_TERMINAL_BASHRC,
+  MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT,
   MATRIX_ZELLIJ_LAYOUT,
   matrixTerminalShellScript,
   matrixZellijConfigPaths,
@@ -200,9 +201,13 @@ export function createZellijRuntime(options: {
     if (!ensureConfigPromise) {
       ensureConfigPromise = (async () => {
         await mkdir(layoutDir, { recursive: true });
-        await atomicWriteText(zellijConfigPaths.shellFile, matrixTerminalShellScript(zellijConfigPaths.bashrcFile));
+        await atomicWriteText(
+          zellijConfigPaths.shellFile,
+          matrixTerminalShellScript(zellijConfigPaths.bashrcFile, zellijConfigPaths.promptLabelFile),
+        );
         await chmod(zellijConfigPaths.shellFile, 0o700);
         await atomicWriteText(zellijConfigPaths.bashrcFile, MATRIX_TERMINAL_BASHRC);
+        await atomicWriteText(zellijConfigPaths.promptLabelFile, MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT);
         await atomicWriteText(configPath, renderMatrixZellijConfig(zellijConfigPaths));
         await atomicWriteText(defaultLayoutPath, MATRIX_ZELLIJ_LAYOUT);
       })().catch((err: unknown) => {

@@ -1,8 +1,10 @@
 import { EventEmitter } from "node:events";
+import { execFile as nodeExecFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyZellijFailure,
@@ -10,6 +12,8 @@ import {
   sanitizeZellijError,
 } from "../../packages/gateway/src/shell/zellij.js";
 import { matrixTerminalShellScript } from "../../packages/gateway/src/shell/zellij-config.js";
+
+const execFileAsync = promisify(nodeExecFile);
 
 function childProcess() {
   return Object.assign(new EventEmitter(), {
@@ -300,10 +304,12 @@ describe("zellij adapter", () => {
       const layoutPath = join(configDir, "layouts", "matrix.kdl");
       const shellPath = join(configDir, "matrix-terminal-shell");
       const bashrcPath = join(configDir, "bashrc");
+      const promptLabelPath = join(configDir, "prompt-label.mjs");
       const config = await readFile(configPath, "utf8");
       const layout = await readFile(layoutPath, "utf8");
       const shell = await readFile(shellPath, "utf8");
       const bashrc = await readFile(bashrcPath, "utf8");
+      const promptLabel = await readFile(promptLabelPath, "utf8");
       const shellMode = (await stat(shellPath)).mode;
 
       expect(config).toContain("pane_frames false");
@@ -311,10 +317,12 @@ describe("zellij adapter", () => {
       expect(config).toContain('default_layout "matrix"');
       expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
       expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
+      expect(shell).toContain(`node '${promptLabelPath}'`);
       expect(shell).not.toContain("/bin/bash");
       expect(shellMode & 0o700).toBe(0o700);
       expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
       expect(bashrc).toContain("\\u:\\w\\$ ");
+      expect(promptLabel).toContain("JSON.parse");
       expect(layout).toContain('plugin location="zellij:compact-bar"');
       expect(layout).not.toContain("tab-bar");
       expect(layout).not.toContain("status-bar");
@@ -328,6 +336,72 @@ describe("zellij adapter", () => {
           }),
         }),
       );
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("derives prompt labels from owner handle.json without shell injection", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-prompt-label-"));
+    try {
+      const systemDir = join(homePath, "system");
+      await mkdir(systemDir, { recursive: true });
+      const handlePath = join(systemDir, "handle.json");
+      await writeFile(handlePath, JSON.stringify({
+        handle: "hamedmp",
+        displayName: "Hamed MP",
+      }));
+
+      const pty = ptyProcess();
+      const spawnPty = vi.fn(() => pty);
+      const adapter = createZellijAdapter({
+        execFile: vi.fn(),
+        spawnPty,
+        timeoutMs: 25,
+        startupDelayMs: 1,
+        homePath,
+      });
+
+      await adapter.createSession({ name: "main" });
+
+      const promptLabelPath = join(homePath, "system", "zellij", "prompt-label.mjs");
+      await expect(execFileAsync(process.execPath, [promptLabelPath], {
+        env: { ...process.env, MATRIX_HOME: homePath },
+        timeout: 1_000,
+      })).resolves.toMatchObject({ stdout: "hamedmp" });
+
+      await writeFile(handlePath, JSON.stringify({
+        handle: "bad$(rm -rf /)",
+        displayName: "Hamed MP",
+      }));
+      await expect(execFileAsync(process.execPath, [promptLabelPath], {
+        env: { ...process.env, MATRIX_HOME: homePath },
+        timeout: 1_000,
+      })).resolves.toMatchObject({ stdout: "Hamed-MP" });
+
+      await writeFile(handlePath, JSON.stringify({
+        handle: "bad\\label",
+        displayName: "bad\u001b[31m",
+      }));
+      await expect(execFileAsync(process.execPath, [promptLabelPath], {
+        env: { ...process.env, MATRIX_HOME: homePath },
+        timeout: 1_000,
+      })).resolves.toMatchObject({ stdout: "" });
+
+      await writeFile(handlePath, "{not-json");
+      await expect(execFileAsync(process.execPath, [promptLabelPath], {
+        env: { ...process.env, MATRIX_HOME: homePath },
+        timeout: 1_000,
+      })).resolves.toMatchObject({
+        stdout: "",
+        stderr: expect.stringContaining("[matrix-terminal-prompt] unable to read owner identity"),
+      });
+
+      await rm(handlePath, { force: true });
+      await expect(execFileAsync(process.execPath, [promptLabelPath], {
+        env: { ...process.env, MATRIX_HOME: homePath },
+        timeout: 1_000,
+      })).resolves.toMatchObject({ stdout: "", stderr: "" });
     } finally {
       await rm(homePath, { recursive: true, force: true });
     }
@@ -515,9 +589,11 @@ describe("zellij adapter", () => {
 
   it("shell-quotes generated bash rcfile paths", () => {
     const path = `/tmp/matrix "owner"/it'works/bashrc`;
-    const script = matrixTerminalShellScript(path);
+    const promptLabelPath = `/tmp/matrix "owner"/it'works/prompt-label.mjs`;
+    const script = matrixTerminalShellScript(path, promptLabelPath);
 
     expect(script).toContain(`exec bash --noprofile --rcfile '/tmp/matrix "owner"/it'\\''works/bashrc' -i`);
+    expect(script).toContain(`node '/tmp/matrix "owner"/it'\\''works/prompt-label.mjs'`);
     expect(script).not.toContain("/bin/bash");
   });
 });

@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { shellError, type ShellSafeError } from "./errors.js";
 import {
   MATRIX_TERMINAL_BASHRC,
+  MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT,
   MATRIX_ZELLIJ_LAYOUT,
   matrixTerminalShellScript,
   matrixZellijConfigPaths,
@@ -261,9 +262,13 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       ensureConfigPromise = (async () => {
         const { mkdir } = await import("node:fs/promises");
         await mkdir(zellijConfigPaths.layoutDir, { recursive: true });
-        await atomicWriteText(zellijConfigPaths.shellFile, matrixTerminalShellScript(zellijConfigPaths.bashrcFile));
+        await atomicWriteText(
+          zellijConfigPaths.shellFile,
+          matrixTerminalShellScript(zellijConfigPaths.bashrcFile, zellijConfigPaths.promptLabelFile),
+        );
         await chmod(zellijConfigPaths.shellFile, 0o700);
         await atomicWriteText(zellijConfigPaths.bashrcFile, MATRIX_TERMINAL_BASHRC);
+        await atomicWriteText(zellijConfigPaths.promptLabelFile, MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT);
         await atomicWriteText(zellijConfigPaths.file, renderMatrixZellijConfig(zellijConfigPaths));
         await atomicWriteText(zellijConfigPaths.layoutFile, MATRIX_ZELLIJ_LAYOUT);
       })().catch((err: unknown) => {
