@@ -47,8 +47,8 @@ bar: PR review, smoke checks, rollback, and live verification.
 
 | Surface | Current path | Target path | Trigger examples |
 |---|---|---|---|
-| Pre-VPS app shell (`app.matrix-os.com` auth, billing, onboarding, runtime picker) | Full `matrix-platform` Cloud Run image | Dedicated app-shell deploy unit or cached shell-only image layer | `deploy/shell`, `shell/v*`, path changes under `shell/**` that affect pre-VPS routes and shared workspace dependencies consumed by the shell, including frontend-facing `packages/observability/**` modules |
-| Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**`, `packages/clerk-sync/**`, platform-owned observability dependencies, platform-mounted gateway integration routes under `packages/gateway/src/integrations/**`, `Dockerfile.platform`, `cloudbuild.platform.yaml`, `scripts/start-platform-cloud-run.sh`, and `distro/customer-vps/cloud-init.yaml` provisioning inputs |
+| Pre-VPS app shell (`app.matrix-os.com` auth, billing, onboarding, runtime picker) | Full `matrix-platform` Cloud Run image | Dedicated app-shell deploy unit or cached shell-only image layer | `deploy/shell`, `shell/v*`, path changes under `shell/**` that affect pre-VPS routes, root workspace metadata consumed by the shell build (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.npmrc`), and shared workspace dependencies consumed by the shell, including frontend-facing `packages/observability/**` modules |
+| Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**`, `packages/clerk-sync/**`, root workspace metadata consumed by the platform image (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.npmrc`), platform-owned observability dependencies, platform-mounted gateway integration routes under `packages/gateway/src/integrations/**`, `Dockerfile.platform`, `cloudbuild.platform.yaml`, `scripts/start-platform-cloud-run.sh`, and `distro/customer-vps/cloud-init.yaml` provisioning inputs |
 | App-domain edge router | Platform image side effects or ad hoc Worker deploy | Explicit edge/router lane, or a required paired shell+platform deploy while the router is embedded | `deploy/edge`, `edge/v*`, path changes under edge/router packages, app-domain route maps, Cloudflare Worker config, or platform route handlers that select pre-VPS shell vs active VPS proxy |
 | Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `shell/**` that affect active VPS shell, `packages/gateway/**`, `packages/kernel/**`, `packages/sync-client/**`, host-bundle-shipped `packages/**`, root package metadata copied into the host bundle (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.npmrc`), `home/**`, `skills/**`, shipped helper scripts copied by the host-bundle build, host-bundle publish scripts such as `scripts/host-bundle-release.mjs`, `distro/customer-vps/host-bin/**`, `distro/customer-vps/systemd/**`, and `scripts/build-host-bundle.sh` |
 | Website/docs | Vercel/site deploy | Independent website/docs lane | `deploy/www`, path changes under `www/**` and shared workspace dependencies consumed by the website, including frontend-facing `packages/observability/**` modules |
@@ -141,6 +141,11 @@ explicit dependency map, not only direct path prefixes. For example, gateway int
 routes mounted by platform select the platform lane, and frontend observability client
 changes select shell and website lanes in addition to ops/platform lanes when consumed
 there.
+Root workspace metadata changes (`package.json`, `pnpm-lock.yaml`,
+`pnpm-workspace.yaml`, `.npmrc`) must be dependency-aware fan-out inputs. The router
+must select every lane whose build installs from that workspace metadata, including
+the shell and platform Cloud Run lanes when dependency or lockfile changes can affect
+their images.
 `blocked` is a list of lane-safety constraints, not a free-form warning. A non-empty
 `blocked` result must either name a required combined promotion group or abort before
 deployment. Each entry includes the affected lanes, reason, and required action, such
