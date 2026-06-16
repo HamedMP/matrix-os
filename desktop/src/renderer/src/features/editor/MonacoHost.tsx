@@ -8,6 +8,10 @@ import { getOrCreateModel, markModelBaseline, monaco } from "./monaco-setup";
 
 const fileBaselines = new Map<string, OpenedFile>();
 
+function fileBaselineKey(taskId: string, path: string): string {
+  return `${taskId}\u0000${path}`;
+}
+
 export default function MonacoHost({ taskId, path }: { taskId: string; path: string }) {
   const api = useConnection((s) => s.api);
   const setDirty = useEditorTabs((s) => s.setDirty);
@@ -40,14 +44,15 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
     void openFile(files, path)
       .then((file) => {
         if (disposed) return;
-        const model = getOrCreateModel(path, file.content);
+        const baselineKey = fileBaselineKey(taskId, path);
+        const model = getOrCreateModel(taskId, path, file.content);
         const hasUnsavedModel = model.getValue() !== file.content;
         const baseline = hasUnsavedModel
-          ? (fileBaselines.get(path) ?? { ...file, loadedMtime: null })
+          ? (fileBaselines.get(baselineKey) ?? { ...file, loadedMtime: null })
           : file;
         fileRef.current = baseline;
         if (!hasUnsavedModel) {
-          fileBaselines.set(path, file);
+          fileBaselines.set(baselineKey, file);
         }
         editor.setModel(model);
         setDirty(taskId, path, model.getValue() !== baseline.content);
@@ -89,8 +94,8 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       if (result.ok) {
         const saved = { ...file, content, loadedMtime: result.newMtime };
         fileRef.current = saved;
-        fileBaselines.set(path, saved);
-        markModelBaseline(path, content);
+        fileBaselines.set(fileBaselineKey(taskId, path), saved);
+        markModelBaseline(taskId, path, content);
         setDirty(taskId, path, false);
         setConflict(false);
         setSaveError(null);
@@ -116,8 +121,8 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       const newMtime = await saveFileOverwrite(createFilesApi(api), path, content);
       const overwritten = { path, content, loadedMtime: newMtime };
       fileRef.current = overwritten;
-      fileBaselines.set(path, overwritten);
-      markModelBaseline(path, content);
+      fileBaselines.set(fileBaselineKey(taskId, path), overwritten);
+      markModelBaseline(taskId, path, content);
       setDirty(taskId, path, false);
       setConflict(false);
       setSaveError(null);
@@ -132,9 +137,9 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
     try {
       const file = await openFile(createFilesApi(api), path);
       fileRef.current = file;
-      fileBaselines.set(path, file);
+      fileBaselines.set(fileBaselineKey(taskId, path), file);
       editorRef.current.getModel()?.setValue(file.content);
-      markModelBaseline(path, file.content);
+      markModelBaseline(taskId, path, file.content);
       setDirty(taskId, path, false);
       setConflict(false);
       setSaveError(null);

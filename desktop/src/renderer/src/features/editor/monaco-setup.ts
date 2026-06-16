@@ -39,62 +39,73 @@ const models = new Map<string, monaco.editor.ITextModel>();
 const modelBaselines = new Map<string, string>();
 const MODEL_CACHE_CAP = 32;
 
-function isModelClean(path: string, model: monaco.editor.ITextModel): boolean {
-  const baseline = modelBaselines.get(path);
+function modelKey(taskId: string, path: string): string {
+  return `${taskId}\u0000${path}`;
+}
+
+function modelUriPath(taskId: string, path: string): string {
+  return `/.matrix-os/tasks/${encodeURIComponent(taskId)}/${path.replace(/^\/+/, "")}`;
+}
+
+function isModelClean(key: string, model: monaco.editor.ITextModel): boolean {
+  const baseline = modelBaselines.get(key);
   return baseline === undefined || model.getValue() === baseline;
 }
 
 function evictOldestCleanModel(): void {
-  for (const [path, model] of models) {
-    if (model.isDisposed() || isModelClean(path, model)) {
+  for (const [key, model] of models) {
+    if (model.isDisposed() || isModelClean(key, model)) {
       model.dispose();
-      models.delete(path);
-      modelBaselines.delete(path);
+      models.delete(key);
+      modelBaselines.delete(key);
       return;
     }
   }
 }
 
-export function getOrCreateModel(path: string, content: string): monaco.editor.ITextModel {
-  const existing = models.get(path);
+export function getOrCreateModel(taskId: string, path: string, content: string): monaco.editor.ITextModel {
+  const key = modelKey(taskId, path);
+  const existing = models.get(key);
   if (existing && !existing.isDisposed()) {
-    models.delete(path);
-    models.set(path, existing);
-    const baseline = modelBaselines.get(path);
+    models.delete(key);
+    models.set(key, existing);
+    const baseline = modelBaselines.get(key);
     if (baseline === undefined) {
-      modelBaselines.set(path, existing.getValue());
+      modelBaselines.set(key, existing.getValue());
     } else if (existing.getValue() === baseline) {
       if (baseline !== content) {
         existing.setValue(content);
       }
-      modelBaselines.set(path, content);
+      modelBaselines.set(key, content);
     }
     return existing;
   }
   if (existing?.isDisposed()) {
-    models.delete(path);
-    modelBaselines.delete(path);
+    models.delete(key);
+    modelBaselines.delete(key);
   }
   if (models.size >= MODEL_CACHE_CAP) {
     evictOldestCleanModel();
   }
-  const model = monaco.editor.createModel(content, undefined, monaco.Uri.file(path));
-  models.set(path, model);
-  modelBaselines.set(path, content);
+  const model = monaco.editor.createModel(content, undefined, monaco.Uri.file(modelUriPath(taskId, path)));
+  models.set(key, model);
+  modelBaselines.set(key, content);
   return model;
 }
 
-export function markModelBaseline(path: string, content: string): void {
-  if (models.has(path)) {
-    modelBaselines.set(path, content);
+export function markModelBaseline(taskId: string, path: string, content: string): void {
+  const key = modelKey(taskId, path);
+  if (models.has(key)) {
+    modelBaselines.set(key, content);
   }
 }
 
-export function dropModel(path: string): void {
-  const model = models.get(path);
+export function dropModel(taskId: string, path: string): void {
+  const key = modelKey(taskId, path);
+  const model = models.get(key);
   if (model) {
     model.dispose();
-    models.delete(path);
+    models.delete(key);
   }
-  modelBaselines.delete(path);
+  modelBaselines.delete(key);
 }

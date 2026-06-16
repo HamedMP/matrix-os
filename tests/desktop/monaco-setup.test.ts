@@ -54,28 +54,40 @@ describe("monaco model cache", () => {
 
   it("does not evict models with unsaved edits when the cache is full", async () => {
     const { getOrCreateModel } = await loadMonacoSetup();
-    const dirty = getOrCreateModel("dirty.ts", "server-value");
+    const dirty = getOrCreateModel("task-a", "dirty.ts", "server-value");
     dirty.setValue("unsaved-value");
 
     for (let i = 0; i < 32; i += 1) {
-      getOrCreateModel(`clean-${i}.ts`, `clean-${i}`);
+      getOrCreateModel("task-a", `clean-${i}.ts`, `clean-${i}`);
     }
 
     expect(dirty.isDisposed()).toBe(false);
-    expect(getOrCreateModel("dirty.ts", "server-value").getValue()).toBe("unsaved-value");
+    expect(getOrCreateModel("task-a", "dirty.ts", "server-value").getValue()).toBe("unsaved-value");
   });
 
   it("does not advance a dirty model baseline on cache hit", async () => {
     const { getOrCreateModel } = await loadMonacoSetup();
-    const dirty = getOrCreateModel("dirty.ts", "server-value");
+    const dirty = getOrCreateModel("task-a", "dirty.ts", "server-value");
     dirty.setValue("unsaved-value");
 
-    expect(getOrCreateModel("dirty.ts", "unsaved-value").getValue()).toBe("unsaved-value");
+    expect(getOrCreateModel("task-a", "dirty.ts", "unsaved-value").getValue()).toBe("unsaved-value");
 
     for (let i = 0; i < 32; i += 1) {
-      getOrCreateModel(`clean-${i}.ts`, `clean-${i}`);
+      getOrCreateModel("task-a", `clean-${i}.ts`, `clean-${i}`);
     }
 
     expect(dirty.isDisposed()).toBe(false);
+  });
+
+  it("isolates same-path dirty models by task", async () => {
+    const { getOrCreateModel } = await loadMonacoSetup();
+    const taskA = getOrCreateModel("task-a", "src/app.ts", "server-a");
+    taskA.setValue("task-a unsaved");
+
+    const taskB = getOrCreateModel("task-b", "src/app.ts", "server-b");
+
+    expect(taskB).not.toBe(taskA);
+    expect(taskB.getValue()).toBe("server-b");
+    expect(getOrCreateModel("task-a", "src/app.ts", "server-a").getValue()).toBe("task-a unsaved");
   });
 });
