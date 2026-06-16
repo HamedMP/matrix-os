@@ -180,6 +180,20 @@ describe("EmbedManager", () => {
     ]);
   });
 
+  it("reload emits loading and reloads the current url", async () => {
+    const { manager, views } = makeManager();
+    const states: string[] = [];
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/", {
+      onState: (state) => states.push(state),
+    });
+
+    expect(manager.reload(id)).toBe(true);
+    await flush();
+
+    expect(states).toEqual(["loading"]);
+    expect(views[0]?.view.loadedUrls).toEqual(["https://gw.test/", "https://gw.test/"]);
+  });
+
   it("does not mark aborted loadURL redirects as failed", async () => {
     const { manager, views, failNextCreatedLoadWith } = makeManager();
     const states: string[] = [];

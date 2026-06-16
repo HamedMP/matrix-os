@@ -142,6 +142,21 @@ export class EmbedManager {
     return true;
   }
 
+  reload(embedId: string): boolean {
+    const record = this.records.get(embedId);
+    if (!record) return false;
+    record.lastUsed = ++this.tick;
+    if (!record.live) {
+      record.view.attach();
+      record.live = true;
+    }
+    record.loadFailed = false;
+    record.onState("loading");
+    this.loadInto(record);
+    this.enforceMaxLive();
+    return true;
+  }
+
   close(embedId: string): boolean {
     const record = this.records.get(embedId);
     if (!record) return false;

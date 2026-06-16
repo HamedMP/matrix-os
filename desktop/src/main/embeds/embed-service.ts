@@ -110,6 +110,7 @@ export class EmbedService {
         this.deps.emitState(embedId, "auth-required");
         return false;
       }
+      return this.manager.reload(embedId);
     }
     return this.manager.focus(embedId);
   }
