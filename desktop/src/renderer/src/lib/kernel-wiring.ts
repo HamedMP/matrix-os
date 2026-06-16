@@ -45,12 +45,22 @@ export function sendKernelMessage(msg: {
   text: string;
   sessionId?: string;
   requestId: string;
-}): void {
-  socket?.send({ type: "message", text: msg.text, requestId: msg.requestId, ...(msg.sessionId ? { sessionId: msg.sessionId } : {}) });
+}): boolean {
+  if (!socket) {
+    console.warn("[kernel-wiring] cannot send kernel message before socket is connected");
+    return false;
+  }
+  socket.send({ type: "message", text: msg.text, requestId: msg.requestId, ...(msg.sessionId ? { sessionId: msg.sessionId } : {}) });
+  return true;
 }
 
-export function abortKernelRequest(requestId: string): void {
-  socket?.send({ type: "abort", requestId });
+export function abortKernelRequest(requestId: string): boolean {
+  if (!socket) {
+    console.warn("[kernel-wiring] cannot abort kernel request before socket is connected");
+    return false;
+  }
+  socket.send({ type: "abort", requestId });
+  return true;
 }
 
 export function wireKernel(): () => void {

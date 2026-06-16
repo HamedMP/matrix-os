@@ -13,6 +13,7 @@ describe("useHermesChat", () => {
     useHermesChat.setState(useHermesChat.getInitialState(), true);
     kernel.abortKernelRequest.mockReset();
     kernel.sendKernelMessage.mockReset();
+    kernel.sendKernelMessage.mockReturnValue(true);
   });
 
   it("aborts the active kernel request before starting a new chat", () => {
@@ -29,5 +30,21 @@ describe("useHermesChat", () => {
       status: "idle",
       activeRequestId: null,
     });
+  });
+
+  it("returns to idle and shows an error when the kernel socket is unavailable", () => {
+    kernel.sendKernelMessage.mockReturnValue(false);
+
+    useHermesChat.getState().send("hello");
+
+    expect(useHermesChat.getState().status).toBe("idle");
+    expect(useHermesChat.getState().activeRequestId).toBeNull();
+    expect(useHermesChat.getState().messages).toEqual([
+      expect.objectContaining({ role: "user", content: "hello" }),
+      expect.objectContaining({
+        role: "system",
+        content: "Can't reach Matrix OS. Check your connection.",
+      }),
+    ]);
   });
 });

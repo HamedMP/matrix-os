@@ -7,6 +7,7 @@ import { reduceChat, type ChatEvent, type ChatMessage } from "../lib/chat";
 import { abortKernelRequest, sendKernelMessage } from "../lib/kernel-wiring";
 
 const TRANSCRIPT_CAP = 800;
+const DISCONNECTED_MESSAGE = "Can't reach Matrix OS. Check your connection.";
 
 export type HermesStatus = "idle" | "thinking" | "streaming";
 
@@ -48,11 +49,22 @@ export const useHermesChat = create<HermesChatState>()((set, get) => ({
       status: "thinking",
       activeRequestId: requestId,
     }));
-    sendKernelMessage({
+    const sent = sendKernelMessage({
       text: trimmed,
       requestId,
       ...(get().sessionId ? { sessionId: get().sessionId! } : {}),
     });
+    if (!sent) {
+      set((state) => ({
+        messages: reduceChat(state.messages, {
+          type: "kernel:error",
+          message: DISCONNECTED_MESSAGE,
+          requestId,
+        }).slice(-TRANSCRIPT_CAP),
+        status: "idle",
+        activeRequestId: null,
+      }));
+    }
   },
 
   abort: () => {

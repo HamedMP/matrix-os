@@ -3,9 +3,40 @@ import { useConnection } from "../../../stores/connection";
 import { Card, Empty, SectionHeader } from "./section-kit";
 import { StatusDot } from "../../../design/primitives";
 
+interface ChannelStatus {
+  name: string;
+  connected: boolean;
+}
+
+export function parseChannelStatusResponse(value: unknown): ChannelStatus[] {
+  const out: ChannelStatus[] = [];
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (
+        item &&
+        typeof item === "object" &&
+        typeof (item as { name?: unknown }).name === "string"
+      ) {
+        out.push({
+          name: (item as { name: string }).name,
+          connected: Boolean((item as { connected?: unknown }).connected),
+        });
+      }
+    }
+    return out;
+  }
+  if (value && typeof value === "object") {
+    for (const [name, v] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof v === "boolean") out.push({ name, connected: v });
+      else if (v && typeof v === "object") out.push({ name, connected: Boolean((v as { connected?: unknown }).connected) });
+    }
+  }
+  return out;
+}
+
 export default function ChannelsSection() {
   const api = useConnection((s) => s.api);
-  const [channels, setChannels] = useState<Array<{ name: string; connected: boolean }>>([]);
+  const [channels, setChannels] = useState<ChannelStatus[]>([]);
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -15,15 +46,7 @@ export default function ChannelsSection() {
       .get<unknown>("/api/channels/status")
       .then((res) => {
         if (cancelled) return;
-        // Accept either a record { telegram: true } or an array of { name, connected }.
-        const out: Array<{ name: string; connected: boolean }> = [];
-        if (res && typeof res === "object" && !Array.isArray(res)) {
-          for (const [name, v] of Object.entries(res as Record<string, unknown>)) {
-            if (typeof v === "boolean") out.push({ name, connected: v });
-            else if (v && typeof v === "object") out.push({ name, connected: Boolean((v as { connected?: unknown }).connected) });
-          }
-        }
-        setChannels(out);
+        setChannels(parseChannelStatusResponse(res));
       })
       .catch((err: unknown) => {
         console.warn("[settings] channels load failed:", err instanceof Error ? err.message : String(err));
