@@ -62,6 +62,19 @@ class ResizeObserverMock {
   unobserve() {}
 }
 
+async function openNewSessionMenu() {
+  fireEvent.click(screen.getByRole("button", { name: "New session" }));
+  await Promise.resolve();
+}
+
+async function chooseNewSessionMenuItem(name: RegExp | string) {
+  await openNewSessionMenu();
+  const menu = screen.getByRole("menu", { name: "New session menu" });
+  fireEvent.click(within(menu).getByRole("menuitem", { name }));
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
@@ -886,7 +899,34 @@ describe("TerminalApp", () => {
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
   });
 
-  it("opens zellij-backed shell sessions from the new-session control", async () => {
+  it("opens the Paper new-session menu before creating a new session", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+    expect(within(menu).getByText("NEW TAB")).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Shell.*⌘T/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*⌘⇧C/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Codex.*⌘⇧X/i })).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([input, init]) => (
+      String(input).endsWith("/api/terminal/sessions") &&
+      init?.method === "POST"
+    ))).toBe(false);
+  });
+
+  it("opens zellij-backed shell sessions from the new-session menu", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -896,9 +936,7 @@ describe("TerminalApp", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New session" }));
-      await Promise.resolve();
-      await Promise.resolve();
+      await chooseNewSessionMenuItem(/Shell/);
     });
 
     const createCalls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
@@ -1455,9 +1493,7 @@ describe("TerminalApp", () => {
     fetchMock.mockClear();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New session" }));
-      await Promise.resolve();
-      await Promise.resolve();
+      await chooseNewSessionMenuItem(/Shell/);
     });
 
     const createCall = fetchMock.mock.calls.find(([input, init]) => (
@@ -1517,8 +1553,7 @@ describe("TerminalApp", () => {
     fetchMock.mockClear();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New session" }));
-      await Promise.resolve();
+      await chooseNewSessionMenuItem(/Shell/);
     });
 
     const createCall = fetchMock.mock.calls.find(([input, init]) => (
@@ -1604,9 +1639,12 @@ describe("TerminalApp", () => {
     });
 
     await act(async () => {
-      const newButton = screen.getByRole("button", { name: "New session" });
-      fireEvent.click(newButton);
-      fireEvent.click(newButton);
+      await openNewSessionMenu();
+      const menu = screen.getByRole("menu", { name: "New session menu" });
+      const shellItem = within(menu).getByRole("menuitem", { name: /Shell/ });
+      fireEvent.click(shellItem);
+      fireEvent.click(shellItem);
+      await Promise.resolve();
       await Promise.resolve();
     });
     const createCalls = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
@@ -1896,10 +1934,41 @@ describe("TerminalApp", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New session" }));
-      await Promise.resolve();
+      await chooseNewSessionMenuItem(/Shell/);
     });
 
     expect(screen.getByText("Failed to create shell")).toBeTruthy();
+  });
+
+  it("starts Claude Code and Codex directly from the new-session menu", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItem(/Claude Code/);
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        claudeMode: true,
+        startupCommand: undefined,
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItem(/Codex/);
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        claudeMode: false,
+        startupCommand: "codex",
+      },
+    });
   });
 });

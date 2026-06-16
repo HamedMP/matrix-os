@@ -2567,6 +2567,7 @@ interface ProjectInfo {
 }
 
 type SidebarTab = "projects" | "shells" | "sessions" | "files";
+type NewSessionMenuAnchor = "drawer" | "rail";
 
 interface ShellSessionSummary {
   name: string;
@@ -2758,6 +2759,7 @@ function LocalTerminalSidebar() {
   if (deletingShellsRef.current === null) deletingShellsRef.current = new Set();
   const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
   const [closeConfirmationShell, setCloseConfirmationShell] = useState<ShellSessionSummary | null>(null);
+  const [newSessionMenuAnchor, setNewSessionMenuAnchor] = useState<NewSessionMenuAnchor | null>(null);
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -2934,6 +2936,7 @@ function LocalTerminalSidebar() {
 
   const createManagedShell = async () => {
     if (creatingShellRef.current) return;
+    setNewSessionMenuAnchor(null);
     creatingShellRef.current = true;
     setCreatingShell(true);
     setShellsError(null);
@@ -3205,6 +3208,27 @@ function LocalTerminalSidebar() {
     openActiveShell(shell, { markSeen: false });
   };
 
+  const openNewSessionMenu = (anchor: NewSessionMenuAnchor) => {
+    if (creatingShell) return;
+    setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
+  };
+
+  const createClaudeCodeSession = () => {
+    setNewSessionMenuAnchor(null);
+    ctx.addTab(ctx.sidebarSelectedPath ?? DEFAULT_CWD, "Claude Code", true);
+    if (ctx.mobile) {
+      ctx.setSidebarOpen(false);
+    }
+  };
+
+  const createCodexSession = () => {
+    setNewSessionMenuAnchor(null);
+    ctx.addTab(ctx.sidebarSelectedPath ?? DEFAULT_CWD, "Codex", false, "codex");
+    if (ctx.mobile) {
+      ctx.setSidebarOpen(false);
+    }
+  };
+
   const pendingCloseShell = closeConfirmationShell
     ? unfilteredRenderedShells.find((shell) => shell.name === closeConfirmationShell.name) ?? closeConfirmationShell
     : null;
@@ -3229,7 +3253,13 @@ function LocalTerminalSidebar() {
           shells={unfilteredRenderedShells}
           selectedShellName={selectedShellName}
           onExpand={() => ctx.setSidebarOpen(true)}
-          onNew={() => void createManagedShell()}
+          creatingShell={creatingShell}
+          newSessionMenuOpen={newSessionMenuAnchor === "rail"}
+          onNew={() => openNewSessionMenu("rail")}
+          onNewMenuClose={() => setNewSessionMenuAnchor(null)}
+          onCreateShell={() => void createManagedShell()}
+          onCreateClaude={createClaudeCodeSession}
+          onCreateCodex={createCodexSession}
           onOpen={makeShellActive}
         />
         {closeConfirmationOverlay}
@@ -3296,27 +3326,40 @@ function LocalTerminalSidebar() {
             </div>
           </div>
           <div className="flex shrink-0 items-center" style={{ gap: 10 }}>
-            <button
-              type="button"
-              aria-label="New session"
-              onClick={() => void createManagedShell()}
-              disabled={creatingShell}
-              className="flex items-center justify-center"
-              style={{
-                background: "#465243",
-                border: 0,
-                borderRadius: ctx.mobile ? 13 : 10,
-                color: "#F8F7EF",
-                cursor: creatingShell ? "not-allowed" : "pointer",
-                fontSize: 25,
-                height: ctx.mobile ? 44 : 40,
-                lineHeight: "28px",
-                opacity: creatingShell ? 0.72 : 1,
-                width: ctx.mobile ? 44 : 40,
-              }}
-            >
-              <PlusIcon aria-hidden="true" size={ctx.mobile ? 20 : 18} strokeWidth={2.5} />
-            </button>
+            <div style={{ position: "relative" }}>
+              <button
+                type="button"
+                aria-label="New session"
+                aria-haspopup="menu"
+                aria-expanded={newSessionMenuAnchor === "drawer"}
+                onClick={() => openNewSessionMenu("drawer")}
+                disabled={creatingShell}
+                className="flex items-center justify-center"
+                style={{
+                  background: "#465243",
+                  border: 0,
+                  borderRadius: ctx.mobile ? 13 : 10,
+                  color: "#F8F7EF",
+                  cursor: creatingShell ? "not-allowed" : "pointer",
+                  fontSize: 25,
+                  height: ctx.mobile ? 44 : 40,
+                  lineHeight: "28px",
+                  opacity: creatingShell ? 0.72 : 1,
+                  width: ctx.mobile ? 44 : 40,
+                }}
+              >
+                <PlusIcon aria-hidden="true" size={ctx.mobile ? 20 : 18} strokeWidth={2.5} />
+              </button>
+              {newSessionMenuAnchor === "drawer" ? (
+                <NewSessionMenu
+                  align="right"
+                  onClose={() => setNewSessionMenuAnchor(null)}
+                  onCreateShell={() => void createManagedShell()}
+                  onCreateClaude={createClaudeCodeSession}
+                  onCreateCodex={createCodexSession}
+                />
+              ) : null}
+            </div>
             {!ctx.mobile && (
               <>
                 <button
@@ -3439,6 +3482,173 @@ function formatCloseConfirmationMeta(shell: ShellSessionSummary): string {
     ? Math.max(0, shell.latestSeq - shell.lastSeenSeq)
     : shell.unread ? 1 : 0;
   return unreadCount > 0 ? `${placement} · ${unreadCount} unread` : placement;
+}
+
+function NewSessionMenu({
+  align,
+  onClose,
+  onCreateShell,
+  onCreateClaude,
+  onCreateCodex,
+}: {
+  align: "left" | "right";
+  onClose: () => void;
+  onCreateShell: () => void;
+  onCreateClaude: () => void;
+  onCreateCodex: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const onPointerDown = (event: globalThis.PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
+      onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label="New session menu"
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      style={{
+        background: "#FFFDF7",
+        border: "1px solid #D6D5C4",
+        borderRadius: 10,
+        boxShadow: "0 20px 45px rgba(39, 40, 34, 0.18)",
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        padding: 12,
+        position: "absolute",
+        ...(align === "right"
+          ? { right: 0, top: "calc(100% + 8px)" }
+          : { left: "calc(100% + 10px)", top: 0 }),
+        width: 300,
+        zIndex: 70,
+      }}
+    >
+      <div style={{ paddingBottom: 2 }}>
+        <div
+          style={{
+            color: "#A09F92",
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: 12,
+            fontWeight: 800,
+            letterSpacing: "0.1em",
+            lineHeight: "16px",
+            textTransform: "uppercase",
+          }}
+        >
+          NEW TAB
+        </div>
+      </div>
+      <NewSessionMenuItem
+        label="Shell"
+        shortcut="⌘T"
+        active
+        icon={(
+          <TerminalIcon
+            aria-hidden="true"
+            size={22}
+            strokeWidth={2.1}
+            style={{ color: "#465243", flexShrink: 0 }}
+          />
+        )}
+        onClick={onCreateShell}
+      />
+      <NewSessionMenuItem
+        label="Claude Code"
+        shortcut="⌘⇧C"
+        icon={<span aria-hidden="true" style={{ background: "#D8792C", borderRadius: 6, flexShrink: 0, height: 19, width: 19 }} />}
+        onClick={onCreateClaude}
+      />
+      <NewSessionMenuItem
+        label="Codex"
+        shortcut="⌘⇧X"
+        icon={<span aria-hidden="true" style={{ background: "#465243", borderRadius: 6, flexShrink: 0, height: 19, width: 19 }} />}
+        onClick={onCreateCodex}
+      />
+    </div>
+  );
+}
+
+function NewSessionMenuItem({
+  label,
+  shortcut,
+  icon,
+  active = false,
+  onClick,
+}: {
+  label: string;
+  shortcut: string;
+  icon: React.ReactNode;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      style={{
+        alignItems: "center",
+        background: active ? "#F0EFE5" : "transparent",
+        border: 0,
+        borderRadius: active ? 8 : 6,
+        boxSizing: "border-box",
+        color: "#31362D",
+        cursor: "pointer",
+        display: "flex",
+        flexShrink: 0,
+        gap: 14,
+        height: active ? 40 : 38,
+        padding: "0 12px",
+        textAlign: "left",
+      }}
+      onMouseEnter={(event) => {
+        event.currentTarget.style.background = "#F0EFE5";
+      }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.background = active ? "#F0EFE5" : "transparent";
+      }}
+    >
+      {icon}
+      <span
+        style={{
+          flex: "1 1 0",
+          fontFamily: "Inter, system-ui, sans-serif",
+          fontSize: 17,
+          fontWeight: active ? 700 : 600,
+          lineHeight: "22px",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          color: "#A09F92",
+          fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          fontSize: 13,
+          lineHeight: "16px",
+        }}
+      >
+        {shortcut}
+      </span>
+    </button>
+  );
 }
 
 function ShellCloseConfirmation({
@@ -3794,13 +4004,25 @@ function CollapsedSessionsRail({
   shells,
   selectedShellName,
   onExpand,
+  creatingShell,
+  newSessionMenuOpen,
   onNew,
+  onNewMenuClose,
+  onCreateShell,
+  onCreateClaude,
+  onCreateCodex,
   onOpen,
 }: {
   shells: ShellSessionSummary[];
   selectedShellName: string | null;
   onExpand: () => void;
+  creatingShell: boolean;
+  newSessionMenuOpen: boolean;
   onNew: () => void;
+  onNewMenuClose: () => void;
+  onCreateShell: () => void;
+  onCreateClaude: () => void;
+  onCreateCodex: () => void;
   onOpen: (shell: ShellSessionSummary) => void;
 }) {
   const activeShells = shells.filter((shell) => shell.placement !== "background");
@@ -3842,9 +4064,20 @@ function CollapsedSessionsRail({
       <CollapsedRailButton label="Expand sessions drawer" onClick={onExpand}>
         <ChevronsRightIcon data-testid="terminal-drawer-expand-icon" size={17} strokeWidth={2} />
       </CollapsedRailButton>
-      <CollapsedRailButton label="New session" onClick={onNew} strong>
-        <PlusIcon aria-hidden="true" data-testid="terminal-collapsed-new-session-icon" size={18} strokeWidth={2.5} />
-      </CollapsedRailButton>
+      <div style={{ position: "relative" }}>
+        <CollapsedRailButton label="New session" onClick={onNew} strong disabled={creatingShell} expanded={newSessionMenuOpen}>
+          <PlusIcon aria-hidden="true" data-testid="terminal-collapsed-new-session-icon" size={18} strokeWidth={2.5} />
+        </CollapsedRailButton>
+        {newSessionMenuOpen ? (
+          <NewSessionMenu
+            align="left"
+            onClose={onNewMenuClose}
+            onCreateShell={onCreateShell}
+            onCreateClaude={onCreateClaude}
+            onCreateCodex={onCreateCodex}
+          />
+        ) : null}
+      </div>
       <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
       <CollapsedRailGroup shells={activeShells} selectedShellName={selectedShellName} onOpen={onOpen} />
       {backgroundShells.length > 0 && (
@@ -3932,30 +4165,38 @@ function CollapsedRailButton({
   onClick,
   children,
   strong = false,
+  disabled = false,
+  expanded = false,
 }: {
   label: string;
   onClick: () => void;
   children: React.ReactNode;
   strong?: boolean;
+  disabled?: boolean;
+  expanded?: boolean;
 }) {
   return (
     <button
       type="button"
       aria-label={label}
+      aria-haspopup={label === "New session" ? "menu" : undefined}
+      aria-expanded={label === "New session" ? expanded : undefined}
       title={label}
       onClick={onClick}
+      disabled={disabled}
       className="flex items-center justify-center"
       style={{
         background: strong ? "#465243" : "#FFFDF7",
         border: strong ? "1px solid #465243" : "1px solid #D6D5C4",
         borderRadius: strong ? 11 : 10,
         color: strong ? "#F8F7EF" : "#6F7167",
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
         flexShrink: 0,
         fontSize: strong ? 24 : 14,
         fontWeight: 700,
         height: COLLAPSED_RAIL_ITEM_SIZE,
         lineHeight: 1,
+        opacity: disabled ? 0.72 : 1,
         width: COLLAPSED_RAIL_ITEM_SIZE,
       }}
     >

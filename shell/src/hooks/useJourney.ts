@@ -74,7 +74,7 @@ export function useJourney(options: { enabled?: boolean } = {}): UseJourneyResul
       const controller = new AbortController();
       inFlightController = controller;
       const timeoutId = window.setTimeout(() => controller.abort(), JOURNEY_TIMEOUT_MS);
-      // react-doctor-disable-next-line react-doctor/async-defer-await -- ordered flow: the token is needed for the request that follows, and the post-await `disposed` guards discard a response received after unmount/refreshJourney, so these awaits cannot be deferred past them.
+      // react-doctor-disable-next-line react-doctor/async-defer-await, react-hooks-js/todo -- ordered flow: the token is needed for the request that follows, and the post-await `disposed` guards discard a response received after unmount/refreshJourney, so these awaits cannot be deferred past them.
       try {
         const token = await getToken();
         if (disposed) return;
