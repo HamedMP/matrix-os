@@ -118,6 +118,14 @@ WantedBy=default.target
 `;
 }
 
+export function linuxStartServiceCommands(): string[][] {
+  return [
+    ["--user", "daemon-reload"],
+    ["--user", "enable", "matrixos-sync.service"],
+    ["--user", "restart", "matrixos-sync.service"],
+  ];
+}
+
 export async function installService(command: DaemonServiceCommand): Promise<string> {
   const os = platform();
   const logDir = join(homedir(), ".matrixos", "logs");
@@ -165,18 +173,15 @@ export async function startService(): Promise<void> {
   }
 
   if (os === "linux") {
-    await execFileAsync("systemctl", ["--user", "daemon-reload"]).catch((err: unknown) => {
+    const [daemonReload, enable, restart] = linuxStartServiceCommands();
+    await execFileAsync("systemctl", daemonReload).catch((err: unknown) => {
       console.warn(
         "[sync/service] systemctl daemon-reload failed:",
         err instanceof Error ? err.message : String(err),
       );
     });
-    await execFileAsync("systemctl", [
-      "--user",
-      "enable",
-      "--now",
-      "matrixos-sync.service",
-    ]);
+    await execFileAsync("systemctl", enable);
+    await execFileAsync("systemctl", restart);
     return;
   }
 

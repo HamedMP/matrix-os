@@ -5,6 +5,7 @@ import {
   escapeSystemdExecArg,
   escapeXml,
   launchdPlist,
+  linuxStartServiceCommands,
   systemdUnit,
 } from "../../src/daemon/service.js";
 
@@ -64,5 +65,15 @@ describe("daemon service command rendering", () => {
       "<string>/home/User Name/.local/bin/matrix</string>",
     );
     expect(plist).toContain("<string>__daemon</string>");
+  });
+});
+
+describe("linuxStartServiceCommands", () => {
+  it("restarts an already-active service so rewritten units take effect", () => {
+    expect(linuxStartServiceCommands()).toEqual([
+      ["--user", "daemon-reload"],
+      ["--user", "enable", "matrixos-sync.service"],
+      ["--user", "restart", "matrixos-sync.service"],
+    ]);
   });
 });

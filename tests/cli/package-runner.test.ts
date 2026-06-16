@@ -57,6 +57,17 @@ describe("published CLI package runners", () => {
     expect(script).toContain('sudo mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"');
   });
 
+  it("prefers upgrading the existing matrix command path before installing elsewhere", async () => {
+    const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
+
+    expect(script).toContain("existing_matrix_install_dir()");
+    expect(script).toContain('EXISTING_MATRIX="$(command -v matrix 2>/dev/null || true)"');
+    expect(script).toMatch(
+      /elif EXISTING_DIR="\$\(existing_matrix_install_dir\)" && \[ -n "\$EXISTING_DIR" \]; then\n\s+INSTALL_DIR="\$EXISTING_DIR"\n\s+install_binary_unprivileged "\$INSTALL_DIR" \|\| install_binary_with_sudo "\$INSTALL_DIR"/,
+    );
+    expect(script).toContain('PATH_MATRIX="$(command -v matrix 2>/dev/null || true)"');
+  });
+
   it("preserves the macOS package installer when available", async () => {
     const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
     const macosInstaller = script.slice(script.indexOf("install_macos() {"));

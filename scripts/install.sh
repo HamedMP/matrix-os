@@ -134,6 +134,14 @@ install_binary_with_sudo() {
   sudo ln -sf matrix "$INSTALL_DIR/mos"
 }
 
+existing_matrix_install_dir() {
+  EXISTING_MATRIX="$(command -v matrix 2>/dev/null || true)"
+  case "$EXISTING_MATRIX" in
+    */matrix) dirname "$EXISTING_MATRIX" ;;
+    *)        printf '' ;;
+  esac
+}
+
 install_cli_binary() {
   ASSET_OS="$1"
   TAG="${2:-$(resolve_version)}"
@@ -160,6 +168,9 @@ install_cli_binary() {
   if [ -n "${MATRIX_INSTALL_DIR:-}" ]; then
     INSTALL_DIR="$MATRIX_INSTALL_DIR"
     install_binary_unprivileged "$INSTALL_DIR" || install_binary_with_sudo "$INSTALL_DIR"
+  elif EXISTING_DIR="$(existing_matrix_install_dir)" && [ -n "$EXISTING_DIR" ]; then
+    INSTALL_DIR="$EXISTING_DIR"
+    install_binary_unprivileged "$INSTALL_DIR" || install_binary_with_sudo "$INSTALL_DIR"
   elif [ -n "${HOME:-}" ] && install_binary_unprivileged "$HOME/.local/bin"; then
     INSTALL_DIR="$HOME/.local/bin"
   else
@@ -176,6 +187,10 @@ install_cli_binary() {
     *":$INSTALL_DIR:"*) ;;
     *) echo "    Add $INSTALL_DIR to PATH or run '$INSTALL_DIR/matrix' directly." ;;
   esac
+  PATH_MATRIX="$(command -v matrix 2>/dev/null || true)"
+  if [ -n "$PATH_MATRIX" ] && [ "$PATH_MATRIX" != "$INSTALL_DIR/matrix" ]; then
+    echo "    Warning: current shell resolves 'matrix' to $PATH_MATRIX before $INSTALL_DIR/matrix."
+  fi
   echo "Next: run 'matrix login' to sign in."
 }
 
