@@ -63,4 +63,25 @@ describe("useFileTree", () => {
     ]);
     expect(useFileTree.getState().loadingPaths.src).toBe(false);
   });
+
+  it("keeps failed child loads retryable", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const get = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary"))
+      .mockResolvedValueOnce({ entries: [{ name: "index.ts", type: "file" }] });
+    const api = makeApi(get as never);
+
+    await useFileTree.getState().toggle(api, "src");
+    expect(useFileTree.getState().childrenByPath.src).toBeUndefined();
+    expect(useFileTree.getState().loadingPaths.src).toBe(false);
+
+    await useFileTree.getState().toggle(api, "src");
+    await useFileTree.getState().toggle(api, "src");
+
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(useFileTree.getState().childrenByPath.src).toEqual([
+      { name: "index.ts", type: "file" },
+    ]);
+  });
 });
