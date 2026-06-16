@@ -1,5 +1,5 @@
 import { Save } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../design/primitives";
 import { toUserMessage } from "../../../lib/errors";
 import { useConnection } from "../../../stores/connection";
@@ -14,6 +14,16 @@ export default function AgentSection() {
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const saveSeqRef = useRef(0);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!api) return;
@@ -40,14 +50,26 @@ export default function AgentSection() {
 
   const save = async () => {
     if (!api || !dirty) return;
+    const saveSeq = saveSeqRef.current + 1;
+    saveSeqRef.current = saveSeq;
+    const nextSoul = soul;
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = null;
+    }
     setStatus("saving");
     try {
-      await api.putText(SOUL_PATH, soul);
-      setBaseline(soul);
+      await api.putText(SOUL_PATH, nextSoul);
+      if (!mountedRef.current || saveSeqRef.current !== saveSeq) return;
+      setBaseline(nextSoul);
       setError(null);
       setStatus("saved");
-      setTimeout(() => setStatus("idle"), 1500);
+      savedTimerRef.current = setTimeout(() => {
+        savedTimerRef.current = null;
+        if (mountedRef.current && saveSeqRef.current === saveSeq) setStatus("idle");
+      }, 1500);
     } catch (err: unknown) {
+      if (!mountedRef.current || saveSeqRef.current !== saveSeq) return;
       setError(toUserMessage(err));
       setStatus("error");
     }

@@ -25,7 +25,10 @@ export default function ChannelsSection() {
         }
         setChannels(out);
       })
-      .catch(() => { if (!cancelled) setError(true); });
+      .catch((err: unknown) => {
+        console.warn("[settings] channels load failed:", err instanceof Error ? err.message : String(err));
+        if (!cancelled) setError(true);
+      });
     return () => { cancelled = true; };
   }, [api]);
 
