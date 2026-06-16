@@ -27,4 +27,8 @@ ingress:
     service: http://matrixos-staging-4:3000
   - hostname: api-staging-4.matrix-os.com
     service: http://matrixos-staging-4:4000
+  # Browser-reachable preview platform (Cloud Run; spec 093, PR #532).
+  # Routes to the matrix-platform-preview run.app origin.
+  - hostname: preview.matrix-os.com
+    service: https://matrix-platform-preview-jqxkjdhtkq-ey.a.run.app
   - service: http_status:404
