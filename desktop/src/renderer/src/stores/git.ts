@@ -96,20 +96,12 @@ let loadAllRequestSeq = 0;
 
 function mergePreviewsForScope(existing: Preview[], incoming: Preview[], slug: string, taskId?: string): Preview[] {
   const incomingIds = new Set(incoming.map((preview) => preview.id));
-<<<<<<< HEAD
-  const scopedOut = existing.filter((preview) => {
-    if (preview.projectSlug !== slug) return true;
-    return taskId ? preview.taskId !== taskId : false;
-  });
-  return [...scopedOut.filter((preview) => !incomingIds.has(preview.id)), ...incoming];
-=======
   const retained = existing.filter((preview) => {
     if (incomingIds.has(preview.id)) return false;
     if (preview.projectSlug !== slug) return true;
     return taskId ? preview.taskId !== taskId : false;
   });
   return [...retained, ...incoming];
->>>>>>> a5e95acf6 (fix(desktop): propagate task session link failures)
 }
 
 interface GitState {
