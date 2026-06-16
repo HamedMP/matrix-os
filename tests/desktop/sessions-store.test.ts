@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { useBoard, type Card } from "@desktop/renderer/src/stores/board";
 import { useSessions } from "@desktop/renderer/src/stores/sessions";
 
 function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
@@ -19,6 +20,14 @@ function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
 
 beforeEach(() => {
   useSessions.setState({ sessions: [], aliasMap: {}, loading: false, creating: false, error: null });
+  useBoard.setState({
+    projects: [],
+    activeProjectSlug: null,
+    cardsByProject: {},
+    firstLoadByProject: {},
+    refreshing: false,
+    error: null,
+  });
 });
 
 describe("useSessions.create", () => {
@@ -184,6 +193,23 @@ describe("useSessions.restart", () => {
   });
 
   it("restarts workspace agent sessions through the session orchestrator", async () => {
+    const card: Card = {
+      id: "task_a",
+      projectSlug: "proj",
+      title: "Review",
+      description: "",
+      status: "running",
+      priority: "normal",
+      order: 1,
+      parentTaskId: null,
+      linkedSessionId: "sess_old",
+      linkedWorktreeId: "wt_1",
+      previewIds: [],
+      tags: [],
+      updatedAt: null,
+      revision: 1,
+    };
+    useBoard.setState({ cardsByProject: { proj: [card] } });
     useSessions.setState({
       sessions: [
         {
@@ -205,7 +231,10 @@ describe("useSessions.restart", () => {
       session: { id: "sess_next", runtime: { zellijSession: "matrix-agent-2" } },
     });
     const get = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
-    const api = makeApi({ delete: del, post, get });
+    const patch = vi.fn().mockResolvedValue({
+      task: { ...card, linkedSessionId: "sess_next" },
+    });
+    const api = makeApi({ delete: del, post, get, patch });
 
     const restarted = await useSessions.getState().restart(api, "matrix-agent-1");
 
@@ -216,6 +245,9 @@ describe("useSessions.restart", () => {
       projectSlug: "proj",
       taskId: "task_a",
       worktreeId: "wt_1",
+    });
+    expect(patch).toHaveBeenCalledWith("/api/projects/proj/tasks/task_a", {
+      linkedSessionId: "sess_next",
     });
     expect(restarted).toEqual({ sessionId: "sess_next", attachName: "matrix-agent-2" });
   });

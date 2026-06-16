@@ -11,6 +11,7 @@ import {
   type WorkspaceSessionDTO,
   type ZellijSessionDTO,
 } from "../lib/session-merge";
+import { useBoard } from "./board";
 
 export interface SessionCreateInput {
   kind: "shell" | "agent";
@@ -205,6 +206,11 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           return null;
         }
         set({ creating: false, error: null });
+        if (existing.projectSlug && existing.taskId) {
+          await useBoard.getState().linkSession(api, existing.projectSlug, existing.taskId, {
+            linkedSessionId: sessionId,
+          });
+        }
         return { sessionId, attachName: get().aliasMap[sessionId] ?? directAttachName };
       }
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name: attachName });
