@@ -30,6 +30,9 @@ npx react-doctor@latest desktop   # mandatory before committing renderer changes
 bun run typecheck            # all packages incl. desktop
 ```
 
+`test:e2e:desktop` is a root `package.json` script added during T001; it builds the
+desktop workspace before running `vitest run tests/e2e/desktop/`.
+
 The stub gateway (`tests/e2e/desktop/fixtures/stub-gateway.ts`) is a small Hono server
 implementing the contract subset in `contracts/gateway-contract.md` (device auth approves
 instantly, one project, fake zellij echo session, scripted kernel stream) so e2e runs need no

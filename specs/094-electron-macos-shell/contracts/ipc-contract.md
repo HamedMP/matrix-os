@@ -16,7 +16,7 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
 | `runtime:select` | `{slot: string(1-64)}` | `{ok}` | triggers socket teardown→rebuild broadcast |
 | `state:get` | `{key: enum}` | JSON value | window/layout/appearance reads |
 | `state:set` | `{key: enum, value (bounded)}` | `{ok}` | atomic write |
-| `embed:open` | `{kind: "hosted-shell"\|"app", slug?, bounds}` | `{embedId}` \| typed error | main performs handoff/token fetch |
+| `embed:open` | `{kind: "hosted-shell", bounds}` \| `{kind: "app", slug: string(1-64), bounds}` | `{embedId}` \| typed error | main performs handoff/token fetch |
 | `embed:set-bounds` | `{embedId, bounds}` | `{ok}` | renderer reports panel rect |
 | `embed:close` | `{embedId}` | `{ok}` | |
 | `embed:retry-auth` | `{embedId}` | `{ok}` \| typed error | at most one auto retry happened already |
@@ -40,6 +40,9 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
 
 - All strings carry max lengths; bounds objects are `{x,y,width,height}` ints within
   [-16384, 16384]; arrays capped.
+- `embed:open` is a discriminated union: `kind:"app"` requires a non-empty slug
+  while `kind:"hosted-shell"` does not accept a slug. Missing app slugs are rejected
+  by Zod at the IPC boundary before the embed manager can request an app token.
 - `embed:*` channels accept only known `embedId`s issued by main (random ids, not guessable
   enumeration).
 - `state:set` values are size-capped (64KB) and schema-checked per key.
