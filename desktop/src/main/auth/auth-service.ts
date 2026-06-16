@@ -176,9 +176,28 @@ export class AuthService {
     this.credential = null;
     this.profile = null;
     this.flowState = "idle";
-    await this.deps.credentialStore.clear();
-    await this.deps.clearProfile();
     this.deps.onAuthChanged(this.getStatus());
+
+    let cleanupError: unknown = null;
+    try {
+      await this.deps.credentialStore.clear();
+    } catch (err: unknown) {
+      cleanupError = err;
+      console.warn(
+        "[auth] failed to clear credential store:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    try {
+      await this.deps.clearProfile();
+    } catch (err: unknown) {
+      cleanupError ??= err;
+      console.warn(
+        "[auth] failed to clear connection profile:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    if (cleanupError) throw cleanupError;
   }
 
   private isCredentialValid(credential: StoredCredential): boolean {

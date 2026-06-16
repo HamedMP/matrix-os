@@ -155,6 +155,35 @@ describe("AuthService", () => {
     expect(onAuthChanged).toHaveBeenCalledTimes(1);
   });
 
+  it("emits signed-out status before persistent sign-out cleanup can fail", async () => {
+    const credentialStore = makeCredentialStore(makeCredential());
+    const onAuthChanged = vi.fn();
+    const cleanupError = new Error("credential clear failed");
+    credentialStore.clear = vi.fn(async () => {
+      throw cleanupError;
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const auth = new AuthService({
+      credentialStore,
+      platformHost: "https://app.matrix-os.com",
+      openExternal: vi.fn(async () => undefined),
+      loadProfile: async () => makeProfile(),
+      saveProfile: vi.fn(async () => undefined),
+      clearProfile: vi.fn(async () => undefined),
+      onAuthChanged,
+    });
+    await auth.init();
+
+    await expect(auth.signOut()).rejects.toThrow(cleanupError);
+
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(onAuthChanged).toHaveBeenCalledWith({
+      signedIn: false,
+      runtimeSlot: "primary",
+      platformHost: "https://app.matrix-os.com",
+    });
+  });
+
   it("does not start polling when sign-out races an in-flight device-code request", async () => {
     const credentialStore = makeCredentialStore(null);
     const saveProfile = vi.fn(async () => undefined);
