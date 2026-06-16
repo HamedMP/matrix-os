@@ -207,8 +207,6 @@ jobs:
           set -euo pipefail
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:${GITHUB_SHA::12}"
           cache_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:buildcache"
-          IMAGE="$image"
-          CACHE_IMAGE="$cache_image"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
           echo "CACHE_IMAGE=$cache_image" >> "$GITHUB_ENV"
           next_public_clerk_publishable_key="$(gcloud secrets versions access latest --secret next-public-clerk-publishable-key --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
@@ -244,9 +242,9 @@ jobs:
             echo "### Platform Cloud Run build"
             echo "- source_sha: \`${GITHUB_SHA}\`"
             echo "- lane: \`platform\`"
-            echo "- image: \`${IMAGE}\`"
+            echo "- image: \`${image}\`"
             echo "- build_id: \`${build_id}\`"
-            echo "- cache_image: \`${CACHE_IMAGE}\`"
+            echo "- cache_image: \`${cache_image}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
           for attempt in $(seq 1 240); do

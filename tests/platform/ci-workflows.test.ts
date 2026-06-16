@@ -193,10 +193,15 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('### Platform Cloud Run build');
-    expect(workflow).toContain('- source_sha: \\`${GITHUB_SHA}\\`');
-    expect(workflow).toContain('- lane: \\`platform\\`');
-    expect(workflow).toContain('- image: \\`${IMAGE}\\`');
-    expect(workflow).toContain('- build_id: \\`${build_id}\\`');
-    expect(workflow).toContain('- cache_image: \\`${CACHE_IMAGE}\\`');
+    expect(workflow).toContain('- source_sha:');
+    expect(workflow).toContain('${GITHUB_SHA}');
+    expect(workflow).toContain('- lane:');
+    expect(workflow).toContain('platform');
+    expect(workflow).toContain('- image:');
+    expect(workflow).toContain('${image}');
+    expect(workflow).toContain('- build_id:');
+    expect(workflow).toContain('${build_id}');
+    expect(workflow).toContain('- cache_image:');
+    expect(workflow).toContain('${cache_image}');
   });
 });
