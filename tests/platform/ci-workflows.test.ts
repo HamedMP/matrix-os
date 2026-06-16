@@ -107,7 +107,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('--min-instances "$min_instances"');
   });
 
-  it('smokes the pre-VPS auth and billing shell surface before promotion', () => {
+  it('smokes the pre-VPS auth and onboarding shell surface before promotion', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
@@ -116,7 +116,8 @@ describe('CI workflows', () => {
     expect(workflow).toContain('$CANDIDATE_URL/?billing=setup');
     expect(workflow).toContain('pre-VPS auth shell');
     expect(workflow).toContain('data-matrix-auth-shell="true"');
-    expect(workflow).toContain('data-matrix-billing-gate="true"');
+    expect(workflow).toContain('data-matrix-(billing-gate|boot-sequence)="true"');
+    expect(workflow).toContain('did not serve the billing gate or boot sequence');
     expect(workflow).toContain('data-matrix-platform-fallback-auth="true"');
     expect(workflow).toContain('served the platform fallback auth page');
   });
