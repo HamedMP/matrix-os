@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import { defineCommand, runMain } from "citty";
 import { loginCommand } from "./commands/login.js";
 import { setupCommand } from "./commands/setup.js";
@@ -19,9 +18,7 @@ import { agentCommand } from "./commands/agent.js";
 import { forwardAliasCommand, portCommand } from "./commands/port.js";
 import { normalizeLeadingGlobalFlags } from "./global-flags.js";
 import { getCliTelemetry } from "./telemetry.js";
-
-const require = createRequire(import.meta.url);
-const pkg = require("../../package.json") as { version: string };
+import { resolveCliVersion } from "./version.js";
 
 const subCommands = {
   login: loginCommand,
@@ -48,7 +45,7 @@ const subCommands = {
 const main = defineCommand({
   meta: {
     name: "matrixos",
-    version: pkg.version,
+    version: resolveCliVersion(),
     description: "Matrix OS CLI — file sync, shell sessions, and instance access",
   },
   subCommands,
@@ -56,21 +53,26 @@ const main = defineCommand({
 
 const rawArgs = normalizeLeadingGlobalFlags(process.argv.slice(2));
 
-// Anonymous usage telemetry (no-op without a PostHog token; opt out with
-// MATRIX_NO_TELEMETRY). Only the resolved command name and an argument count
-// are captured -- never argument values or paths. Unknown first tokens are
-// reported as "unknown" so typos cannot leak file names.
-const telemetry = getCliTelemetry();
-const firstPositional = rawArgs.find((arg) => !arg.startsWith("-"));
-const commandName = firstPositional
-  ? Object.hasOwn(subCommands, firstPositional)
-    ? firstPositional
-    : "unknown"
-  : "root";
-telemetry.captureCommandRun(commandName, Math.max(rawArgs.length - (firstPositional ? 1 : 0), 0));
+if (rawArgs[0] === "__daemon") {
+  const { startDaemon } = await import("../daemon/index.js");
+  await startDaemon();
+} else {
+  // Anonymous usage telemetry (no-op without a PostHog token; opt out with
+  // MATRIX_NO_TELEMETRY). Only the resolved command name and an argument count
+  // are captured -- never argument values or paths. Unknown first tokens are
+  // reported as "unknown" so typos cannot leak file names.
+  const telemetry = getCliTelemetry();
+  const firstPositional = rawArgs.find((arg) => !arg.startsWith("-"));
+  const commandName = firstPositional
+    ? Object.hasOwn(subCommands, firstPositional)
+      ? firstPositional
+      : "unknown"
+    : "root";
+  telemetry.captureCommandRun(commandName, Math.max(rawArgs.length - (firstPositional ? 1 : 0), 0));
 
-try {
-  await runMain(main, { rawArgs });
-} finally {
-  await telemetry.shutdown();
+  try {
+    await runMain(main, { rawArgs });
+  } finally {
+    await telemetry.shutdown();
+  }
 }

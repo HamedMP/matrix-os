@@ -15,6 +15,7 @@ const mustExist = [
   'src/index.ts',
   'src/lib/find-tsx-loader.mjs',
   'src/lib/node-runtime-guard.mjs',
+  'scripts/build-binaries.mjs',
 ];
 
 const missing = mustExist.filter((p) => !existsSync(resolve(pkgRoot, p)));

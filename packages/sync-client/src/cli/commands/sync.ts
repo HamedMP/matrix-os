@@ -7,11 +7,20 @@ import {
   sendCommand,
   isDaemonRunning,
 } from "../daemon-client.js";
-import { installService, startService } from "../../daemon/service.js";
+import {
+  createSourceDaemonServiceCommand,
+  createStandaloneDaemonServiceCommand,
+  installService,
+  startService,
+} from "../../daemon/service.js";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 
 const SUBCOMMANDS = new Set(["status", "pause", "resume"]);
+
+function isStandaloneCliRuntime(): boolean {
+  return process.env.MATRIX_CLI_STANDALONE === "1" && typeof process.versions.bun === "string";
+}
 
 function writeSyncError(err: unknown, json: boolean): void {
   const code = isDaemonClientError(err) ? err.code : "sync_failed";
@@ -89,11 +98,10 @@ async function runStart(
     return;
   }
 
-  // Point launchd/systemd at the .mjs launcher -- it re-execs node with
-  // --import tsx so the .ts daemon entry can be loaded directly. Plain node
-  // can't import .ts files.
-  const daemonPath = new URL("../../daemon/launcher.mjs", import.meta.url).pathname;
-  await installService(daemonPath);
+  const serviceCommand = isStandaloneCliRuntime()
+    ? createStandaloneDaemonServiceCommand()
+    : createSourceDaemonServiceCommand(new URL("../../daemon/launcher.mjs", import.meta.url).pathname);
+  await installService(serviceCommand);
   await startService();
 
   console.log(`Sync started for: ${syncPath}`);

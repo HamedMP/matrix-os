@@ -1,4 +1,4 @@
-export const MIN_NODE_MAJOR = 24;
+export const MIN_NODE_MAJOR = 20;
 
 export function nodeMajor(version) {
   const match = /^v?(\d+)\./.exec(String(version));
@@ -11,7 +11,7 @@ export function isSupportedNodeVersion(version) {
 }
 
 export function unsupportedNodeMessage(version) {
-  return `Matrix CLI requires Node.js 24 or newer (current: ${version}).`;
+  return `Matrix CLI requires Node.js 20 or newer (current: ${version}).`;
 }
 
 export function hasJsonFlag(argv) {

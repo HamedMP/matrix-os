@@ -1,5 +1,3 @@
-import { PostHog } from "posthog-node";
-
 /**
  * Anonymous CLI telemetry. Mirrors the env precedence of
  * `getPostHogConfig` in @matrix-os/observability, replicated here because
@@ -21,6 +19,7 @@ const TOKEN_ENV_KEYS = [
 ];
 const HOST_ENV_KEYS = ["POSTHOG_HOST", "NEXT_PUBLIC_POSTHOG_HOST"];
 
+const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2_000;
 
 export const CLI_TELEMETRY_EVENTS = {
@@ -51,6 +50,7 @@ export interface CliTelemetryLogger {
 export interface CreateCliTelemetryOptions {
   env?: EnvSource;
   clientFactory?: (config: CliTelemetryConfig) => CliTelemetryClient;
+  fetch?: typeof fetch;
   logger?: CliTelemetryLogger;
   shutdownTimeoutMs?: number;
 }
@@ -98,6 +98,50 @@ function resolveDistinctId(env: EnvSource): string {
   return env.MATRIX_USER_ID?.trim() || env.MATRIX_HANDLE?.trim() || "matrix-cli-anonymous";
 }
 
+function posthogCaptureUrl(host: string): string {
+  return `${host.replace(/\/+$/, "")}/capture/`;
+}
+
+function createFetchTelemetryClient(
+  config: CliTelemetryConfig,
+  fetchImpl: typeof fetch,
+  logger: CliTelemetryLogger,
+  timeoutMs: number,
+): CliTelemetryClient {
+  const pending = new Set<Promise<void>>();
+  const host = config.host ?? DEFAULT_POSTHOG_HOST;
+
+  async function send(input: CliTelemetryCaptureInput): Promise<void> {
+    const response = await fetchImpl(posthogCaptureUrl(host), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        api_key: config.token,
+        distinct_id: input.distinctId,
+        event: input.event,
+        properties: input.properties,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) {
+      logger.warn(`[telemetry] capture failed: Http${response.status}`);
+    }
+  }
+
+  return {
+    capture(input) {
+      const operation = send(input).catch((err: unknown) => {
+        logger.warn(`[telemetry] capture failed: ${errorKind(err)}`);
+      });
+      pending.add(operation);
+      operation.finally(() => pending.delete(operation));
+    },
+    shutdown() {
+      return Promise.allSettled([...pending]);
+    },
+  };
+}
+
 export function createCliTelemetry(options: CreateCliTelemetryOptions = {}): CliTelemetry {
   const env = options.env ?? process.env;
   const logger = options.logger ?? console;
@@ -122,14 +166,7 @@ export function createCliTelemetry(options: CreateCliTelemetryOptions = {}): Cli
       const config: CliTelemetryConfig = host ? { token, host } : { token };
       client = options.clientFactory
         ? options.clientFactory(config)
-        : new PostHog(config.token, {
-            ...(config.host ? { host: config.host } : {}),
-            // Short-lived process: send each event immediately, no batching,
-            // no geo lookups.
-            flushAt: 1,
-            flushInterval: 0,
-            disableGeoip: true,
-          });
+        : createFetchTelemetryClient(config, options.fetch ?? fetch, logger, shutdownTimeoutMs);
     }
     return client;
   }

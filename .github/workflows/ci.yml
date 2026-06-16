@@ -219,10 +219,14 @@ jobs:
           done
 
   sync-client:
-    name: Sync Client Package
+    name: Sync Client Package (Node ${{ matrix.node }})
     needs: [changes, patterns]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 24]
     steps:
       - name: Skip expensive CI for docs-only changes
         if: needs.changes.outputs.should_run != 'true'
@@ -237,7 +241,7 @@ jobs:
       - uses: actions/setup-node@v6
         if: needs.changes.outputs.should_run == 'true'
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -376,7 +380,7 @@ jobs:
             echo "| Type Check | $TYPECHECK_RESULT |"
             echo "| Pattern Scan | $PATTERNS_RESULT |"
             echo "| React Doctor | $REACT_DOCTOR_RESULT |"
-            echo "| Sync Client Package | $SYNC_CLIENT_RESULT |"
+            echo "| Sync Client Package (Node 20/24) | $SYNC_CLIENT_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"

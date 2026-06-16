@@ -60,6 +60,19 @@ describe('CI workflows', () => {
     expect(dockerBuildActionUses).toHaveLength(1);
   });
 
+  it('uses compatible artifact actions in CLI release workflows', () => {
+    const root = process.cwd();
+    const cliReleaseWorkflow = readFileSync(join(root, '.github/workflows/cli-release.yml'), 'utf8');
+    const releaseWorkflow = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+
+    for (const workflow of [cliReleaseWorkflow, releaseWorkflow]) {
+      expect(workflow).toContain('uses: actions/upload-artifact@v7');
+      expect(workflow).toContain('uses: actions/download-artifact@v7');
+      expect(workflow).not.toContain('uses: actions/upload-artifact@v4');
+      expect(workflow).not.toContain('uses: actions/download-artifact@v8');
+    }
+  });
+
   it('wires every required Stripe price secret into platform Cloud Run', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

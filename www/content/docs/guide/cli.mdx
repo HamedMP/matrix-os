@@ -25,7 +25,7 @@ pnpm dlx @finnaai/matrix whoami
 
 If you do not have a Matrix account yet, `login --profile cloud` keeps waiting while the browser walks you through signup, hosted trial checkout, and provisioning your Matrix computer. When setup finishes, approve the CLI in that same browser tab and return to your terminal.
 
-The package runner requires Node.js 24 or newer. If your shell uses an older Node runtime, install Node 24+ first and rerun the same command.
+The package runner requires Node.js 20 or newer. If your shell uses an older Node runtime, use the install script below to install the standalone binary instead.
 
 ## Install Permanently
 
@@ -35,6 +35,9 @@ brew install finnaai/tap/matrix
 
 # npm
 npm install -g @finnaai/matrix
+
+# Standalone binary, no Node.js required
+curl -fsSL https://get.matrix-os.com | sh
 
 # Inside the matrix-os repo (development)
 pnpm install

@@ -16,7 +16,7 @@ protection is also updated when the shard list changes.
 - `Type Check`
 - `Pattern Scan`
 - `React Doctor`
-- `Sync Client Package`
+- `Sync Client Package (Node 20/24)`
 - `Unit Tests`
 - `E2E Tests`
 
@@ -32,7 +32,7 @@ logs and artifacts.
 | `docker-test.yml` | Legacy/local Docker scenario validation | `ready-for-ci`, ready PRs, merge queue, `main`, nightly, manual | Required when Docker/runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
-| `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release | Manual CLI release | Required for CLI publishing |
+| `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 | `docker.yml` | Legacy Docker image publishing/deploy path | `v*` tags, manual | Legacy only, not the customer runtime path |
 

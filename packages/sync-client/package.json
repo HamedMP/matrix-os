@@ -1,6 +1,6 @@
 {
   "name": "@finnaai/matrix",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Matrix OS command-line client — login, sync, and peer management for matrix-os.com",
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -21,7 +21,7 @@
     "matrixos"
   ],
   "engines": {
-    "node": ">=24"
+    "node": ">=20"
   },
   "bin": {
     "matrix": "bin/matrix.mjs",
@@ -52,7 +52,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prepublishOnly": "node ./scripts/check-publish.mjs",
-    "validate:package-runners": "node ./scripts/validate-package-runners.mjs"
+    "validate:package-runners": "node ./scripts/validate-package-runners.mjs",
+    "build:binaries": "node ./scripts/build-binaries.mjs"
   },
   "dependencies": {
     "chokidar": "^4.0.0",
@@ -61,7 +62,6 @@
     "picomatch": "^4.0.4",
     "pino": "^9.6.0",
     "pino-roll": "^2.1.0",
-    "posthog-node": "^5.24.15",
     "tsx": "^4.21.0",
     "ws": "^8.19.0",
     "zod": "^4.4.3"

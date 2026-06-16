@@ -5,7 +5,7 @@ const GENERIC_MESSAGES: Record<string, string> = {
   gateway_unreachable: "Gateway unreachable. Matrix CLI could not contact your Matrix OS instance.",
   request_timeout: "Request timed out. Try again or run `mos doctor`.",
   zellij_failed: "Shell backend unavailable. Your Matrix OS instance could not start a shell session.",
-  unsupported_node: "Matrix CLI requires Node.js 24 or newer.",
+  unsupported_node: "Matrix CLI requires Node.js 20 or newer.",
   attach_failed: "Shell attach failed.",
   attach_timeout: "Shell attach timed out. Try again or run `mos doctor`.",
   login_failed: "Login failed. Run `mos login` to retry.",

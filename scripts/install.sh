@@ -2,10 +2,9 @@
 # Matrix OS installer. Served at https://get.matrix-os.com.
 #
 # Platform detection:
-#   macOS   -> downloads the signed .pkg from the GitHub release and runs
-#              `installer -pkg`. Needs sudo for /Applications + /usr/local.
-#   Linux   -> `npm i -g @finnaai/matrix` (stop-gap until a standalone binary).
-#   Windows -> print a PowerShell install hint.
+#   macOS/Linux -> downloads the standalone `matrix` CLI binary from the
+#                  matching GitHub release and installs it on PATH.
+#   Windows     -> print a PowerShell install hint.
 #
 # Usage:
 #   curl -sL https://get.matrix-os.com | sh
@@ -13,6 +12,7 @@
 # Env overrides:
 #   MATRIX_VERSION   pin to a specific release tag (default: latest)
 #   MATRIX_CHANNEL   "stable" (default). Reserved for future pre-release lanes.
+#   MATRIX_INSTALL_DIR  override install directory (default: $HOME/.local/bin or /usr/local/bin)
 
 set -eu
 
@@ -52,7 +52,11 @@ fetch() {
 resolve_version() {
   # Turn "latest" into an actual tag so all downstream URLs are deterministic.
   if [ "$MATRIX_VERSION" != "latest" ]; then
-    printf '%s' "$MATRIX_VERSION"
+    case "$MATRIX_VERSION" in
+      cli-v*) printf '%s' "$MATRIX_VERSION" ;;
+      v*)     printf '%s' "$MATRIX_VERSION" ;;
+      *)      printf 'cli-v%s' "$MATRIX_VERSION" ;;
+    esac
     return
   fi
   # GitHub's /releases/latest endpoint 302s to /releases/tag/<tag>.
@@ -67,78 +71,160 @@ resolve_version() {
   fi
 }
 
-install_macos() {
-  echo "==> Matrix OS installer (macOS)"
+cli_version_from_tag() {
+  case "$1" in
+    cli-v*) printf '%s' "${1#cli-v}" ;;
+    v*)     printf '%s' "${1#v}" ;;
+    *)      printf '%s' "$1" ;;
+  esac
+}
+
+detect_asset_arch() {
+  ARCH="$(uname -m 2>/dev/null || echo unknown)"
+  case "$ARCH" in
+    x86_64|amd64) printf 'x64' ;;
+    arm64|aarch64) printf 'arm64' ;;
+    *) die "unsupported CPU architecture: $ARCH" ;;
+  esac
+}
+
+verify_checksum() {
+  FILE="$1"
+  SHA_FILE="$2"
+  EXPECTED="$(awk '{print $1}' "$SHA_FILE" | head -1)"
+  [ -n "$EXPECTED" ] || die "checksum file is empty"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL="$(sha256sum "$FILE" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL="$(shasum -a 256 "$FILE" | awk '{print $1}')"
+  else
+    die "need sha256sum or shasum to verify download"
+  fi
+
+  [ "$ACTUAL" = "$EXPECTED" ] || die "download checksum mismatch"
+}
+
+install_binary_unprivileged() {
+  INSTALL_DIR="$1"
+  if { [ -d "$INSTALL_DIR" ] || mkdir -p "$INSTALL_DIR" 2>/dev/null; } && [ -w "$INSTALL_DIR" ]; then
+    echo "==> Installing to $INSTALL_DIR/matrix"
+    TMP_BIN="$INSTALL_DIR/.matrix.tmp.$$"
+    rm -f "$TMP_BIN"
+    if cp "$BIN_PATH" "$TMP_BIN" && chmod 0755 "$TMP_BIN" && mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"; then
+      ln -sf matrix "$INSTALL_DIR/matrixos"
+      ln -sf matrix "$INSTALL_DIR/mos"
+      return 0
+    fi
+    rm -f "$TMP_BIN"
+  fi
+  return 1
+}
+
+install_binary_with_sudo() {
+  INSTALL_DIR="$1"
   need sudo
-  TAG="$(resolve_version)"
-  # Release tags are v-prefixed (v0.2.0) but the .pkg asset strips the v
-  # (MatrixSync-0.2.0.pkg). Normalize both for URL construction.
-  VERSION="${TAG#v}"
+  echo "==> Installing to $INSTALL_DIR/matrix"
+  sudo mkdir -p "$INSTALL_DIR"
+  TMP_BIN="$INSTALL_DIR/.matrix.tmp.$$"
+  sudo rm -f "$TMP_BIN"
+  sudo install -m 0755 "$BIN_PATH" "$TMP_BIN"
+  sudo mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"
+  sudo ln -sf matrix "$INSTALL_DIR/matrixos"
+  sudo ln -sf matrix "$INSTALL_DIR/mos"
+}
+
+install_cli_binary() {
+  ASSET_OS="$1"
+  TAG="${2:-$(resolve_version)}"
+  VERSION="$(cli_version_from_tag "$TAG")"
+  ASSET_ARCH="$(detect_asset_arch)"
+  ASSET="matrix-$VERSION-$ASSET_OS-$ASSET_ARCH"
+  BASE_URL="https://github.com/$MATRIX_REPO/releases/download/$TAG"
+
+  echo "==> Matrix OS CLI installer ($ASSET_OS/$ASSET_ARCH)"
   echo "    version: $VERSION"
 
   INSTALL_TMPDIR="$(mktemp -d)"
   trap 'rm -rf "$INSTALL_TMPDIR"' EXIT
 
-  PKG_URL="https://github.com/$MATRIX_REPO/releases/download/$TAG/MatrixSync-$VERSION.pkg"
-  PKG_PATH="$INSTALL_TMPDIR/MatrixSync.pkg"
+  BIN_PATH="$INSTALL_TMPDIR/matrix"
+  SHA_PATH="$INSTALL_TMPDIR/$ASSET.sha256"
 
-  echo "==> Downloading $PKG_URL"
-  fetch "$PKG_URL" "$PKG_PATH" || die "download failed. Check that $VERSION has a .pkg artefact."
+  echo "==> Downloading $BASE_URL/$ASSET"
+  fetch "$BASE_URL/$ASSET" "$BIN_PATH" || die "download failed. Check that $TAG has a $ASSET release asset."
+  fetch "$BASE_URL/$ASSET.sha256" "$SHA_PATH" || die "checksum download failed for $ASSET"
+  verify_checksum "$BIN_PATH" "$SHA_PATH"
+  chmod 0755 "$BIN_PATH"
 
-  # Gatekeeper sanity: verify the downloaded pkg is signed + notarised before
-  # asking the user for their sudo password.
-  echo "==> Verifying signature"
-  pkgutil --check-signature "$PKG_PATH" >/dev/null \
-    || die "downloaded pkg failed signature check"
-  spctl --assess --type install "$PKG_PATH" >/dev/null 2>&1 \
-    || echo "    (warning: spctl assess returned non-zero; continuing)"
-
-  echo "==> Installing (you'll be prompted for your password)"
-  sudo installer -pkg "$PKG_PATH" -target /
-
-  if command -v matrix >/dev/null 2>&1; then
-    echo "==> Installed: $(matrix --version 2>/dev/null || echo 'matrix')"
-    echo "Next: run 'matrix login' to sign in."
+  if [ -n "${MATRIX_INSTALL_DIR:-}" ]; then
+    INSTALL_DIR="$MATRIX_INSTALL_DIR"
+    install_binary_unprivileged "$INSTALL_DIR" || install_binary_with_sudo "$INSTALL_DIR"
+  elif [ -n "${HOME:-}" ] && install_binary_unprivileged "$HOME/.local/bin"; then
+    INSTALL_DIR="$HOME/.local/bin"
   else
-    echo "    matrix CLI not on PATH. You may need to open a new shell."
+    INSTALL_DIR="/usr/local/bin"
+    install_binary_unprivileged "$INSTALL_DIR" || install_binary_with_sudo "$INSTALL_DIR"
   fi
+
+  if "$INSTALL_DIR/matrix" --version >/dev/null 2>&1; then
+    echo "==> Installed: $("$INSTALL_DIR/matrix" --version 2>/dev/null)"
+  else
+    echo "==> Installed: $INSTALL_DIR/matrix"
+  fi
+  case ":$PATH:" in
+    *":$INSTALL_DIR:"*) ;;
+    *) echo "    Add $INSTALL_DIR to PATH or run '$INSTALL_DIR/matrix' directly." ;;
+  esac
+  echo "Next: run 'matrix login' to sign in."
+}
+
+install_macos() {
+  TAG="$(resolve_version)"
+  VERSION="$(cli_version_from_tag "$TAG")"
+  PKG_NAME="MatrixSync-$VERSION.pkg"
+  BASE_URL="https://github.com/$MATRIX_REPO/releases/download/$TAG"
+
+  echo "==> Matrix OS installer (macOS)"
+  echo "    version: $VERSION"
+
+  if [ -n "${MATRIX_INSTALL_DIR:-}" ]; then
+    echo "==> MATRIX_INSTALL_DIR set; installing CLI-only standalone binary"
+    install_cli_binary "darwin" "$TAG"
+    return
+  fi
+
+  INSTALL_TMPDIR="$(mktemp -d)"
+  trap 'rm -rf "$INSTALL_TMPDIR"' EXIT
+
+  PKG_PATH="$INSTALL_TMPDIR/$PKG_NAME"
+  echo "==> Checking for $BASE_URL/$PKG_NAME"
+  if fetch "$BASE_URL/$PKG_NAME" "$PKG_PATH"; then
+    need sudo
+    echo "==> Verifying package signature"
+    pkgutil --check-signature "$PKG_PATH" >/dev/null || die "downloaded pkg failed signature check"
+    spctl --assess --type install "$PKG_PATH" >/dev/null 2>&1 \
+      || echo "    (warning: spctl assess returned non-zero; continuing)"
+
+    echo "==> Installing MatrixSync.app and matrix CLI (you may be prompted for your password)"
+    sudo installer -pkg "$PKG_PATH" -target /
+
+    if command -v matrix >/dev/null 2>&1; then
+      echo "==> Installed: $(matrix --version 2>/dev/null || echo 'matrix')"
+    else
+      echo "==> Installed MatrixSync.app. Open a new shell if 'matrix' is not on PATH yet."
+    fi
+    echo "Next: run 'matrix login' to sign in."
+    return
+  fi
+
+  echo "==> macOS package not available for $TAG; installing CLI-only standalone binary"
+  rm -rf "$INSTALL_TMPDIR"
+  install_cli_binary "darwin" "$TAG"
 }
 
 install_linux() {
-  echo "==> Matrix OS installer (Linux)"
-  if ! command -v npm >/dev/null 2>&1; then
-    die "npm not found. Install Node.js 24+ from https://nodejs.org then re-run this script."
-  fi
-  # Check Node version. The CLI requires Node 24+.
-  NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-  case "$NODE_MAJOR" in
-    ''|*[!0-9]*) die "could not determine Node.js version. Ensure 'node' is on PATH." ;;
-  esac
-  if [ "$NODE_MAJOR" -lt 24 ]; then
-    die "Node.js 24 or newer required (detected $NODE_MAJOR). Upgrade at https://nodejs.org"
-  fi
-
-  VERSION="${MATRIX_VERSION#v}"
-  case "$MATRIX_VERSION" in
-    latest) NPM_SPEC="@finnaai/matrix" ;;
-    *)      NPM_SPEC="@finnaai/matrix@$VERSION" ;;
-  esac
-
-  # Prefer an unprivileged install when the user has npm prefix configured for
-  # it; otherwise fall back to sudo.
-  if [ -w "$(npm config get prefix 2>/dev/null)/lib/node_modules" ] 2>/dev/null; then
-    npm install -g "$NPM_SPEC"
-  else
-    echo "==> Installing globally (may prompt for sudo)"
-    sudo npm install -g "$NPM_SPEC"
-  fi
-
-  if command -v matrix >/dev/null 2>&1; then
-    echo "==> Installed: $(matrix --version 2>/dev/null || echo 'matrix')"
-    echo "Next: run 'matrix login' to sign in."
-  else
-    echo "    matrix not on PATH yet. Check your npm global prefix."
-  fi
+  install_cli_binary "linux"
 }
 
 install_windows() {
@@ -148,7 +234,7 @@ Windows installer is not available yet.
 Temporary workaround (PowerShell):
   npm install -g @finnaai/matrix
 
-Requires Node.js 24+ from https://nodejs.org.
+Requires Node.js 20+ from https://nodejs.org.
 WIN
   exit 1
 }
