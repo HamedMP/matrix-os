@@ -13,9 +13,14 @@ class FakeView implements EmbedViewLike {
   loadedUrls: string[] = [];
   bounds: Bounds | null = null;
   failNextLoadError: unknown;
+  onState: (state: "loading" | "ready" | "failed") => void;
 
-  constructor(failNextLoadError: unknown = null) {
+  constructor(
+    failNextLoadError: unknown = null,
+    onState: (state: "loading" | "ready" | "failed") => void = () => undefined,
+  ) {
     this.failNextLoadError = failNextLoadError;
+    this.onState = onState;
   }
 
   setBounds(bounds: Bounds): void {
@@ -44,14 +49,18 @@ class FakeView implements EmbedViewLike {
   destroy(): void {
     this.events.push("destroy");
   }
+
+  emit(state: "loading" | "ready" | "failed"): void {
+    this.onState(state);
+  }
 }
 
 function makeManager(maxLive?: number) {
   const views: Array<{ partition: string; view: FakeView }> = [];
   let nextCreatedLoadError: unknown = null;
   const manager = new EmbedManager({
-    createView: ({ partition }) => {
-      const view = new FakeView(nextCreatedLoadError);
+    createView: ({ partition, onState }) => {
+      const view = new FakeView(nextCreatedLoadError, onState);
       nextCreatedLoadError = null;
       views.push({ partition, view });
       return view;
@@ -117,6 +126,19 @@ describe("EmbedManager", () => {
     expect(view?.events).toContain("attach");
     expect(view?.loadedUrls).toEqual(["https://gw.test/canvas"]);
     expect(view?.bounds).toEqual(BOUNDS);
+  });
+
+  it("propagates adapter lifecycle states to the caller", () => {
+    const { manager, views } = makeManager();
+    const states: string[] = [];
+    manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas", {
+      onState: (state) => states.push(state),
+    });
+
+    views[0]?.view.emit("loading");
+    views[0]?.view.emit("ready");
+
+    expect(states).toEqual(["loading", "ready"]);
   });
 
   it("returns unique embed ids", () => {
@@ -192,6 +214,39 @@ describe("EmbedManager", () => {
 
     expect(states).toEqual(["loading"]);
     expect(views[0]?.view.loadedUrls).toEqual(["https://gw.test/", "https://gw.test/"]);
+  });
+
+  it("ignores stale loadUrl failures after a newer reload starts", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const states: string[] = [];
+    let rejectFirst!: (err: unknown) => void;
+    let loadCount = 0;
+    const manager = new EmbedManager({
+      createView: () => ({
+        setBounds: () => undefined,
+        loadUrl: async () => {
+          loadCount += 1;
+          if (loadCount === 1) {
+            return new Promise<void>((_resolve, reject) => {
+              rejectFirst = reject;
+            });
+          }
+        },
+        attach: () => undefined,
+        detach: () => undefined,
+        destroy: () => undefined,
+      }),
+    });
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/", {
+      onState: (state) => states.push(state),
+    });
+
+    expect(manager.reload(id)).toBe(true);
+    rejectFirst(new Error("stale navigation failed"));
+    await flush();
+
+    expect(states).toEqual(["loading"]);
+    expect(console.warn).not.toHaveBeenCalled();
   });
 
   it("does not mark aborted loadURL redirects as failed", async () => {

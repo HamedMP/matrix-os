@@ -33,12 +33,19 @@ interface OpenResult {
 }
 
 const MAX_PENDING_HOSTED_SHELLS = 12;
+const MAX_PENDING_APPS = 12;
+
+interface PendingAppEmbed {
+  slug: string;
+  bounds: Bounds;
+}
 
 export class EmbedService {
   private readonly manager: EmbedManager;
   private readonly tokenCache = new LaunchTokenCache();
   private readonly deps: EmbedServiceDeps;
   private readonly pendingHostedShells = new Map<string, Bounds>();
+  private readonly pendingApps = new Map<string, PendingAppEmbed>();
   private readonly hostedShellIds = new Set<string>();
 
   constructor(deps: EmbedServiceDeps) {
@@ -72,12 +79,14 @@ export class EmbedService {
 
   close(embedId: string): boolean {
     const wasPending = this.pendingHostedShells.delete(embedId);
+    const wasPendingApp = this.pendingApps.delete(embedId);
     this.hostedShellIds.delete(embedId);
-    return this.manager.close(embedId) || wasPending;
+    return this.manager.close(embedId) || wasPending || wasPendingApp;
   }
 
   closeAll(): void {
     this.pendingHostedShells.clear();
+    this.pendingApps.clear();
     this.hostedShellIds.clear();
     this.tokenCache.clear();
     this.manager.closeAll();
@@ -100,6 +109,17 @@ export class EmbedService {
       this.attachHostedShellEmbed(gatewayOrigin, bounds, embedId);
       this.pendingHostedShells.delete(embedId);
       this.hostedShellIds.add(embedId);
+      this.deps.emitState(embedId, "loading");
+      return true;
+    }
+    if (this.pendingApps.has(embedId)) {
+      const pending = this.pendingApps.get(embedId)!;
+      const opened = await this.createAppEmbed(this.deps.getGatewayOrigin(), pending.slug, pending.bounds, embedId);
+      if (!opened) {
+        if (this.pendingApps.has(embedId)) this.deps.emitState(embedId, "auth-required");
+        return false;
+      }
+      this.pendingApps.delete(embedId);
       this.deps.emitState(embedId, "loading");
       return true;
     }
@@ -196,6 +216,30 @@ export class EmbedService {
   }
 
   private async openApp(gatewayOrigin: string, slug: string, bounds: Bounds): Promise<OpenResult> {
+    const embedId = randomUUID();
+    const opened = await this.createAppEmbed(gatewayOrigin, slug, bounds, embedId);
+    if (!opened) {
+      this.rememberPendingApp(embedId, { slug, bounds });
+      return { embedId, state: "auth-required" };
+    }
+    return { embedId, state: "loading" };
+  }
+
+  private rememberPendingApp(embedId: string, pending: PendingAppEmbed): void {
+    this.pendingApps.set(embedId, pending);
+    while (this.pendingApps.size > MAX_PENDING_APPS) {
+      const oldest = this.pendingApps.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.pendingApps.delete(oldest);
+    }
+  }
+
+  private async createAppEmbed(
+    gatewayOrigin: string,
+    slug: string,
+    bounds: Bounds,
+    embedId: string,
+  ): Promise<boolean> {
     let cached = this.tokenCache.get(slug);
     if (!cached) {
       const token = await this.fetchLaunchToken(gatewayOrigin, slug);
@@ -204,15 +248,14 @@ export class EmbedService {
         cached = token;
       }
     }
-    if (!cached) throw new Error("could not obtain app launch token");
+    if (!cached) return false;
     const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
     if (!resolved) throw new Error("app launch url failed origin check");
-    const embedId = randomUUID();
     this.manager.open("app", slug, bounds, resolved, {
       id: embedId,
       onState: (state) => this.deps.emitState(embedId, state),
     });
-    return { embedId, state: "loading" };
+    return true;
   }
 
   private async fetchLaunchToken(

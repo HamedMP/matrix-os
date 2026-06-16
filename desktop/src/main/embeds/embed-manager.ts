@@ -39,6 +39,7 @@ interface EmbedRecord {
   view: EmbedViewLike;
   live: boolean;
   loadFailed: boolean;
+  loadGeneration: number;
   lastUsed: number;
   onState: (state: "loading" | "ready" | "failed") => void;
 }
@@ -106,6 +107,7 @@ export class EmbedManager {
       view,
       live: true,
       loadFailed: false,
+      loadGeneration: 0,
       lastUsed: ++this.tick,
       onState: emitState,
     };
@@ -188,7 +190,9 @@ export class EmbedManager {
   }
 
   private loadInto(record: EmbedRecord): void {
+    const generation = ++record.loadGeneration;
     void record.view.loadUrl(record.url).catch((err: unknown) => {
+      if (this.records.get(record.id) !== record || record.loadGeneration !== generation) return;
       if (isAbortedLoadError(err)) return;
       console.warn(
         "[embed-manager] embed load failed:",
