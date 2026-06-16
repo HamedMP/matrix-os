@@ -75,6 +75,29 @@ async function chooseNewSessionMenuItem(name: RegExp | string) {
   await Promise.resolve();
 }
 
+function createDragDataTransfer(): DataTransfer {
+  const data = new Map<string, string>();
+  return {
+    dropEffect: "move",
+    effectAllowed: "move",
+    files: [] as unknown as FileList,
+    items: [] as unknown as DataTransferItemList,
+    types: [],
+    clearData: vi.fn((format?: string) => {
+      if (format) {
+        data.delete(format);
+      } else {
+        data.clear();
+      }
+    }),
+    getData: vi.fn((format: string) => data.get(format) ?? ""),
+    setData: vi.fn((format: string, value: string) => {
+      data.set(format, value);
+    }),
+    setDragImage: vi.fn(),
+  } as unknown as DataTransfer;
+}
+
 describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
@@ -354,6 +377,58 @@ describe("TerminalApp", () => {
     });
 
     expect(writeText).toHaveBeenCalledWith("mos shell attach main");
+    expect(screen.getByTestId("terminal-session-copy-feedback-main").textContent).toContain("Command copied");
+    expect(within(actions).getByText("matrix shell connect")).toBeTruthy();
+  });
+
+  it("reorders active shell sessions with the Paper drag affordance", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", tabs: [] },
+              { name: "review", status: "active", placement: "active", attachCommand: "mos shell attach review", tabs: [] },
+              { name: "docs", status: "active", placement: "active", attachCommand: "mos shell attach docs", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const activeGroup = screen.getByTestId("terminal-session-group-active");
+    const getOrder = () => Array.from(activeGroup.querySelectorAll("[data-session-name]"))
+      .map((node) => node.getAttribute("data-session-name"));
+    expect(getOrder()).toEqual(["main", "review", "docs"]);
+
+    const dataTransfer = createDragDataTransfer();
+    const mainHandle = screen.getByRole("button", { name: "Drag matrix-main session" });
+    fireEvent.mouseEnter(screen.getByTestId("terminal-session-card-main"));
+    fireEvent.dragStart(mainHandle, { dataTransfer });
+    fireEvent.dragOver(screen.getByTestId("terminal-session-card-docs"), { dataTransfer });
+
+    expect(screen.getByTestId("terminal-session-drop-line-docs")).toBeTruthy();
+
+    fireEvent.drop(screen.getByTestId("terminal-session-card-docs"), { dataTransfer });
+
+    expect(getOrder()).toEqual(["review", "docs", "main"]);
   });
 
   it("renames sessions from the Paper pencil affordance", async () => {

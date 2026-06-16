@@ -11,6 +11,7 @@ import {
   CopyIcon,
   FilesIcon,
   FolderIcon,
+  GripVerticalIcon,
   KeyboardIcon,
   MonitorIcon,
   PanelLeftOpenIcon,
@@ -2760,6 +2761,9 @@ function LocalTerminalSidebar() {
   const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
   const [closeConfirmationShell, setCloseConfirmationShell] = useState<ShellSessionSummary | null>(null);
   const [newSessionMenuAnchor, setNewSessionMenuAnchor] = useState<NewSessionMenuAnchor | null>(null);
+  const [draggingShellName, setDraggingShellName] = useState<string | null>(null);
+  const [dragOverShellName, setDragOverShellName] = useState<string | null>(null);
+  const [draggingShellPlacement, setDraggingShellPlacement] = useState<"active" | "background" | null>(null);
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -3208,6 +3212,53 @@ function LocalTerminalSidebar() {
     openActiveShell(shell, { markSeen: false });
   };
 
+  const placementForShell = (shell: ShellSessionSummary): "active" | "background" => (
+    shell.placement ?? (openSessionIds.has(shell.name) ? "active" : "background")
+  );
+
+  const reorderShells = (fromName: string, toName: string) => {
+    if (fromName === toName) return;
+    setShells((prev) => {
+      const fromIndex = prev.findIndex((shell) => shell.name === fromName);
+      const toIndex = prev.findIndex((shell) => shell.name === toName);
+      if (fromIndex < 0 || toIndex < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      if (!moved) return prev;
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const finishShellDrag = () => {
+    setDraggingShellName(null);
+    setDragOverShellName(null);
+    setDraggingShellPlacement(null);
+  };
+
+  const beginShellDrag = (shell: ShellSessionSummary) => {
+    setDraggingShellName(shell.name);
+    setDraggingShellPlacement(placementForShell(shell));
+    setDragOverShellName(null);
+  };
+
+  const hoverShellDropTarget = (shell: ShellSessionSummary) => {
+    if (!draggingShellName || draggingShellName === shell.name) return;
+    if (draggingShellPlacement && draggingShellPlacement !== placementForShell(shell)) return;
+    setDragOverShellName(shell.name);
+  };
+
+  const dropShellOnTarget = (shell: ShellSessionSummary) => {
+    if (draggingShellPlacement && draggingShellPlacement !== placementForShell(shell)) {
+      finishShellDrag();
+      return;
+    }
+    if (draggingShellName && draggingShellName !== shell.name) {
+      reorderShells(draggingShellName, shell.name);
+    }
+    finishShellDrag();
+  };
+
   const openNewSessionMenu = (anchor: NewSessionMenuAnchor) => {
     if (creatingShell) return;
     setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
@@ -3453,6 +3504,12 @@ function LocalTerminalSidebar() {
             onToggle={moveShellToBackground}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell) => setCloseConfirmationShell(shell)}
+            draggingShellName={draggingShellName}
+            dragOverShellName={dragOverShellName}
+            onDragStart={beginShellDrag}
+            onDragOver={hoverShellDropTarget}
+            onDrop={dropShellOnTarget}
+            onDragEnd={finishShellDrag}
           />
         )}
         {!shellsLoading && renderedShells.length > 0 && (
@@ -3467,6 +3524,12 @@ function LocalTerminalSidebar() {
             onToggle={makeShellActive}
             onRename={(shell, nextName) => renameManagedShell(shell, nextName)}
             onDelete={(shell) => setCloseConfirmationShell(shell)}
+            draggingShellName={draggingShellName}
+            dragOverShellName={dragOverShellName}
+            onDragStart={beginShellDrag}
+            onDragOver={hoverShellDropTarget}
+            onDrop={dropShellOnTarget}
+            onDragEnd={finishShellDrag}
           />
         )}
       </div>
@@ -4219,6 +4282,12 @@ function ShellSessionGroup({
   onToggle,
   onRename,
   onDelete,
+  draggingShellName,
+  dragOverShellName,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: {
   label: "Active" | "Background";
   meta: string;
@@ -4230,9 +4299,15 @@ function ShellSessionGroup({
   onToggle: (shell: ShellSessionSummary) => void;
   onRename: (shell: ShellSessionSummary, nextName: string) => Promise<boolean>;
   onDelete: (shell: ShellSessionSummary) => void;
+  draggingShellName: string | null;
+  dragOverShellName: string | null;
+  onDragStart: (shell: ShellSessionSummary) => void;
+  onDragOver: (shell: ShellSessionSummary) => void;
+  onDrop: (shell: ShellSessionSummary) => void;
+  onDragEnd: () => void;
 }) {
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="flex items-center justify-between" style={{ color: "#858578", minHeight: 22 }}>
         <div className="flex items-center" style={{ gap: 7 }}>
           {label === "Background" && (
@@ -4263,6 +4338,12 @@ function ShellSessionGroup({
           onToggle={() => onToggle(shell)}
           onRename={(nextName) => onRename(shell, nextName)}
           onDelete={() => onDelete(shell)}
+          dragging={shell.name === draggingShellName}
+          dropTarget={shell.name === dragOverShellName}
+          onDragStart={() => onDragStart(shell)}
+          onDragOver={() => onDragOver(shell)}
+          onDrop={() => onDrop(shell)}
+          onDragEnd={onDragEnd}
         />
       ))}
     </section>
@@ -4278,6 +4359,12 @@ function ShellCard({
   onToggle,
   onRename,
   onDelete,
+  dragging,
+  dropTarget,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: {
   shell: ShellSessionSummary;
   foreground: boolean;
@@ -4287,6 +4374,12 @@ function ShellCard({
   onToggle: () => void;
   onRename: (nextName: string) => Promise<boolean>;
   onDelete: () => void;
+  dragging: boolean;
+  dropTarget: boolean;
+  onDragStart: () => void;
+  onDragOver: () => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
 }) {
   const tabs = shell.tabs ?? [];
   const focusedTab = tabs.find((tab) => tab.focused) ?? tabs[0];
@@ -4300,9 +4393,17 @@ function ShellCard({
   const cardRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommittingRef = useRef(false);
+  const copiedTimerRef = useRef<number | null>(null);
   const showActions = foreground && (actionsVisible || copied);
   const showRenameControl = foreground && actionsVisible && !renaming;
+  const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
   const renameControlLabel = `Rename ${displayName}`;
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current !== null) {
+      window.clearTimeout(copiedTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!renaming) return;
@@ -4314,7 +4415,13 @@ function ShellCard({
     try {
       await copyTextToClipboard(shellAttachCommand(shell));
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
+      if (copiedTimerRef.current !== null) {
+        window.clearTimeout(copiedTimerRef.current);
+      }
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopied(false);
+      }, 1600);
     } catch (err: unknown) {
       console.warn("Failed to copy shell connect command:", err instanceof Error ? err.message : err);
     }
@@ -4382,6 +4489,18 @@ function ShellCard({
     <div
       ref={cardRef}
       className="group"
+      data-testid={`terminal-session-card-${shell.name}`}
+      onDragOver={(event) => {
+        if (!dragging) {
+          event.preventDefault();
+        }
+        event.dataTransfer.dropEffect = "move";
+        onDragOver();
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        onDrop();
+      }}
       onMouseEnter={() => setActionsVisible(true)}
       onMouseLeave={() => setActionsVisible(false)}
       onFocus={() => setActionsVisible(true)}
@@ -4394,18 +4513,38 @@ function ShellCard({
         background: selected ? "#FFFDF7" : foreground ? "#FFFDF7" : "#E2E2D0",
         border: `1px solid ${selected ? "#9CB77A" : foreground ? "#D6D5C4" : "#D4D2C1"}`,
         borderRadius: 10,
-        boxShadow: selected
-          ? "0 0 0 5px rgba(156,183,122,0.28), 0 14px 30px rgba(39,40,34,0.18)"
-          : foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
+        boxShadow: dragging
+          ? "0 18px 34px rgba(39,40,34,0.22)"
+          : selected
+            ? "0 0 0 5px rgba(156,183,122,0.28), 0 14px 30px rgba(39,40,34,0.18)"
+            : foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
         display: "flex",
         flexDirection: "column",
-        gap: showActions ? 8 : 0,
-        opacity: foreground ? 1 : 0.86,
+        gap: showActions || copied ? 8 : 0,
+        opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: foreground ? "10px 12px" : "14px 12px",
         position: "relative",
+        transform: dragging ? "translateY(-2px)" : "translateY(0)",
+        transition: "border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 150ms ease",
       }}
     >
+      {dropTarget && (
+        <span
+          aria-hidden="true"
+          data-testid={`terminal-session-drop-line-${shell.name}`}
+          style={{
+            background: "#D8792C",
+            borderRadius: 999,
+            height: 3,
+            left: 12,
+            position: "absolute",
+            right: 12,
+            top: -7,
+            zIndex: 3,
+          }}
+        />
+      )}
       {selected && (
         <span
           aria-hidden="true"
@@ -4442,6 +4581,40 @@ function ShellCard({
         />
       )}
       <div className="flex items-center" style={{ gap: 10, minHeight: 24, pointerEvents: "none", position: "relative", zIndex: 1 }}>
+        <button
+          type="button"
+          aria-label={`Drag ${displayName} session`}
+          draggable={!renaming && !deleting}
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+          onDragStart={(event) => {
+            event.stopPropagation();
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", shell.name);
+            onDragStart();
+          }}
+          onDragEnd={(event) => {
+            event.stopPropagation();
+            onDragEnd();
+          }}
+          className="flex items-center justify-center"
+          style={{
+            background: "transparent",
+            border: 0,
+            color: "#A09F92",
+            cursor: showDragHandle ? "grab" : "default",
+            flexShrink: 0,
+            height: 18,
+            opacity: showDragHandle ? 1 : 0,
+            padding: 0,
+            pointerEvents: "auto",
+            transition: "opacity 120ms ease",
+            width: 12,
+          }}
+        >
+          <GripVerticalIcon size={12} strokeWidth={2.1} />
+        </button>
         <span
           className={getShellStatusDotClassName(shell)}
           data-testid={`terminal-session-status-${shell.name}`}
@@ -4495,6 +4668,8 @@ function ShellCard({
           ) : (
             <button
               type="button"
+              data-session-name={shell.name}
+              data-testid={`terminal-session-name-${shell.name}`}
               aria-label={`Open ${displayName}`}
               className="min-w-0 truncate"
               onClick={(event) => {
@@ -4610,8 +4785,8 @@ function ShellCard({
             className="pointer-events-auto min-w-0"
             style={SHELL_CARD_COPY_BUTTON_STYLE}
           >
-            <span className="truncate" style={{ color: copied ? "#4F8A55" : "#8A8B7C", minWidth: 0 }}>
-              {copied ? "Command copied" : showActions ? (
+            <span className="truncate" style={{ color: "#8A8B7C", minWidth: 0 }}>
+              {showActions ? (
                 <>
                   <span>matrix shell connect</span>
                   <span style={{ color: "#B0AF9F" }}> {shell.name}</span>
@@ -4636,6 +4811,27 @@ function ShellCard({
           </button>
         </div>
       )}
+      {foreground && copied ? (
+        <div
+          data-testid={`terminal-session-copy-feedback-${shell.name}`}
+          role="status"
+          className="relative z-[1] flex items-center"
+          style={{
+            background: "#15180F",
+            borderRadius: 7,
+            color: "#F0EFE5",
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize: 12,
+            gap: 8,
+            height: 28,
+            lineHeight: "16px",
+            padding: "0 10px",
+          }}
+        >
+          <span aria-hidden="true" style={{ background: "#9CB77A", borderRadius: 999, height: 6, width: 6 }} />
+          <span>Command copied</span>
+        </div>
+      ) : null}
       {!foreground && focusedTab ? (
         <div className="pointer-events-none relative z-[1] truncate" style={{ color: "#858578", fontSize: 13, lineHeight: "16px", marginTop: 2, paddingLeft: 18 }}>
           {focusedTab.name ? `last tab ${focusedTab.name}` : "keeps process alive"}
