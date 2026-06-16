@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type CardPriority, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -37,11 +37,23 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
     }
   }, [open]);
 
-  const closeFromUser = () => {
+  const closeFromUser = useCallback(() => {
     dialogGenerationRef.current += 1;
     dialogClosedRef.current = true;
     onClose();
-  };
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeFromUser();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [closeFromUser, open]);
 
   const submit = async (openAfter: boolean) => {
     if (!api || !activeSlug || title.trim().length === 0 || submitting) return;
@@ -136,9 +148,9 @@ export default function CreateTaskDialog({ open, onClose }: { open: boolean; onC
           className="flex items-center justify-end gap-2 border-t pt-3"
           style={{ borderColor: "var(--border-subtle)" }}
         >
-        <Button variant="ghost" disabled={submitting} onClick={closeFromUser}>
-          Cancel
-        </Button>
+          <Button variant="ghost" onClick={closeFromUser}>
+            Cancel
+          </Button>
           <Button
             variant="subtle"
             disabled={submitting || title.trim().length === 0}
