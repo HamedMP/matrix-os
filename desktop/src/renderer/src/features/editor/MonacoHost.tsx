@@ -4,7 +4,7 @@ import { useConnection } from "../../stores/connection";
 import { ConflictBar } from "./EditorPanel";
 import { useEditorTabs } from "./editor-tabs-store";
 import { createFilesApi, openFile, saveFile, saveFileOverwrite, type OpenedFile } from "./editor-save";
-import { getOrCreateModel, monaco } from "./monaco-setup";
+import { getOrCreateModel, markModelBaseline, monaco } from "./monaco-setup";
 
 export default function MonacoHost({ taskId, path }: { taskId: string; path: string }) {
   const api = useConnection((s) => s.api);
@@ -79,6 +79,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       const result = await saveFile(createFilesApi(api), file, content);
       if (result.ok) {
         fileRef.current = { ...file, content, loadedMtime: result.newMtime };
+        markModelBaseline(path, content);
         setDirty(taskId, path, false);
         setConflict(false);
         setSaveError(null);
@@ -103,6 +104,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
     try {
       const newMtime = await saveFileOverwrite(createFilesApi(api), path, content);
       fileRef.current = { path, content, loadedMtime: newMtime };
+      markModelBaseline(path, content);
       setDirty(taskId, path, false);
       setConflict(false);
       setSaveError(null);
@@ -118,6 +120,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       const file = await openFile(createFilesApi(api), path);
       fileRef.current = file;
       editorRef.current.getModel()?.setValue(file.content);
+      markModelBaseline(path, file.content);
       setDirty(taskId, path, false);
       setConflict(false);
       setSaveError(null);

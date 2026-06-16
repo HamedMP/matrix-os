@@ -36,6 +36,7 @@ export { monaco };
 
 // Model cache so open files survive panel/workspace remounts (SC-006).
 const models = new Map<string, monaco.editor.ITextModel>();
+const modelBaselines = new Map<string, string>();
 const MODEL_CACHE_CAP = 32;
 
 export function getOrCreateModel(path: string, content: string): monaco.editor.ITextModel {
@@ -43,18 +44,35 @@ export function getOrCreateModel(path: string, content: string): monaco.editor.I
   if (existing && !existing.isDisposed()) {
     models.delete(path);
     models.set(path, existing);
+    const baseline = modelBaselines.get(path);
+    if (baseline !== undefined && existing.getValue() === baseline && baseline !== content) {
+      existing.setValue(content);
+    }
+    modelBaselines.set(path, content);
     return existing;
+  }
+  if (existing?.isDisposed()) {
+    models.delete(path);
+    modelBaselines.delete(path);
   }
   if (models.size >= MODEL_CACHE_CAP) {
     const oldest = models.keys().next().value as string | undefined;
     if (oldest) {
       models.get(oldest)?.dispose();
       models.delete(oldest);
+      modelBaselines.delete(oldest);
     }
   }
   const model = monaco.editor.createModel(content, undefined, monaco.Uri.file(path));
   models.set(path, model);
+  modelBaselines.set(path, content);
   return model;
+}
+
+export function markModelBaseline(path: string, content: string): void {
+  if (models.has(path)) {
+    modelBaselines.set(path, content);
+  }
 }
 
 export function dropModel(path: string): void {
@@ -63,4 +81,5 @@ export function dropModel(path: string): void {
     model.dispose();
     models.delete(path);
   }
+  modelBaselines.delete(path);
 }

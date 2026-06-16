@@ -51,7 +51,8 @@ function TreeNode({
         .then((res) => setChildren(parseEntries(res.entries)))
         .catch((err: unknown) => {
           console.warn("[files] list failed:", err instanceof Error ? err.message : String(err));
-          setChildren([]);
+          setChildren(null);
+          setExpanded(false);
         });
     }
   }, [api, children, path]);

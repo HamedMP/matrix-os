@@ -8,7 +8,7 @@
 //     string, mime? }; 404 when missing. mtime field is `modified` (ISO),
 //     normalized here to epoch ms.
 //   GET /files/{path}            -> raw text body
-//   PUT /files/{path}            -> raw text body in, { ok: true } out
+//   PUT /files/{path}            -> raw text body in, { ok: true, modified? } out
 import { z } from "zod/v4";
 import { AppError } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
@@ -22,10 +22,13 @@ export interface OpenedFile {
 export interface FilesApi {
   stat(path: string): Promise<{ mtime: number | null }>;
   read(path: string): Promise<string>;
-  write(path: string, content: string): Promise<void>;
+  write(path: string, content: string): Promise<{ mtime: number | null }>;
 }
 
 const WireStatSchema = z.looseObject({
+  modified: z.union([z.string(), z.number()]).optional(),
+});
+const WireWriteSchema = z.looseObject({
   modified: z.union([z.string(), z.number()]).optional(),
 });
 
@@ -62,7 +65,10 @@ export function createFilesApi(api: ApiClient): FilesApi {
     },
     read: (path) => api.getText(`/files/${encodeFilesPath(path)}`),
     write: async (path, content) => {
-      await api.putText<{ ok: boolean }>(`/files/${encodeFilesPath(path)}`, content);
+      const raw = await api.putText<unknown>(`/files/${encodeFilesPath(path)}`, content);
+      const parsed = WireWriteSchema.safeParse(raw);
+      if (!parsed.success) return { mtime: null };
+      return { mtime: normalizeMtime(parsed.data.modified) };
     },
   };
 }
@@ -86,9 +92,8 @@ export async function saveFile(
   // Strict equality: null/null (file does not exist yet on either side) is
   // the only conflict-free null pairing. Network errors propagate as AppError.
   if (serverMtime !== file.loadedMtime) return { ok: false, reason: "conflict" };
-  await files.write(file.path, content);
-  const { mtime: newMtime } = await files.stat(file.path);
-  return { ok: true, newMtime };
+  const { mtime: newMtime } = await files.write(file.path, content);
+  return { ok: true, newMtime: newMtime ?? serverMtime };
 }
 
 export async function saveFileOverwrite(
@@ -96,7 +101,6 @@ export async function saveFileOverwrite(
   path: string,
   content: string,
 ): Promise<number | null> {
-  await files.write(path, content);
-  const { mtime } = await files.stat(path);
+  const { mtime } = await files.write(path, content);
   return mtime;
 }

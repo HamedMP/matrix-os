@@ -43,7 +43,7 @@ function makeFiles(overrides: Partial<FilesApi> = {}): FilesApi {
   return {
     stat: vi.fn().mockResolvedValue({ mtime: MODIFIED_MS }),
     read: vi.fn().mockResolvedValue("file body"),
-    write: vi.fn().mockResolvedValue(undefined),
+    write: vi.fn().mockResolvedValue({ mtime: MODIFIED_MS + 5_000 }),
     ...overrides,
   };
 }
@@ -90,8 +90,13 @@ describe("createFilesApi", () => {
   it("writes raw text via PUT /files with per-segment path encoding", async () => {
     const api = makeApi();
     const files = createFilesApi(api);
-    await files.write("projects/my notes.md", "hello");
+    await expect(files.write("projects/my notes.md", "hello")).resolves.toEqual({ mtime: null });
     expect(api.putText).toHaveBeenCalledWith("/files/projects/my%20notes.md", "hello");
+  });
+
+  it("returns the normalized write mtime when PUT includes modified metadata", async () => {
+    const api = makeApi({ putText: vi.fn().mockResolvedValue({ ok: true, modified: MODIFIED_ISO }) });
+    await expect(createFilesApi(api).write("notes.md", "hello")).resolves.toEqual({ mtime: MODIFIED_MS });
   });
 });
 
@@ -122,25 +127,30 @@ describe("saveFile", () => {
     expect(files.write).not.toHaveBeenCalled();
   });
 
-  it("writes and returns the fresh mtime when the baseline matches", async () => {
-    const stat = vi
-      .fn()
-      .mockResolvedValueOnce({ mtime: MODIFIED_MS })
-      .mockResolvedValueOnce({ mtime: MODIFIED_MS + 5_000 });
+  it("writes and returns the write response mtime when the baseline matches", async () => {
+    const stat = vi.fn().mockResolvedValue({ mtime: MODIFIED_MS });
     const files = makeFiles({ stat });
     const result = await saveFile(files, opened, "new content");
     expect(files.write).toHaveBeenCalledWith("projects/notes.md", "new content");
     expect(result).toEqual({ ok: true, newMtime: MODIFIED_MS + 5_000 });
-    expect(stat).toHaveBeenCalledTimes(2);
+    expect(stat).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not stat after writing when the gateway omits write mtime", async () => {
+    const stat = vi.fn().mockResolvedValue({ mtime: MODIFIED_MS });
+    const files = makeFiles({ stat, write: vi.fn().mockResolvedValue({ mtime: null }) });
+    await expect(saveFile(files, opened, "new content")).resolves.toEqual({
+      ok: true,
+      newMtime: MODIFIED_MS,
+    });
+    expect(stat).toHaveBeenCalledTimes(1);
   });
 
   it("treats null mtimes as conflict-free only when both sides are null", async () => {
     const newFile = { path: "new.md", content: "", loadedMtime: null };
     const bothNull = makeFiles({
-      stat: vi
-        .fn()
-        .mockResolvedValueOnce({ mtime: null })
-        .mockResolvedValueOnce({ mtime: MODIFIED_MS }),
+      stat: vi.fn().mockResolvedValue({ mtime: null }),
+      write: vi.fn().mockResolvedValue({ mtime: MODIFIED_MS }),
     });
     await expect(saveFile(bothNull, newFile, "hello")).resolves.toEqual({
       ok: true,
@@ -173,13 +183,15 @@ describe("saveFile", () => {
 });
 
 describe("saveFileOverwrite", () => {
-  it("writes without a conflict precheck and returns the fresh mtime", async () => {
-    const stat = vi.fn().mockResolvedValue({ mtime: MODIFIED_MS + 9_000 });
-    const files = makeFiles({ stat });
+  it("writes without a conflict precheck and returns the write response mtime", async () => {
+    const stat = vi.fn();
+    const files = makeFiles({
+      stat,
+      write: vi.fn().mockResolvedValue({ mtime: MODIFIED_MS + 9_000 }),
+    });
     const newMtime = await saveFileOverwrite(files, "projects/notes.md", "forced");
     expect(files.write).toHaveBeenCalledWith("projects/notes.md", "forced");
-    expect(stat).toHaveBeenCalledTimes(1);
-    expect(stat).toHaveBeenCalledAfter(files.write as ReturnType<typeof vi.fn>);
+    expect(stat).not.toHaveBeenCalled();
     expect(newMtime).toBe(MODIFIED_MS + 9_000);
   });
 });
