@@ -18,6 +18,16 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('! -name "${{ matrix.arch }}-mac.yml"');
     expect(workflow).toContain('! -name "${{ matrix.arch }}-${CHANNEL}-mac.yml"');
     expect(workflow).toContain("desktop/dist/*-mac.yml");
+    expect(workflow).toContain("desktop/dist/*.blockmap");
+  });
+
+  it("falls back from an empty desktop update channel at build time", () => {
+    const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
+
+    expect(config).toContain(
+      "process.env.MATRIX_DESKTOP_UPDATE_CHANNEL || process.env.OPERATOR_UPDATE_CHANNEL || \"\"",
+    );
+    expect(config).not.toContain("MATRIX_DESKTOP_UPDATE_CHANNEL ?? process.env.OPERATOR_UPDATE_CHANNEL");
   });
 
   it("records the full canary app version in the release manifest", () => {

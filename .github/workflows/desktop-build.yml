@@ -125,6 +125,7 @@ jobs:
           path: |
             desktop/dist/*.dmg
             desktop/dist/*.zip
+            desktop/dist/*.blockmap
             desktop/dist/*-mac.yml
           if-no-files-found: error
           retention-days: ${{ inputs.retention_days }}
@@ -178,6 +179,7 @@ jobs:
           name: ${{ inputs.artifact_prefix }}-linux-x64
           path: |
             desktop/dist/*.AppImage
+            desktop/dist/*.blockmap
             desktop/dist/*-linux.yml
           if-no-files-found: error
           retention-days: ${{ inputs.retention_days }}

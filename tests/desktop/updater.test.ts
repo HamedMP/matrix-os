@@ -77,6 +77,21 @@ describe("createUpdater", () => {
     expect(updater.status()).toBe("ready");
   });
 
+  it("does not reset ready status on later scheduled checks", async () => {
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.3" });
+    updaterMock.autoUpdater.removeAllListeners.mockClear();
+    updaterMock.autoUpdater.checkForUpdates.mockClear();
+
+    await updater.check();
+
+    expect(updater.status()).toBe("ready");
+    expect(updaterMock.autoUpdater.removeAllListeners).not.toHaveBeenCalled();
+    expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
   it("reports ready through callbacks instead of check return timing", async () => {
     const onReady = vi.fn();
     const updater = createUpdater({ onAvailable: vi.fn(), onReady });
