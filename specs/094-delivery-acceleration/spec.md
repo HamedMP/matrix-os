@@ -94,6 +94,12 @@ Labels are mutable PR controls. They select previews and optional pre-merge depl
 - `skip-screenshots`
 - `release-candidate`
 
+`deploy/<lane>` values in the Delivery Surfaces table are manual dispatch selectors,
+not git tags. Valid selectors are `deploy/platform`, `deploy/shell`, `deploy/edge`,
+`deploy/runtime`, `deploy/www`, `deploy/cli`, and `deploy/ops`. They may appear as
+workflow-dispatch inputs or checked-in operator script arguments; unknown selectors
+fail closed before any build or deploy starts.
+
 Workflow dispatch remains the emergency operator path. It must require:
 
 - commit SHA,
@@ -348,6 +354,9 @@ Rollback must be a workflow action, not an undocumented operator command.
   back to the previously recorded revision and fail the workflow.
 - **Incremental update verification fails**: keep the current `/opt/matrix/app` symlink,
   delete the staging directory, and report failure to platform.
+- **Runtime preflight fails**: do not activate the staged tree, keep the current
+  symlink/release metadata untouched, delete or quarantine the staging directory, and
+  report the coarse `preflight` phase to platform.
 - **Incremental manifest base mismatch**: if the installed manifest/version does not
   match `manifest.baseVersion`, do not apply file deltas. Fall back to a full-bundle
   install when allowed by the release policy, or fail before staging with an explicit
@@ -450,7 +459,12 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 7. Downloads changed objects with bounded concurrency and 30s per-object timeouts.
 8. Verifies every object hash and manifest signature/digest.
 9. Stages app files under `/opt/matrix/releases/<version>.staging`.
-10. Runs preflight checks.
+10. Runs preflight checks: staged root ownership and mode are correct, free disk margin
+    remains above the configured threshold, `BUNDLE_VERSION` matches the target version,
+    manifest digest metadata is present, protected owner-data paths are absent from the
+    staged tree, symlinks resolve inside the staged release tree, executable bits match
+    the manifest, and any service-unit or launcher change has already forced the
+    full-bundle path.
 11. Activates the staged app tree under the updater lock by flipping `/opt/matrix/app`
    and writing `/opt/matrix/release.json` via tmp-then-rename. The startup/pre-update
    consistency check is the recovery mechanism if the process crashes between those
