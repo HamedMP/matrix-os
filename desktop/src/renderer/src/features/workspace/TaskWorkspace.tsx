@@ -7,6 +7,10 @@ import { useSessions } from "../../stores/sessions";
 import { useUi } from "../../stores/ui";
 import TerminalView from "../terminal/TerminalView";
 
+function warnSessionLoadFailure(err: unknown): void {
+  console.warn("[task-workspace] load sessions failed:", err instanceof Error ? err.message : String(err));
+}
+
 export default function TaskWorkspace({ taskId }: { taskId: string }) {
   const api = useConnection((s) => s.api);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
@@ -24,7 +28,7 @@ export default function TaskWorkspace({ taskId }: { taskId: string }) {
   }, [cardsByProject, taskId]);
 
   useEffect(() => {
-    if (api) void sessionsLoad(api);
+    if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
   }, [api, sessionsLoad]);
 
   const attachName = resolveAttachName(card?.linkedSessionId ?? null);
@@ -67,7 +71,7 @@ export default function TaskWorkspace({ taskId }: { taskId: string }) {
               <Button
                 variant="primary"
                 onClick={() => {
-                  if (api) void sessionsLoad(api);
+                  if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
                 }}
               >
                 Refresh sessions
