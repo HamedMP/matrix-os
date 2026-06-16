@@ -503,7 +503,7 @@ function loadShellThemePreference(sessionName: string | null, setThemeId: (theme
   if (!sessionName || typeof fetch !== "function") {
     return;
   }
-  void fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+  void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
     signal: AbortSignal.timeout(10_000),
   })
     .then((res) => res.ok ? res.json() : null)
@@ -1594,7 +1594,7 @@ function ShellThemeChooser({
       return;
     }
     const state = useTerminalSettings.getState();
-    void fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+    void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

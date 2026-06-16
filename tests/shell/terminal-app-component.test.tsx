@@ -246,6 +246,7 @@ describe("TerminalApp", () => {
   });
 
   it("opens the Paper shell-theme chooser from the Theme menu", async () => {
+    const fetchMock = vi.mocked(fetch);
     render(<TerminalApp />);
 
     await act(async () => {
@@ -253,6 +254,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    fetchMock.mockClear();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Theme" }));
@@ -263,12 +265,30 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(screen.getByRole("dialog", { name: "Shell theme" })).toBeTruthy();
     expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
     expect(screen.getByText("custom · green on black")).toBeTruthy();
     expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
+
+    fetchMock.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("radio", { name: "Light gruvbox-light" }));
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.objectContaining({
+        method: "PUT",
+        body: expect.stringContaining("\"shellThemeId\":\"light\""),
+      }),
+    );
   });
 
   it("copies Matrix shell connect commands from session rows", async () => {
