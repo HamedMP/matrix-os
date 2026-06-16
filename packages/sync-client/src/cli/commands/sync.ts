@@ -132,6 +132,7 @@ async function runStart(
       currentRuntime,
     })
   ) {
+    await saveConfig({ ...config, syncDaemonRuntime: currentRuntime });
     console.log(`Sync already running for: ${syncPath}`);
     console.log(`Peer ID: ${config.peerId}`);
     if (gatewayFolder) console.log(`Gateway folder: ${gatewayFolder}`);
