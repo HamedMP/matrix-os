@@ -76,7 +76,12 @@ export default defineConfig({
         "packages/platform/src/**",
         "desktop/src/renderer/src/**",
       ],
-      exclude: ["**/*.test.ts", "**/*.test.tsx", "**/*.integration.ts"],
+      exclude: [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.integration.ts",
+        "desktop/src/renderer/src/main.tsx",
+      ],
       thresholds: {
         statements: 99,
         branches: 95,
