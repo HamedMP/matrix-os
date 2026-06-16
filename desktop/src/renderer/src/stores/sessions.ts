@@ -205,12 +205,18 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           set({ creating: false, error: refreshError });
           return null;
         }
-        set({ creating: false, error: null });
+        let linkError: unknown = null;
         if (existing.projectSlug && existing.taskId) {
-          await useBoard.getState().linkSession(api, existing.projectSlug, existing.taskId, {
-            linkedSessionId: sessionId,
-          });
+          try {
+            await useBoard.getState().linkSession(api, existing.projectSlug, existing.taskId, {
+              linkedSessionId: sessionId,
+            });
+          } catch (err: unknown) {
+            console.error("[sessions] Failed to relink restarted session:", err);
+            linkError = err;
+          }
         }
+        set({ creating: false, error: linkError instanceof AppError ? linkError.category : linkError ? "server" : null });
         return { sessionId, attachName: get().aliasMap[sessionId] ?? directAttachName };
       }
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name: attachName });
