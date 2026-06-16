@@ -373,6 +373,7 @@ describe("TerminalApp", () => {
     const row = screen.getByRole("button", { name: "Open matrix-main" }).closest(".group");
     expect(row).toBeTruthy();
     fireEvent.mouseEnter(row!);
+    expect(screen.getByRole("button", { name: "Open matrix-main" }).style.flex).toBe("0 1 auto");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Rename matrix-main" }));
       await Promise.resolve();

@@ -4147,11 +4147,12 @@ function ShellCard({
                 border: 0,
                 color: foreground ? "#31362D" : "#5F6258",
                 cursor: "pointer",
-                flex: "1 1 auto",
+                flex: "0 1 auto",
                 fontFamily: "var(--font-mono, ui-monospace, monospace)",
                 fontSize: 14,
                 fontWeight: 700,
                 lineHeight: "18px",
+                minWidth: 0,
                 padding: 0,
                 textAlign: "left",
               }}
