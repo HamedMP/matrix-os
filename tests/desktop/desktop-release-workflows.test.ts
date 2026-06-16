@@ -22,10 +22,24 @@ describe("desktop release workflows", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
 
     expect(workflow).toContain("version: ${{ steps.meta.outputs.version }}");
+    expect(workflow).toContain("version: ${{ needs.prepare.outputs.version }}");
     expect(workflow).toContain("BASE_VERSION=");
     expect(workflow).toContain('echo "version=$BASE_VERSION-$SUFFIX" >> "$GITHUB_OUTPUT"');
     expect(workflow).toContain('${{ needs.prepare.outputs.version }}" canary "$GITHUB_SHA"');
     expect(workflow).not.toContain('${{ needs.prepare.outputs.suffix }}" canary "$GITHUB_SHA"');
+  });
+
+  it("patches exact release versions and validates notarization inputs before packaging", () => {
+    const build = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+    const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
+
+    expect(build).toContain("Validate Apple notarization secrets");
+    expect(build).toContain("APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set together");
+    expect(build).toContain("Apply desktop release version");
+    expect(build).toContain("RELEASE_VERSION: ${{ inputs.version }}");
+    expect(build).toContain("j.version = exact ||");
+    expect(release).toContain("version: ${{ needs.prepare.outputs.version }}");
+    expect(release).toContain("overwrite_files: true");
   });
 
   it("merges mac manifests in deterministic filename order", () => {

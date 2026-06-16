@@ -32,6 +32,15 @@ describe("resolveUpdateFeedConfig", () => {
     });
   });
 
+  it("uses the bundled release channel when runtime env is absent", () => {
+    expect(resolveUpdateFeedConfig({}, true, "canary")).toMatchObject({
+      enabled: true,
+      provider: "github",
+      channel: "canary",
+      allowPrerelease: true,
+    });
+  });
+
   it("lets a generic feed override GitHub releases", () => {
     expect(
       resolveUpdateFeedConfig(

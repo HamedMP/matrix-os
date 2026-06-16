@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: ""
+      version:
+        description: Exact desktop/package.json version for release builds.
+        required: false
+        type: string
+        default: ""
       artifact_prefix:
         description: Prefix for uploaded artifacts.
         required: true
@@ -56,12 +61,31 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply desktop prerelease suffix
-        if: ${{ inputs.version_suffix != '' }}
+      - name: Validate Apple notarization secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          present=0
+          missing=0
+          for var in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!var:-}" ]; then
+              present=$((present + 1))
+            else
+              missing=$((missing + 1))
+            fi
+          done
+          if [ "$present" -gt 0 ] && [ "$missing" -gt 0 ]; then
+            echo "APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set together for notarization." >&2
+            exit 1
+          fi
+
+      - name: Apply desktop release version
+        if: ${{ inputs.version != '' || inputs.version_suffix != '' }}
         env:
+          RELEASE_VERSION: ${{ inputs.version }}
           VERSION_SUFFIX: ${{ inputs.version_suffix }}
         run: |
-          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); j.version=j.version.replace(/-.*/, '') + '-' + process.env.VERSION_SUFFIX; await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
+          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
       - name: Build desktop app
         run: pnpm --filter desktop build
@@ -118,12 +142,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply desktop prerelease suffix
-        if: ${{ inputs.version_suffix != '' }}
+      - name: Apply desktop release version
+        if: ${{ inputs.version != '' || inputs.version_suffix != '' }}
         env:
+          RELEASE_VERSION: ${{ inputs.version }}
           VERSION_SUFFIX: ${{ inputs.version_suffix }}
         run: |
-          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); j.version=j.version.replace(/-.*/, '') + '-' + process.env.VERSION_SUFFIX; await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
+          node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
       - name: Build desktop app
         run: pnpm --filter desktop build

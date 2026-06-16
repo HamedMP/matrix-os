@@ -90,6 +90,7 @@ jobs:
     uses: ./.github/workflows/desktop-build.yml
     with:
       channel: ${{ needs.prepare.outputs.channel }}
+      version: ${{ needs.prepare.outputs.version }}
       artifact_prefix: ${{ needs.prepare.outputs.artifact_prefix }}
       retention_days: 30
     secrets: inherit
@@ -154,3 +155,4 @@ jobs:
           make_latest: ${{ needs.prepare.outputs.channel == 'stable' }}
           files: desktop-release/**
           fail_on_unmatched_files: true
+          overwrite_files: true
