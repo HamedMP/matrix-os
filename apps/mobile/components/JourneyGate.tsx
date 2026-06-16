@@ -134,7 +134,10 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
           {journey.failure?.retryable ? (
             <PrimaryButton label={working ? "Retrying…" : "Retry setup"} testID="journey-retry" onPress={onRetry} />
           ) : (
-            <PrimaryButton label="Contact support" testID="journey-support" onPress={() => onOpenUrl(SUPPORT_URL)} />
+            <>
+              <PrimaryButton label="Contact support" testID="journey-support" onPress={() => onOpenUrl(SUPPORT_URL)} />
+              <PrimaryButton label="Check again" testID="journey-refresh" onPress={onRefresh} />
+            </>
           )}
         </Centered>
       );
