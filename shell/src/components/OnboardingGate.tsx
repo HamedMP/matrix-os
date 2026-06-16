@@ -26,8 +26,12 @@ function OnboardingGateInner({
 }) {
   const searchParams = useSearchParams();
   const isDeviceFlow = searchParams.get("device_return") !== null;
+  const isBillingEntrypoint =
+    searchParams.has("billing") ||
+    searchParams.has("plans") ||
+    searchParams.has("checkout");
 
-  if (isDeviceFlow) {
+  if (isDeviceFlow || isBillingEntrypoint) {
     return <BillingGate platformSessionActive={platformSessionActive}>{children}</BillingGate>;
   }
   return (

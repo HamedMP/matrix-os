@@ -2,7 +2,14 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth, RedirectToSignIn } from "@clerk/nextjs";
-import { AlertCircleIcon, Loader2Icon, RefreshCwIcon } from "lucide-react";
+import {
+  AlertCircleIcon,
+  CheckCircle2Icon,
+  CircleDollarSignIcon,
+  Loader2Icon,
+  RefreshCwIcon,
+  ServerIcon,
+} from "lucide-react";
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
 
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
@@ -16,6 +23,28 @@ const STAGE_LABEL: Record<string, string> = {
   finalizing: "Finishing setup",
 };
 
+type BootStep = "account" | "billing" | "computer";
+
+const STEP_ORDER: BootStep[] = ["account", "billing", "computer"];
+const STEP_LABEL: Record<BootStep, string> = {
+  account: "Account",
+  billing: "Billing",
+  computer: "Computer",
+};
+const STEP_ICON: Record<BootStep, typeof CheckCircle2Icon> = {
+  account: CheckCircle2Icon,
+  billing: CircleDollarSignIcon,
+  computer: ServerIcon,
+};
+
+function getStepState(step: BootStep, activeStep: BootStep): "done" | "active" | "pending" {
+  const stepIndex = STEP_ORDER.indexOf(step);
+  const activeIndex = STEP_ORDER.indexOf(activeStep);
+  if (stepIndex < activeIndex) return "done";
+  if (stepIndex === activeIndex) return "active";
+  return "pending";
+}
+
 async function authHeaders(getToken: () => Promise<string | null>): Promise<HeadersInit> {
   const token = await getToken();
   return {
@@ -25,13 +54,51 @@ async function authHeaders(getToken: () => Promise<string | null>): Promise<Head
   };
 }
 
-function BootShell({ children }: { children: ReactNode }) {
+function BootShell({
+  children,
+  activeStep = "account",
+}: {
+  children: ReactNode;
+  activeStep?: BootStep;
+}) {
   return (
     <main
       data-matrix-boot-sequence="true"
-      className="flex min-h-screen flex-col items-center justify-center gap-4 bg-page-bg px-6 text-center text-forest/80"
+      className="flex min-h-screen flex-col items-center justify-center bg-page-bg px-6 py-10 text-center text-forest/80"
     >
-      {children}
+      <section
+        className="flex w-full max-w-lg flex-col items-center gap-6 rounded-lg border border-forest/15 bg-white/85 p-6 shadow-[0_24px_80px_rgba(50,53,46,0.16)]"
+        aria-live="polite"
+      >
+        <div className="flex size-12 items-center justify-center rounded-md border border-forest/15 bg-cream/60">
+          <ServerIcon className="size-5 text-ember" aria-hidden="true" />
+        </div>
+        <div className="flex w-full flex-wrap items-center justify-center gap-2 text-xs font-medium text-forest/70">
+          {STEP_ORDER.map((step, index) => {
+            const state = getStepState(step, activeStep);
+            const Icon = STEP_ICON[step];
+            return (
+              <div key={step} className="flex min-w-0 items-center gap-2">
+                {index > 0 ? <span className="hidden h-px w-5 bg-forest/15 sm:inline-block" aria-hidden="true" /> : null}
+                <span
+                  className={[
+                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1",
+                    state === "active"
+                      ? "border-ember/35 bg-ember/10 text-deep"
+                      : state === "done"
+                        ? "border-forest/15 bg-cream/60 text-forest"
+                        : "border-forest/10 bg-white text-forest/50",
+                  ].join(" ")}
+                >
+                  <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{STEP_LABEL[step]}</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex flex-col items-center gap-4">{children}</div>
+      </section>
     </main>
   );
 }
@@ -123,9 +190,10 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
 
   if (!isLoaded) {
     return (
-      <BootShell>
+      <BootShell activeStep="account">
         <Spinner />
-        <p className="text-sm">Loading your Matrix computer…</p>
+        <h1 className="text-lg font-medium text-forest">Checking your session</h1>
+        <p className="max-w-sm text-sm">Matrix is loading your account before opening billing or your computer.</p>
       </BootShell>
     );
   }
@@ -138,9 +206,10 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
 
   if (status === "loading") {
     return (
-      <BootShell>
+      <BootShell activeStep="account">
         <Spinner />
-        <p className="text-sm">Loading your Matrix computer…</p>
+        <h1 className="text-lg font-medium text-forest">Checking setup status</h1>
+        <p className="max-w-sm text-sm">Matrix is checking account, billing, and computer readiness.</p>
       </BootShell>
     );
   }
@@ -153,7 +222,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
 
   if (status === "unreachable") {
     return (
-      <BootShell>
+      <BootShell activeStep="account">
         <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
         <p className="text-sm">We can’t reach Matrix right now.</p>
         <button type="button" onClick={refreshJourney} className="inline-flex items-center gap-2 rounded-md border border-forest/20 px-3 py-1.5 text-sm hover:bg-forest/5">
@@ -172,7 +241,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
   switch (state.phase) {
     case "plan_required":
       return (
-        <BootShell>
+        <BootShell activeStep="billing">
           <h1 className="text-lg font-medium text-forest">Choose your plan</h1>
           <p className="max-w-sm text-sm">{state.detail}</p>
           {state.nextAction.url ? (
@@ -184,7 +253,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       );
     case "payment_settling":
       return (
-        <BootShell>
+        <BootShell activeStep="billing">
           {state.settling?.delayed ? (
             <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
           ) : (
@@ -201,7 +270,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       );
     case "provisioning":
       return (
-        <BootShell>
+        <BootShell activeStep="computer">
           <Spinner />
           <h1 className="text-lg font-medium text-forest">Building your Matrix computer</h1>
           <p className="max-w-sm text-sm">
@@ -211,7 +280,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       );
     case "provisioning_failed":
       return (
-        <BootShell>
+        <BootShell activeStep="computer">
           <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
           <h1 className="text-lg font-medium text-forest">Setup needs attention</h1>
           <p className="max-w-sm text-sm">{state.detail}</p>
@@ -226,7 +295,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       );
     case "account_required":
       return (
-        <BootShell>
+        <BootShell activeStep="account">
           <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
           <h1 className="text-lg font-medium text-forest">Finishing account setup</h1>
           <p className="max-w-sm text-sm">{state.detail || "We are finishing your Matrix account setup."}</p>
@@ -241,9 +310,9 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
     default:
       // Unknown phase: do NOT fall through to the shell. Show a safe wait state.
       return (
-        <BootShell>
+        <BootShell activeStep="account">
           <Spinner />
-          <p className="text-sm">Loading your Matrix computer…</p>
+          <p className="text-sm">Checking setup status…</p>
         </BootShell>
       );
   }

@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertCircleIcon, Loader2Icon, LogInIcon } from "lucide-react";
+import { AlertCircleIcon, CircleDollarSignIcon, Loader2Icon, LogInIcon } from "lucide-react";
 import {
   getMatrixBillingSuccessRedirectUrl,
 } from "@/lib/billing";
@@ -205,10 +205,21 @@ function SubscriptionConfirmationPending({
 
 function BillingStatusLoading() {
   return (
-    <main data-matrix-billing-gate="true" className="flex min-h-screen items-center justify-center bg-page-bg text-forest/70">
-      <output className="flex items-center gap-2 text-sm">
-        <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
-        Loading billing status
+    <main data-matrix-billing-gate="true" className="flex min-h-screen items-center justify-center bg-page-bg px-6 py-10 text-forest/70">
+      <output
+        className="flex w-full max-w-md flex-col items-center gap-4 rounded-lg border border-forest/15 bg-white/85 p-6 text-center shadow-[0_24px_80px_rgba(50,53,46,0.16)]"
+        aria-live="polite"
+      >
+        <span className="flex size-12 items-center justify-center rounded-md border border-forest/15 bg-cream/60">
+          <CircleDollarSignIcon className="size-5 text-ember" aria-hidden="true" />
+        </span>
+        <span className="flex items-center gap-2 text-sm font-medium text-forest">
+          <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
+          Loading billing status
+        </span>
+        <span className="max-w-xs text-sm leading-6 text-forest/70">
+          Matrix is checking your subscription before opening billing setup.
+        </span>
       </output>
     </main>
   );
