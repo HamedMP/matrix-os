@@ -25,6 +25,7 @@ interface OpenRequest {
   kind: "hosted-shell" | "app";
   slug?: string;
   bounds: Bounds;
+  active?: boolean;
 }
 
 interface OpenResult {
@@ -69,9 +70,9 @@ export class EmbedService {
   async open(request: OpenRequest): Promise<OpenResult> {
     const gatewayOrigin = this.deps.getGatewayOrigin();
     if (request.kind === "hosted-shell") {
-      return this.openHostedShell(gatewayOrigin, request.bounds);
+      return this.openHostedShell(gatewayOrigin, request.bounds, request.active ?? true);
     }
-    return this.openApp(gatewayOrigin, request.slug ?? "", request.bounds);
+    return this.openApp(gatewayOrigin, request.slug ?? "", request.bounds, request.active ?? true);
   }
 
   setBounds(embedId: string, bounds: Bounds): boolean {
@@ -124,6 +125,7 @@ export class EmbedService {
         pending.slug,
         pending.bounds,
         embedId,
+        true,
         () => this.pendingApps.has(embedId),
       );
       if (!opened) {
@@ -171,9 +173,9 @@ export class EmbedService {
     };
   }
 
-  private async openHostedShell(gatewayOrigin: string, bounds: Bounds): Promise<OpenResult> {
+  private async openHostedShell(gatewayOrigin: string, bounds: Bounds, active: boolean): Promise<OpenResult> {
     const embedId = randomUUID();
-    const opened = await this.createHostedShellEmbed(gatewayOrigin, bounds, embedId);
+    const opened = await this.createHostedShellEmbed(gatewayOrigin, bounds, embedId, active);
     if (!opened) {
       this.rememberPendingHostedShell(embedId, bounds);
       return { embedId, state: "auth-required" };
@@ -195,10 +197,11 @@ export class EmbedService {
     gatewayOrigin: string,
     bounds: Bounds,
     embedId: string,
+    active: boolean,
   ): Promise<boolean> {
     const handoff = await this.performHostedShellHandoff(gatewayOrigin);
     if (!handoff) return false;
-    this.attachHostedShellEmbed(gatewayOrigin, bounds, embedId);
+    this.attachHostedShellEmbed(gatewayOrigin, bounds, embedId, active);
     return true;
   }
 
@@ -206,10 +209,12 @@ export class EmbedService {
     gatewayOrigin: string,
     bounds: Bounds,
     embedId: string,
+    active = true,
   ): void {
     const url = `${gatewayOrigin}/`;
     this.manager.open("hosted-shell", null, bounds, url, {
       id: embedId,
+      active,
       onState: (state) => this.deps.emitState(embedId, state),
     });
   }
@@ -226,9 +231,9 @@ export class EmbedService {
     return handoff.ok;
   }
 
-  private async openApp(gatewayOrigin: string, slug: string, bounds: Bounds): Promise<OpenResult> {
+  private async openApp(gatewayOrigin: string, slug: string, bounds: Bounds, active: boolean): Promise<OpenResult> {
     const embedId = randomUUID();
-    const opened = await this.createAppEmbed(gatewayOrigin, slug, bounds, embedId);
+    const opened = await this.createAppEmbed(gatewayOrigin, slug, bounds, embedId, active);
     if (!opened) {
       this.rememberPendingApp(embedId, { slug, bounds });
       return { embedId, state: "auth-required" };
@@ -250,6 +255,7 @@ export class EmbedService {
     slug: string,
     bounds: Bounds,
     embedId: string,
+    active = true,
     shouldAttach: () => boolean = () => true,
   ): Promise<boolean> {
     let cached = this.tokenCache.get(slug);
@@ -270,6 +276,7 @@ export class EmbedService {
     }
     this.manager.open("app", slug, bounds, resolved, {
       id: embedId,
+      active,
       onState: (state) => this.deps.emitState(embedId, state),
     });
     return true;

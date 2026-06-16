@@ -120,9 +120,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
-  handle("embed:open", async ({ kind, slug, bounds }) => {
+  handle("embed:open", async ({ kind, slug, bounds, active }) => {
     try {
-      return await ctx.embeds.open({ kind, slug, bounds });
+      return await ctx.embeds.open({ kind, slug, bounds, active });
     } catch (err: unknown) {
       console.warn(
         "[ipc] embed:open failed:",

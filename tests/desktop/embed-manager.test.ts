@@ -176,6 +176,23 @@ describe("EmbedManager", () => {
     expect(view?.bounds).toEqual(BOUNDS);
   });
 
+  it("can open embeds detached so inactive tabs do not flash a native overlay", () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas", {
+      active: false,
+    });
+    const view = views[0]?.view;
+
+    expect(manager.liveCount).toBe(0);
+    expect(view?.events).not.toContain("attach");
+    expect(view?.bounds).toEqual(BOUNDS);
+    expect(view?.loadedUrls).toEqual(["https://gw.test/canvas"]);
+
+    manager.setActive(id, true);
+    expect(manager.liveCount).toBe(1);
+    expect(view?.events).toContain("attach");
+  });
+
   it("propagates adapter lifecycle states to the caller", () => {
     const { manager, views } = makeManager();
     const states: string[] = [];

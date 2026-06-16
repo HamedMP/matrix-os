@@ -116,6 +116,7 @@ export const INVOKE_CHANNELS = {
         kind: z.enum(["hosted-shell", "app"]),
         slug: z.string().min(1).max(128).optional(),
         bounds: BoundsSchema,
+        active: z.boolean().optional(),
       })
       .strict(),
     response: z.object({ embedId: z.string().min(1).max(64), state: EmbedStateSchema }).strict(),

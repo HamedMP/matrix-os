@@ -13,6 +13,7 @@ export default function TerminalsTab() {
   const load = useSessions((s) => s.load);
   const create = useSessions((s) => s.create);
   const [selected, setSelected] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     if (api) void load(api);
@@ -61,15 +62,19 @@ export default function TerminalsTab() {
           <Button
             variant="subtle"
             className="w-full justify-center"
+            disabled={!api || creating}
             onClick={() => {
-              if (!api) return;
-              void create(api).then((session) => {
-                if (session) setSelected(session.attachName);
-              });
+              if (!api || creating) return;
+              setCreating(true);
+              void create(api)
+                .then((session) => {
+                  if (session) setSelected(session.attachName);
+                })
+                .finally(() => setCreating(false));
             }}
           >
             <Plus size={13} />
-            New session
+            {creating ? "Creating…" : "New session"}
           </Button>
         </div>
       </div>

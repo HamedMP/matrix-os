@@ -85,7 +85,7 @@ export class EmbedManager {
     slug: string | null,
     bounds: Bounds,
     url: string,
-    options?: { id?: string; onState?: (state: "loading" | "ready" | "failed") => void },
+    options?: { id?: string; active?: boolean; onState?: (state: "loading" | "ready" | "failed") => void },
   ): string {
     if (!isNavigationAllowed(url, this.getAllowedOrigins())) {
       throw new Error("embed URL is not allowed");
@@ -97,6 +97,7 @@ export class EmbedManager {
         : this.appPartition(slug);
 
     const id = options?.id ?? randomUUID();
+    const active = options?.active ?? true;
     if (this.records.has(id)) throw new Error("embed id already exists");
     const onState = options?.onState ?? (() => undefined);
     let record: EmbedRecord | null = null;
@@ -117,13 +118,13 @@ export class EmbedManager {
       id,
       url,
       view,
-      live: true,
+      live: active,
       loadFailed: false,
       loadGeneration: 0,
       lastUsed: ++this.tick,
       onState: emitState,
     };
-    view.attach();
+    if (active) view.attach();
     view.setBounds(bounds);
     this.records.set(id, record);
     this.loadInto(record);
