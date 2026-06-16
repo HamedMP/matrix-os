@@ -45,6 +45,7 @@ export default function AppLauncher() {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const previousQueryRef = useRef(query);
 
   useEffect(() => {
     if (api) void load(api);
@@ -63,8 +64,13 @@ export default function AppLauncher() {
 
   // Keep the highlighted index in range as the filter changes.
   useEffect(() => {
+    if (previousQueryRef.current !== query) {
+      previousQueryRef.current = query;
+      setActive(0);
+      return;
+    }
     setActive((i) => (i >= filtered.length ? 0 : i));
-  }, [filtered.length]);
+  }, [filtered.length, query]);
 
   const open = (slug: string, name: string) =>
     openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug) ? { icon: appIconUrl(platformHost, slug)! } : {}) });
