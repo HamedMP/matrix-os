@@ -47,6 +47,23 @@ describe("useFileTree", () => {
     expect(useFileTree.getState().loadingRoots).toBe(false);
   });
 
+  it("keeps failed root loads retryable", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const get = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary"))
+      .mockResolvedValueOnce({ entries: [{ name: "README.md", type: "file" }] });
+    const api = makeApi(get as never);
+
+    await useFileTree.getState().loadRoots(api);
+    expect(useFileTree.getState().roots).toBeNull();
+    expect(useFileTree.getState().loadingRoots).toBe(false);
+
+    await useFileTree.getState().loadRoots(api);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(useFileTree.getState().roots).toEqual([{ name: "README.md", type: "file" }]);
+  });
+
   it("coalesces concurrent child loads for the same directory", async () => {
     const childLoad = deferred<{ entries: unknown[] }>();
     const get = vi.fn(() => childLoad.promise);
