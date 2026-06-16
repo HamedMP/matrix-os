@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGitDiffArgs,
+  GIT_DIFF_TIMEOUT_MS,
   resolveLaneDecision,
   validateLaneDecision,
 } from "../../scripts/delivery/resolve-lanes.mjs";
@@ -60,6 +61,24 @@ describe("delivery lane router", () => {
     ).toThrow(/runtime\/\* tags are not valid/);
   });
 
+  it("rejects prerelease-looking CLI tags instead of routing them to the CLI lane", () => {
+    expect(() =>
+      resolveLaneDecision({
+        changedPaths: [],
+        tags: ["cli-v1.2.3-rc1"],
+      }),
+    ).toThrow(/Unknown deploy tag/);
+  });
+
+  it("routes shared proxy package changes through the platform lane", () => {
+    const decision = resolveLaneDecision({
+      changedPaths: ["packages/proxy/src/main.ts"],
+    });
+
+    expect(decision.lanes).toEqual(["platform"]);
+    expect(decision.reason).toContain("proxy package changed");
+  });
+
   it("validates emitted decisions before workflows can consume them", () => {
     expect(() =>
       validateLaneDecision({
@@ -86,5 +105,6 @@ describe("delivery lane router", () => {
       "--name-only",
       "base-sha..head-sha",
     ]);
+    expect(GIT_DIFF_TIMEOUT_MS).toBe(30_000);
   });
 });

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 export const LANES = Object.freeze(["platform", "shell", "edge", "runtime", "www", "cli", "ops"]);
+export const GIT_DIFF_TIMEOUT_MS = 30_000;
 
 const LANE_ORDER = new Map(LANES.map((lane, index) => [lane, index]));
 
@@ -65,6 +66,11 @@ const PATH_RULES = Object.freeze([
     test: (path) => path.startsWith("packages/platform/") || path.startsWith("packages/clerk-sync/"),
     lanes: ["platform"],
     reason: "platform control-plane code changed",
+  },
+  {
+    test: (path) => path.startsWith("packages/proxy/"),
+    lanes: ["platform"],
+    reason: "platform shared proxy package changed",
   },
   {
     test: (path) => path.startsWith("packages/gateway/src/integrations/"),
@@ -229,7 +235,7 @@ function laneForTag(tag) {
   if (/^shell\/v\d{4}\.\d{2}\.\d{2}\.\d+$/.test(tag)) return "shell";
   if (/^edge\/v\d{4}\.\d{2}\.\d{2}\.\d+$/.test(tag)) return "edge";
   if (/^www\/v\d{4}\.\d{2}\.\d{2}\.\d+$/.test(tag)) return "www";
-  if (/^cli-v\d+\.\d+\.\d+/.test(tag)) return "cli";
+  if (/^cli-v\d+\.\d+\.\d+$/.test(tag)) return "cli";
   if (/^v[\w.-]+$/.test(tag)) return "runtime";
   throw new Error(`Unknown deploy tag: ${tag}`);
 }
@@ -312,6 +318,7 @@ function readChangedPaths({ base, head, paths }) {
   const result = spawnSync("git", args, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: GIT_DIFF_TIMEOUT_MS,
   });
   if (result.status !== 0) {
     throw new Error(result.stderr.trim() || `git ${args.join(" ")} failed`);
