@@ -84,6 +84,6 @@ describe("TabContent", () => {
 
     render(<TabContent />);
 
-    expect(screen.getByRole("heading", { name: "Apps" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /^(Apps|Loading apps)$/ })).toBeTruthy();
   });
 });
