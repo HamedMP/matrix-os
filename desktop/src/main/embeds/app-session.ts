@@ -12,6 +12,7 @@ export interface ParsedCookie {
   value: string;
   domain?: string;
   path?: string;
+  /** Milliseconds since Unix epoch; Electron cookie adapters must convert to seconds. */
   expires?: number;
   secure?: boolean;
   httpOnly?: boolean;
