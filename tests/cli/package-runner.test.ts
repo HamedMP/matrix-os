@@ -55,6 +55,10 @@ describe("published CLI package runners", () => {
     expect(script).toContain('TMP_BIN="$INSTALL_DIR/.matrix.tmp.$$"');
     expect(script).toContain('mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"');
     expect(script).toContain('sudo mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"');
+    expect(script).toContain('sudo rm -f "$TMP_BIN"');
+    expect(script).toMatch(
+      /if ! sudo mv -f "\$TMP_BIN" "\$INSTALL_DIR\/matrix"; then\n\s+sudo rm -f "\$TMP_BIN"\n\s+return 1\n\s+fi/,
+    );
   });
 
   it("prefers upgrading the existing matrix command path before installing elsewhere", async () => {

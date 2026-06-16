@@ -128,8 +128,14 @@ install_binary_with_sudo() {
   sudo mkdir -p "$INSTALL_DIR"
   TMP_BIN="$INSTALL_DIR/.matrix.tmp.$$"
   sudo rm -f "$TMP_BIN"
-  sudo install -m 0755 "$BIN_PATH" "$TMP_BIN"
-  sudo mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"
+  if ! sudo install -m 0755 "$BIN_PATH" "$TMP_BIN"; then
+    sudo rm -f "$TMP_BIN"
+    return 1
+  fi
+  if ! sudo mv -f "$TMP_BIN" "$INSTALL_DIR/matrix"; then
+    sudo rm -f "$TMP_BIN"
+    return 1
+  fi
   sudo ln -sf matrix "$INSTALL_DIR/matrixos"
   sudo ln -sf matrix "$INSTALL_DIR/mos"
 }
