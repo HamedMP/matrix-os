@@ -23,6 +23,8 @@ export default function HomeTab() {
   const handle = useConnection((s) => s.handle);
   const projects = useBoard((s) => s.projects);
   const sessions = useSessions((s) => s.sessions);
+  const sessionsLoading = useSessions((s) => s.loading);
+  const sessionsError = useSessions((s) => s.error);
   const loadSessions = useSessions((s) => s.load);
   const openTab = useTabs((s) => s.openTab);
   const setComposerOpen = useUi((s) => s.setComposerOpen);
@@ -96,7 +98,17 @@ export default function HomeTab() {
               </IconButton>
             </div>
             <div className="flex flex-col gap-0.5">
-              {sessions.length === 0 ? (
+              {sessionsLoading && sessions.length === 0 ? (
+                <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Loading sessions…</p>
+              ) : sessionsError ? (
+                <div className="flex flex-col items-start gap-2">
+                  <p className="text-sm" style={{ color: "var(--danger)" }}>Sessions unavailable.</p>
+                  <Button variant="subtle" onClick={() => api && void loadSessions(api)}>
+                    <RefreshCw size={13} />
+                    Retry sessions
+                  </Button>
+                </div>
+              ) : sessions.length === 0 ? (
                 <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>No live sessions.</p>
               ) : (
                 sessions.slice(0, 8).map((s) => (
