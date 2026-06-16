@@ -13,6 +13,11 @@ const GENERIC_MESSAGES: Record<string, string> = {
   unknown_command: "Request failed",
   unsupported_version: "Request failed",
   auth_expired: "Matrix CLI auth expired. Run `mos login` to refresh your session.",
+  billing_required: "Choose a plan before running setup. Visit https://app.matrix-os.com/?plans=1.",
+  not_authenticated: "Not signed in. Run `mos login` first.",
+  retry_exhausted: "Setup has failed repeatedly. Contact support@matrix-os.com.",
+  setup_failed: "Couldn't start setup. Please try again shortly.",
+  setup_timeout: "Setup is taking longer than expected. Re-run `mos login` shortly to check.",
   payment_delayed: "Payment is taking longer than expected to confirm. Contact support@matrix-os.com if it persists.",
 };
 
