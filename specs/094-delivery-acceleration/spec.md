@@ -53,7 +53,7 @@ bar: PR review, smoke checks, rollback, and live verification.
 | Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `shell/**` that affect active VPS shell, `packages/gateway/**`, `packages/kernel/**`, `packages/sync-client/**`, host-bundle-shipped `packages/**`, `home/**`, `distro/customer-vps/host-bin/**`, `distro/customer-vps/systemd/**`, and `scripts/build-host-bundle.sh` |
 | Website/docs | Vercel/site deploy | Independent website/docs lane | `deploy/www`, path changes under `www/**` and shared workspace dependencies consumed by the website, including frontend-facing `packages/observability/**` modules |
 | CLI | npm/GitHub/Homebrew release | Independent CLI lane | `deploy/cli`, `cli-v*`, path changes under CLI package/scripts |
-| Observability/ops | Ad hoc scripts or platform image side effects | Explicit ops lane with scoped smoke | `deploy/ops`, path changes under `packages/observability/**`, ops distro files |
+| Observability/ops | Ad hoc scripts or platform image side effects | Explicit ops lane with scoped smoke | `deploy/ops`, ops distro files, and `packages/observability/**`; observability package changes also fan out to platform, shell, and website lanes when those surfaces consume the changed module |
 
 ## Operator Tags and Labels
 
@@ -246,6 +246,13 @@ before staging. The updater must never write a mixed release where `/opt/matrix/
 comes from the target version but `/opt/matrix/bin`, `/opt/matrix/runtime`, or systemd
 units remain from a different target version.
 
+The `protected` field is a release-policy denylist for owner data outside the release
+tree. It exists so publish-time validation, full-bundle fallback, and template-sync
+code can prove no manifest, delete entry, or activation step targets `$MATRIX_HOME`.
+For app-only incremental updates, the staging preflight checks that every staged path
+maps only to release-owned roots and treats the owner-data denylist as a cross-check,
+not as a path expected to appear under `/opt/matrix/releases/<version>.staging`.
+
 The VPS update agent compares the installed manifest with the target manifest and
 downloads only changed content-addressed objects. It stages changes under
 `/opt/matrix/releases/<version>.staging`, verifies hashes, then atomically flips the
@@ -377,6 +384,10 @@ Rollback must be a workflow action, not an undocumented operator command.
   surface a manual recovery requirement.
 - **Activation succeeds but service health fails**: flip symlink back to the previous
   release, restart services, and mark the target release failed for that handle.
+- **Service restart or health report times out**: abort the activation completion path,
+  roll back to the previous release when activation already happened, release the
+  updater lock through the supervisor cleanup path, and report the coarse `restart` or
+  `health` phase to platform.
 - **Manifest references a missing object**: fail before activation; release publication
   should also verify object existence before registration.
 - **Operator dispatches wrong lane**: dispatch requires explicit SHA and lane; workflow
@@ -474,12 +485,13 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
    and writing `/opt/matrix/release.json` via tmp-then-rename. The startup/pre-update
    consistency check is the recovery mechanism if the process crashes between those
    filesystem operations.
-12. Restarts affected services while still holding the updater lock, except the updater's
+12. Restarts affected services while still holding the updater lock with bounded
+   per-service restart timeouts and an overall activation timeout, except the updater's
    own process must not be restarted before step 13 completes. If the release changes
    `matrix-sync-agent` or the updater wrapper, a dedicated supervisor handoff or deferred
    self-restart marker performs that restart after health reporting.
-13. Reports installed version and health back to platform, releases the lock, then runs
-   any deferred updater self-restart through the supervisor.
+13. Reports installed version and health back to platform with a bounded timeout,
+   releases the lock, then runs any deferred updater self-restart through the supervisor.
 
 ## Phased Plan
 
