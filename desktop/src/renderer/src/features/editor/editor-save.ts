@@ -104,5 +104,7 @@ export async function saveFileOverwrite(
   content: string,
 ): Promise<number | null> {
   const { mtime } = await files.write(path, content);
-  return mtime;
+  if (mtime !== null) return mtime;
+  const { mtime: refreshedMtime } = await files.stat(path);
+  return refreshedMtime;
 }

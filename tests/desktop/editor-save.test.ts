@@ -196,4 +196,16 @@ describe("saveFileOverwrite", () => {
     expect(stat).not.toHaveBeenCalled();
     expect(newMtime).toBe(MODIFIED_MS + 9_000);
   });
+
+  it("refreshes the baseline when overwrite response omits mtime", async () => {
+    const stat = vi.fn().mockResolvedValue({ mtime: MODIFIED_MS + 9_000 });
+    const files = makeFiles({
+      stat,
+      write: vi.fn().mockResolvedValue({ mtime: null }),
+    });
+    const newMtime = await saveFileOverwrite(files, "projects/notes.md", "forced");
+    expect(files.write).toHaveBeenCalledWith("projects/notes.md", "forced");
+    expect(stat).toHaveBeenCalledWith("projects/notes.md");
+    expect(newMtime).toBe(MODIFIED_MS + 9_000);
+  });
 });
