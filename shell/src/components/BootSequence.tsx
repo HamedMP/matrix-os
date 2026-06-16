@@ -225,8 +225,19 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
         </BootShell>
       );
     case "account_required":
-      // No account yet — never render the shell; send to the sign-in/up door.
-      return <RedirectToSignIn />;
+      return (
+        <BootShell>
+          <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
+          <h1 className="text-lg font-medium text-forest">Finishing account setup</h1>
+          <p className="max-w-sm text-sm">{state.detail || "We are finishing your Matrix account setup."}</p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button type="button" onClick={refreshJourney} className="inline-flex items-center gap-2 rounded-md border border-forest/20 px-3 py-1.5 text-sm hover:bg-forest/5">
+              <RefreshCwIcon className="size-4" aria-hidden="true" /> Try again
+            </button>
+            <a href="mailto:support@matrix-os.com" className="text-sm underline">Contact support</a>
+          </div>
+        </BootShell>
+      );
     default:
       // Unknown phase: do NOT fall through to the shell. Show a safe wait state.
       return (

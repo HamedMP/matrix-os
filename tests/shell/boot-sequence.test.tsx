@@ -180,10 +180,13 @@ describe("BootSequence", () => {
     expect(screen.queryByTestId("shell")).toBeNull();
   });
 
-  it("never hands the shell to an account_required phase", async () => {
+  it("keeps a signed-in account_required phase out of the Clerk redirect loop", async () => {
     mockJourney({ phase: "account_required", detail: "Create your account.", nextAction: { kind: "none" } });
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
-    expect(await screen.findByTestId("redirect-to-sign-in")).toBeTruthy();
+    expect(await screen.findByText("Finishing account setup")).toBeTruthy();
+    expect(screen.getByText("Try again")).toBeTruthy();
+    expect(screen.getByText("Contact support")).toBeTruthy();
+    expect(screen.queryByTestId("redirect-to-sign-in")).toBeNull();
     expect(screen.queryByTestId("shell")).toBeNull();
   });
 });
