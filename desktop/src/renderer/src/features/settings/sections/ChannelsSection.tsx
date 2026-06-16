@@ -17,6 +17,7 @@ export default function ChannelsSection() {
       .then((res) => {
         if (cancelled) return;
         setChannels(parseChannelStatusResponse(res));
+        setError(false);
       })
       .catch((err: unknown) => {
         console.warn("[settings] channels load failed:", err instanceof Error ? err.message : String(err));

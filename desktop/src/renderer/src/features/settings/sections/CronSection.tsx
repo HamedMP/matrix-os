@@ -29,7 +29,12 @@ export default function CronSection() {
   useEffect(() => {
     if (!api) return;
     let cancelled = false;
-    api.get<unknown>("/api/cron").then((res) => { if (!cancelled) setJobs(parse(res)); }).catch((err: unknown) => {
+    api.get<unknown>("/api/cron").then((res) => {
+      if (!cancelled) {
+        setJobs(parse(res));
+        setError(false);
+      }
+    }).catch((err: unknown) => {
       console.warn("[settings] cron load failed:", err instanceof Error ? err.message : String(err));
       if (!cancelled) setError(true);
     });

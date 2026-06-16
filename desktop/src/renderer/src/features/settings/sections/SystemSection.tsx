@@ -26,7 +26,10 @@ export default function SystemSection() {
     api
       .get<SystemInfo>("/api/system/info")
       .then((d) => {
-        if (!cancelled) setInfo(d);
+        if (!cancelled) {
+          setInfo(d);
+          setError(false);
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return;
