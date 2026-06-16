@@ -59,10 +59,12 @@ export default function ProcessesPanel() {
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
   const mounted = useRef(false);
+  const requestSeq = useRef(0);
 
   const load = async (isCancelled: () => boolean = () => false) => {
     if (!api || inFlight.current) return;
     inFlight.current = true;
+    const requestId = ++requestSeq.current;
     const cancelled = () => !mounted.current || isCancelled();
     try {
       const raw = await api.get<unknown>("/api/system/activity?processLimit=25");
@@ -75,7 +77,7 @@ export default function ProcessesPanel() {
       setError(toUserMessage(err));
       setSnapshot((prev) => prev ?? {});
     } finally {
-      inFlight.current = false;
+      if (requestSeq.current === requestId) inFlight.current = false;
     }
   };
 
@@ -91,6 +93,7 @@ export default function ProcessesPanel() {
     return () => {
       cancelled = true;
       mounted.current = false;
+      requestSeq.current += 1;
       inFlight.current = false;
       clearInterval(timer);
     };
