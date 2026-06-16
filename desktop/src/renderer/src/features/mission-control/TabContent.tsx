@@ -9,7 +9,7 @@ import SettingsView from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
 import AgentsTab from "../threads/AgentsTab";
 import ChatTab from "../chat/ChatTab";
-import { AppLauncher } from "../embeds";
+import AppLauncher from "../embeds/AppLauncher";
 
 function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
   switch (tab.kind) {
