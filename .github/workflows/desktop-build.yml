@@ -74,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f desktop/dist/*-mac.yml
+          test -f desktop/dist/latest-mac.yml
           test -f desktop/dist/*.dmg
           test -f desktop/dist/*.zip
           test -f desktop/dist/mac*/Matrix\ OS.app/Contents/Resources/app-update.yml
@@ -84,6 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           mv desktop/dist/latest-mac.yml "desktop/dist/${{ matrix.arch }}-mac.yml"
+          find desktop/dist -maxdepth 1 -type f -name '*-mac.yml' ! -name '${{ matrix.arch }}-mac.yml' -delete
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v6
