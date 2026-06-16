@@ -57,6 +57,7 @@ interface UserMachinesTable {
   deleted_at: string | null;
   failure_code: string | null;
   failure_at: string | null;
+  attempt: number;
 }
 
 interface HostBundleReleasesTable {
@@ -346,6 +347,7 @@ export interface UserMachineRecord {
   deletedAt: string | null;
   failureCode: string | null;
   failureAt: string | null;
+  attempt: number;
 }
 
 export interface HostBundleReleaseRecord {
@@ -493,6 +495,7 @@ export interface NewUserMachine {
   deletedAt?: string | null;
   failureCode?: string | null;
   failureAt?: string | null;
+  attempt?: number;
 }
 
 export interface NewProviderDeletionQueueRecord {
@@ -580,11 +583,13 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       last_seen_at TEXT,
       deleted_at TEXT,
       failure_code TEXT,
-      failure_at TEXT
+      failure_at TEXT,
+      attempt INTEGER NOT NULL DEFAULT 1
     )
   `.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
   await sql`DROP INDEX IF EXISTS idx_user_machines_clerk`.execute(db);
@@ -1023,6 +1028,7 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     deletedAt: row.deleted_at,
     failureCode: row.failure_code,
     failureAt: row.failure_at,
+    attempt: row.attempt,
   };
 }
 
@@ -1045,6 +1051,7 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     deleted_at: record.deletedAt ?? null,
     failure_code: record.failureCode ?? null,
     failure_at: record.failureAt ?? null,
+    attempt: record.attempt ?? 1,
   };
 }
 
@@ -1067,6 +1074,7 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.deletedAt !== undefined) update.deleted_at = values.deletedAt;
   if (values.failureCode !== undefined) update.failure_code = values.failureCode;
   if (values.failureAt !== undefined) update.failure_at = values.failureAt;
+  if (values.attempt !== undefined) update.attempt = values.attempt;
   return update;
 }
 
@@ -1839,6 +1847,29 @@ export async function claimUserMachineRecovery(
     .returningAll()
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
+}
+
+/**
+ * Soft-deletes a failed machine row so it stops occupying the active
+ * (clerk_user_id, runtime_slot) unique slot, letting a retry provision a fresh
+ * machine. The failure status is preserved for audit; only `deleted_at` is set.
+ * The `status = 'failed'` guard encodes the invariant at the DB layer: this
+ * helper must never silently retire a live (provisioning/recovering/running)
+ * machine, even if a future caller forgets the status check.
+ */
+export async function retireUserMachine(
+  db: PlatformDB,
+  machineId: string,
+  retiredAt: string,
+): Promise<void> {
+  await db.ready;
+  await db.executor
+    .updateTable('user_machines')
+    .set({ deleted_at: retiredAt })
+    .where('machine_id', '=', machineId)
+    .where('deleted_at', 'is', null)
+    .where('status', '=', 'failed')
+    .execute();
 }
 
 export async function claimUserMachineDelete(

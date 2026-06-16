@@ -23,6 +23,7 @@ export interface CustomerVpsConfig {
   registrationTokenTtlMs: number;
   reconciliationBatchSize: number;
   reconciliationStaleAfterMs: number;
+  maxProvisionAttempts: number;
 }
 
 function numberFromEnv(value: string | undefined, fallback: number): number {
@@ -67,5 +68,6 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     registrationTokenTtlMs: numberFromEnv(env.CUSTOMER_VPS_REGISTRATION_TOKEN_TTL_MS, 15 * 60 * 1000),
     reconciliationBatchSize: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_BATCH_SIZE, 50),
     reconciliationStaleAfterMs: numberFromEnv(env.CUSTOMER_VPS_RECONCILIATION_STALE_AFTER_MS, 10 * 60 * 1000),
+    maxProvisionAttempts: numberFromEnv(env.CUSTOMER_VPS_MAX_PROVISION_ATTEMPTS, 3),
   };
 }

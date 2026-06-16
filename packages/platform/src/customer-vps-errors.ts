@@ -8,6 +8,8 @@ export type CustomerVpsFailureCode =
   | 'billing_required'
   | 'not_found'
   | 'registration_rejected'
+  | 'registration_timeout'
+  | 'retry_exhausted'
   | 'unknown';
 
 export class CustomerVpsError extends Error {
