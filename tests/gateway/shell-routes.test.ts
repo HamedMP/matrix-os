@@ -7,6 +7,7 @@ describe("gateway shell routes", () => {
     list: () => Promise<unknown[]>;
     create: (input: unknown) => Promise<unknown>;
     delete: (name: string, options?: { force?: boolean }) => Promise<void>;
+    rename?: (name: string, nextName: string) => Promise<unknown>;
   }, shellBackend?: { health: () => Promise<{ ok: boolean; code: string }> }) {
     const app = new Hono();
     app.route("/api/terminal", createShellRoutes({ registry, shellBackend }));
@@ -141,6 +142,70 @@ describe("gateway shell routes", () => {
 
     expect(res.status).toBe(200);
     expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
+  });
+
+  it("renames sessions through a bounded JSON route", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+      rename: vi.fn(async () => ({
+        name: "review-main",
+        status: "active",
+        placement: "background",
+      })),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions/main", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "review-main" }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      session: {
+        name: "review-main",
+        status: "active",
+        placement: "background",
+      },
+    });
+    expect(registry.rename).toHaveBeenCalledWith("main", "review-main");
+  });
+
+  it("validates session rename params and body before dispatch", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+      rename: vi.fn(),
+    };
+    const app = appWithRegistry(registry);
+
+    const invalidParam = await app.request("/api/terminal/sessions/Main", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "review-main" }),
+    });
+    const invalidBody = await app.request("/api/terminal/sessions/main", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Review Main" }),
+    });
+    const tooLarge = await app.request("/api/terminal/sessions/main", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": "2048",
+      },
+      body: JSON.stringify({ name: "x".repeat(2048) }),
+    });
+
+    expect(invalidParam.status).toBe(400);
+    expect(invalidBody.status).toBe(400);
+    expect(tooLarge.status).toBe(413);
+    expect(registry.rename).not.toHaveBeenCalled();
   });
 
   it("caps ignored DELETE request bodies", async () => {

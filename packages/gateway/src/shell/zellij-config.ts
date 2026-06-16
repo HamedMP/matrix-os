@@ -1,5 +1,8 @@
 import { join, resolve } from "node:path";
 
+export const MATRIX_ZELLIJ_LAYOUT_NAME = "matrix";
+export type MatrixZellijShellThemeId = "dark" | "light" | "matrix";
+
 export type MatrixZellijConfigPaths = {
   dir: string;
   file: string;
@@ -10,7 +13,7 @@ export type MatrixZellijConfigPaths = {
   layoutFile: string;
 };
 
-export const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS keeps Zellij chrome compact; the browser shell renders sessions and actions.
+export const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS minimal Zellij layout, shared by desktop and mobile clients.
 layout {
   default_tab_template {
     children
@@ -78,13 +81,45 @@ export function matrixZellijConfigPaths(homePath: string): MatrixZellijConfigPat
   };
 }
 
-export function renderMatrixZellijConfig(configPaths: MatrixZellijConfigPaths): string {
+export function zellijThemeForShellTheme(themeId: MatrixZellijShellThemeId): "default" | "gruvbox-light" | "matrix" {
+  switch (themeId) {
+    case "light":
+      return "gruvbox-light";
+    case "matrix":
+      return "matrix";
+    case "dark":
+      return "default";
+  }
+}
+
+export function renderMatrixZellijConfig(
+  configPaths: MatrixZellijConfigPaths,
+  themeId: MatrixZellijShellThemeId = "dark",
+): string {
   return `// Matrix OS generated shell config.
+// Paper shell themes: dark=default, light=gruvbox-light, matrix=matrix.
 pane_frames false
 simplified_ui true
-default_layout "matrix"
+hide_session_name true
+default_layout "${MATRIX_ZELLIJ_LAYOUT_NAME}"
 default_shell ${JSON.stringify(configPaths.shellFile)}
-theme "default"
+theme "${zellijThemeForShellTheme(themeId)}"
+
+themes {
+  matrix {
+    fg 47 191 85
+    bg 2 10 2
+    black 2 10 2
+    red 47 191 85
+    green 57 255 106
+    yellow 91 240 138
+    blue 31 176 78
+    magenta 57 255 106
+    cyan 57 255 106
+    white 216 255 217
+    orange 91 240 138
+  }
+}
 `;
 }
 

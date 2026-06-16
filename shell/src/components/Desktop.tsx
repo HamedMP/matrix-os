@@ -844,18 +844,15 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435) and feeds loadModules' deps (also a useEffect dependency); a fresh function each render would re-fire both effects every render
   const openWindow = useCallback((name: string, path: string) => {
-    // Terminal windows get unique paths to allow multiple instances
-    const actualPath = path === "__terminal__"
-      ? `__terminal__:${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-      : path;
-
-    // Open without minimizing other windows — allow multiple apps visible
-    wmOpenWindow(name, actualPath, dockXOffset);
+    // Open without minimizing other windows — allow multiple apps visible.
+    // Terminal is a singleton app now; individual shell sessions live inside
+    // its Paper drawer rather than separate OS windows.
+    wmOpenWindow(name, path, dockXOffset);
 
     // In canvas mode, pan to center on the window after it opens/focuses
     if (useDesktopMode.getState().mode === "canvas") {
       requestAnimationFrame(() => {
-        const win = useWindowManager.getState().windows.find((w) => w.path === actualPath);
+        const win = useWindowManager.getState().windows.find((w) => w.path === path);
         if (win) {
           const cRect = useCanvasTransform.getState().containerRect;
           useCanvasTransform.getState().focusOnWindow(
@@ -1962,6 +1959,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             const isFullscreen = win.id === fullscreenWindowId;
             const isMinimizing = minimizingIds.has(win.id);
             const isHidden = win.minimized && !isMinimizing && !isFullscreen;
+            const terminalOwnsChrome = win.path.startsWith("__terminal__");
 
             // Compute dock target for suck animation
             let dockTargetX = 0;
@@ -2016,7 +2014,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 } as React.CSSProperties}
                 onMouseDown={() => !isFullscreen && wmFocusWindow(win.id)}
               >
-                {!isFullscreen && (
+                {!isFullscreen && !terminalOwnsChrome && (
                 <CardHeader
                   className="flex flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
                   onPointerDown={(e) => onDragStart(win.id, e)}
@@ -2044,6 +2042,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   {win.path.startsWith("__terminal__") ? (
                     <TerminalApp
                       launchTargetId={win.id}
+                      windowControls={{
+                        close: () => wmCloseWindow(win.id),
+                        minimize: () => animateMinimize(win.id),
+                        toggleFullscreen: () => wmToggleFullscreen(win.id),
+                        dragHandleProps: {
+                          onPointerDown: (event) => onDragStart(win.id, event),
+                          onPointerMove: onDragMove,
+                          onPointerUp: onDragEnd,
+                          onPointerCancel: onDragEnd,
+                        },
+                      }}
                     />
                   ) : win.path === "__workspace__" ? (
                     <WorkspaceApp />

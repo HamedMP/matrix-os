@@ -4,26 +4,58 @@ import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { validateSessionName } from "./names.js";
 
-export const ShellPreferencesSchema = z.object({
-  themeId: z.enum([
-    "system",
-    "one-dark",
-    "one-light",
-    "catppuccin-mocha",
-    "dracula",
-    "solarized-dark",
-    "solarized-light",
-    "nord",
-    "github-dark",
-    "github-light",
-  ]).default("system"),
+const LegacyThemeIdSchema = z.enum([
+  "system",
+  "one-dark",
+  "one-light",
+  "catppuccin-mocha",
+  "dracula",
+  "solarized-dark",
+  "solarized-light",
+  "nord",
+  "github-dark",
+  "github-light",
+]);
+
+const ShellThemeIdSchema = z.enum(["dark", "light", "matrix"]);
+
+function legacyThemeToShellTheme(themeId: z.infer<typeof LegacyThemeIdSchema> | undefined) {
+  switch (themeId) {
+    case "one-light":
+    case "solarized-light":
+    case "github-light":
+      return "light";
+    case "system":
+    case undefined:
+      return "dark";
+    default:
+      return "dark";
+  }
+}
+
+export const ShellPreferencesSchema = z.preprocess((input) => {
+  if (!input || typeof input !== "object") {
+    return input;
+  }
+  const record = input as Record<string, unknown>;
+  if (typeof record.shellThemeId === "string") {
+    return record;
+  }
+  const legacy = LegacyThemeIdSchema.safeParse(record.themeId);
+  return {
+    ...record,
+    shellThemeId: legacyThemeToShellTheme(legacy.success ? legacy.data : undefined),
+  };
+}, z.object({
+  shellThemeId: ShellThemeIdSchema.default("dark"),
   fontFamily: z.enum(["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"]).default("MesloLGS NF"),
   ligatures: z.boolean().default(true),
   cursorStyle: z.enum(["block", "bar", "underline"]).default("block"),
   smoothScroll: z.boolean().default(true),
-});
+}));
 
 export type ShellPreferences = z.infer<typeof ShellPreferencesSchema>;
+export type ShellThemeId = z.infer<typeof ShellThemeIdSchema>;
 
 export interface ShellPreferencesStoreOptions {
   homePath: string;

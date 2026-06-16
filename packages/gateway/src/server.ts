@@ -1671,6 +1671,7 @@ export async function createGateway(config: GatewayConfig) {
     workspace: zellijAdapter,
     layouts: shellLayoutStore,
     shellBackend: zellijAdapter,
+    shellThemeConfig: zellijAdapter,
     commandRunner: createShellCommandRunner({ homePath }),
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();

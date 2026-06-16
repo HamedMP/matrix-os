@@ -4,12 +4,17 @@ import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { shellError } from "./errors.js";
 import { resolveShellCwd, validateLayoutName, validateSessionName } from "./names.js";
-import type { ScrollbackStore } from "./scrollback-store.js";
+import type { ScrollbackActivity, ScrollbackStore } from "./scrollback-store.js";
+
+const ShellPlacementSchema = z.enum(["active", "background"]);
+const ShellVisualStatusSchema = z.enum(["running", "finished", "idle", "waiting"]);
+const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
   createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
+  renameSession?(name: string, nextName: string): Promise<void>;
 }
 
 const ShellSessionSchema = z.object({
@@ -26,13 +31,30 @@ const ShellSessionSchema = z.object({
   })).default([]),
   attachedClients: z.number().int().nonnegative().default(0),
   lastSeq: z.number().int().nonnegative().optional(),
+  placement: ShellPlacementSchema.default("active"),
+  lastSeenSeq: z.number().int().nonnegative().nullable().default(null),
+  visualStatus: ShellVisualStatusSchema.optional(),
 });
 
 const RegistryFileSchema = z.object({
   sessions: z.record(z.string(), ShellSessionSchema).default({}),
 });
 
-export type ShellSession = z.infer<typeof ShellSessionSchema>;
+type PersistedShellSession = z.infer<typeof ShellSessionSchema>;
+export type ShellPlacement = z.infer<typeof ShellPlacementSchema>;
+export type ShellVisualStatus = z.infer<typeof ShellVisualStatusSchema>;
+export interface ShellSession extends PersistedShellSession {
+  latestSeq: number | null;
+  unread: boolean;
+  visualStatus: ShellVisualStatus;
+  attachCommand: string;
+}
+
+export interface ShellSessionUiStatePatch {
+  placement?: ShellPlacement;
+  lastSeenSeq?: number | null;
+  visualStatus?: ShellVisualStatus;
+}
 
 export interface ShellRegistryOptions {
   homePath: string;
@@ -63,12 +85,12 @@ export class ShellRegistry {
 
       for (const name of live) {
         const existing = file.sessions[name];
-        const session = {
+        const session: PersistedShellSession = {
           ...(existing ?? this.adoptSession(name, now)),
           status: "active" as const,
           updatedAt: existing?.status === "active" ? existing.updatedAt : now,
         };
-        sessions.push(session);
+        sessions.push(await this.decorateSession(session));
         if (!existing || existing.status !== "active") {
           file.sessions[name] = session;
           changed = true;
@@ -95,7 +117,7 @@ export class ShellRegistry {
       }
       const now = new Date().toISOString();
       const existing = file.sessions[safeName];
-      const session = {
+      const session: PersistedShellSession = {
         ...(existing ?? this.adoptSession(safeName, now)),
         status: "active" as const,
         updatedAt: existing?.status === "active" ? existing.updatedAt : now,
@@ -104,7 +126,7 @@ export class ShellRegistry {
         file.sessions[safeName] = session;
         await this.write(file);
       }
-      return session;
+      return this.decorateSession(session);
     });
   }
 
@@ -125,7 +147,7 @@ export class ShellRegistry {
 
       if (live.has(name)) {
         const now = new Date().toISOString();
-        const session: ShellSession = {
+        const session: PersistedShellSession = {
           ...(file.sessions[name] ?? this.adoptSession(name, now)),
           status: "active",
           updatedAt: now,
@@ -133,7 +155,7 @@ export class ShellRegistry {
         };
         file.sessions[name] = session;
         await this.write(file);
-        return session;
+        return this.decorateSession(session);
       }
       if (changed) {
         await this.write(file);
@@ -144,7 +166,7 @@ export class ShellRegistry {
 
       await this.options.adapter.createSession({ name, cwd, layout: layoutName, cmd: input.cmd });
       const now = new Date().toISOString();
-      const session: ShellSession = {
+      const session: PersistedShellSession = {
         name,
         status: "active",
         createdAt: now,
@@ -152,6 +174,8 @@ export class ShellRegistry {
         layoutName,
         tabs: [],
         attachedClients: 0,
+        placement: "active",
+        lastSeenSeq: null,
       };
       file.sessions[name] = session;
 
@@ -167,7 +191,99 @@ export class ShellRegistry {
         throw err;
       }
 
-      return session;
+      return this.decorateSession(session);
+    });
+  }
+
+  async updateUiState(name: string, patch: ShellSessionUiStatePatch): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const file = await this.read();
+      const now = new Date().toISOString();
+      let existing = file.sessions[safeName];
+      if (!existing) {
+        const live = new Set(await this.options.adapter.listSessions());
+        if (!live.has(safeName)) {
+          throw shellError("session_not_found", "Session not found", 404);
+        }
+        existing = this.adoptSession(safeName, now);
+      }
+      const next: PersistedShellSession = {
+        ...existing,
+        updatedAt: now,
+        ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
+        ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
+        ...(patch.visualStatus !== undefined ? { visualStatus: patch.visualStatus } : {}),
+      };
+      file.sessions[safeName] = next;
+      await this.write(file);
+      return this.decorateSession(next);
+    });
+  }
+
+  async rename(name: string, nextName: string): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const safeNextName = validateSessionName(nextName);
+      if (!this.options.adapter.renameSession) {
+        throw shellError("session_rename_unavailable", "Request failed", 503);
+      }
+
+      const file = await this.read();
+      const live = new Set(await this.options.adapter.listSessions());
+      if (!live.has(safeName)) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      if (safeName === safeNextName) {
+        const now = new Date().toISOString();
+        const session = {
+          ...(file.sessions[safeName] ?? this.adoptSession(safeName, now)),
+          status: "active" as const,
+        };
+        file.sessions[safeName] = session;
+        await this.write(file);
+        return this.decorateSession(session);
+      }
+      if (live.has(safeNextName) || file.sessions[safeNextName]) {
+        throw shellError("session_exists", "Session already exists", 409);
+      }
+
+      const now = new Date().toISOString();
+      const existing = file.sessions[safeName] ?? this.adoptSession(safeName, now);
+      const next: PersistedShellSession = {
+        ...existing,
+        name: safeNextName,
+        status: "active",
+        updatedAt: now,
+      };
+      delete file.sessions[safeName];
+      file.sessions[safeNextName] = next;
+
+      await this.options.adapter.renameSession(safeName, safeNextName);
+      let scrollbackRenamed = false;
+      try {
+        await this.options.scrollbackStore?.rename(safeName, safeNextName);
+        scrollbackRenamed = true;
+        await this.write(file);
+      } catch (err: unknown) {
+        await this.options.adapter.renameSession(safeNextName, safeName).catch((rollbackErr: unknown) => {
+          console.warn(
+            "[shell] failed to rollback renamed zellij session:",
+            rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+          );
+        });
+        if (scrollbackRenamed) {
+          await this.options.scrollbackStore?.rename(safeNextName, safeName).catch((rollbackErr: unknown) => {
+            console.warn(
+              "[shell] failed to rollback renamed scrollback:",
+              rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+            );
+          });
+        }
+        throw err;
+      }
+
+      return this.decorateSession(next);
     });
   }
 
@@ -191,7 +307,7 @@ export class ShellRegistry {
     });
   }
 
-  private adoptSession(name: string, now: string): ShellSession {
+  private adoptSession(name: string, now: string): PersistedShellSession {
     return {
       name,
       status: "active",
@@ -199,7 +315,49 @@ export class ShellRegistry {
       updatedAt: now,
       tabs: [],
       attachedClients: 0,
+      placement: "active",
+      lastSeenSeq: null,
     };
+  }
+
+  private async decorateSession(session: PersistedShellSession): Promise<ShellSession> {
+    const activity = await this.options.scrollbackStore?.latestActivity?.(session.name);
+    const latestSeq = activity?.latestSeq ?? await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
+    const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
+    const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
+    const visualStatus = this.deriveVisualStatus(session, unread, activity);
+    return {
+      ...session,
+      placement: session.placement ?? "active",
+      lastSeenSeq: lastSeenSeq ?? null,
+      latestSeq,
+      unread,
+      visualStatus,
+      attachCommand: `mos shell attach ${session.name}`,
+    };
+  }
+
+  private deriveVisualStatus(
+    session: PersistedShellSession,
+    unread: boolean,
+    activity?: ScrollbackActivity,
+  ): ShellVisualStatus {
+    if (session.visualStatus === "waiting") {
+      return "waiting";
+    }
+    if (session.status !== "active") {
+      return unread ? "finished" : "idle";
+    }
+    if (activity?.commandRunning === true) {
+      return "running";
+    }
+    if (activity?.commandRunning === false) {
+      return unread ? "finished" : "idle";
+    }
+    if (activity?.latestOutputAt && isRecentShellOutput(activity.latestOutputAt)) {
+      return "running";
+    }
+    return unread ? "finished" : "idle";
   }
 
   private async markMissingMetadataExited(
@@ -257,4 +415,12 @@ export class ShellRegistry {
     );
     return run;
   }
+}
+
+function isRecentShellOutput(value: string): boolean {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+  return Date.now() - timestamp <= SHELL_RUNNING_FALLBACK_WINDOW_MS;
 }

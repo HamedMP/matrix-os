@@ -81,6 +81,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
   const isIframeWindow = !win.path.startsWith("__");
+  const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
 
@@ -143,6 +144,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
     origX: number;
     origY: number;
   } | null>(null);
+  const mouseDragCleanupRef = useRef<(() => void) | null>(null);
 
   const resizeRef = useRef<{
     startX: number;
@@ -153,39 +155,78 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
 
   const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const onDragStart = (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const clearMouseDragListeners = () => {
+    mouseDragCleanupRef.current?.();
+    mouseDragCleanupRef.current = null;
+  };
+
+  const startWindowDrag = (clientX: number, clientY: number) => {
     dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
+      startX: clientX,
+      startY: clientY,
       origX: win.x,
       origY: win.y,
     };
     setInteracting(true);
     focusWindow(win.id);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
 
     // Safety: auto-clear if pointer up never fires
     if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
     safetyTimerRef.current = setTimeout(() => {
       dragRef.current = null;
       setInteracting(false);
+      clearMouseDragListeners();
     }, 5000);
   };
 
-  const onDragMove = (e: React.PointerEvent) => {
+  const moveWindowDrag = (clientX: number, clientY: number) => {
     if (!dragRef.current) return;
     const { startX, startY, origX, origY } = dragRef.current;
-    const dx = (e.clientX - startX) / zoom;
-    const dy = (e.clientY - startY) / zoom;
+    const dx = (clientX - startX) / zoom;
+    const dy = (clientY - startY) / zoom;
     moveWindow(win.id, origX + dx, origY + dy);
+  };
+
+  const onDragStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startWindowDrag(e.clientX, e.clientY);
+    if (e.target instanceof HTMLElement && e.target.setPointerCapture) {
+      e.target.setPointerCapture(e.pointerId);
+    }
+  };
+
+  const onDragMove = (e: React.PointerEvent) => {
+    moveWindowDrag(e.clientX, e.clientY);
   };
 
   const onDragEnd = () => {
     dragRef.current = null;
     setInteracting(false);
+    clearMouseDragListeners();
     if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
+  };
+
+  const onTerminalChromeMouseDown = (e: React.MouseEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    startWindowDrag(e.clientX, e.clientY);
+
+    const handleMouseMove = (event: MouseEvent) => {
+      event.preventDefault();
+      moveWindowDrag(event.clientX, event.clientY);
+    };
+    const handleMouseUp = () => {
+      onDragEnd();
+    };
+    clearMouseDragListeners();
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    mouseDragCleanupRef.current = () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
   };
 
   // Double-clicking the title bar zooms the canvas so this app fills the
@@ -435,6 +476,19 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         <TerminalApp
           mobile={isMobile}
           launchTargetId={win.id}
+          windowControls={{
+            close: () => closeWindow(win.id),
+            minimize: () => minimizeWindow(win.id),
+            toggleFullscreen: () => useWindowManager.getState().toggleFullscreen(win.id),
+            dragHandleProps: {
+              onPointerDown: onDragStart,
+              onPointerMove: onDragMove,
+              onPointerUp: onDragEnd,
+              onPointerCancel: onDragEnd,
+              onMouseDown: onTerminalChromeMouseDown,
+              onDoubleClick: onTitleDoubleClick,
+            },
+          }}
         />
       ) : win.path === "__workspace__" ? (
         <WorkspaceApp />
@@ -489,7 +543,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       style={wrapperStyle}
       onMouseDown={isFullscreen ? undefined : () => focusWindow(win.id)}
     >
-      {!isFullscreen && titleBar}
+      {!isFullscreen && !terminalOwnsChrome && titleBar}
       <div
         className={isFullscreen
           ? "bg-background overflow-hidden"

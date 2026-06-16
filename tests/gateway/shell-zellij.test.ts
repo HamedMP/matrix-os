@@ -284,7 +284,7 @@ describe("zellij adapter", () => {
     );
   });
 
-  it("writes and uses the compact Matrix zellij config for shell sessions", async () => {
+  it("writes and uses the compact Matrix zellij config and layout for shell sessions", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-zellij-"));
     try {
       const pty = ptyProcess();
@@ -314,6 +314,7 @@ describe("zellij adapter", () => {
 
       expect(config).toContain("pane_frames false");
       expect(config).toContain("simplified_ui true");
+      expect(config).toContain("hide_session_name true");
       expect(config).toContain('default_layout "matrix"');
       expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
       expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
@@ -323,12 +324,16 @@ describe("zellij adapter", () => {
       expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
       expect(bashrc).toContain("\\u:\\w\\$ ");
       expect(promptLabel).toContain("JSON.parse");
+      expect(config).toContain('theme "default"');
+      expect(config).not.toContain("matrix-dark {");
+      expect(config).not.toContain("matrix-light {");
+      expect(config).toContain("matrix {");
       expect(layout).toContain('plugin location="zellij:compact-bar"');
       expect(layout).not.toContain("tab-bar");
       expect(layout).not.toContain("status-bar");
       expect(spawnPty).toHaveBeenCalledWith(
         "zellij",
-        ["--session", "main"],
+        ["--session", "main", "--new-session-with-layout", layoutPath],
         expect.objectContaining({
           env: expect.objectContaining({
             ZELLIJ_CONFIG_DIR: configDir,
@@ -436,6 +441,10 @@ describe("zellij adapter", () => {
     expect(layoutText).toContain('command="node"');
     expect(layoutText).toContain('args "-e"');
     expect(layoutText).toContain("MATRIX_BENCH_READY");
+    expect(layoutText).toContain("default_tab_template");
+    expect(layoutText).toContain('plugin location="zellij:compact-bar"');
+    expect(layoutText).not.toContain("tab-bar");
+    expect(layoutText).not.toContain("status-bar");
     expect(layoutPath).toEqual(expect.any(String));
     expect(existsSync(layoutPath!)).toBe(true);
 

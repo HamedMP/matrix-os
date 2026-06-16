@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalPreferencesPanel } from "../../shell/src/components/terminal/preferences-panel.js";
 import { useTerminalSettings } from "../../shell/src/stores/terminal-settings.js";
@@ -9,7 +9,7 @@ import { useTerminalSettings } from "../../shell/src/stores/terminal-settings.js
 describe("TerminalPreferencesPanel", () => {
   beforeEach(() => {
     useTerminalSettings.setState({
-      themeId: "system",
+      themeId: "dark",
       fontSize: 13,
       fontFamily: "JetBrains Mono",
       ligatures: true,
@@ -24,14 +24,19 @@ describe("TerminalPreferencesPanel", () => {
 
     expect(screen.getByRole("option", { name: "MesloLGS NF" })).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "dracula" } });
+    expect(screen.getByRole("option", { name: "Dark" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Light" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Matrix" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Dracula" })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Theme"), { target: { value: "matrix" } });
     fireEvent.change(screen.getByLabelText("Font"), { target: { value: "MesloLGS NF" } });
     fireEvent.click(screen.getByLabelText("Ligatures"));
     fireEvent.change(screen.getByLabelText("Cursor"), { target: { value: "bar" } });
     fireEvent.click(screen.getByLabelText("Smooth scroll"));
 
     expect(useTerminalSettings.getState()).toMatchObject({
-      themeId: "dracula",
+      themeId: "matrix",
       fontFamily: "MesloLGS NF",
       ligatures: false,
       cursorStyle: "bar",
@@ -55,9 +60,19 @@ describe("TerminalPreferencesPanel", () => {
     })));
 
     render(<TerminalPreferencesPanel sessionName="main" />);
-    await Promise.resolve();
-    await Promise.resolve();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(useTerminalSettings.getState().themeId).toBe("dracula");
+  });
+
+  it("shows the mapped theme when local settings still contain a legacy theme id", () => {
+    useTerminalSettings.setState({ themeId: "one-light" });
+
+    render(<TerminalPreferencesPanel />);
+
+    expect(screen.getByLabelText("Theme")).toHaveProperty("value", "light");
   });
 });

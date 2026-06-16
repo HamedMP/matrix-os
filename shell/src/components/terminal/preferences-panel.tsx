@@ -1,10 +1,20 @@
 "use client";
 
-import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type TerminalCursorStyle, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
+import { useEffect } from "react";
+import { TERMINAL_FONT_FAMILIES, useTerminalSettings, type ShellThemeId, type TerminalCursorStyle, type TerminalFontFamily, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getGatewayUrl } from "@/lib/gateway";
 import { TERMINAL_THEME_OPTIONS } from "./terminal-themes";
 
 const CURSOR_OPTIONS: TerminalCursorStyle[] = ["block", "bar", "underline"];
+
+function mapLegacyThemeId(themeId: TerminalThemeId | undefined): ShellThemeId | null {
+  if (!themeId) return null;
+  if (themeId === "dark" || themeId === "light" || themeId === "matrix") return themeId;
+  if (themeId === "system") return null;
+  if (themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light") return "light";
+  if (themeId === "one-dark" || themeId === "catppuccin-mocha" || themeId === "dracula" || themeId === "solarized-dark" || themeId === "nord" || themeId === "github-dark") return "dark";
+  return "dark";
+}
 
 interface TerminalPreferencesPanelProps {
   sessionName?: string | null;
@@ -21,9 +31,47 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
   const setLigatures = useTerminalSettings((s) => s.setLigatures);
   const setCursorStyle = useTerminalSettings((s) => s.setCursorStyle);
   const setSmoothScroll = useTerminalSettings((s) => s.setSmoothScroll);
+  const selectedShellThemeId = mapLegacyThemeId(themeId) ?? "dark";
+
+  // react-doctor-disable-next-line react-doctor/no-cascading-set-state, react-doctor/no-effect-event-handler, react-doctor/no-fetch-in-effect -- guarded preferences load: runs only when `sessionName` is set, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. The setters hydrate the terminal-settings store from one server response (not a synchronous render cascade), and the load is render-driven, not a user event. A data-fetching library is unnecessary for this one-shot session read.
+  useEffect(() => {
+    if (!sessionName || typeof fetch !== "function") {
+      return;
+    }
+    let cancelled = false;
+    void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+      signal: AbortSignal.timeout(10_000),
+    })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data: unknown) => {
+        if (cancelled || !data || typeof data !== "object" || !("preferences" in data)) {
+          return;
+        }
+        const preferences = (data as { preferences: Partial<{
+          shellThemeId: ShellThemeId;
+          themeId: TerminalThemeId;
+          fontFamily: TerminalFontFamily;
+          ligatures: boolean;
+          cursorStyle: TerminalCursorStyle;
+          smoothScroll: boolean;
+        }> }).preferences;
+        const nextTheme = preferences.shellThemeId ?? mapLegacyThemeId(preferences.themeId);
+        if (nextTheme) setThemeId(nextTheme);
+        if (preferences.fontFamily) setFontFamily(preferences.fontFamily);
+        if (typeof preferences.ligatures === "boolean") setLigatures(preferences.ligatures);
+        if (preferences.cursorStyle) setCursorStyle(preferences.cursorStyle);
+        if (typeof preferences.smoothScroll === "boolean") setSmoothScroll(preferences.smoothScroll);
+      })
+      .catch((err: unknown) => {
+        console.warn("Failed to load terminal preferences:", err instanceof Error ? err.message : err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionName, setCursorStyle, setFontFamily, setLigatures, setSmoothScroll, setThemeId]);
 
   const persist = (patch: Partial<{
-    themeId: TerminalThemeId;
+    shellThemeId: ShellThemeId;
     fontFamily: TerminalFontFamily;
     ligatures: boolean;
     cursorStyle: TerminalCursorStyle;
@@ -33,11 +81,11 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
       return;
     }
     const state = useTerminalSettings.getState();
-    void fetch(`${getGatewayUrl()}/api/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+    void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        themeId: state.themeId,
+        shellThemeId: mapLegacyThemeId(state.themeId) ?? "dark",
         fontFamily: state.fontFamily,
         ligatures: state.ligatures,
         cursorStyle: state.cursorStyle,
@@ -59,11 +107,11 @@ export function TerminalPreferencesPanel({ sessionName }: TerminalPreferencesPan
         <span style={{ color: "var(--muted-foreground)" }}>Theme</span>
         <select
           aria-label="Theme"
-          value={themeId}
+          value={selectedShellThemeId}
           onChange={(event) => {
-            const next = event.target.value as TerminalThemeId;
+            const next = event.target.value as ShellThemeId;
             setThemeId(next);
-            persist({ themeId: next });
+            persist({ shellThemeId: next });
           }}
         >
           {TERMINAL_THEME_OPTIONS.map((option) => (

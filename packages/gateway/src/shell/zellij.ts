@@ -14,6 +14,7 @@ import {
   matrixTerminalShellScript,
   matrixZellijConfigPaths,
   renderMatrixZellijConfig,
+  type MatrixZellijShellThemeId,
   type MatrixZellijConfigPaths,
 } from "./zellij-config.js";
 
@@ -84,6 +85,7 @@ export interface ZellijAdapter {
   listSessions(): Promise<string[]>;
   createSession(options: CreateSessionOptions): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
+  renameSession(name: string, nextName: string): Promise<void>;
   validateLayout(path: string): Promise<void>;
   attachSession(name: string, options?: AttachOptions): ShellAttachProcess;
   listTabs(name: string): Promise<unknown[]>;
@@ -94,6 +96,7 @@ export interface ZellijAdapter {
   closePane(name: string, pane: string): Promise<unknown>;
   applyLayout(name: string, layout: string): Promise<unknown>;
   dumpLayout(name: string): Promise<unknown>;
+  setShellTheme(themeId: MatrixZellijShellThemeId): Promise<void>;
 }
 
 const SAFE_ATTACH_ENV_KEYS = new Set([
@@ -253,6 +256,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   const retainedCreatePtys = new Map<string, RetainedCreatePty>();
   const zellijConfigPaths = deps.homePath ? matrixZellijConfigPaths(deps.homePath) : null;
   let ensureConfigPromise: Promise<void> | null = null;
+  let shellThemeId: MatrixZellijShellThemeId = "dark";
 
   async function ensureMatrixZellijConfig(): Promise<void> {
     if (!zellijConfigPaths) {
@@ -269,7 +273,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         await chmod(zellijConfigPaths.shellFile, 0o700);
         await atomicWriteText(zellijConfigPaths.bashrcFile, MATRIX_TERMINAL_BASHRC);
         await atomicWriteText(zellijConfigPaths.promptLabelFile, MATRIX_TERMINAL_PROMPT_LABEL_SCRIPT);
-        await atomicWriteText(zellijConfigPaths.file, renderMatrixZellijConfig(zellijConfigPaths));
+        await atomicWriteText(zellijConfigPaths.file, renderMatrixZellijConfig(zellijConfigPaths, shellThemeId));
         await atomicWriteText(zellijConfigPaths.layoutFile, MATRIX_ZELLIJ_LAYOUT);
       })().catch((err: unknown) => {
         ensureConfigPromise = null;
@@ -385,6 +389,8 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
           args.push("--new-session-with-layout", layoutPath);
         } else if (options.layout) {
           args.push("--layout", options.layout);
+        } else if (zellijConfigPaths) {
+          args.push("--new-session-with-layout", zellijConfigPaths.layoutFile);
         }
 
         let pty: ShellAttachProcess;
@@ -436,6 +442,14 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       const args = ["delete-session", name];
       if (options.force) args.push("--force");
       await run(args);
+    },
+    async renameSession(name, nextName) {
+      await run(["--session", name, "action", "rename-session", nextName]);
+      const retained = retainedCreatePtys.get(name);
+      if (retained) {
+        retainedCreatePtys.delete(name);
+        retainedCreatePtys.set(nextName, retained);
+      }
     },
     async validateLayout(path) {
       await run(["setup", "--check", "--layout", path], 5_000);
@@ -511,6 +525,11 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       const kdl = await run(["--session", name, "action", "dump-layout"]);
       return { kdl };
     },
+    async setShellTheme(themeId) {
+      shellThemeId = themeId;
+      ensureConfigPromise = null;
+      await ensureMatrixZellijConfig();
+    },
   };
 }
 
@@ -570,6 +589,13 @@ function initialCommandLayout(command: string, cwd?: string): string {
     ? `      args ${args.map(kdlString).join(" ")}\n`
     : "";
   return `layout {
+  default_tab_template {
+    children
+    pane size=1 borderless=true {
+      plugin location="zellij:compact-bar"
+    }
+  }
+
   tab name="main" {
     pane ${paneAttrs} {
 ${argLine}    }

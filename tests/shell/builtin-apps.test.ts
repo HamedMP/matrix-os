@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PINNED_APPS,
+  TERMINAL_MIN_WINDOW_HEIGHT,
+  TERMINAL_MIN_WINDOW_WIDTH,
   isBuiltInAppPath,
   normalizeBuiltInAppPath,
   normalizeBuiltInLayoutWindow,
@@ -21,6 +23,24 @@ describe("built-in app helpers", () => {
     expect(isBuiltInAppPath("__terminal__:1712345678-a3bc")).toBe(true);
     expect(isBuiltInAppPath("apps/workspace/index.html")).toBe(true);
     expect(isBuiltInAppPath("apps/notes/index.html")).toBe(false);
+  });
+
+  it("normalizes legacy terminal instance paths to the singleton Terminal app", () => {
+    expect(normalizeBuiltInAppPath("__terminal__:1712345678-a3bc")).toBe("__terminal__");
+    expect(normalizeBuiltInLayoutWindow({
+      path: "__terminal__:1712345678-a3bc",
+      title: "zellij-x6mb8y2",
+      x: 10,
+      y: 20,
+      width: 800,
+      height: 600,
+      state: "open",
+    })).toMatchObject({
+      path: "__terminal__",
+      title: "Terminal",
+      width: TERMINAL_MIN_WINDOW_WIDTH,
+      height: TERMINAL_MIN_WINDOW_HEIGHT,
+    });
   });
 
   it("normalizes saved Workspace layout entries before restoration", () => {

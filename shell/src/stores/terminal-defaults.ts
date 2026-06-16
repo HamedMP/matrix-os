@@ -1,4 +1,7 @@
 export type TerminalThemeId =
+  | "dark"
+  | "light"
+  | "matrix"
   | "system"
   | "one-dark"
   | "one-light"
@@ -10,4 +13,6 @@ export type TerminalThemeId =
   | "github-dark"
   | "github-light";
 
-export const DEFAULT_TERMINAL_THEME_ID: TerminalThemeId = "one-dark";
+export type ShellThemeId = "dark" | "light" | "matrix";
+
+export const DEFAULT_TERMINAL_THEME_ID: ShellThemeId = "dark";

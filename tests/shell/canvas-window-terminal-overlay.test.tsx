@@ -7,9 +7,13 @@ import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js"
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 
 const appViewerRender = vi.hoisted(() => vi.fn());
+const terminalRender = vi.hoisted(() => vi.fn());
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
-  TerminalApp: () => <button type="button">Terminal tab one</button>,
+  TerminalApp: (props: unknown) => {
+    terminalRender(props);
+    return <button type="button">Terminal tab one</button>;
+  },
 }));
 
 vi.mock("../../shell/src/components/AppViewer.js", () => ({
@@ -61,6 +65,7 @@ const iframeWindow: AppWindow = {
 describe("CanvasWindow terminal interactivity", () => {
   beforeEach(() => {
     appViewerRender.mockClear();
+    terminalRender.mockClear();
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
     useWindowManager.setState({
       windows: [],
@@ -78,6 +83,69 @@ describe("CanvasWindow terminal interactivity", () => {
 
     expect(screen.getByRole("button", { name: "Terminal tab one" })).toBeTruthy();
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeNull();
+  });
+
+  it("lets Terminal own Canvas chrome and passes window controls into it", () => {
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+
+    expect(container.textContent).toBe("Terminal tab one");
+    expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
+      launchTargetId: "win-terminal",
+      windowControls: expect.objectContaining({
+        close: expect.any(Function),
+        minimize: expect.any(Function),
+        toggleFullscreen: expect.any(Function),
+        dragHandleProps: expect.objectContaining({
+          onPointerDown: expect.any(Function),
+          onPointerMove: expect.any(Function),
+          onPointerUp: expect.any(Function),
+          onPointerCancel: expect.any(Function),
+          onDoubleClick: expect.any(Function),
+        }),
+      }),
+    }));
+  });
+
+  it("moves terminal Canvas windows through the delegated Terminal chrome drag handle", () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: null,
+      fullscreenWindowId: null,
+    });
+    render(<CanvasWindow win={terminalWindow} />);
+
+    const props = terminalRender.mock.lastCall?.[0] as {
+      windowControls: {
+        dragHandleProps: {
+          onPointerDown: (event: unknown) => void;
+          onPointerMove: (event: unknown) => void;
+          onPointerUp: () => void;
+        };
+      };
+    };
+    const target = { setPointerCapture: vi.fn() };
+    props.windowControls.dragHandleProps.onPointerDown({
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      clientX: 100,
+      clientY: 120,
+      pointerId: 1,
+      target,
+    });
+    props.windowControls.dragHandleProps.onPointerMove({
+      clientX: 132,
+      clientY: 148,
+    });
+    props.windowControls.dragHandleProps.onPointerUp();
+
+    expect(useWindowManager.getState().getWindow("win-terminal")).toMatchObject({
+      x: 52,
+      y: 58,
+    });
   });
 
   it("keeps the click shield for iframe app windows", () => {

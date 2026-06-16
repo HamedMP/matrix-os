@@ -11,6 +11,60 @@ export interface TerminalThemeOption {
 }
 
 const palettes: Record<string, AnsiPalette> = {
+  "matrix-shell-dark": {
+    black: "#0C0C0C",
+    red: "#D85E5E",
+    green: "#0AD18B",
+    yellow: "#C9A24A",
+    blue: "#6AA0FF",
+    magenta: "#B58CFF",
+    cyan: "#00E5C0",
+    white: "#BFBFBF",
+    brightBlack: "#5B5B5B",
+    brightRed: "#F06A6A",
+    brightGreen: "#7FE0A0",
+    brightYellow: "#E0A12E",
+    brightBlue: "#8CB8FF",
+    brightMagenta: "#CFAAFF",
+    brightCyan: "#74F7E0",
+    brightWhite: "#F0EFE5",
+  },
+  "matrix-shell-light": {
+    black: "#FBF1C7",
+    red: "#CC241D",
+    green: "#79740E",
+    yellow: "#B57614",
+    blue: "#458588",
+    magenta: "#B16286",
+    cyan: "#689D6A",
+    white: "#3C3836",
+    brightBlack: "#A89984",
+    brightRed: "#9D0006",
+    brightGreen: "#79740E",
+    brightYellow: "#AF3A03",
+    brightBlue: "#076678",
+    brightMagenta: "#8F3F71",
+    brightCyan: "#427B58",
+    brightWhite: "#282828",
+  },
+  "matrix-shell-neon": {
+    black: "#020A02",
+    red: "#2FBF55",
+    green: "#2FBF55",
+    yellow: "#5BF08A",
+    blue: "#1FB04E",
+    magenta: "#39FF6A",
+    cyan: "#39FF6A",
+    white: "#2FBF55",
+    brightBlack: "#176B30",
+    brightRed: "#5BF08A",
+    brightGreen: "#39FF6A",
+    brightYellow: "#9BFF8F",
+    brightBlue: "#5BF08A",
+    brightMagenta: "#8DFFAA",
+    brightCyan: "#B3FFC6",
+    brightWhite: "#D8FFD9",
+  },
   "one-dark": {
     black: "#282c34",
     red: "#e06c75",
@@ -204,6 +258,27 @@ const themeMapping: Record<string, string> = {
 };
 
 const terminalThemePresets = {
+  "dark": {
+    label: "Dark",
+    background: "#0C0C0C",
+    foreground: "#BFBFBF",
+    cursor: "#0AD18B",
+    selectionBackground: "#00E5C033",
+  },
+  "light": {
+    label: "Light",
+    background: "#FBF1C7",
+    foreground: "#3C3836",
+    cursor: "#79740E",
+    selectionBackground: "#79740E33",
+  },
+  "matrix": {
+    label: "Matrix",
+    background: "#020A02",
+    foreground: "#2FBF55",
+    cursor: "#39FF6A",
+    selectionBackground: "#39FF6A33",
+  },
   "one-dark": {
     label: "One Dark",
     background: "#1e2127",
@@ -279,11 +354,9 @@ const terminalThemePresets = {
 >;
 
 export const TERMINAL_THEME_OPTIONS: TerminalThemeOption[] = [
-  { id: "system", label: "Match OS" },
-  ...Object.entries(terminalThemePresets).map(([id, preset]) => ({
-    id: id as Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
-    label: preset.label,
-  })),
+  { id: "dark", label: "Dark" },
+  { id: "light", label: "Light" },
+  { id: "matrix", label: "Matrix" },
 ];
 
 function inferMode(bg: string): "light" | "dark" {
@@ -308,8 +381,22 @@ export function getAnsiPalette(themeSlug: string, backgroundHex: string): AnsiPa
 export function getTerminalThemePreset(
   themeId: Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
 ) {
+  const mappedThemeId =
+    themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light"
+      ? "light"
+      : themeId === "matrix"
+        ? "matrix"
+        : themeId === "dark" || themeId === "light"
+          ? themeId
+          : "dark";
+  const shellPalette =
+    mappedThemeId === "light"
+      ? palettes["matrix-shell-light"]
+      : mappedThemeId === "matrix"
+        ? palettes["matrix-shell-neon"]
+        : palettes["matrix-shell-dark"];
   return {
-    ...terminalThemePresets[themeId],
-    ...palettes[themeId],
+    ...terminalThemePresets[mappedThemeId],
+    ...shellPalette,
   };
 }

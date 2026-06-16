@@ -113,12 +113,17 @@ describe("zellij-runtime", () => {
 
     expect(config).toContain("pane_frames false");
     expect(config).toContain("simplified_ui true");
+    expect(config).toContain("hide_session_name true");
     expect(config).toContain('default_layout "matrix"');
     expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
     expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
     expect(shell).toContain(`node '${promptLabelPath}'`);
     expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
     expect(promptLabel).toContain("handle.json");
+    expect(config).toContain('theme "default"');
+    expect(config).not.toContain("matrix-dark {");
+    expect(config).not.toContain("matrix-light {");
+    expect(config).toContain("matrix {");
     expect(defaultLayout).toContain('plugin location="zellij:compact-bar"');
     expect(sessionLayout).toContain('plugin location="zellij:compact-bar"');
     expect(spawnPty).toHaveBeenCalledWith(
