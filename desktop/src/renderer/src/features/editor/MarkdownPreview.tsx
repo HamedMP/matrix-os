@@ -62,15 +62,11 @@ export default function MarkdownPreview({ path }: { path: string }) {
         style={{ color: "var(--text-primary)" }}
         data-selectable
       >
-<<<<<<< HEAD
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
           urlTransform={safeUrlTransform}
         >
-=======
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}>
->>>>>>> f3a0b5dfe (fix(desktop): harden markdown preview rendering)
           {preview.content}
         </ReactMarkdown>
       </div>
