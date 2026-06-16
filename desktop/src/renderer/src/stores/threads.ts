@@ -188,9 +188,13 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
         return apply(thread, { sessionId: event.sessionId });
       }
       case "session:switched": {
+        // Prefer the active thread; otherwise bind only when exactly one thread
+        // is running (unambiguous). Binding by array order under concurrent runs
+        // would attach the session to the wrong thread.
+        const running = state.threads.filter((t) => t.status === "running");
         const thread =
           state.threads.find((t) => t.id === state.activeThreadId) ??
-          state.threads.find((t) => t.status === "running");
+          (running.length === 1 ? running[0] : undefined);
         if (!thread) return {};
         return apply(thread, { sessionId: event.sessionId });
       }
