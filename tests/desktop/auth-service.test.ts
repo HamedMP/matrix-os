@@ -400,7 +400,6 @@ describe("AuthService expireSession", () => {
   });
 
   it("emits signed-out status before persistent sign-out cleanup can fail", async () => {
-<<<<<<< HEAD
     const { auth, store, changes } = makeService({
       credential: VALID,
       profile: PROFILE,
@@ -411,25 +410,6 @@ describe("AuthService expireSession", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
       await auth.init();
-=======
-    const { store: credentialStore } = makeCredentialStore(VALID);
-    const onAuthChanged = vi.fn();
-    const cleanupError = new Error("credential clear failed");
-    credentialStore.clear = vi.fn(async () => {
-      throw cleanupError;
-    });
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const auth = new AuthService({
-      credentialStore,
-      platformHost: "https://app.matrix-os.com",
-      now: () => 10_000,
-      loadProfile: async () => PROFILE,
-      saveProfile: vi.fn(async () => undefined),
-      clearProfile: vi.fn(async () => undefined),
-      onAuthChanged,
-    });
-    await auth.init();
->>>>>>> 0b933693b (test(desktop): align release auth cleanup fixture)
 
       await expect(auth.signOut()).rejects.toThrow(cleanupError);
 
