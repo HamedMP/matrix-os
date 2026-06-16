@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalPreferencesPanel } from "../../shell/src/components/terminal/preferences-panel.js";
 import { useTerminalSettings } from "../../shell/src/stores/terminal-settings.js";
@@ -60,8 +60,10 @@ describe("TerminalPreferencesPanel", () => {
     })));
 
     render(<TerminalPreferencesPanel sessionName="main" />);
-    await Promise.resolve();
-    await Promise.resolve();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
     expect(useTerminalSettings.getState().themeId).toBe("dracula");
   });
