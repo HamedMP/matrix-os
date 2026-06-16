@@ -78,6 +78,22 @@ describe("createUpdater", () => {
     expect(updater.status()).toBe("ready");
   });
 
+  it("does not start a second update check while one is already checking", async () => {
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    const firstCheck = updater.check();
+    expect(updater.status()).toBe("checking");
+    updaterMock.autoUpdater.removeAllListeners.mockClear();
+    updaterMock.autoUpdater.checkForUpdates.mockClear();
+
+    await updater.check();
+
+    expect(updater.status()).toBe("checking");
+    expect(updaterMock.autoUpdater.removeAllListeners).not.toHaveBeenCalled();
+    expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    await firstCheck;
+  });
+
   it("does not reset ready status on later scheduled checks", async () => {
     const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
 
