@@ -12,10 +12,10 @@ class FakeView implements EmbedViewLike {
   events: string[] = [];
   loadedUrls: string[] = [];
   bounds: Bounds | null = null;
-  failNextLoad: boolean;
+  failNextLoadError: unknown;
 
-  constructor(failNextLoad = false) {
-    this.failNextLoad = failNextLoad;
+  constructor(failNextLoadError: unknown = null) {
+    this.failNextLoadError = failNextLoadError;
   }
 
   setBounds(bounds: Bounds): void {
@@ -26,9 +26,10 @@ class FakeView implements EmbedViewLike {
   async loadUrl(url: string): Promise<void> {
     this.events.push(`load:${url}`);
     this.loadedUrls.push(url);
-    if (this.failNextLoad) {
-      this.failNextLoad = false;
-      throw new Error("load failed");
+    if (this.failNextLoadError) {
+      const err = this.failNextLoadError;
+      this.failNextLoadError = null;
+      throw err;
     }
   }
 
@@ -47,11 +48,11 @@ class FakeView implements EmbedViewLike {
 
 function makeManager(maxLive?: number) {
   const views: Array<{ partition: string; view: FakeView }> = [];
-  let failNextCreatedLoad = false;
+  let nextCreatedLoadError: unknown = null;
   const manager = new EmbedManager({
     createView: ({ partition }) => {
-      const view = new FakeView(failNextCreatedLoad);
-      failNextCreatedLoad = false;
+      const view = new FakeView(nextCreatedLoadError);
+      nextCreatedLoadError = null;
       views.push({ partition, view });
       return view;
     },
@@ -62,7 +63,10 @@ function makeManager(maxLive?: number) {
     manager,
     views,
     failNextCreatedLoad: () => {
-      failNextCreatedLoad = true;
+      nextCreatedLoadError = new Error("load failed");
+    },
+    failNextCreatedLoadWith: (err: unknown) => {
+      nextCreatedLoadError = err;
     },
   };
 }
@@ -174,6 +178,20 @@ describe("EmbedManager", () => {
       "https://gw.test/apps/notes/",
       "https://gw.test/apps/notes/",
     ]);
+  });
+
+  it("does not mark aborted loadURL redirects as failed", async () => {
+    const { manager, views, failNextCreatedLoadWith } = makeManager();
+    const states: string[] = [];
+    failNextCreatedLoadWith(Object.assign(new Error("ERR_ABORTED"), { errno: -3 }));
+    const id = manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/", {
+      onState: (state) => states.push(state),
+    });
+    await flush();
+    expect(states).toEqual([]);
+
+    expect(manager.focus(id)).toBe(true);
+    expect(views[0]?.view.loadedUrls).toEqual(["https://gw.test/apps/notes/"]);
   });
 
   it("updates bounds for live embeds", () => {

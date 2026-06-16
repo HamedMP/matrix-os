@@ -31,6 +31,7 @@ export interface EmbedManagerOptions {
 export const MAX_TOTAL_EMBEDS = 12;
 const DEFAULT_MAX_LIVE = 3;
 const SAFE_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+const ERR_ABORTED = -3;
 
 interface EmbedRecord {
   id: string;
@@ -40,6 +41,16 @@ interface EmbedRecord {
   loadFailed: boolean;
   lastUsed: number;
   onState: (state: "loading" | "ready" | "failed") => void;
+}
+
+function isAbortedLoadError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const maybe = err as { code?: unknown; errno?: unknown; message?: unknown };
+  return (
+    maybe.errno === ERR_ABORTED ||
+    maybe.code === "ERR_ABORTED" ||
+    (typeof maybe.message === "string" && maybe.message.includes("ERR_ABORTED"))
+  );
 }
 
 export class EmbedManager {
@@ -154,6 +165,7 @@ export class EmbedManager {
 
   private loadInto(record: EmbedRecord): void {
     void record.view.loadUrl(record.url).catch((err: unknown) => {
+      if (isAbortedLoadError(err)) return;
       console.warn(
         "[embed-manager] embed load failed:",
         err instanceof Error ? err.message : String(err),
