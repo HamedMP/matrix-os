@@ -48,9 +48,9 @@ bar: PR review, smoke checks, rollback, and live verification.
 | Surface | Current path | Target path | Trigger examples |
 |---|---|---|---|
 | Pre-VPS app shell (`app.matrix-os.com` auth, billing, onboarding, runtime picker) | Full `matrix-platform` Cloud Run image | Dedicated app-shell deploy unit or cached shell-only image layer | `deploy/shell`, `shell/v*`, path changes under `shell/**` that affect pre-VPS routes and shared workspace dependencies consumed by the shell, including frontend-facing `packages/observability/**` modules |
-| Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**`, `packages/clerk-sync/**`, platform-owned observability dependencies, platform-mounted gateway integration routes under `packages/gateway/src/integrations/**`, and `distro/customer-vps/cloud-init.yaml` provisioning inputs |
+| Platform API/control plane | Full `matrix-platform` Cloud Run image | Platform API image with app-shell dependency only when needed | `deploy/platform`, `platform/v*`, path changes under `packages/platform/**`, `packages/clerk-sync/**`, platform-owned observability dependencies, platform-mounted gateway integration routes under `packages/gateway/src/integrations/**`, `Dockerfile.platform`, `cloudbuild.platform.yaml`, `scripts/start-platform-cloud-run.sh`, and `distro/customer-vps/cloud-init.yaml` provisioning inputs |
 | App-domain edge router | Platform image side effects or ad hoc Worker deploy | Explicit edge/router lane, or a required paired shell+platform deploy while the router is embedded | `deploy/edge`, `edge/v*`, path changes under edge/router packages, app-domain route maps, Cloudflare Worker config, or platform route handlers that select pre-VPS shell vs active VPS proxy |
-| Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `shell/**` that affect active VPS shell, `packages/gateway/**`, `packages/kernel/**`, `packages/sync-client/**`, host-bundle-shipped `packages/**`, `home/**`, `distro/customer-vps/host-bin/**`, `distro/customer-vps/systemd/**`, and `scripts/build-host-bundle.sh` |
+| Customer VPS runtime | Full host bundle build/publish/deploy | Manifested host bundle plus incremental update plan | `deploy/runtime`, existing `v*` tags, path changes under `shell/**` that affect active VPS shell, `packages/gateway/**`, `packages/kernel/**`, `packages/sync-client/**`, host-bundle-shipped `packages/**`, `home/**`, `skills/**`, shipped helper scripts copied by the host-bundle build, host-bundle publish scripts such as `scripts/host-bundle-release.mjs`, `distro/customer-vps/host-bin/**`, `distro/customer-vps/systemd/**`, and `scripts/build-host-bundle.sh` |
 | Website/docs | Vercel/site deploy | Independent website/docs lane | `deploy/www`, path changes under `www/**` and shared workspace dependencies consumed by the website, including frontend-facing `packages/observability/**` modules |
 | CLI | npm/GitHub/Homebrew release | Independent CLI lane | `deploy/cli`, `cli-v*`, path changes under CLI package/scripts |
 | Observability/ops | Ad hoc scripts or platform image side effects | Explicit ops lane with scoped smoke | `deploy/ops`, ops distro files, and `packages/observability/**`; observability package changes also fan out to platform, shell, and website lanes when those surfaces consume the changed module |
@@ -214,7 +214,7 @@ also publishes a manifest:
   "files": [
     {
       "type": "file",
-      "path": "app/shell/.next/server/app/page.js",
+      "path": "shell/.next/server/app/page.js",
       "sha256": "...",
       "size": 12345,
       "mode": "0644",
@@ -223,7 +223,7 @@ also publishes a manifest:
   ],
   "symlinks": [
     {
-      "path": "app/node_modules/@matrix-os/gateway",
+      "path": "node_modules/@matrix-os/gateway",
       "target": "../../packages/gateway"
     }
   ],
@@ -237,14 +237,26 @@ also publishes a manifest:
 }
 ```
 
-The v1 incremental manifest may update files and symlinks inside the staged app tree.
-Symlink entries must include an explicit relative target and the resolved target must
-remain inside the staged release tree. If a bundle diff changes non-app roots such as
+Manifest `path`, `delete`, and `symlinks[].path` entries are app-root-relative. The
+release staging root is `/opt/matrix/releases/<version>.staging`, the staged app tree is
+`/opt/matrix/releases/<version>.staging/app`, and `/opt/matrix/app` points to that app
+subtree after activation. The v1 incremental manifest may update files and symlinks
+inside the staged app tree. Symlink entries must include an explicit relative target and
+the resolved target must remain inside the staged release tree. If a bundle diff changes
+non-app roots such as
 `bin`, `runtime`, `systemd`, launchers, or unsupported symlink topology, publication
 must mark `requiresFullBundle: true` and the VPS updater must use the full-bundle path
 before staging. The updater must never write a mixed release where `/opt/matrix/app`
 comes from the target version but `/opt/matrix/bin`, `/opt/matrix/runtime`, or systemd
 units remain from a different target version.
+
+Existing VPSes that still have `/opt/matrix/app` as a real directory must complete a
+bootstrap migration before incremental activation is enabled. The migration installs the
+current verified app tree under `/opt/matrix/releases/<current>/app`, writes matching
+release metadata and rollback metadata, then replaces `/opt/matrix/app` with a symlink
+using a temp-link-then-rename step while the updater lock is held. If the current tree
+cannot be verified against a known manifest, the updater must use a full-bundle install
+or fail closed; it must not delete the live app directory without a rollback path.
 
 The `protected` field is a release-policy denylist for owner data outside the release
 tree. It exists so publish-time validation, full-bundle fallback, and template-sync
@@ -308,8 +320,9 @@ Rollback must be a workflow action, not an undocumented operator command.
 - Workflow dispatch SHA must resolve to a commit in the repository.
 - Production workflow dispatch SHA must be reachable from `main` or an approved release
   tag unless the break-glass path with explicit human approval is used.
-- Host-bundle manifest paths must be normalized relative paths, must not contain `..`,
-  and must target only `/opt/matrix/app` staging content.
+- Host-bundle manifest paths must be normalized app-root-relative paths, must not
+  contain `..`, and must target only `/opt/matrix/releases/<version>.staging/app`
+  content.
 - Host-bundle manifest entry types are allowlisted: `file`, `directory`, and `symlink`.
   Unknown types fail before download or staging.
 - Host-bundle manifest symlinks must have normalized relative paths and relative targets
@@ -464,33 +477,35 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
 3. Runs startup/pre-update consistency checks comparing `/opt/matrix/release.json`,
    `/opt/matrix/app/BUNDLE_VERSION`, and the installed manifest digest; mismatch fails
    closed into the split-brain recovery path before deltas are considered.
-4. Downloads manifest metadata and validates every `files[].url`, symlink target, and
+4. Runs the directory-to-symlink bootstrap migration when `/opt/matrix/app` is not yet a
+   symlink to a verified release tree.
+5. Downloads manifest metadata and validates every `files[].url`, symlink target, and
    `requiresFullBundle` condition against the bundle object allowlist, release-tree
    containment, and redirect/timeout policy.
-5. Compares `manifest.baseVersion` with the installed
+6. Compares `manifest.baseVersion` with the installed
    version from `/opt/matrix/release.json` and the installed manifest digest.
-6. Falls back to full-bundle install when the base mismatches, `requiresFullBundle` is
+7. Falls back to full-bundle install when the base mismatches, `requiresFullBundle` is
    true, non-app roots changed, or symlink topology cannot be represented safely and
    policy allows it; otherwise fails before staging.
-7. Downloads changed objects with bounded concurrency and 30s per-object timeouts.
-8. Verifies every object hash and manifest signature/digest.
-9. Stages app files under `/opt/matrix/releases/<version>.staging`.
-10. Runs preflight checks: staged root ownership and mode are correct, free disk margin
+8. Downloads changed objects with bounded concurrency and 30s per-object timeouts.
+9. Verifies every object hash and manifest signature/digest.
+10. Stages app files under `/opt/matrix/releases/<version>.staging/app`.
+11. Runs preflight checks: staged root ownership and mode are correct, free disk margin
     remains above the configured threshold, `BUNDLE_VERSION` matches the target version,
     manifest digest metadata is present, protected owner-data paths are absent from the
     staged tree, symlinks resolve inside the staged release tree, executable bits match
     the manifest, and any service-unit or launcher change has already forced the
     full-bundle path.
-11. Activates the staged app tree under the updater lock by flipping `/opt/matrix/app`
+12. Activates the staged app tree under the updater lock by flipping `/opt/matrix/app`
    and writing `/opt/matrix/release.json` via tmp-then-rename. The startup/pre-update
    consistency check is the recovery mechanism if the process crashes between those
    filesystem operations.
-12. Restarts affected services while still holding the updater lock with bounded
+13. Restarts affected services while still holding the updater lock with bounded
    per-service restart timeouts and an overall activation timeout, except the updater's
-   own process must not be restarted before step 13 completes. If the release changes
+   own process must not be restarted before step 14 completes. If the release changes
    `matrix-sync-agent` or the updater wrapper, a dedicated supervisor handoff or deferred
    self-restart marker performs that restart after health reporting.
-13. Reports installed version and health back to platform with a bounded timeout,
+14. Reports installed version and health back to platform with a bounded timeout,
    releases the lock, then runs any deferred updater self-restart through the supervisor.
 
 ## Phased Plan
@@ -532,9 +547,10 @@ The customer VPS updater runs in `matrix-sync-agent` or a dedicated systemd unit
   and beta channels.
 - Test checkpoint: `bun run test`, an updater integration test that stages a synthetic
   manifest, rejects base-version mismatches/path traversal/bad object URLs/bad symlink
-  targets/missing hashes, falls back or fails on `requiresFullBundle` and non-app-root
-  changes, serializes concurrent updates with the updater lock, detects split-brain
-  `release.json` vs `BUNDLE_VERSION` state, flips the app symlink, updates
+  targets/missing hashes, bootstraps existing directory installs to release symlinks,
+  falls back or fails on `requiresFullBundle` and non-app-root changes, serializes
+  concurrent updates with the updater lock, detects split-brain `release.json` vs
+  `BUNDLE_VERSION` state, flips the app symlink, updates
   `/opt/matrix/release.json` via tmp-then-rename, reports health to a test platform
   endpoint, cleans abandoned staging directories, and manually verifies rollback on a
   disposable VPS.
