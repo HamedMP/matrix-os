@@ -47,6 +47,17 @@ describe("tabs store", () => {
     expect(useTabs.getState().activeTabId).toBe(b);
   });
 
+  it("closing the first active tab focuses the new first tab", () => {
+    const a = useTabs.getState().openTab({ kind: "board", projectSlug: "a", title: "A" });
+    const b = useTabs.getState().openTab({ kind: "board", projectSlug: "b", title: "B" });
+    useTabs.getState().openTab({ kind: "terminal", sessionName: "term", title: "Terminal" });
+    useTabs.getState().focusTab(a);
+
+    useTabs.getState().closeTab(a);
+
+    expect(useTabs.getState().activeTabId).toBe(b);
+  });
+
   it("closing the last tab sets active to null", () => {
     const id = useTabs.getState().openTab({ kind: "home", title: "Home" });
     useTabs.getState().closeTab(id);

@@ -69,8 +69,8 @@ export const useTabs = create<TabsState>()((set, get) => ({
       const tabs = state.tabs.filter((t) => t.id !== id);
       let activeTabId = state.activeTabId;
       if (activeTabId === id) {
-        // Focus the neighbour to the left, else the new last tab.
-        const next = tabs[idx - 1] ?? tabs[tabs.length - 1] ?? null;
+        // Focus the left neighbour; if the closed tab was first, prefer the new first.
+        const next = tabs[idx - 1] ?? tabs[idx] ?? tabs[tabs.length - 1] ?? null;
         activeTabId = next?.id ?? null;
       }
       return { tabs, activeTabId };
