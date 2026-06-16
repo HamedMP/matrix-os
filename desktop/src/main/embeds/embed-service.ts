@@ -114,7 +114,13 @@ export class EmbedService {
     }
     if (this.pendingApps.has(embedId)) {
       const pending = this.pendingApps.get(embedId)!;
-      const opened = await this.createAppEmbed(this.deps.getGatewayOrigin(), pending.slug, pending.bounds, embedId);
+      const opened = await this.createAppEmbed(
+        this.deps.getGatewayOrigin(),
+        pending.slug,
+        pending.bounds,
+        embedId,
+        () => this.pendingApps.has(embedId),
+      );
       if (!opened) {
         if (this.pendingApps.has(embedId)) this.deps.emitState(embedId, "auth-required");
         return false;
@@ -239,6 +245,7 @@ export class EmbedService {
     slug: string,
     bounds: Bounds,
     embedId: string,
+    shouldAttach: () => boolean = () => true,
   ): Promise<boolean> {
     let cached = this.tokenCache.get(slug);
     if (!cached) {
@@ -249,6 +256,7 @@ export class EmbedService {
       }
     }
     if (!cached) return false;
+    if (!shouldAttach()) return false;
     const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
     if (!resolved) throw new Error("app launch url failed origin check");
     this.manager.open("app", slug, bounds, resolved, {
