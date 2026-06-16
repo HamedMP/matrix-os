@@ -61,10 +61,14 @@ export function getOrCreateModel(path: string, content: string): monaco.editor.I
     models.delete(path);
     models.set(path, existing);
     const baseline = modelBaselines.get(path);
-    if (baseline !== undefined && existing.getValue() === baseline && baseline !== content) {
-      existing.setValue(content);
+    if (baseline === undefined) {
+      modelBaselines.set(path, existing.getValue());
+    } else if (existing.getValue() === baseline) {
+      if (baseline !== content) {
+        existing.setValue(content);
+      }
+      modelBaselines.set(path, content);
     }
-    modelBaselines.set(path, content);
     return existing;
   }
   if (existing?.isDisposed()) {

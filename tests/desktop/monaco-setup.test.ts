@@ -64,4 +64,18 @@ describe("monaco model cache", () => {
     expect(dirty.isDisposed()).toBe(false);
     expect(getOrCreateModel("dirty.ts", "server-value").getValue()).toBe("unsaved-value");
   });
+
+  it("does not advance a dirty model baseline on cache hit", async () => {
+    const { getOrCreateModel } = await loadMonacoSetup();
+    const dirty = getOrCreateModel("dirty.ts", "server-value");
+    dirty.setValue("unsaved-value");
+
+    expect(getOrCreateModel("dirty.ts", "unsaved-value").getValue()).toBe("unsaved-value");
+
+    for (let i = 0; i < 32; i += 1) {
+      getOrCreateModel(`clean-${i}.ts`, `clean-${i}`);
+    }
+
+    expect(dirty.isDisposed()).toBe(false);
+  });
 });
