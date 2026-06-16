@@ -143,15 +143,25 @@ describe("loadAll", () => {
       return Promise.resolve({ worktrees: [] });
     });
     const api = makeApi({ get: get as never });
+    useGit.setState({
+      branches: [{ name: "stale" }],
+      prs: [wirePr({ number: 99 }) as never],
+      worktrees: [wireWorktree({ id: "stale_wt" }) as never],
+      refreshedAt: T2,
+    });
 
     const pending = useGit.getState().loadAll(api, "proj");
     expect(useGit.getState().loading).toBe(true);
+    expect(useGit.getState().branches).toEqual([]);
+    expect(useGit.getState().prs).toEqual([]);
+    expect(useGit.getState().worktrees).toEqual([]);
+    expect(useGit.getState().refreshedAt).toBeNull();
     d.resolve({ branches: [], refreshedAt: T1 });
     await pending;
     expect(useGit.getState().loading).toBe(false);
   });
 
-  it("keeps the previous data for a failing surface and updates the others", async () => {
+  it("keeps failed surfaces empty after the project-scoped pre-clear and updates the others", async () => {
     useGit.setState({ branches: [{ name: "previous" }] });
     const get = routedGet({
       "/branches": new AppError("offline"),
@@ -163,7 +173,7 @@ describe("loadAll", () => {
     await useGit.getState().loadAll(api, "proj");
 
     const state = useGit.getState();
-    expect(state.branches).toEqual([{ name: "previous" }]);
+    expect(state.branches).toEqual([]);
     expect(state.prs).toHaveLength(1);
     expect(state.worktrees).toHaveLength(1);
     expect(state.error).toBe("offline");

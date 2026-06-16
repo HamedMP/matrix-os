@@ -132,6 +132,7 @@ describe("panel layout mutations", () => {
     store.togglePanel("task_a", "editor", 3_000);
     let layout = useWorkspace.getState().layouts["task_a"]!;
     expect(layout.visible.editor).toBe(false);
+    expect(layout.sizes.terminal).toBe(100);
     expect(layout.sizes.editor).toBe(30);
 
     store.togglePanel("task_a", "editor", 4_000);

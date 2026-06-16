@@ -116,7 +116,7 @@ export const useGit = create<GitState>()((set, get) => ({
   error: null,
 
   loadAll: async (api, slug) => {
-    set({ loading: true });
+    set({ branches: [], prs: [], worktrees: [], refreshedAt: null, loading: true, error: null });
     const failures: AppErrorCategory[] = [];
     const patch: Partial<GitState> = {};
     let branchRefreshed: string | undefined;

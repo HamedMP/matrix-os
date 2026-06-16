@@ -43,6 +43,49 @@ function equalSplitSizes(visible: Record<PanelKind, boolean>): Record<PanelKind,
   return sizes;
 }
 
+function normalizeVisibleSizes(
+  visible: Record<PanelKind, boolean>,
+  sizes: Record<PanelKind, number>,
+): Record<PanelKind, number> {
+  const shown = PANEL_KINDS.filter((kind) => visible[kind]);
+  const next = { ...sizes };
+  if (shown.length === 0) return next;
+  const total = shown.reduce((sum, kind) => sum + Math.max(next[kind] ?? 0, 0), 0);
+  if (total <= 0) return equalSplitSizes(visible);
+  for (const kind of shown) {
+    next[kind] = (Math.max(next[kind] ?? 0, 0) / total) * 100;
+  }
+  return next;
+}
+
+function restorePanelSize(
+  visible: Record<PanelKind, boolean>,
+  sizes: Record<PanelKind, number>,
+  panel: PanelKind,
+): Record<PanelKind, number> {
+  const restored = Math.max(sizes[panel] ?? 0, 0);
+  if (restored <= 0) return equalSplitSizes(visible);
+  const next = { ...sizes };
+  const others = PANEL_KINDS.filter((kind) => kind !== panel && visible[kind]);
+  if (others.length === 0) {
+    next[panel] = 100;
+    return next;
+  }
+  const panelSize = Math.min(restored, 95);
+  const otherBudget = 100 - panelSize;
+  const otherTotal = others.reduce((sum, kind) => sum + Math.max(next[kind] ?? 0, 0), 0);
+  next[panel] = panelSize;
+  if (otherTotal <= 0) {
+    const share = otherBudget / others.length;
+    for (const kind of others) next[kind] = share;
+  } else {
+    for (const kind of others) {
+      next[kind] = (Math.max(next[kind] ?? 0, 0) / otherTotal) * otherBudget;
+    }
+  }
+  return next;
+}
+
 export function defaultLayout(now: number = Date.now()): PanelLayout {
   const visible = {} as Record<PanelKind, boolean>;
   for (const kind of PANEL_KINDS) {
@@ -160,12 +203,9 @@ export const useWorkspace = create<WorkspaceState>()((set, get) => {
     togglePanel: (taskId, panel, now = Date.now()) => {
       const layout = get().layouts[taskId] ?? defaultLayout(now);
       const visible = { ...layout.visible, [panel]: !layout.visible[panel] };
-      // A newly shown panel with no size triggers an equal re-split; a panel
-      // that kept a size from a previous show restores it untouched.
-      const sizes =
-        visible[panel] && (layout.sizes[panel] ?? 0) <= 0
-          ? equalSplitSizes(visible)
-          : { ...layout.sizes };
+      const sizes = visible[panel]
+        ? restorePanelSize(visible, layout.sizes, panel)
+        : normalizeVisibleSizes(visible, layout.sizes);
       writeLayout(taskId, { ...layout, visible, sizes, touchedAt: now });
     },
 
