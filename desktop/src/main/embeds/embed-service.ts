@@ -315,6 +315,10 @@ export class EmbedService {
       request.on("response", (response) => {
         const chunks: Buffer[] = [];
         response.on("data", (chunk) => chunks.push(chunk));
+        response.on("error", (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
         response.on("end", () => {
           clearTimeout(timeout);
           const rawSetCookie = response.headers["set-cookie"];

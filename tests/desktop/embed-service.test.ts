@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+import { net } from "electron";
 import { describe, expect, it, vi } from "vitest";
 import { EmbedService } from "@desktop/main/embeds/embed-service";
 import type { Bounds } from "@desktop/main/embeds/embed-manager";
@@ -10,6 +12,42 @@ vi.mock("electron", () => ({
 const BOUNDS: Bounds = { x: 0, y: 0, width: 800, height: 600 };
 
 describe("EmbedService", () => {
+  it("rejects gateway requests when the response stream errors", async () => {
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState: vi.fn(),
+    });
+    const response = Object.assign(new EventEmitter(), {
+      headers: {},
+      statusCode: 200,
+    });
+    const request = Object.assign(new EventEmitter(), {
+      setHeader: vi.fn(),
+      abort: vi.fn(),
+      end: vi.fn(() => {
+        request.emit("response", response);
+        response.emit("error", new Error("stream reset"));
+      }),
+    });
+    vi.mocked(net.request).mockReturnValue(request as never);
+    const internals = service as unknown as {
+      gatewayRequest: (
+        url: string,
+        init: { method: string; headers: Record<string, string>; body: string },
+      ) => Promise<{ status: number; setCookieHeaders: string[]; body: string }>;
+    };
+
+    await expect(
+      internals.gatewayRequest("https://gateway.test/api/apps/notes/session-token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    ).rejects.toThrow("stream reset");
+  });
+
   it("keeps retry auth recoverable when a pending app launch url fails origin checks", async () => {
     const emitState = vi.fn();
     const service = new EmbedService({
