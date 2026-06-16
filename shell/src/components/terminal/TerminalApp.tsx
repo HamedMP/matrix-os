@@ -220,6 +220,7 @@ const SHELL_CARD_COPY_BUTTON_STYLE: CSSProperties = {
   height: 28,
   minWidth: 0,
   padding: "0 8px 0 10px",
+  pointerEvents: "auto",
 };
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
@@ -4760,7 +4761,7 @@ function ShellCard({
               <PencilIcon size={12} strokeWidth={2} />
             </button>
           )}
-          {foreground && !renaming && (
+          {foreground && !renaming && showActions && (
             <button
               type="button"
               aria-label={`Copy connect command for ${displayName}`}
@@ -4833,75 +4834,74 @@ function ShellCard({
             transition: "max-height 150ms ease, opacity 120ms ease",
           }}
         >
-          <button
-            type="button"
-            aria-label={`Copy Matrix shell connect command for ${displayName}`}
-            className="min-w-0"
-            onClick={(event) => {
-              event.stopPropagation();
-              void copyAttachCommand();
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-            onMouseDown={(event) => event.stopPropagation()}
-            style={SHELL_CARD_COPY_BUTTON_STYLE}
-          >
-            <span
-              className="truncate"
-              style={{ color: "#8A8B7C", minWidth: 0 }}
-            >
-              {showActions ? (
-                <>
-                  <span>matrix shell connect</span>
-                  <span style={{ color: "#B0AF9F" }}> {shell.name}</span>
-                </>
-              ) : null}
-            </span>
-            <CopyIcon size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
-          </button>
-          <button
-            type="button"
-            aria-label={`${deleting ? "Deleting" : "Close"} ${displayName}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete();
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-            onMouseDown={(event) => event.stopPropagation()}
-            disabled={deleting}
-            className={`pointer-events-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-[#DCDAC9] bg-[#F0EFE5] text-base text-[#77786E] ${deleting ? "cursor-not-allowed opacity-[0.65]" : "cursor-pointer opacity-100"}`}
-          >
-            ×
-          </button>
+          {showActions ? (
+            <>
+              <button
+                type="button"
+                aria-label={`Copy Matrix shell connect command for ${displayName}`}
+                className="min-w-0"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void copyAttachCommand();
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                style={SHELL_CARD_COPY_BUTTON_STYLE}
+              >
+                <span
+                  className="truncate"
+                  data-testid={copyFeedback ? `terminal-session-copy-toast-${shell.name}` : undefined}
+                  role={copyFeedback ? "status" : undefined}
+                  aria-live={copyFeedback ? "polite" : undefined}
+                  style={{
+                    color: copyFeedback === "failed"
+                      ? "#A24F2F"
+                      : copyFeedback === "copied"
+                        ? "#465243"
+                        : "#8A8B7C",
+                    minWidth: 0,
+                  }}
+                >
+                  {copyFeedback ? (
+                    <span style={{ alignItems: "center", display: "inline-flex", gap: 6 }}>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          background: copyFeedback === "copied" ? "#9CB77A" : "#D8792C",
+                          borderRadius: 999,
+                          height: 6,
+                          width: 6,
+                        }}
+                      />
+                      {copyFeedback === "copied" ? "Command copied" : "Copy failed"}
+                    </span>
+                  ) : (
+                    <>
+                      <span>matrix shell connect</span>
+                      <span style={{ color: "#B0AF9F" }}> {shell.name}</span>
+                    </>
+                  )}
+                </span>
+                <CopyIcon size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
+              </button>
+              <button
+                type="button"
+                aria-label={`${deleting ? "Deleting" : "Close"} ${displayName}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete();
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+                disabled={deleting}
+                className={`pointer-events-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-[#DCDAC9] bg-[#F0EFE5] text-base text-[#77786E] ${deleting ? "cursor-not-allowed opacity-[0.65]" : "cursor-pointer opacity-100"}`}
+              >
+                ×
+              </button>
+            </>
+          ) : null}
         </div>
       )}
-      {foreground && copyFeedback ? (
-        <div
-          data-testid={`terminal-session-copy-toast-${shell.name}`}
-          role="status"
-          aria-live="polite"
-          className="relative z-[1] flex items-center"
-          style={{
-            background: "#15180F",
-            borderRadius: 7,
-            boxShadow: "0 12px 24px rgba(39,40,34,0.22)",
-            color: "#F0EFE5",
-            fontFamily: "Inter, system-ui, sans-serif",
-            fontSize: 12,
-            gap: 8,
-            height: 28,
-            left: 12,
-            lineHeight: "16px",
-            padding: "0 10px",
-            position: "absolute",
-            right: 12,
-            top: "calc(100% + 8px)",
-            zIndex: 12,
-          }}
-        >
-          <span aria-hidden="true" style={{ background: copyFeedback === "copied" ? "#9CB77A" : "#D8792C", borderRadius: 999, height: 6, width: 6 }} />
-          <span>{copyFeedback === "copied" ? "Command copied" : "Copy failed"}</span>
-        </div>
-      ) : null}
       {!foreground && focusedTab ? (
         <div className="pointer-events-none relative z-[1] truncate" style={{ color: "#858578", fontSize: 13, lineHeight: "16px", marginTop: 2, paddingLeft: 18 }}>
           {focusedTab.name ? `last tab ${focusedTab.name}` : "keeps process alive"}

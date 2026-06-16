@@ -98,6 +98,14 @@ function createDragDataTransfer(): DataTransfer {
   } as unknown as DataTransfer;
 }
 
+function revealSessionActions(name: string) {
+  const card = screen.getByTestId(`terminal-session-card-${name}`);
+  fireEvent.pointerEnter(card);
+  fireEvent.pointerMove(card);
+  fireEvent.mouseEnter(card);
+  fireEvent.mouseMove(card);
+}
+
 describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
@@ -363,6 +371,8 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.queryByText("matrix shell connect")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Matrix shell connect command for matrix-main" })).toBeNull();
     const row = screen.getByRole("button", { name: "Open matrix-main" }).closest(".group");
     expect(row).toBeTruthy();
     fireEvent.mouseEnter(row!);
@@ -378,7 +388,7 @@ describe("TerminalApp", () => {
 
     expect(writeText).toHaveBeenCalledWith("mos shell attach main");
     expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Command copied");
-    expect(within(actions).getByText("matrix shell connect")).toBeTruthy();
+    expect(within(actions).queryByText("matrix shell connect")).toBeNull();
   });
 
   it("copies with the synchronous selection fallback and still shows the Paper copy confirmation", async () => {
@@ -474,6 +484,8 @@ describe("TerminalApp", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+
+    revealSessionActions("main");
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
@@ -1328,6 +1340,8 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    revealSessionActions("main");
+
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
       await Promise.resolve();
@@ -1837,6 +1851,8 @@ describe("TerminalApp", () => {
     ));
     expect(createCalls).toHaveLength(1);
 
+    revealSessionActions("main");
+
     await act(async () => {
       const deleteButton = screen.getByRole("button", { name: /close matrix-main/i });
       fireEvent.click(deleteButton);
@@ -1894,7 +1910,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-card-main")).toBeTruthy();
     expect(screen.queryByText("bench")).toBeNull();
 
     await act(async () => {
@@ -1947,7 +1963,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-card-main")).toBeTruthy();
     shellListMode = "fail";
 
     await act(async () => {
@@ -1956,7 +1972,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-card-main")).toBeTruthy();
     expect(screen.getByText("Failed to load shells")).toBeTruthy();
 
     await act(async () => {
@@ -2055,14 +2071,16 @@ describe("TerminalApp", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-card-main")).toBeTruthy();
+
+    revealSessionActions("main");
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /close matrix-main/i }));
       await Promise.resolve();
     });
     expect(screen.getByRole("dialog", { name: "Close this session?" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-card-main")).toBeTruthy();
 
     await act(async () => {
       fireEvent.click(within(screen.getByRole("dialog", { name: "Close this session?" })).getByRole("button", { name: "Delete" }));
@@ -2085,7 +2103,7 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.getByText("bench")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-session-card-main")).toBeTruthy();
     expect(screen.getByText("Failed to remove shell")).toBeTruthy();
   });
 
