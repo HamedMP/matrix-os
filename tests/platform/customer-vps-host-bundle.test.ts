@@ -398,6 +398,23 @@ describe('customer VPS host bundle', () => {
     expect(syncAgent).toContain('last_staging_cleanup="$(date +%s)"');
   });
 
+  it('sync agent preflights disk headroom before downloading an update', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"');
+    expect(syncAgent).toContain('readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"');
+    expect(syncAgent).toContain('readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"');
+    expect(syncAgent).toContain('clean_legacy_upgrade_artifacts()');
+    expect(syncAgent).toContain("find \"$LEGACY_UPGRADE_DIR\" -maxdepth 1 -type f \\( -name 'matrix-host-bundle.tar.gz' -o -name 'matrix-host-bundle.tar.gz.sha256' \\) -print0");
+    expect(syncAgent).toContain('required_update_free_kb()');
+    expect(syncAgent).toContain('ensure_update_headroom()');
+    expect(syncAgent).toContain('required="$(required_update_free_kb "$bundle_size_bytes")"');
+    expect(syncAgent).toContain('available="$(df -Pk "$STAGING_DIR" | awk \'NR==2 {print $4}\')"');
+    expect(syncAgent).toContain('ERROR: insufficient disk space for update');
+    expect(syncAgent).toContain('ensure_update_headroom "$(json_field "$manifest" size)" || return 1');
+  });
+
   it('sync agent replaces the app tree with root permissions', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
