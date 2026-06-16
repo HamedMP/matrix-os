@@ -73,6 +73,11 @@ const PATH_RULES = Object.freeze([
     reason: "platform shared proxy package changed",
   },
   {
+    test: (path) => path.startsWith("packages/ui/"),
+    lanes: ["shell", "runtime"],
+    reason: "shared UI package changed",
+  },
+  {
     test: (path) => path.startsWith("packages/gateway/src/integrations/"),
     lanes: ["platform", "runtime"],
     reason: "platform-mounted gateway integration code changed",
@@ -126,6 +131,14 @@ export function buildGitDiffArgs({ base, head }) {
     throw new Error("Both --base and --head are required when --path is not provided");
   }
   return ["diff", "--name-only", `${base}..${head}`];
+}
+
+export function formatGitDiffFailure(args, result) {
+  if (result.error instanceof Error) {
+    return result.error.message || String(result.error);
+  }
+  const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
+  return stderr || `git ${args.join(" ")} failed`;
 }
 
 export function resolveLaneDecision({ changedPaths = [], selectors = [], labels = [], tags = [] } = {}) {
@@ -321,7 +334,7 @@ function readChangedPaths({ base, head, paths }) {
     timeout: GIT_DIFF_TIMEOUT_MS,
   });
   if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || `git ${args.join(" ")} failed`);
+    throw new Error(formatGitDiffFailure(args, result));
   }
   return result.stdout
     .split("\n")

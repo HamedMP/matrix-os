@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGitDiffArgs,
+  formatGitDiffFailure,
   GIT_DIFF_TIMEOUT_MS,
   resolveLaneDecision,
   validateLaneDecision,
@@ -79,6 +80,16 @@ describe("delivery lane router", () => {
     expect(decision.reason).toContain("proxy package changed");
   });
 
+  it("routes shared UI package changes through shell and runtime lanes", () => {
+    const decision = resolveLaneDecision({
+      changedPaths: ["packages/ui/src/Button.tsx"],
+    });
+
+    expect(decision.lanes).toEqual(["shell", "runtime"]);
+    expect(decision.requires).toEqual(["react-doctor", "shell-smoke", "host-bundle-smoke"]);
+    expect(decision.reason).toContain("shared UI package changed");
+  });
+
   it("validates emitted decisions before workflows can consume them", () => {
     expect(() =>
       validateLaneDecision({
@@ -106,5 +117,16 @@ describe("delivery lane router", () => {
       "base-sha..head-sha",
     ]);
     expect(GIT_DIFF_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it("surfaces spawn errors from git diff failures", () => {
+    const args = buildGitDiffArgs({ base: "base-sha", head: "head-sha" });
+
+    expect(
+      formatGitDiffFailure(args, {
+        stderr: "",
+        error: Object.assign(new Error("spawn git ETIMEDOUT"), { code: "ETIMEDOUT" }),
+      }),
+    ).toContain("spawn git ETIMEDOUT");
   });
 });
