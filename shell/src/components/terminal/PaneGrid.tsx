@@ -49,14 +49,24 @@ interface PaneNodeRendererProps {
 
 function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false }: PaneNodeRendererProps) {
   if (node.type === "pane") {
+    const focused = focusedPaneId === node.id;
     return (
-      <div key={node.id} className="h-full w-full min-h-0 min-w-0">
+      <div
+        key={node.id}
+        className="h-full w-full min-h-0 min-w-0"
+        style={{
+          boxShadow: focused
+            ? "inset 0 0 0 2px var(--primary), inset 0 0 0 3px color-mix(in srgb, var(--background) 68%, transparent)"
+            : "inset 0 0 0 1px color-mix(in srgb, var(--border) 62%, transparent)",
+          position: "relative",
+        }}
+      >
         <TerminalPane
           key={node.id}
           paneId={node.id}
           cwd={node.cwd}
           theme={theme}
-          isFocused={focusedPaneId === node.id}
+          isFocused={focused}
           sessionId={node.sessionId}
           claudeMode={node.claudeMode === true}
           startupCommand={node.startupCommand}

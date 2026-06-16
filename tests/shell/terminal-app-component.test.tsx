@@ -95,6 +95,19 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("does not render workspace transport ids as managed shell sessions", async () => {
+    render(<TerminalApp initialSessionId="matrix-sess_run_db0dded67faaca6b" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("matrix-sess_run_db0dded67faaca6b")).toBeNull();
+    expect(screen.queryByRole("button", { name: /close matrix-sess_run_db0dded67faaca6b/i })).toBeNull();
+  });
+
   it("keeps the mobile terminal chrome clear of cwd badges that overlap zellij tabs", async () => {
     render(<TerminalApp mobile />);
 

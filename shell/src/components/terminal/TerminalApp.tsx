@@ -69,6 +69,21 @@ const TAB_CLOSE_BUTTON_STYLE: CSSProperties = {
   marginLeft: "auto",
 };
 
+const ACTIVE_TAB_PILL_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "color-mix(in srgb, var(--primary) 16%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--primary) 44%, transparent)",
+  borderRadius: 999,
+  color: "var(--primary)",
+  display: "inline-flex",
+  flex: "0 0 auto",
+  fontSize: 12,
+  fontWeight: 800,
+  height: 18,
+  lineHeight: "16px",
+  padding: "0 6px",
+};
+
 const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
   height: 28,
   padding: "0 10px",
@@ -87,6 +102,17 @@ const SIDEBAR_RAIL_BUTTON_BASE_STYLE: CSSProperties = {
   borderRadius: 8,
   fontSize: 12,
   fontWeight: 700,
+};
+
+const SHELL_CARD_DELETE_BUTTON_STYLE: CSSProperties = {
+  background: "#F0EFE5",
+  border: "1px solid #DCDAC9",
+  borderRadius: 7,
+  color: "#77786E",
+  flexShrink: 0,
+  fontSize: 16,
+  height: 28,
+  width: 28,
 };
 
 const SHELL_CARD_NAME_BUTTON_STYLE: CSSProperties = {
@@ -1317,13 +1343,13 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
                 ...TAB_ITEM_BASE_STYLE,
                 background: active ? "var(--background)" : "color-mix(in srgb, var(--background) 42%, transparent)",
                 color: active ? "var(--foreground)" : "var(--muted-foreground)",
-                border: `1px solid ${active ? "var(--border)" : "color-mix(in srgb, var(--border) 55%, transparent)"}`,
+                border: `1px solid ${active ? "var(--primary)" : "color-mix(in srgb, var(--border) 55%, transparent)"}`,
                 padding: ctx.mobile ? "0 7px" : "0 8px",
-                fontWeight: active ? 600 : 450,
+                fontWeight: active ? 750 : 450,
                 flex: ctx.mobile ? "0 1 148px" : "0 1 168px",
                 minWidth: ctx.mobile ? 96 : 108,
                 maxWidth: ctx.mobile ? 160 : 190,
-                boxShadow: active ? "0 1px 0 rgba(0,0,0,0.08)" : "none",
+                boxShadow: active ? "inset 0 -3px 0 var(--primary), 0 0 0 1px color-mix(in srgb, var(--primary) 28%, transparent)" : "none",
               }}
               draggable
               onClick={() => ctx.setActiveTab(tab.id)}
@@ -1348,6 +1374,14 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{tab.label}</span>
               </span>
+              {active && (
+                <span
+                  aria-hidden="true"
+                  style={ACTIVE_TAB_PILL_STYLE}
+                >
+                  Active
+                </span>
+              )}
               <button
                 type="button"
                 className="cursor-pointer flex items-center justify-center transition-colors"
@@ -2014,6 +2048,7 @@ function LocalTerminalSidebar() {
     for (const sessionId of getSessionIds(terminalTab.paneTree)) {
       if (!sessionId || openSessionIds.has(sessionId)) continue;
       openSessionIds.add(sessionId);
+      if (!isCanonicalShellSessionId(sessionId)) continue;
       syntheticShells.push({
         name: sessionId,
         status: "active",
@@ -2461,16 +2496,9 @@ function ShellCard({
             disabled={deleting}
             className="flex items-center justify-center"
             style={{
-              background: "#F0EFE5",
-              border: "1px solid #DCDAC9",
-              borderRadius: 7,
-              color: "#77786E",
+              ...SHELL_CARD_DELETE_BUTTON_STYLE,
               cursor: deleting ? "not-allowed" : "pointer",
-              flexShrink: 0,
-              fontSize: 16,
-              height: 28,
               opacity: deleting ? 0.65 : 1,
-              width: 28,
             }}
           >
             ×
