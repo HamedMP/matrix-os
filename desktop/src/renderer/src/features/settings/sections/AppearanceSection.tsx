@@ -5,14 +5,30 @@ import { Card, SectionHeader } from "./section-kit";
 
 type Theme = "dark" | "light" | "system";
 
+function isTheme(value: unknown): value is Theme {
+  return value === "dark" || value === "light" || value === "system";
+}
+
+function resolveTheme(theme: Theme): "dark" | "light" {
+  if (theme !== "system") return theme;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyThemeToDocument(theme: Theme): void {
+  document.documentElement.setAttribute("data-theme", resolveTheme(theme));
+}
+
 export default function AppearanceSection() {
   const [theme, setTheme] = useState<Theme>("dark");
 
   useEffect(() => {
     void invoke("state:get", { key: "appearance" })
       .then((result) => {
-        const value = result.value as { theme?: Theme } | null;
-        if (value?.theme) setTheme(value.theme);
+        const value = result.value as { theme?: unknown } | null;
+        if (isTheme(value?.theme)) {
+          setTheme(value.theme);
+          applyThemeToDocument(value.theme);
+        }
       })
       .catch((err: unknown) => {
         console.warn(
@@ -24,10 +40,7 @@ export default function AppearanceSection() {
 
   const apply = (next: Theme) => {
     setTheme(next);
-    const resolved = next === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-      : next;
-    document.documentElement.setAttribute("data-theme", resolved);
+    applyThemeToDocument(next);
     void invoke("state:set", { key: "appearance", value: { theme: next } }).catch((err: unknown) => {
       console.warn("[settings] persist appearance failed:", err instanceof Error ? err.message : String(err));
     });
