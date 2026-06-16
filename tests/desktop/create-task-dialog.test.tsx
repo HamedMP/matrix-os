@@ -129,12 +129,12 @@ describe("CreateTaskDialog", () => {
     fireEvent.pointerDown(backdrop!);
     fireEvent.mouseDown(backdrop!);
     fireEvent.click(backdrop!);
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog")).toBeNull();
-    });
-
     await act(async () => {
       resolveCreate(makeCard("task-1"));
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
     });
 
     expect(navigate).not.toHaveBeenCalled();

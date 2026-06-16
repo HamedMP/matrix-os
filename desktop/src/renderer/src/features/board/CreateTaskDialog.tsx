@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Button, Dialog } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type CardPriority, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -15,14 +15,46 @@ const SELECT_STYLE: React.CSSProperties = {
 };
 
 export default function CreateTaskDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const dialogClosedRef = useRef(!open);
+  const dialogGenerationRef = useRef(0);
+
+  useEffect(() => {
+    dialogGenerationRef.current += 1;
+    dialogClosedRef.current = !open;
+    return () => {
+      dialogGenerationRef.current += 1;
+      dialogClosedRef.current = true;
+    };
+  }, [open]);
+
+  const closeFromUser = useCallback(() => {
+    dialogGenerationRef.current += 1;
+    dialogClosedRef.current = true;
+    onClose();
+  }, [onClose]);
+
   return (
-    <Dialog open={open} onClose={onClose} width={520}>
-      {open ? <CreateTaskForm onClose={onClose} /> : null}
+    <Dialog open={open} onClose={closeFromUser} width={520}>
+      {open ? (
+        <CreateTaskForm
+          onClose={closeFromUser}
+          dialogClosedRef={dialogClosedRef}
+          dialogGenerationRef={dialogGenerationRef}
+        />
+      ) : null}
     </Dialog>
   );
 }
 
-function CreateTaskForm({ onClose }: { onClose: () => void }) {
+function CreateTaskForm({
+  onClose,
+  dialogClosedRef,
+  dialogGenerationRef,
+}: {
+  onClose: () => void;
+  dialogClosedRef: MutableRefObject<boolean>;
+  dialogGenerationRef: MutableRefObject<number>;
+}) {
   const api = useConnection((s) => s.api);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const createTask = useBoard((s) => s.createTask);
@@ -34,17 +66,11 @@ function CreateTaskForm({ onClose }: { onClose: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [failed, setFailed] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
-  const dialogClosedRef = useRef(false);
-  const dialogGenerationRef = useRef(0);
 
   useEffect(() => {
-    dialogGenerationRef.current += 1;
-    dialogClosedRef.current = false;
     const timer = window.setTimeout(() => titleRef.current?.focus(), 0);
     return () => {
       window.clearTimeout(timer);
-      dialogGenerationRef.current += 1;
-      dialogClosedRef.current = true;
     };
   }, []);
 

@@ -2,7 +2,7 @@
 // Drives the BUILT Electron app (desktop/out) with Playwright against the
 // stub gateway — no VPS, no credentials, screenshots saved as evidence
 // (lesson L12: the agent can finally verify the running app).
-import { mkdtempSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -19,16 +19,18 @@ suite("operator desktop e2e", () => {
   let gateway: StubGateway;
   let app: ElectronApplication;
   let page: Page;
+  let userDataDir: string;
 
   beforeAll(async () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
+    userDataDir = mkdtempSync(join(tmpdir(), "operator-e2e-"));
     app = await _electron.launch({
       args: [DESKTOP_MAIN],
       env: {
         ...process.env,
         OPERATOR_GATEWAY_URL: gateway.url,
-        OPERATOR_USER_DATA_DIR: mkdtempSync(join(tmpdir(), "operator-e2e-")),
+        OPERATOR_USER_DATA_DIR: userDataDir,
       },
     });
     page = await app.firstWindow();
@@ -41,6 +43,13 @@ suite("operator desktop e2e", () => {
       console.warn("[e2e] app close failed:", err instanceof Error ? err.message : String(err));
     }
     await gateway?.close();
+    if (userDataDir) {
+      try {
+        rmSync(userDataDir, { recursive: true, force: true });
+      } catch (err: unknown) {
+        console.warn("[e2e] user-data cleanup failed:", err instanceof Error ? err.message : String(err));
+      }
+    }
   });
 
   it("signs in via the device flow and reaches the board", async () => {
