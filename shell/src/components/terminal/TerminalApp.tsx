@@ -3888,7 +3888,7 @@ function CollapsedRailGroup({
               background: selected ? "#FFFDF7" : muted ? "#E2E2D0" : "#FFFDF7",
               border: `1px solid ${selected ? "#9CB77A" : muted ? "#D4D2C1" : "#D6D5C4"}`,
               borderRadius: 11,
-              boxShadow: selected ? "0 0 0 3px rgba(156,183,122,0.22), 0 8px 18px rgba(39,40,34,0.16)" : "none",
+              boxShadow: selected ? "0 0 0 5px rgba(156,183,122,0.30), 0 8px 18px rgba(39,40,34,0.16)" : "none",
               color: muted ? "#858578" : "#31362D",
               cursor: "pointer",
               flexShrink: 0,
@@ -4151,7 +4151,7 @@ function ShellCard({
         border: `1px solid ${selected ? "#9CB77A" : foreground ? "#D6D5C4" : "#D4D2C1"}`,
         borderRadius: 10,
         boxShadow: selected
-          ? "0 0 0 3px rgba(156,183,122,0.18), 0 14px 30px rgba(39,40,34,0.18)"
+          ? "0 0 0 5px rgba(156,183,122,0.28), 0 14px 30px rgba(39,40,34,0.18)"
           : foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
         display: "flex",
