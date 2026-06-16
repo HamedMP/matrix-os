@@ -1,11 +1,18 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import type { AgentLaunchSpec } from "./agent-launcher.js";
 import { DANGEROUS_CONTROL_CHARS_GLOBAL } from "./prompt-validation.js";
+import {
+  MATRIX_TERMINAL_BASHRC,
+  MATRIX_ZELLIJ_LAYOUT,
+  matrixTerminalShellScript,
+  matrixZellijConfigPaths,
+  renderMatrixZellijConfig,
+} from "./shell/zellij-config.js";
 
 type CommandRunner = (
   command: string,
@@ -51,26 +58,6 @@ const ZELLIJ_TIMEOUT_MS = 10_000;
 const ZELLIJ_STARTUP_DELAY_MS = 500;
 const MAX_RETAINED_ZELLIJ_PTYS = 128;
 const RETAINED_PTY_TTL_MS = 4 * 60 * 60 * 1000;
-const MATRIX_ZELLIJ_CONFIG = `// Matrix OS generated workspace config.
-pane_frames false
-simplified_ui true
-default_layout "matrix"
-theme "default"
-`;
-const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS keeps Zellij chrome compact; Matrix shell renders sessions and actions.
-layout {
-  default_tab_template {
-    children
-    pane size=1 borderless=true {
-      plugin location="zellij:compact-bar"
-    }
-  }
-
-  tab name="main" {
-    pane
-  }
-}
-`;
 const SAFE_PROCESS_ENV_KEYS = new Set([
   "COLORTERM",
   "DISPLAY",
@@ -201,10 +188,11 @@ export function createZellijRuntime(options: {
   const startupDelayMs = options.startupDelayMs ?? ZELLIJ_STARTUP_DELAY_MS;
   const retainedPtyTtlMs = options.retainedPtyTtlMs ?? RETAINED_PTY_TTL_MS;
   const nowMs = options.nowMs ?? Date.now;
-  const layoutDir = join(homePath, "system", "zellij", "layouts");
-  const configDir = join(homePath, "system", "zellij");
-  const configPath = join(configDir, "config.kdl");
-  const defaultLayoutPath = join(layoutDir, "matrix.kdl");
+  const zellijConfigPaths = matrixZellijConfigPaths(homePath);
+  const layoutDir = zellijConfigPaths.layoutDir;
+  const configDir = zellijConfigPaths.dir;
+  const configPath = zellijConfigPaths.file;
+  const defaultLayoutPath = zellijConfigPaths.layoutFile;
   const retainedPtys = new Map<string, RetainedPty>();
   let ensureConfigPromise: Promise<void> | null = null;
 
@@ -212,7 +200,10 @@ export function createZellijRuntime(options: {
     if (!ensureConfigPromise) {
       ensureConfigPromise = (async () => {
         await mkdir(layoutDir, { recursive: true });
-        await atomicWriteText(configPath, MATRIX_ZELLIJ_CONFIG);
+        await atomicWriteText(zellijConfigPaths.shellFile, matrixTerminalShellScript(zellijConfigPaths.bashrcFile));
+        await chmod(zellijConfigPaths.shellFile, 0o700);
+        await atomicWriteText(zellijConfigPaths.bashrcFile, MATRIX_TERMINAL_BASHRC);
+        await atomicWriteText(configPath, renderMatrixZellijConfig(zellijConfigPaths));
         await atomicWriteText(defaultLayoutPath, MATRIX_ZELLIJ_LAYOUT);
       })().catch((err: unknown) => {
         ensureConfigPromise = null;

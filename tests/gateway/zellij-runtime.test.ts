@@ -101,13 +101,20 @@ describe("zellij-runtime", () => {
 
     const configDir = join(homePath, "system", "zellij");
     const configPath = join(configDir, "config.kdl");
+    const shellPath = join(configDir, "matrix-terminal-shell");
+    const bashrcPath = join(configDir, "bashrc");
     const config = await readFile(configPath, "utf-8");
+    const shell = await readFile(shellPath, "utf-8");
+    const bashrc = await readFile(bashrcPath, "utf-8");
     const defaultLayout = await readFile(join(configDir, "layouts", "matrix.kdl"), "utf-8");
     const sessionLayout = await readFile(started.layoutPath, "utf-8");
 
     expect(config).toContain("pane_frames false");
     expect(config).toContain("simplified_ui true");
     expect(config).toContain('default_layout "matrix"');
+    expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
+    expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
+    expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
     expect(defaultLayout).toContain('plugin location="zellij:compact-bar"');
     expect(sessionLayout).toContain('plugin location="zellij:compact-bar"');
     expect(spawnPty).toHaveBeenCalledWith(

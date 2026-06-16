@@ -7,6 +7,14 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { shellError, type ShellSafeError } from "./errors.js";
+import {
+  MATRIX_TERMINAL_BASHRC,
+  MATRIX_ZELLIJ_LAYOUT,
+  matrixTerminalShellScript,
+  matrixZellijConfigPaths,
+  renderMatrixZellijConfig,
+  type MatrixZellijConfigPaths,
+} from "./zellij-config.js";
 
 type ExecFile = typeof nodeExecFile;
 type Disposable = { dispose(): void };
@@ -110,21 +118,6 @@ const ZELLIJ_CONTEXT_ENV_KEYS = new Set([
 const DEFAULT_STARTUP_DELAY_MS = 500;
 const DEFAULT_RETAINED_PTY_TTL_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_MAX_RETAINED_PTYS = 128;
-const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS keeps Zellij chrome compact; the browser shell renders sessions and actions.
-layout {
-  default_tab_template {
-    children
-    pane size=1 borderless=true {
-      plugin location="zellij:compact-bar"
-    }
-  }
-
-  tab name="main" {
-    pane
-  }
-}
-`;
-
 type RetainedCreatePty = {
   process: ShellAttachProcess;
   startedAtMs: number;
@@ -132,54 +125,9 @@ type RetainedCreatePty = {
   tempLayoutDir?: string;
 };
 
-type ZellijConfigPaths = {
-  dir: string;
-  file: string;
-  shellFile: string;
-  bashrcFile: string;
-  layoutDir: string;
-  layoutFile: string;
-};
-
-function matrixZellijConfig(configPaths: ZellijConfigPaths | null): string {
-  const defaultShell = configPaths
-    ? `default_shell ${kdlString(configPaths.shellFile)}\n`
-    : "";
-  return `// Matrix OS generated shell config.
-pane_frames false
-simplified_ui true
-default_layout "matrix"
-${defaultShell}theme "default"
-`;
-}
-
-function matrixTerminalShellScript(bashrcPath: string): string {
-  return `#!/usr/bin/env bash
-set -euo pipefail
-
-export MATRIX_HOME="\${MATRIX_HOME:-\${HOME:-/home/matrix/home}}"
-export HOME="\${HOME:-$MATRIX_HOME}"
-export MATRIX_TERMINAL_PROMPT="\${MATRIX_TERMINAL_PROMPT:-\\\\[\\\\e[1;36m\\\\]\\\\u\\\\[\\\\e[0m\\\\]:\\\\[\\\\e[1;34m\\\\]\\\\w\\\\[\\\\e[0m\\\\]\\\\$ }"
-
-exec /bin/bash --noprofile --rcfile "${bashrcPath}" -i
-`;
-}
-
-const MATRIX_TERMINAL_BASHRC = `# Matrix OS generated terminal rcfile.
-if [ -r "$HOME/.bashrc" ]; then
-  . "$HOME/.bashrc"
-fi
-
-if [ -n "\${MATRIX_TERMINAL_PROMPT:-}" ]; then
-  PS1="\${MATRIX_TERMINAL_PROMPT}"
-else
-  PS1="\\u:\\w\\$ "
-fi
-`;
-
 function attachEnv(
   source: NodeJS.ProcessEnv = process.env,
-  configPaths: ZellijConfigPaths | null = null,
+  configPaths: MatrixZellijConfigPaths | null = null,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(source)) {
@@ -302,16 +250,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
   const cwd = deps.cwd ?? process.cwd();
   const spawnPty = deps.spawnPty ?? defaultPtySpawn();
   const retainedCreatePtys = new Map<string, RetainedCreatePty>();
-  const zellijConfigPaths = deps.homePath
-    ? {
-        dir: join(resolve(deps.homePath), "system", "zellij"),
-        file: join(resolve(deps.homePath), "system", "zellij", "config.kdl"),
-        shellFile: join(resolve(deps.homePath), "system", "zellij", "matrix-terminal-shell"),
-        bashrcFile: join(resolve(deps.homePath), "system", "zellij", "bashrc"),
-        layoutDir: join(resolve(deps.homePath), "system", "zellij", "layouts"),
-        layoutFile: join(resolve(deps.homePath), "system", "zellij", "layouts", "matrix.kdl"),
-      }
-    : null;
+  const zellijConfigPaths = deps.homePath ? matrixZellijConfigPaths(deps.homePath) : null;
   let ensureConfigPromise: Promise<void> | null = null;
 
   async function ensureMatrixZellijConfig(): Promise<void> {
@@ -325,7 +264,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         await atomicWriteText(zellijConfigPaths.shellFile, matrixTerminalShellScript(zellijConfigPaths.bashrcFile));
         await chmod(zellijConfigPaths.shellFile, 0o700);
         await atomicWriteText(zellijConfigPaths.bashrcFile, MATRIX_TERMINAL_BASHRC);
-        await atomicWriteText(zellijConfigPaths.file, matrixZellijConfig(zellijConfigPaths));
+        await atomicWriteText(zellijConfigPaths.file, renderMatrixZellijConfig(zellijConfigPaths));
         await atomicWriteText(zellijConfigPaths.layoutFile, MATRIX_ZELLIJ_LAYOUT);
       })().catch((err: unknown) => {
         ensureConfigPromise = null;

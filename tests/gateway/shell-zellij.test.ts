@@ -9,6 +9,7 @@ import {
   createZellijAdapter,
   sanitizeZellijError,
 } from "../../packages/gateway/src/shell/zellij.js";
+import { matrixTerminalShellScript } from "../../packages/gateway/src/shell/zellij-config.js";
 
 function childProcess() {
   return Object.assign(new EventEmitter(), {
@@ -309,7 +310,8 @@ describe("zellij adapter", () => {
       expect(config).toContain("simplified_ui true");
       expect(config).toContain('default_layout "matrix"');
       expect(config).toContain(`default_shell ${JSON.stringify(shellPath)}`);
-      expect(shell).toContain(`--rcfile "${bashrcPath}" -i`);
+      expect(shell).toContain(`exec bash --noprofile --rcfile '${bashrcPath}' -i`);
+      expect(shell).not.toContain("/bin/bash");
       expect(shellMode & 0o700).toBe(0o700);
       expect(bashrc).toContain('PS1="${MATRIX_TERMINAL_PROMPT}"');
       expect(bashrc).toContain("\\u:\\w\\$ ");
@@ -509,5 +511,13 @@ describe("zellij adapter", () => {
     expect(sanitizeZellijError("bad /home/alice/projects/app and /tmp/file")).toBe(
       "bad [path] and [path]",
     );
+  });
+
+  it("shell-quotes generated bash rcfile paths", () => {
+    const path = `/tmp/matrix "owner"/it'works/bashrc`;
+    const script = matrixTerminalShellScript(path);
+
+    expect(script).toContain(`exec bash --noprofile --rcfile '/tmp/matrix "owner"/it'\\''works/bashrc' -i`);
+    expect(script).not.toContain("/bin/bash");
   });
 });
