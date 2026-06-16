@@ -25,7 +25,7 @@ files via existing gateway routes). Field names mirror the wire contract verifie
 |---|---|---|
 | windowBounds | {x,y,width,height} | restore on launch |
 | lastProjectSlug | string \| null | board boot target |
-| panelLayouts | Record<taskKey, PanelLayout> | bounded: prune entries for tasks not seen in 90d |
+| panelLayouts | Record<taskKey, PanelLayoutEntry> | bounded: prune entries whose `lastSeenAt` is older than 90d |
 | appearance | {theme: "dark"\|"light"\|"system"} | |
 
 ## Renderer stores (Zustand, one per domain — L13)
@@ -74,7 +74,13 @@ linkedSessionId, linkedWorktreeId, previewIds[], tags[], updatedAt, revision }`
 - Reduction rules: delta accumulation onto last assistant bubble of same requestId; tool_start
   inserts activity entry; post-tool text starts a fresh bubble (tool-split).
 
-### PanelLayout (per task)
+### PanelLayoutEntry (per task)
+`{ layout: PanelLayout, lastSeenAt: number }`
+- `lastSeenAt` is epoch ms updated whenever the task layout is loaded, focused, or persisted.
+- Local-store pruning deletes entries with `lastSeenAt < now - 90d`; entries without a valid
+  timestamp fail schema validation and are discarded during recovery.
+
+### PanelLayout
 `{ order: PanelKind[], visible: Record<PanelKind, boolean>, sizes: Record<PanelKind, number> }`
 - PanelKind ∈ `terminal | editor | git | browser | artifacts | processes`
 - sizes are percentages; per-panel minimums enforced at drag time; persisted per task.

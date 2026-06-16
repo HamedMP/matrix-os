@@ -123,5 +123,6 @@ Known route gotchas from the prototype: project slug must be real (`matrix-os`, 
 | Task event push on `/ws` | FR-014 live board sync | Today REST-poll only (`/api/workspace/events`) |
 | Kill zellij session by name | FR-026 close/terminate | Known prototype blocker ("× deactivates instead of closing") |
 | Diff content endpoint | FR-050..051 review pane | Lists exist; diff bodies don't |
+| Process listing endpoint | FR-043 processes panel | No gateway route exists yet; v1 shows a deferred empty state |
 | Desktop release feed (signed) | FR-091 auto-update | Extend release-channel infra with desktop artifact type |
 | Command-completion attention signal | FR-070 (best effort) | Degrade gracefully if absent |
