@@ -26,6 +26,8 @@ export function handleMenuNavigate(kind: string): void {
       });
       return;
     }
+    useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+    return;
   }
   if (kind !== "home") {
     console.warn(`[shortcuts] unsupported menu:navigate kind: ${kind}`);

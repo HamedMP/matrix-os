@@ -109,7 +109,7 @@ export default function Board({ projectSlug, active = true }: { projectSlug?: st
   const setCreateTaskOpen = useUi((s) => s.setCreateTaskOpen);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
-  const firstLoadPending = activeSlug ? (firstLoadByProject[activeSlug] ?? true) : false;
+  const firstLoadPending = activeSlug ? (firstLoadByProject[activeSlug] ?? cards.length === 0) : false;
 
   // Only the focused board tab becomes the create-dialog context. Inactive
   // mounted board tabs must not clobber activeProjectSlug.

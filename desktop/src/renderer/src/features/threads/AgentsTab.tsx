@@ -21,13 +21,21 @@ export default function AgentsTab() {
   const setActiveThread = useThreads((s) => s.setActiveThread);
   const setComposerOpen = useUi((s) => s.setComposerOpen);
   const [localId, setLocalId] = useState<string | null>(null);
+  const hasActiveThread = activeThreadId ? threads.some((thread) => thread.id === activeThreadId) : false;
+  const hasLocalThread = localId ? threads.some((thread) => thread.id === localId) : false;
 
   // Prefer the store's active thread (e.g. just started from the composer),
   // then the local pick, then the newest thread.
-  const selectedId = activeThreadId ?? localId ?? threads[0]?.id ?? null;
+  const selectedId = hasActiveThread
+    ? activeThreadId
+    : hasLocalThread
+      ? localId
+      : threads[0]?.id ?? null;
 
   useEffect(() => {
-    if (!localId && threads[0]) setLocalId(threads[0].id);
+    if (!threads.some((thread) => thread.id === localId)) {
+      setLocalId(threads[0]?.id ?? null);
+    }
   }, [threads, localId]);
 
   const selected = threads.find((t) => t.id === selectedId) ?? null;

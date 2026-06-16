@@ -41,4 +41,17 @@ describe("handleMenuNavigate", () => {
     });
     expect(warn).toHaveBeenCalledWith("[shortcuts] unsupported menu:navigate kind: apps");
   });
+
+  it("falls back to home without warning when board navigation has no project", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    handleMenuNavigate("board");
+
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "home",
+      title: "Home",
+      closable: false,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
 });
