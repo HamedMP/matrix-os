@@ -57,6 +57,12 @@ describe("terminal theme presets", () => {
     expect(getAnsiPalette("missing-theme", "#ffffff").black).toBe("#383a42");
   });
 
+  it("maps desktop-native theme ids without falling back by luminance", () => {
+    expect(getAnsiPalette("one-dark", "#ffffff").black).toBe("#282c34");
+    expect(getAnsiPalette("one-light", "#101010").black).toBe("#383a42");
+    expect(getAnsiPalette("catppuccin-mocha", "#101010").brightWhite).toBe("#cdd6f4");
+  });
+
   it("keeps solarized-light ANSI black distinct from white", () => {
     const palette = getTerminalThemePreset("solarized-light");
 

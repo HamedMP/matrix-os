@@ -197,6 +197,9 @@ const palettes = {
 } satisfies Record<ConcreteTerminalThemeId, AnsiPalette>;
 
 const themeMapping: Record<string, ConcreteTerminalThemeId> = {
+  "one-dark": "one-dark",
+  "one-light": "one-light",
+  "catppuccin-mocha": "catppuccin-mocha",
   "default-dark": "one-dark",
   "default-light": "one-light",
   "catppuccin": "catppuccin-mocha",
