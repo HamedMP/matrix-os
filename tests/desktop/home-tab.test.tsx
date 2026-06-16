@@ -22,7 +22,6 @@ describe("HomeTab", () => {
     useBoard.setState({ projects: [], activeProjectSlug: null, cardsByProject: {} });
     useTabs.setState({ tabs: [], activeTabId: null });
     useUi.setState({
-      view: { kind: "board" },
       createTaskOpen: false,
       composerOpen: false,
       paletteOpen: false,

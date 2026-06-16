@@ -10,6 +10,29 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
 }
 
+export function handleMenuNavigate(kind: string): void {
+  if (kind === "settings") {
+    useTabs.getState().openTab({ kind: "settings", title: "Settings" });
+    return;
+  }
+  if (kind === "board") {
+    const { activeProjectSlug, projects } = useBoard.getState();
+    const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
+    if (project) {
+      useTabs.getState().openTab({
+        kind: "board",
+        projectSlug: project.slug,
+        title: project.name || project.slug,
+      });
+      return;
+    }
+  }
+  if (kind !== "home") {
+    console.warn(`[shortcuts] unsupported menu:navigate kind: ${kind}`);
+  }
+  useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+}
+
 export function useGlobalShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -46,20 +69,7 @@ export function useGlobalShortcuts(): void {
       if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
     });
     const offNavigate = onEvent("menu:navigate", ({ kind }) => {
-      if (kind === "settings") useTabs.getState().openTab({ kind: "settings", title: "Settings" });
-      if (kind === "board") {
-        const { activeProjectSlug, projects } = useBoard.getState();
-        const project = projects.find((candidate) => candidate.slug === activeProjectSlug) ?? projects[0];
-        if (project) {
-          useTabs.getState().openTab({
-            kind: "board",
-            projectSlug: project.slug,
-            title: project.name || project.slug,
-          });
-        } else {
-          useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
-        }
-      }
+      handleMenuNavigate(kind);
     });
     return () => {
       window.removeEventListener("keydown", onKeyDown);
