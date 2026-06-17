@@ -92,7 +92,7 @@ export default function Composer() {
   const setOpen = useUi((s) => s.setComposerOpen);
   return (
     <Dialog open={open} onClose={() => setOpen(false)} width={560}>
-      <ComposerForm onClose={() => setOpen(false)} />
+      {open ? <ComposerForm onClose={() => setOpen(false)} /> : null}
     </Dialog>
   );
 }
