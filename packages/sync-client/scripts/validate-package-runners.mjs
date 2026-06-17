@@ -8,13 +8,18 @@ import { fileURLToPath } from "node:url";
 const pkgRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const tempRoot = await mkdtemp(join(tmpdir(), "matrix-cli-runners-"));
 
-function run(command, args, options = {}) {
+async function run(command, args, options = {}) {
+  const runHome = options.home ?? join(tempRoot, "home");
+  const pnpmHome = options.pnpmHome ?? join(tempRoot, "pnpm-home");
+  await mkdir(runHome, { recursive: true });
+  await mkdir(pnpmHome, { recursive: true });
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd ?? pkgRoot,
       env: {
         ...process.env,
-        HOME: options.home ?? join(tempRoot, "home"),
+        HOME: runHome,
+        PNPM_HOME: pnpmHome,
         npm_config_yes: "true",
         npm_config_update_notifier: "false",
         ...options.env,
@@ -57,6 +62,7 @@ try {
   await mkdir(packDestination, { recursive: true });
   const packed = await run("npm", ["pack", "--pack-destination", packDestination, "--json"], {
     home: join(tempRoot, "npm-pack-home"),
+    pnpmHome: join(tempRoot, "npm-pack-pnpm-home"),
   });
   const [packInfo] = JSON.parse(packed.stdout);
   const tarball = join(packDestination, packInfo.filename);
@@ -75,6 +81,7 @@ try {
 
   const npmRun = await run("npm", ["exec", "--yes", "--package", tarball, "--", "matrix", "--version"], {
     home: join(tempRoot, "npm-exec-home"),
+    pnpmHome: join(tempRoot, "npm-exec-pnpm-home"),
   });
   const npmOutput = npmRun.stdout + npmRun.stderr;
   if (!npmOutput.includes(packInfo.version)) {
@@ -83,6 +90,7 @@ try {
 
   const pnpmRun = await run("pnpm", ["dlx", `file:${tarball}`, "--version"], {
     home: join(tempRoot, "pnpm-dlx-home"),
+    pnpmHome: join(tempRoot, "pnpm-dlx-pnpm-home"),
   });
   const pnpmOutput = pnpmRun.stdout + pnpmRun.stderr;
   if (!pnpmOutput.includes(packInfo.version)) {
