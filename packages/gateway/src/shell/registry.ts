@@ -38,9 +38,11 @@ const ShellSessionSchema = z.object({
 
 const RegistryFileSchema = z.object({
   sessions: z.record(z.string(), ShellSessionSchema).default({}),
+  order: z.array(z.string()).optional(),
 });
 
 type PersistedShellSession = z.infer<typeof ShellSessionSchema>;
+type RegistryFile = z.infer<typeof RegistryFileSchema>;
 export type ShellPlacement = z.infer<typeof ShellPlacementSchema>;
 export type ShellVisualStatus = z.infer<typeof ShellVisualStatusSchema>;
 export interface ShellSession extends PersistedShellSession {
@@ -80,8 +82,8 @@ export class ShellRegistry {
       const file = await this.read();
       const live = await this.options.adapter.listSessions();
       let changed = false;
-      const sessions: ShellSession[] = [];
       const now = new Date().toISOString();
+      const activeSessions: PersistedShellSession[] = [];
 
       for (const name of live) {
         const existing = file.sessions[name];
@@ -90,7 +92,7 @@ export class ShellRegistry {
           status: "active" as const,
           updatedAt: existing?.status === "active" ? existing.updatedAt : now,
         };
-        sessions.push(await this.decorateSession(session));
+        activeSessions.push(session);
         if (!existing || existing.status !== "active") {
           file.sessions[name] = session;
           changed = true;
@@ -98,12 +100,13 @@ export class ShellRegistry {
       }
 
       changed = await this.markMissingMetadataExited(file, new Set(live)) || changed;
+      changed = this.normalizeCustomOrder(file, activeSessions) || changed;
 
       if (changed) {
         await this.write(file);
       }
 
-      return sessions;
+      return this.decorateSessions(this.orderActiveSessions(file, activeSessions));
     });
   }
 
@@ -178,6 +181,14 @@ export class ShellRegistry {
         lastSeenSeq: null,
       };
       file.sessions[name] = session;
+      if (file.order) {
+        file.order = this.orderedNamesFromSessions(this.orderActiveSessions(file, [
+          ...Array.from(live)
+            .filter((liveName) => liveName !== name)
+            .map((liveName) => file.sessions[liveName] ?? this.adoptSession(liveName, now)),
+          session,
+        ]));
+      }
 
       try {
         await this.write(file);
@@ -258,12 +269,21 @@ export class ShellRegistry {
       };
       delete file.sessions[safeName];
       file.sessions[safeNextName] = next;
+      if (file.order) {
+        file.order = file.order.map((entry) => entry === safeName ? safeNextName : entry);
+      }
 
       await this.options.adapter.renameSession(safeName, safeNextName);
       let scrollbackRenamed = false;
       try {
         await this.options.scrollbackStore?.rename(safeName, safeNextName);
         scrollbackRenamed = true;
+        if (file.order) {
+          const nextLive = new Set(live);
+          nextLive.delete(safeName);
+          nextLive.add(safeNextName);
+          this.normalizeCustomOrder(file, Array.from(nextLive).map((liveName) => file.sessions[liveName] ?? this.adoptSession(liveName, now)));
+        }
         await this.write(file);
       } catch (err: unknown) {
         await this.options.adapter.renameSession(safeNextName, safeName).catch((rollbackErr: unknown) => {
@@ -302,8 +322,51 @@ export class ShellRegistry {
       }
       await this.options.adapter.deleteSession(safeName, options);
       delete file.sessions[safeName];
+      if (file.order) {
+        file.order = file.order.filter((entry) => entry !== safeName);
+      }
       await this.cleanupScrollback(safeName);
       await this.write(file);
+    });
+  }
+
+  async reorder(order: string[]): Promise<ShellSession[]> {
+    return this.withMutationLock(async () => {
+      const requestedOrder = Array.from(new Set(order.map((name) => validateSessionName(name))));
+      const file = await this.read();
+      const live = await this.options.adapter.listSessions();
+      const liveSet = new Set(live);
+      const now = new Date().toISOString();
+      const activeSessions: PersistedShellSession[] = [];
+
+      for (const name of live) {
+        const existing = file.sessions[name];
+        const session: PersistedShellSession = {
+          ...(existing ?? this.adoptSession(name, now)),
+          status: "active",
+          updatedAt: existing?.status === "active" ? existing.updatedAt : now,
+        };
+        activeSessions.push(session);
+        if (!existing || existing.status !== "active") {
+          file.sessions[name] = session;
+        }
+      }
+
+      await this.markMissingMetadataExited(file, liveSet);
+      const requestedLiveSessions = requestedOrder
+        .filter((name) => liveSet.has(name))
+        .map((name) => file.sessions[name])
+        .filter((session): session is PersistedShellSession => session !== undefined);
+      const requestedLiveNames = new Set(requestedLiveSessions.map((session) => session.name));
+      const appendedSessions = this.defaultOrderSessions(
+        activeSessions.filter((session) => !requestedLiveNames.has(session.name)),
+        false,
+      );
+      const orderedSessions = [...requestedLiveSessions, ...appendedSessions];
+      file.order = this.orderedNamesFromSessions(orderedSessions);
+
+      await this.write(file);
+      return this.decorateSessions(orderedSessions);
     });
   }
 
@@ -361,7 +424,7 @@ export class ShellRegistry {
   }
 
   private async markMissingMetadataExited(
-    file: z.infer<typeof RegistryFileSchema>,
+    file: RegistryFile,
     live: Set<string>,
   ): Promise<boolean> {
     let changed = false;
@@ -376,7 +439,61 @@ export class ShellRegistry {
     return changed;
   }
 
-  private async read(): Promise<z.infer<typeof RegistryFileSchema>> {
+  private defaultOrderSessions(sessions: PersistedShellSession[], mainFirst = true): PersistedShellSession[] {
+    return [...sessions].sort((left, right) => {
+      if (mainFirst) {
+        if (left.name === "main" && right.name !== "main") return -1;
+        if (right.name === "main" && left.name !== "main") return 1;
+      }
+      const created = left.createdAt.localeCompare(right.createdAt);
+      return created === 0 ? left.name.localeCompare(right.name) : created;
+    });
+  }
+
+  private orderedNamesFromSessions(sessions: PersistedShellSession[]): string[] {
+    return sessions.map((session) => session.name);
+  }
+
+  private orderActiveSessions(file: RegistryFile, sessions: PersistedShellSession[]): PersistedShellSession[] {
+    if (!file.order) {
+      return this.defaultOrderSessions(sessions);
+    }
+    const byName = new Map(sessions.map((session) => [session.name, session]));
+    const ordered: PersistedShellSession[] = [];
+    const seen = new Set<string>();
+    for (const name of file.order) {
+      const session = byName.get(name);
+      if (!session || seen.has(name)) {
+        continue;
+      }
+      ordered.push(session);
+      seen.add(name);
+    }
+    const appended = this.defaultOrderSessions(sessions.filter((session) => !seen.has(session.name)), false);
+    return [...ordered, ...appended];
+  }
+
+  private normalizeCustomOrder(file: RegistryFile, activeSessions: PersistedShellSession[]): boolean {
+    if (!file.order) {
+      return false;
+    }
+    const nextOrder = this.orderedNamesFromSessions(this.orderActiveSessions(file, activeSessions));
+    const changed = file.order.length !== nextOrder.length || file.order.some((name, index) => name !== nextOrder[index]);
+    if (changed) {
+      file.order = nextOrder;
+    }
+    return changed;
+  }
+
+  private async decorateSessions(sessions: PersistedShellSession[]): Promise<ShellSession[]> {
+    const decorated: ShellSession[] = [];
+    for (const session of sessions) {
+      decorated.push(await this.decorateSession(session));
+    }
+    return decorated;
+  }
+
+  private async read(): Promise<RegistryFile> {
     try {
       const raw = await readFile(this.persistPath, "utf-8");
       return RegistryFileSchema.parse(JSON.parse(raw));
@@ -392,7 +509,7 @@ export class ShellRegistry {
     }
   }
 
-  private async write(file: z.infer<typeof RegistryFileSchema>): Promise<void> {
+  private async write(file: RegistryFile): Promise<void> {
     await writeUtf8FileAtomic(this.persistPath, JSON.stringify(file, null, 2));
   }
 

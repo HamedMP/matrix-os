@@ -19,6 +19,7 @@ interface SessionRegistryRoutes {
   }): Promise<unknown>;
   delete(name: string, options?: { force?: boolean }): Promise<void>;
   rename?(name: string, nextName: string): Promise<unknown>;
+  reorder?(order: string[]): Promise<unknown[]>;
   updateUiState?(name: string, input: {
     placement?: "active" | "background";
     lastSeenSeq?: number | null;
@@ -98,6 +99,9 @@ const SessionUiStateBodySchema = z.object({
 const SessionRenameBodySchema = z.object({
   name: SafeSessionNameSchema,
 }).strict();
+const SessionOrderBodySchema = z.object({
+  order: z.array(SafeSessionNameSchema).max(100),
+}).strict();
 
 function safeCwdSchema() {
   return z.string().min(1).max(1024)
@@ -109,6 +113,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
   const sessionRenameBodyLimit = bodyLimit({ maxSize: 1024 });
+  const sessionOrderBodyLimit = bodyLimit({ maxSize: 1024 });
   const uiStateBodyLimit = bodyLimit({ maxSize: 1024 });
   const preferencesBodyLimit = bodyLimit({ maxSize: 4096 });
   const workspaceBodyLimit = bodyLimit({ maxSize: 8192 });
@@ -147,6 +152,16 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
           ? String((session as { name: unknown }).name)
           : body.name;
       return c.json({ name, created: true }, 201);
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.put("/sessions/order", sessionOrderBodyLimit, async (c) => {
+    try {
+      if (!deps.registry.reorder) return unavailable(c, "session_reorder_unavailable");
+      const body = SessionOrderBodySchema.parse(await c.req.json());
+      return c.json({ sessions: await deps.registry.reorder(body.order) });
     } catch (err) {
       return safeError(c, err);
     }

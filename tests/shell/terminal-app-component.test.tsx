@@ -377,17 +377,18 @@ describe("TerminalApp", () => {
     expect(row).toBeTruthy();
     fireEvent.mouseEnter(row!);
     const actions = screen.getByTestId("terminal-session-actions-main");
-    expect(within(actions).getByText("matrix shell connect")).toBeTruthy();
-    expect(within(actions).getByText("main")).toBeTruthy();
-    expect(actions.style.gap).toBe("25px");
+    expect(screen.queryByText("matrix shell connect")).toBeNull();
+    expect(actions.style.maxHeight).toBe("");
+    expect(within(actions).getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
+    expect(within(actions).getByRole("button", { name: "Close matrix-main" })).toBeTruthy();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
       await Promise.resolve();
     });
 
-    expect(writeText).toHaveBeenCalledWith("mos shell attach main");
-    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Command copied");
+    expect(writeText).toHaveBeenCalledWith("matrix shell connect main");
+    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Copied");
     expect(within(actions).queryByText("matrix shell connect")).toBeNull();
   });
 
@@ -442,7 +443,7 @@ describe("TerminalApp", () => {
 
     expect(writeText).not.toHaveBeenCalled();
     expect(execCommand).toHaveBeenCalledWith("copy");
-    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Command copied");
+    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Copied");
   });
 
   it("falls back to the Clipboard API when legacy copy returns false", async () => {
@@ -493,18 +494,32 @@ describe("TerminalApp", () => {
     });
 
     expect(execCommand).toHaveBeenCalledWith("copy");
-    expect(writeText).toHaveBeenCalledWith("mos shell attach main");
-    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Command copied");
+    expect(writeText).toHaveBeenCalledWith("matrix shell connect main");
+    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Copied");
   });
 
   it("reorders active shell sessions with the Paper drag affordance", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      calls.push({ url, init });
       if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
         return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
       }
       if (url.includes("/api/terminal/layout")) {
         return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions/order") && init?.method === "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "docs", status: "active", placement: "active", attachCommand: "mos shell attach docs", tabs: [] },
+              { name: "review", status: "active", placement: "active", attachCommand: "mos shell attach review", tabs: [] },
+              { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", tabs: [] },
+            ],
+          }),
+        } as Response);
       }
       if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
         return Promise.resolve({
@@ -542,9 +557,22 @@ describe("TerminalApp", () => {
 
     expect(screen.getByTestId("terminal-session-drop-line-docs")).toBeTruthy();
 
-    fireEvent.drop(screen.getByTestId("terminal-session-card-docs"), { dataTransfer });
+    await act(async () => {
+      fireEvent.drop(screen.getByTestId("terminal-session-card-docs"), { dataTransfer });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
 
-    expect(getOrder()).toEqual(["review", "docs", "main"]);
+    const orderCall = calls.find((call) => call.url.endsWith("/api/terminal/sessions/order") && call.init?.method === "PUT");
+    expect(orderCall).toBeTruthy();
+    expect(JSON.parse(String(orderCall?.init?.body))).toEqual({ order: ["review", "docs", "main"] });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getOrder()).toEqual(["docs", "review", "main"]);
   });
 
   it("renames sessions from the Paper pencil affordance", async () => {
@@ -1158,6 +1186,93 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.getByText("Active")).toBeTruthy();
     expect(screen.getByLabelText("Search sessions")).toBeTruthy();
+  });
+
+  it("highlights the shell attached to the active restored pane on first render", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            tabs: [
+              {
+                id: "tab-docs",
+                label: "Docs",
+                paneTree: { type: "pane", id: "pane-docs", cwd: "projects", sessionId: "docs" },
+              },
+            ],
+            activeTabId: "tab-docs",
+            sidebarOpen: true,
+          }),
+        } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", tabs: [] },
+              { name: "docs", status: "active", placement: "active", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("terminal-session-row-docs").getAttribute("data-selected")).toBe("true");
+    expect(screen.getByTestId("terminal-session-row-main").getAttribute("data-selected")).toBe("false");
+  });
+
+  it("attaches and highlights the first ordered shell when no saved layout exists", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "bench", status: "active", placement: "active", tabs: [] },
+              { name: "main", status: "active", placement: "active", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: "bench",
+      },
+    });
+    expect(screen.getByTestId("terminal-session-row-bench").getAttribute("data-selected")).toBe("true");
   });
 
   it("renders the Paper collapsed sessions rail in layout flow when hidden", async () => {

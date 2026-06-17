@@ -18,6 +18,114 @@ afterEach(async () => {
 });
 
 describe("shell registry", () => {
+  it("lists main first, then active sessions by creation time when no custom order exists", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        sessions: {
+          bench: { name: "bench", status: "active", createdAt: "2026-06-15T12:00:02.000Z", updatedAt: "x", attachedClients: 0, tabs: [] },
+          main: { name: "main", status: "active", createdAt: "2026-06-15T12:00:03.000Z", updatedAt: "x", attachedClients: 0, tabs: [] },
+          docs: { name: "docs", status: "active", createdAt: "2026-06-15T12:00:01.000Z", updatedAt: "x", attachedClients: 0, tabs: [] },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["bench", "main", "docs"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "main" },
+      { name: "docs" },
+      { name: "bench" },
+    ]);
+  });
+
+  it("persists custom order and respects it after reload", async () => {
+    const root = await tempRoot();
+    const live = new Set(["main", "bench", "docs"]);
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+
+    await registry.list();
+    await expect(registry.reorder(["docs", "main"])).resolves.toMatchObject([
+      { name: "docs" },
+      { name: "main" },
+      { name: "bench" },
+    ]);
+
+    const reloaded = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+    await expect(reloaded.list()).resolves.toMatchObject([
+      { name: "docs" },
+      { name: "main" },
+      { name: "bench" },
+    ]);
+    const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
+    expect(JSON.parse(raw).order).toEqual(["docs", "main", "bench"]);
+  });
+
+  it("prunes deleted sessions from persisted custom order", async () => {
+    const root = await tempRoot();
+    const live = new Set(["main", "bench", "docs"]);
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async (name: string) => {
+        live.delete(name);
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+
+    await registry.list();
+    await registry.reorder(["docs", "bench", "main"]);
+    await registry.delete("bench");
+
+    const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
+    expect(JSON.parse(raw).order).toEqual(["docs", "main"]);
+  });
+
+  it("ignores stale custom order entries and appends new live sessions deterministically", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        order: ["ghost", "docs"],
+        sessions: {
+          docs: { name: "docs", status: "active", createdAt: "2026-06-15T12:00:04.000Z", updatedAt: "x", attachedClients: 0, tabs: [] },
+          bench: { name: "bench", status: "active", createdAt: "2026-06-15T12:00:02.000Z", updatedAt: "x", attachedClients: 0, tabs: [] },
+          main: { name: "main", status: "active", createdAt: "2026-06-15T12:00:03.000Z", updatedAt: "x", attachedClients: 0, tabs: [] },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main", "bench", "docs"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "docs" },
+      { name: "bench" },
+      { name: "main" },
+    ]);
+    const raw = await readFile(persistPath, "utf-8");
+    expect(JSON.parse(raw).order).toEqual(["docs", "bench", "main"]);
+  });
+
   it("atomically persists created sessions", async () => {
     const root = await tempRoot();
     const adapter = {
@@ -127,17 +235,17 @@ describe("shell registry", () => {
         attachCommand: "mos shell attach main",
       },
       {
-        name: "deploy-logs",
-        placement: "active",
-        unread: false,
-        visualStatus: "idle",
-      },
-      {
         name: "review-done",
         latestSeq: 7,
         lastSeenSeq: 3,
         unread: true,
         visualStatus: "finished",
+      },
+      {
+        name: "deploy-logs",
+        placement: "active",
+        unread: false,
+        visualStatus: "idle",
       },
     ]);
 
@@ -210,12 +318,12 @@ describe("shell registry", () => {
     await registry.updateUiState("legacy-running", { lastSeenSeq: 1, visualStatus: "running" });
 
     await expect(registry.list()).resolves.toMatchObject([
+      { name: "legacy-running", latestSeq: 5, lastSeenSeq: 1, unread: true, visualStatus: "finished" },
+      { name: "osc-done", latestSeq: 21, lastSeenSeq: 20, unread: true, visualStatus: "finished" },
+      { name: "osc-running", unread: false, visualStatus: "running" },
       { name: "quiet", unread: false, visualStatus: "idle" },
       { name: "unread-done", latestSeq: 8, lastSeenSeq: 2, unread: true, visualStatus: "finished" },
-      { name: "osc-running", unread: false, visualStatus: "running" },
-      { name: "osc-done", latestSeq: 21, lastSeenSeq: 20, unread: true, visualStatus: "finished" },
       { name: "waiting", visualStatus: "waiting" },
-      { name: "legacy-running", latestSeq: 5, lastSeenSeq: 1, unread: true, visualStatus: "finished" },
     ]);
   });
 
