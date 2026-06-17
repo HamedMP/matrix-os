@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import { EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
+import { formatBytes, portList } from "./process-format";
 
 const POLL_MS = 5000;
 
@@ -28,28 +29,6 @@ const SnapshotSchema = z.object({
   processes: z.array(ProcessSchema).optional(),
 });
 type Snapshot = z.infer<typeof SnapshotSchema>;
-
-/** Human byte size (e.g. 1.5 GB) from a byte count. */
-export function formatBytes(bytes: number | undefined): string {
-  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i += 1;
-  }
-  const rounded = value >= 10 || i === 0 ? Math.round(value) : Math.round(value * 10) / 10;
-  return `${rounded} ${units[i]}`;
-}
-
-function portList(ports: unknown[] | undefined): string {
-  if (!ports || ports.length === 0) return "";
-  const nums = ports
-    .map((p) => (typeof p === "number" ? p : typeof p === "object" && p && "port" in p ? (p as { port: unknown }).port : null))
-    .filter((p): p is number => typeof p === "number");
-  return nums.length ? nums.join(", ") : "";
-}
 
 const SERVICE_OK = new Set(["running", "active", "ok", "healthy"]);
 

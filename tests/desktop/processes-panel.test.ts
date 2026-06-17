@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes } from "@desktop/renderer/src/features/workspace/ProcessesPanel";
+import { formatBytes, portList } from "@desktop/renderer/src/features/workspace/process-format";
 
 describe("formatBytes", () => {
   it("scales through byte units", () => {
@@ -15,5 +15,17 @@ describe("formatBytes", () => {
     expect(formatBytes(undefined)).toBe("—");
     expect(formatBytes(-1)).toBe("—");
     expect(formatBytes(Number.NaN)).toBe("—");
+  });
+});
+
+describe("portList", () => {
+  it("renders numeric, string, and object port values", () => {
+    expect(portList([3000, "5173", { port: "8080/tcp" }, { port: 9229 }])).toBe(
+      "3000, 5173, 8080/tcp, 9229",
+    );
+  });
+
+  it("skips invalid and empty port values", () => {
+    expect(portList([Number.NaN, "", "  ", { port: null }, { name: "api" }])).toBe("");
   });
 });
