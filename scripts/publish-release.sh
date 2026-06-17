@@ -91,6 +91,11 @@ if [ -z "${R2_ENDPOINT:-}" ]; then
   R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 fi
 PLATFORM_PUBLIC_URL="${PLATFORM_PUBLIC_URL:-https://app.matrix-os.com}"
+INCREMENTAL_UPLOAD_CONCURRENCY="${HOST_BUNDLE_INCREMENTAL_UPLOAD_CONCURRENCY:-16}"
+if ! [[ "$INCREMENTAL_UPLOAD_CONCURRENCY" =~ ^[0-9]+$ ]] || [ "$INCREMENTAL_UPLOAD_CONCURRENCY" -lt 1 ] || [ "$INCREMENTAL_UPLOAD_CONCURRENCY" -gt 64 ]; then
+  echo "HOST_BUNDLE_INCREMENTAL_UPLOAD_CONCURRENCY must be an integer from 1 to 64" >&2
+  exit 1
+fi
 
 SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
 SIZE="$(stat --printf='%s' "$BUNDLE")"
@@ -150,6 +155,27 @@ for entry in manifest.get('files', []):
         raise SystemExit('incremental manifest contains an invalid file object entry')
     print(f'{sha}\t{size}\t{key}')
 " "$INCREMENTAL_MANIFEST"
+}
+
+validate_incremental_object_list() {
+  local object_sha256 object_size object_key object_file actual_size actual_sha256
+  while IFS=$'\t' read -r object_sha256 object_size object_key; do
+    object_file="$DIST_DIR/objects/sha256/$object_sha256"
+    if [ ! -f "$object_file" ]; then
+      echo "ERROR: missing incremental object file $object_file" >&2
+      exit 1
+    fi
+    actual_size="$(stat --printf='%s' "$object_file")"
+    if [ "$actual_size" != "$object_size" ]; then
+      echo "ERROR: incremental object size mismatch for $object_file" >&2
+      exit 1
+    fi
+    actual_sha256="$(sha256sum "$object_file" | awk '{print $1}')"
+    if [ "$actual_sha256" != "$object_sha256" ]; then
+      echo "ERROR: incremental object checksum mismatch for $object_file" >&2
+      exit 1
+    fi
+  done < "$INCREMENTAL_OBJECTS_FILE"
 }
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
@@ -223,23 +249,6 @@ verify_existing_checksum() {
   fi
 }
 
-verify_existing_content_object() {
-  local key="$1"
-  local expected_size="$2"
-  local expected_sha256="$3"
-  local existing_size existing_sha256
-  existing_size="$(object_size "$key")"
-  if [ "$existing_size" != "$expected_size" ]; then
-    echo "ERROR: existing immutable object size mismatch for s3://$R2_BUCKET/$key" >&2
-    exit 1
-  fi
-  existing_sha256="$(bundle_object_sha256 "$key")"
-  if [ "$existing_sha256" != "$expected_sha256" ]; then
-    echo "ERROR: existing immutable object content mismatch for s3://$R2_BUCKET/$key" >&2
-    exit 1
-  fi
-}
-
 upload_immutable_object() {
   local source_file="$1"
   local key="$2"
@@ -259,6 +268,59 @@ upload_immutable_object() {
     --metadata "sha256=$metadata_sha256" \
     --if-none-match '*' \
     "${AWS_ARGS[@]}" >/dev/null
+}
+
+upload_content_addressed_object() {
+  local source_file="$1"
+  local key="$2"
+  local content_type="$3"
+  local metadata_sha256="$4"
+  local error_file
+  error_file="$(mktemp)"
+
+  if aws s3api put-object \
+    --bucket "$R2_BUCKET" \
+    --key "$key" \
+    --body "$source_file" \
+    --content-type "$content_type" \
+    --metadata "sha256=$metadata_sha256" \
+    --if-none-match '*' \
+    "${AWS_ARGS[@]}" > /dev/null 2>"$error_file"; then
+    rm -f "$error_file"
+    return 0
+  fi
+
+  local status=$?
+  if grep -Eq 'PreconditionFailed|Precondition Failed|pre-condition|status code: 412|\(412\)|(^|[^0-9])412([^0-9]|$)' "$error_file"; then
+    rm -f "$error_file"
+    return 0
+  fi
+
+  cat "$error_file" >&2
+  rm -f "$error_file"
+  return "$status"
+}
+
+incremental_upload_pids=()
+
+wait_for_incremental_upload_slot() {
+  local first_pid
+  while [ "${#incremental_upload_pids[@]}" -ge "$INCREMENTAL_UPLOAD_CONCURRENCY" ]; do
+    first_pid="${incremental_upload_pids[0]}"
+    incremental_upload_pids=("${incremental_upload_pids[@]:1}")
+    wait "$first_pid" || return
+  done
+}
+
+wait_for_incremental_uploads() {
+  local failed=0 upload_pid
+  for upload_pid in "${incremental_upload_pids[@]}"; do
+    if ! wait "$upload_pid"; then
+      failed=1
+    fi
+  done
+  incremental_upload_pids=()
+  return "$failed"
 }
 
 if [ "$DRY_RUN" = "1" ]; then
@@ -291,6 +353,7 @@ cleanup_temp_files() { rm -f "$AUTH_HEADER_FILE" "$CHECKSUM_FILE" "$INCREMENTAL_
 trap cleanup_temp_files EXIT
 printf '%s  matrix-host-bundle.tar.gz\n' "$SHA256" > "$CHECKSUM_FILE"
 write_incremental_object_list > "$INCREMENTAL_OBJECTS_FILE"
+validate_incremental_object_list
 
 echo "  Uploading versioned archive..."
 if object_exists "$BUNDLE_KEY"; then
@@ -305,29 +368,23 @@ if object_exists "$CHECKSUM_KEY"; then
 else
   upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"
 fi
-echo "  Uploading incremental file objects..."
+echo "  Uploading incremental file objects with concurrency $INCREMENTAL_UPLOAD_CONCURRENCY..."
+incremental_upload_failed=0
 while IFS=$'\t' read -r object_sha256 object_size object_key; do
   object_file="$DIST_DIR/objects/sha256/$object_sha256"
-  if [ ! -f "$object_file" ]; then
-    echo "ERROR: missing incremental object file $object_file" >&2
-    exit 1
+  if ! wait_for_incremental_upload_slot; then
+    incremental_upload_failed=1
   fi
-  actual_size="$(stat --printf='%s' "$object_file")"
-  if [ "$actual_size" != "$object_size" ]; then
-    echo "ERROR: incremental object size mismatch for $object_file" >&2
-    exit 1
-  fi
-  actual_sha256="$(sha256sum "$object_file" | awk '{print $1}')"
-  if [ "$actual_sha256" != "$object_sha256" ]; then
-    echo "ERROR: incremental object checksum mismatch for $object_file" >&2
-    exit 1
-  fi
-  if object_exists "$object_key"; then
-    verify_existing_content_object "$object_key" "$object_size" "$object_sha256"
-  else
-    upload_immutable_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256"
-  fi
+  upload_content_addressed_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256" &
+  incremental_upload_pids+=("$!")
 done < "$INCREMENTAL_OBJECTS_FILE"
+if ! wait_for_incremental_uploads; then
+  incremental_upload_failed=1
+fi
+if [ "$incremental_upload_failed" -ne 0 ]; then
+  echo "ERROR: one or more incremental file object uploads failed" >&2
+  exit 1
+fi
 if object_exists "$INCREMENTAL_MANIFEST_KEY"; then
   echo "  Verifying existing immutable incremental manifest..."
   verify_existing_incremental_manifest
