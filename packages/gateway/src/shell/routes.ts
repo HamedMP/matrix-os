@@ -113,7 +113,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
   const sessionRenameBodyLimit = bodyLimit({ maxSize: 1024 });
-  const sessionOrderBodyLimit = bodyLimit({ maxSize: 1024 });
+  const sessionOrderBodyLimit = bodyLimit({ maxSize: 8192 });
   const uiStateBodyLimit = bodyLimit({ maxSize: 1024 });
   const preferencesBodyLimit = bodyLimit({ maxSize: 4096 });
   const workspaceBodyLimit = bodyLimit({ maxSize: 8192 });

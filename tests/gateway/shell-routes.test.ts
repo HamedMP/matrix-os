@@ -177,6 +177,27 @@ describe("gateway shell routes", () => {
     expect(registry.reorder).toHaveBeenNthCalledWith(2, ["main", "bench"]);
   });
 
+  it("accepts large valid session order bodies within the schema cap", async () => {
+    const order = Array.from({ length: 30 }, (_, index) => `s${String(index).padStart(2, "0")}-${"a".repeat(27)}`);
+    expect(JSON.stringify({ order }).length).toBeGreaterThan(1024);
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+      reorder: vi.fn(async (nextOrder: string[]) => nextOrder.map((name) => ({ name, status: "active" }))),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions/order", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(registry.reorder).toHaveBeenCalledWith(order);
+  });
+
   it("validates session order bodies before dispatch", async () => {
     const registry = {
       list: vi.fn(async () => []),
@@ -195,7 +216,7 @@ describe("gateway shell routes", () => {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
-        "Content-Length": "2048",
+        "Content-Length": "9000",
       },
       body: JSON.stringify({ order: ["main"] }),
     });
