@@ -77,6 +77,20 @@ export default function SessionsView() {
           <RefreshCw size={14} />
         </IconButton>
       </div>
+      {error ? (
+        <div
+          role="alert"
+          className="mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"
+          style={{
+            borderColor: "var(--danger-muted)",
+            color: "var(--danger)",
+            background: "var(--danger-muted)",
+          }}
+        >
+          <AlertTriangle size={14} />
+          <span>{categoryMessage(error)}</span>
+        </div>
+      ) : null}
       {sessions.map((session) => (
         <button
           key={session.attachName}

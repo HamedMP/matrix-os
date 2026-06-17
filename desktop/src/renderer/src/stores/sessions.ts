@@ -25,6 +25,8 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+let loadSequence = 0;
+
 export const useSessions = create<SessionsState>()((set, get) => ({
   sessions: [],
   aliasMap: {},
@@ -32,6 +34,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   error: null,
 
   load: async (api) => {
+    const sequence = ++loadSequence;
     set({ loading: true, error: null });
     try {
       const [zellijResponse, workspaceResponse] = await Promise.all([
@@ -42,6 +45,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         asArray<ZellijSessionDTO>(zellijResponse.sessions),
         asArray<WorkspaceSessionDTO>(workspaceResponse.sessions),
       );
+      if (sequence !== loadSequence) return;
       set({
         sessions: merged.sessions,
         aliasMap: merged.aliasMap,
@@ -49,6 +53,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         error: null,
       });
     } catch (err: unknown) {
+      if (sequence !== loadSequence) return;
       console.error("[sessions] Failed to load sessions:", err);
       set({
         loading: false,

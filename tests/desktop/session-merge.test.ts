@@ -152,6 +152,14 @@ describe("useSessions store", () => {
     } as ApiClient;
   }
 
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
   it("loads both routes and merges into attachable sessions", async () => {
     const get = vi.fn().mockImplementation((path: string) => {
       if (path === "/api/terminal/sessions") {
@@ -193,6 +201,35 @@ describe("useSessions store", () => {
 
     expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["main"]);
     expect(useSessions.getState().error).toBe("offline");
+  });
+
+  it("ignores stale slower load results after a newer load finishes", async () => {
+    const firstTerminal = deferred<{ sessions: unknown[] }>();
+    const firstWorkspace = deferred<{ sessions: unknown[]; nextCursor: null }>();
+    let call = 0;
+    const get = vi.fn((path: string) => {
+      call += 1;
+      if (call === 1 && path === "/api/terminal/sessions") return firstTerminal.promise;
+      if (call === 2 && path === "/api/sessions") return firstWorkspace.promise;
+      if (path === "/api/terminal/sessions") {
+        return Promise.resolve({ sessions: [{ name: "new-session", status: "active" }] });
+      }
+      return Promise.resolve({ sessions: [], nextCursor: null });
+    });
+
+    const staleLoad = useSessions.getState().load(makeApi(get));
+    const freshLoad = useSessions.getState().load(makeApi(get));
+    await freshLoad;
+
+    firstTerminal.resolve({ sessions: [{ name: "old-session", status: "active" }] });
+    firstWorkspace.resolve({ sessions: [], nextCursor: null });
+    await staleLoad;
+
+    expect(useSessions.getState().sessions.map((session) => session.attachName)).toEqual([
+      "new-session",
+    ]);
+    expect(useSessions.getState().loading).toBe(false);
+    expect(useSessions.getState().error).toBeNull();
   });
 
   it("clears a stale load error while a refresh is pending", async () => {
