@@ -16,6 +16,13 @@ describe("HomeTab", () => {
       invoke: vi.fn(async () => ({ embedId: "embed-test", state: "ready" })),
       on: vi.fn(() => () => undefined),
     });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class FakeResizeObserver {
+        observe(): void {}
+        disconnect(): void {}
+      },
+    );
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
