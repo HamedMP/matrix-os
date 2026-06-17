@@ -5,6 +5,7 @@ import { createCredentialStore } from "./auth/credential-store";
 import { installHeaderInjection } from "./auth/header-injection";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
+import { installAppMenu } from "./platform/menu";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
@@ -177,6 +178,7 @@ if (!gotLock) {
       };
 
       await openMainWindow();
+      installAppMenu(() => mainWindow);
 
       app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) {
