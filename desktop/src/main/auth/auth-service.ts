@@ -118,11 +118,12 @@ export class AuthService {
     }
     if (nonce !== this.flowNonce) throw new Error("Sign-in request was canceled.");
     this.flowState = "pending";
-    this.pendingDeviceCode = {
+    const pendingDeviceCode = {
       userCode: code.userCode,
       verificationUri: code.verificationUri,
       expiresIn: code.expiresIn,
     };
+    this.pendingDeviceCode = pendingDeviceCode;
 
     // Background poll loop; auth:poll reads flowState snapshots.
     void pollForToken({
@@ -186,7 +187,7 @@ export class AuthService {
       );
     });
 
-    return this.pendingDeviceCode;
+    return pendingDeviceCode;
   }
 
   poll(): PollResult {
