@@ -74,6 +74,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
     try {
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
       const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
+      const refreshSequence = loadSequence + 1;
       await get().load(api);
       const refreshError = get().error;
       const created = get().sessions.find((session) => session.attachName === attachName) ?? {
@@ -83,7 +84,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         source: "zellij" as const,
       };
       set((state) => {
-        const loadingPatch = state.loading ? { loading: false } : {};
+        const loadingPatch = refreshSequence === loadSequence && state.loading ? { loading: false } : {};
         return state.sessions.some((session) => session.attachName === created.attachName)
           ? { ...loadingPatch, error: refreshError }
           : { sessions: [created, ...state.sessions], ...loadingPatch, error: refreshError };

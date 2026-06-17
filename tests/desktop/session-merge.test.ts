@@ -284,4 +284,33 @@ describe("useSessions store", () => {
     expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["operator-new"]);
     expect(useSessions.getState().error).toBe("offline");
   });
+
+  it("keeps a superseding load in progress after create refresh is preempted", async () => {
+    const internalTerminal = deferred<{ sessions: unknown[] }>();
+    const internalWorkspace = deferred<{ sessions: unknown[]; nextCursor: null }>();
+    const competingTerminal = new Promise<{ sessions: unknown[] }>(() => undefined);
+    const competingWorkspace = new Promise<{ sessions: unknown[]; nextCursor: null }>(() => undefined);
+    const post = vi.fn().mockResolvedValue({ name: "operator-new", created: true });
+    let call = 0;
+    const get = vi.fn((path: string) => {
+      call += 1;
+      if (call === 1 && path === "/api/terminal/sessions") return internalTerminal.promise;
+      if (call === 2 && path === "/api/sessions") return internalWorkspace.promise;
+      if (path === "/api/terminal/sessions") return competingTerminal;
+      return competingWorkspace;
+    });
+
+    const createPromise = useSessions.getState().create(makeApi(get, post));
+    while (call < 2) {
+      await Promise.resolve();
+    }
+    void useSessions.getState().load(makeApi(get));
+    expect(useSessions.getState().loading).toBe(true);
+
+    internalTerminal.resolve({ sessions: [{ name: "operator-new", status: "active" }] });
+    internalWorkspace.resolve({ sessions: [], nextCursor: null });
+
+    await expect(createPromise).resolves.toMatchObject({ attachName: "operator-new" });
+    expect(useSessions.getState().loading).toBe(true);
+  });
 });
