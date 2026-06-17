@@ -1,6 +1,6 @@
 import { LayoutGrid } from "lucide-react";
 import { useEffect, useState } from "react";
-import { EmbedHost } from "./index";
+import EmbedHost from "./EmbedHost";
 import { EmptyState } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 

@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useMemo } from "react";
+import { Group, Panel, Separator, type Layout as GroupLayout } from "react-resizable-panels";
 import {
   useWorkspace,
   defaultLayout,
@@ -11,7 +12,7 @@ export const PANEL_TITLES: Record<PanelKind, string> = {
   terminal: "Terminal",
   editor: "Editor",
   git: "Git",
-  browser: "Browser",
+  browser: "Files",
   artifacts: "Artifacts",
   processes: "Processes",
 };
@@ -21,68 +22,48 @@ interface PanelStripProps {
   renderPanel: (panel: PanelKind) => React.ReactNode;
 }
 
+export function groupLayoutForPanels(
+  visiblePanels: PanelKind[],
+  sizes: Record<PanelKind, number>,
+): GroupLayout {
+  const even = visiblePanels.length ? 100 / visiblePanels.length : 0;
+  const next: GroupLayout = {};
+  for (const panel of visiblePanels) {
+    next[panel] = sizes[panel] || even;
+  }
+  return next;
+}
+
+export function panelSizesFromGroupLayout(
+  visiblePanels: PanelKind[],
+  nextLayout: GroupLayout,
+  previousSizes: Record<PanelKind, number>,
+): Record<PanelKind, number> {
+  const next = { ...previousSizes };
+  visiblePanels.forEach((panel) => {
+    const value = nextLayout[panel];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      next[panel] = value;
+    }
+  });
+  return next;
+}
+
 export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
   const layouts = useWorkspace((s) => s.layouts);
   const setPanelSizes = useWorkspace((s) => s.setPanelSizes);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<{
-    left: PanelKind;
-    right: PanelKind;
-    startX: number;
-    startSizes: Record<PanelKind, number>;
-    latestSizes: Record<PanelKind, number> | null;
-  } | null>(null);
 
   const layout: PanelLayout = useMemo(() => layouts[taskId] ?? defaultLayout(), [layouts, taskId]);
-  const visiblePanels = useMemo(
-    () => layout.order.filter((panel) => layout.visible[panel]),
-    [layout],
-  );
+  const visiblePanels = useMemo(() => layout.order.filter((panel) => layout.visible[panel]), [layout]);
 
-  const onDividerDown = useCallback(
-    (left: PanelKind, right: PanelKind, e: React.PointerEvent) => {
-      e.preventDefault();
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
-      dragState.current = {
-        left,
-        right,
-        startX: e.clientX,
-        startSizes: { ...layout.sizes },
-        latestSizes: null,
-      };
-    },
-    [layout.sizes],
-  );
+  // Remount the group when the visible set changes so default sizes re-apply.
+  const groupKey = visiblePanels.join("-");
 
-  const onDividerMove = useCallback(
-    (e: React.PointerEvent) => {
-      const drag = dragState.current;
-      const container = containerRef.current;
-      if (!drag || !container) return;
-      const totalWidth = container.getBoundingClientRect().width;
-      if (totalWidth <= 0) return;
-      const deltaPct = ((e.clientX - drag.startX) / totalWidth) * 100;
-      const leftStart = drag.startSizes[drag.left] ?? 0;
-      const rightStart = drag.startSizes[drag.right] ?? 0;
-      const minLeft = PANEL_MIN_PCT[drag.left];
-      const minRight = PANEL_MIN_PCT[drag.right];
-      const clamped = Math.max(minLeft - leftStart, Math.min(deltaPct, rightStart - minRight));
-      const nextSizes = {
-        ...drag.startSizes,
-        [drag.left]: leftStart + clamped,
-        [drag.right]: rightStart - clamped,
-      };
-      drag.latestSizes = nextSizes;
-      setPanelSizes(taskId, nextSizes, Date.now(), { persist: false });
-    },
-    [setPanelSizes, taskId],
-  );
-
-  const onDividerUp = useCallback(() => {
-    const drag = dragState.current;
-    dragState.current = null;
-    if (drag?.latestSizes) setPanelSizes(taskId, drag.latestSizes);
-  }, [setPanelSizes, taskId]);
+  // react-resizable-panels v4 layouts are keyed by rendered panel id.
+  // The workspace store persists them keyed by panel id.
+  const defaultGroupLayout = useMemo(() => {
+    return groupLayoutForPanels(visiblePanels, layout.sizes);
+  }, [visiblePanels, layout.sizes]);
 
   if (visiblePanels.length === 0) {
     return (
@@ -95,33 +76,47 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
   }
 
   return (
-    <div ref={containerRef} className="flex min-h-0 min-w-0 flex-1">
+    <Group
+      key={groupKey}
+      orientation="horizontal"
+      defaultLayout={defaultGroupLayout}
+      onLayoutChange={(next) =>
+        setPanelSizes(taskId, panelSizesFromGroupLayout(visiblePanels, next, layout.sizes))
+      }
+      className="flex min-h-0 min-w-0 flex-1"
+    >
       {visiblePanels.map((panel, index) => (
-        <div key={panel} className="flex min-h-0 min-w-0" style={{ flexBasis: `${layout.sizes[panel] ?? 100 / visiblePanels.length}%`, flexGrow: 0, flexShrink: 0, display: "flex" }}>
-          {index > 0 ? (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              className="w-[5px] shrink-0 cursor-col-resize transition-colors duration-100 hover:bg-[var(--accent-muted)]"
-              style={{ background: "var(--border-subtle)", backgroundClip: "padding-box", borderLeft: "2px solid transparent", borderRight: "2px solid transparent" }}
-              onPointerDown={(e) => onDividerDown(visiblePanels[index - 1]!, panel, e)}
-              onPointerMove={onDividerMove}
-              onPointerUp={onDividerUp}
-              onPointerCancel={onDividerUp}
-              onLostPointerCapture={onDividerUp}
-            />
-          ) : null}
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={PANEL_TITLES[panel]}>
-            <header
-              className="flex h-7 shrink-0 items-center border-b px-2.5 text-xs font-semibold tracking-wide uppercase"
-              style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)", background: "var(--bg-surface)" }}
-            >
-              {PANEL_TITLES[panel]}
-            </header>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">{renderPanel(panel)}</div>
-          </section>
-        </div>
+        <PanelHost key={panel} panel={panel} showSeparator={index > 0} renderPanel={renderPanel} />
       ))}
-    </div>
+    </Group>
+  );
+}
+
+function PanelHost({
+  panel,
+  showSeparator,
+  renderPanel,
+}: {
+  panel: PanelKind;
+  showSeparator: boolean;
+  renderPanel: (panel: PanelKind) => React.ReactNode;
+}) {
+  return (
+    <>
+      {showSeparator ? (
+        <Separator className="group/sep relative w-px shrink-0 cursor-col-resize outline-none" style={{ background: "var(--border-subtle)" }}>
+          <span className="absolute inset-y-0 -left-1 -right-1 transition-colors duration-100 group-hover/sep:bg-[var(--accent-muted)]" />
+        </Separator>
+      ) : null}
+      <Panel id={panel} minSize={PANEL_MIN_PCT[panel]} className="flex min-h-0 min-w-0 flex-col">
+        <header
+          className="flex h-7 shrink-0 items-center border-b px-2.5 text-xs font-semibold tracking-wide uppercase"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)", background: "var(--bg-surface)" }}
+        >
+          {PANEL_TITLES[panel]}
+        </header>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{renderPanel(panel)}</div>
+      </Panel>
+    </>
   );
 }

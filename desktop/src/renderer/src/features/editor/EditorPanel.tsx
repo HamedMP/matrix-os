@@ -4,7 +4,7 @@ import { Button, EmptyState } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useEditorTabs } from "./editor-tabs-store";
 
-const MonacoHost = lazy(() => import("./MonacoHost"));
+const CodeMirrorHost = lazy(() => import("./CodeMirrorHost"));
 
 // Stable empty reference: a selector returning a fresh [] every render would
 // fail the Object.is check and loop forever (React #185, CLAUDE.md rule).
@@ -81,7 +81,7 @@ export default function EditorPanel({ taskId }: { taskId: string }) {
             </div>
           }
         >
-          <MonacoHost key={activePath} taskId={taskId} path={activePath} />
+          <CodeMirrorHost key={activePath} taskId={taskId} path={activePath} />
         </Suspense>
       ) : null}
     </div>

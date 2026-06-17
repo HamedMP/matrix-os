@@ -2,14 +2,26 @@
 // task events, native notifications, dock badge.
 import { invoke, onEvent } from "./operator";
 import { KernelSocket, type KernelServerMessage } from "./kernel-socket";
+import type { ChatEvent } from "./chat";
 import {
   useBoard,
   type TaskEventCreated,
   type TaskEventUpdated,
 } from "../stores/board";
 import { useConnection } from "../stores/connection";
+import { useHermesChat } from "../stores/hermes-chat";
 import { useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
+
+const KERNEL_CHAT_EVENT_TYPES = new Set([
+  "kernel:init",
+  "kernel:text",
+  "kernel:tool_start",
+  "kernel:tool_end",
+  "kernel:result",
+  "kernel:error",
+  "kernel:aborted",
+]);
 
 let socket: KernelSocket | null = null;
 let cleanupKernel: (() => void) | null = null;
@@ -33,12 +45,22 @@ export function sendKernelMessage(msg: {
   text: string;
   sessionId?: string;
   requestId: string;
-}): void {
-  socket?.send({ type: "message", text: msg.text, requestId: msg.requestId, ...(msg.sessionId ? { sessionId: msg.sessionId } : {}) });
+}): boolean {
+  if (!socket) {
+    console.warn("[kernel-wiring] cannot send kernel message before socket is connected");
+    return false;
+  }
+  socket.send({ type: "message", text: msg.text, requestId: msg.requestId, ...(msg.sessionId ? { sessionId: msg.sessionId } : {}) });
+  return true;
 }
 
-export function abortKernelRequest(requestId: string): void {
-  socket?.send({ type: "abort", requestId });
+export function abortKernelRequest(requestId: string): boolean {
+  if (!socket) {
+    console.warn("[kernel-wiring] cannot abort kernel request before socket is connected");
+    return false;
+  }
+  socket.send({ type: "abort", requestId });
+  return true;
 }
 
 export function wireKernel(): () => void {
@@ -77,6 +99,10 @@ export function wireKernel(): () => void {
     }
     if (isTaskEvent(msg)) {
       useBoard.getState().applyTaskEvent(msg);
+    }
+    // Feed the OS-agent conversation (it filters to its own request id).
+    if (KERNEL_CHAT_EVENT_TYPES.has(msg.type)) {
+      useHermesChat.getState().ingest(msg as unknown as ChatEvent);
     }
   });
 

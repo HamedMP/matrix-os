@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import TabContent from "../../desktop/src/renderer/src/features/mission-control/TabContent";
-import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import TabContent from "@desktop/renderer/src/features/mission-control/TabContent";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useTabs } from "@desktop/renderer/src/stores/tabs";
 
 const taskWorkspaceMock = vi.hoisted(() =>
   vi.fn(({ taskId, projectSlug }: { taskId: string; projectSlug?: string }) => (
@@ -14,32 +15,27 @@ const taskWorkspaceMock = vi.hoisted(() =>
   )),
 );
 
-vi.mock("../../desktop/src/renderer/src/features/mission-control/HomeTab", () => ({
-  default: () => <button type="button">Home body</button>,
-}));
-vi.mock("../../desktop/src/renderer/src/features/board/Board", () => ({
+vi.mock("@desktop/renderer/src/features/board/Board", () => ({
   default: ({ projectSlug }: { projectSlug: string }) => (
     <button type="button">Board {projectSlug}</button>
   ),
 }));
-vi.mock("../../desktop/src/renderer/src/features/workspace/TaskWorkspace", () => ({
+vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({
   default: taskWorkspaceMock,
 }));
-vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => ({
+vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
   default: () => <button type="button">Terminal body</button>,
-}));
-vi.mock("../../desktop/src/renderer/src/features/threads/ThreadView", () => ({
-  default: () => <button type="button">Thread body</button>,
-}));
-vi.mock("../../desktop/src/renderer/src/features/settings/SettingsView", () => ({
-  default: () => <button type="button">Settings body</button>,
-}));
-vi.mock("../../desktop/src/renderer/src/features/threads/AgentsTab", () => ({
-  default: () => <button type="button">Agents body</button>,
 }));
 
 describe("TabContent", () => {
   beforeEach(() => {
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: null,
+    });
     useTabs.setState({ tabs: [], activeTabId: null });
   });
 
@@ -78,5 +74,16 @@ describe("TabContent", () => {
       expect.objectContaining({ taskId: "task_a", projectSlug: "alpha", active: true }),
       undefined,
     );
+  });
+
+  it("renders the apps tab through the tracked AppLauncher module", () => {
+    useTabs.setState({
+      activeTabId: "apps",
+      tabs: [{ id: "apps", kind: "apps", title: "Apps", closable: true }],
+    });
+
+    render(<TabContent />);
+
+    expect(screen.getByRole("heading", { name: /^(Apps|Loading apps)$/ })).toBeTruthy();
   });
 });

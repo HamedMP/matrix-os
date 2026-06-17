@@ -1,7 +1,85 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleMenuNavigate } from "../../desktop/src/renderer/src/features/mission-control/shortcuts";
-import { useBoard } from "../../desktop/src/renderer/src/stores/board";
-import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import {
+  handleCycleTabShortcut,
+  handleCloseTabShortcut,
+  handleMenuNavigate,
+} from "@desktop/renderer/src/features/mission-control/shortcuts";
+import { useBoard } from "@desktop/renderer/src/stores/board";
+import { useTabs } from "@desktop/renderer/src/stores/tabs";
+
+describe("handleCloseTabShortcut", () => {
+  it("prevents the native window close even when the active tab is not closable", () => {
+    const preventDefault = vi.fn();
+    const closeTab = vi.fn();
+
+    handleCloseTabShortcut(
+      { preventDefault },
+      {
+        activeTabId: "home",
+        tabs: [{ id: "home", closable: false }],
+        closeTab,
+      },
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(closeTab).not.toHaveBeenCalled();
+  });
+
+  it("prevents default and closes the active tab when it is closable", () => {
+    const preventDefault = vi.fn();
+    const closeTab = vi.fn();
+
+    handleCloseTabShortcut(
+      { preventDefault },
+      {
+        activeTabId: "task",
+        tabs: [{ id: "task", closable: true }],
+        closeTab,
+      },
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(closeTab).toHaveBeenCalledWith("task");
+  });
+});
+
+describe("handleCycleTabShortcut", () => {
+  it("focuses the first tab on forward cycle when no tab is active", () => {
+    const preventDefault = vi.fn();
+    const focusTab = vi.fn();
+
+    handleCycleTabShortcut(
+      { preventDefault },
+      {
+        activeTabId: null,
+        tabs: [{ id: "one" }, { id: "two" }],
+        focusTab,
+      },
+      1,
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(focusTab).toHaveBeenCalledWith("one");
+  });
+
+  it("focuses the last tab on reverse cycle when no tab is active", () => {
+    const preventDefault = vi.fn();
+    const focusTab = vi.fn();
+
+    handleCycleTabShortcut(
+      { preventDefault },
+      {
+        activeTabId: null,
+        tabs: [{ id: "one" }, { id: "two" }],
+        focusTab,
+      },
+      -1,
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(focusTab).toHaveBeenCalledWith("two");
+  });
+});
 
 describe("handleMenuNavigate", () => {
   beforeEach(() => {

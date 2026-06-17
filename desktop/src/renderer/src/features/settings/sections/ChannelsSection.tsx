@@ -1,0 +1,53 @@
+import { useEffect, useState } from "react";
+import { useConnection } from "../../../stores/connection";
+import { Card, Empty, SectionHeader } from "./section-kit";
+import { StatusDot } from "../../../design/primitives";
+import { parseChannelStatusResponse, type ChannelStatus } from "./channel-status";
+
+export default function ChannelsSection() {
+  const api = useConnection((s) => s.api);
+  const [state, setState] = useState<{ channels: ChannelStatus[]; error: boolean; loading: boolean }>({
+    channels: [],
+    error: false,
+    loading: Boolean(api),
+  });
+
+  useEffect(() => {
+    if (!api) {
+      setState((current) => ({ ...current, loading: false }));
+      return;
+    }
+    let cancelled = false;
+    setState((current) => ({ ...current, error: false, loading: true }));
+    api
+      .get<unknown>("/api/channels/status")
+      .then((res) => {
+        if (cancelled) return;
+        setState({ channels: parseChannelStatusResponse(res), error: false, loading: false });
+      })
+      .catch((err: unknown) => {
+        console.warn("[settings] channels load failed:", err instanceof Error ? err.message : String(err));
+        if (!cancelled) setState((current) => ({ ...current, error: true, loading: false }));
+      });
+    return () => { cancelled = true; };
+  }, [api]);
+
+  return (
+    <>
+      <SectionHeader title="Channels" description="Messaging surfaces connected to your agent." />
+      <Card>
+        {state.loading ? <Empty text="Loading channels..." /> : state.error ? <Empty text="Channels unavailable." /> : state.channels.length === 0 ? (
+          <Empty text="No channels configured yet." />
+        ) : (
+          state.channels.map((c) => (
+            <div key={c.name} className="flex items-center gap-2 text-sm">
+              <StatusDot color={c.connected ? "var(--status-complete)" : "var(--status-todo)"} />
+              <span className="flex-1 capitalize" style={{ color: "var(--text-primary)" }}>{c.name}</span>
+              <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>{c.connected ? "Connected" : "Off"}</span>
+            </div>
+          ))
+        )}
+      </Card>
+    </>
+  );
+}

@@ -7,10 +7,13 @@ interface UiState {
   composerOpen: boolean;
   paletteOpen: boolean;
   quickOpenOpen: boolean;
+  sidebarCollapsed: boolean;
   setCreateTaskOpen: (open: boolean) => void;
   setComposerOpen: (open: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   setQuickOpenOpen: (open: boolean) => void;
+  toggleSidebar: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
 }
 
 export const useUi = create<UiState>()((set) => ({
@@ -18,8 +21,11 @@ export const useUi = create<UiState>()((set) => ({
   composerOpen: false,
   paletteOpen: false,
   quickOpenOpen: false,
+  sidebarCollapsed: false,
   setCreateTaskOpen: (open) => set({ createTaskOpen: open }),
   setComposerOpen: (open) => set({ composerOpen: open }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setQuickOpenOpen: (open) => set({ quickOpenOpen: open }),
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
 }));

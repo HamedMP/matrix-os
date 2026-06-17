@@ -4,6 +4,18 @@ import { useBoard } from "../../stores/board";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 
+interface CloseTabShortcutState {
+  activeTabId: string | null;
+  tabs: Array<{ id: string; closable: boolean }>;
+  closeTab(id: string): void;
+}
+
+interface CycleTabShortcutState {
+  activeTabId: string | null;
+  tabs: Array<{ id: string }>;
+  focusTab(id: string): void;
+}
+
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
@@ -35,28 +47,85 @@ export function handleMenuNavigate(kind: string): void {
   useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
 }
 
+export function handleCloseTabShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+  tabs: CloseTabShortcutState,
+): void {
+  event.preventDefault();
+  if (!tabs.activeTabId) return;
+  const tab = tabs.tabs.find((t) => t.id === tabs.activeTabId);
+  if (tab?.closable) {
+    tabs.closeTab(tabs.activeTabId);
+  }
+}
+
+export function handleCycleTabShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+  tabs: CycleTabShortcutState,
+  direction: 1 | -1,
+): void {
+  if (tabs.tabs.length <= 1) return;
+  event.preventDefault();
+  const idx = tabs.tabs.findIndex((t) => t.id === tabs.activeTabId);
+  const nextIndex = idx === -1
+    ? direction === 1 ? 0 : tabs.tabs.length - 1
+    : (idx + direction + tabs.tabs.length) % tabs.tabs.length;
+  const next = tabs.tabs[nextIndex];
+  if (next) tabs.focusTab(next.id);
+}
+
 export function useGlobalShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const ui = useUi.getState();
+      const tabs = useTabs.getState();
       const meta = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
 
-      if (meta && e.key.toLowerCase() === "k") {
+      if (meta && key === "k") {
         e.preventDefault();
         ui.setPaletteOpen(!ui.paletteOpen);
         return;
       }
-      if (meta && e.key.toLowerCase() === "j") {
+      if (meta && key === "j") {
         e.preventDefault();
         ui.setComposerOpen(!ui.composerOpen);
         return;
       }
-      if (meta && e.key.toLowerCase() === "p") {
+      if (meta && key === "p") {
         e.preventDefault();
         ui.setQuickOpenOpen(!ui.quickOpenOpen);
         return;
       }
-      if (!meta && e.key.toLowerCase() === "c" && !isTypingTarget(e.target)) {
+      // New chat with the OS agent.
+      if (meta && e.shiftKey && key === "o") {
+        e.preventDefault();
+        tabs.openTab({ kind: "chat", title: "Hermes", closable: false });
+        return;
+      }
+      // New tab → Home.
+      if (meta && key === "t") {
+        e.preventDefault();
+        tabs.openTab({ kind: "home", title: "Home", closable: false });
+        return;
+      }
+      // Close the active tab.
+      if (meta && key === "w") {
+        handleCloseTabShortcut(e, tabs);
+        return;
+      }
+      // Toggle sidebar.
+      if (meta && e.key === "\\") {
+        e.preventDefault();
+        ui.toggleSidebar();
+        return;
+      }
+      // Cycle tabs with Ctrl+Tab / Ctrl+Shift+Tab.
+      if (e.ctrlKey && e.key === "Tab" && tabs.tabs.length > 1) {
+        handleCycleTabShortcut(e, tabs, e.shiftKey ? -1 : 1);
+        return;
+      }
+      if (!meta && key === "c" && !isTypingTarget(e.target)) {
         if (ui.paletteOpen || ui.composerOpen || ui.createTaskOpen) return;
         e.preventDefault();
         ui.setCreateTaskOpen(true);
