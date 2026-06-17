@@ -120,7 +120,7 @@ describe("TerminalsTab", () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /new session/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /new session/i })[0]!);
 
     expect(await screen.findByText("Something went wrong. Please try again.")).toBeTruthy();
   });
