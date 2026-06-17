@@ -3,6 +3,7 @@ import {
   EmbedManager,
   MAX_TOTAL_EMBEDS,
   type Bounds,
+  type EmbedManagerOptions,
   type EmbedViewLike,
 } from "@desktop/main/embeds/embed-manager";
 
@@ -12,10 +13,15 @@ class FakeView implements EmbedViewLike {
   events: string[] = [];
   loadedUrls: string[] = [];
   bounds: Bounds | null = null;
-  failNextLoad: boolean;
+  failNextLoadError: unknown;
+  onState: (state: "loading" | "ready" | "failed") => void;
 
-  constructor(failNextLoad = false) {
-    this.failNextLoad = failNextLoad;
+  constructor(
+    failNextLoadError: unknown = null,
+    onState: (state: "loading" | "ready" | "failed") => void = () => undefined,
+  ) {
+    this.failNextLoadError = failNextLoadError;
+    this.onState = onState;
   }
 
   setBounds(bounds: Bounds): void {
@@ -26,9 +32,10 @@ class FakeView implements EmbedViewLike {
   async loadUrl(url: string): Promise<void> {
     this.events.push(`load:${url}`);
     this.loadedUrls.push(url);
-    if (this.failNextLoad) {
-      this.failNextLoad = false;
-      throw new Error("load failed");
+    if (this.failNextLoadError) {
+      const err = this.failNextLoadError;
+      this.failNextLoadError = null;
+      throw err;
     }
   }
 
@@ -43,15 +50,19 @@ class FakeView implements EmbedViewLike {
   destroy(): void {
     this.events.push("destroy");
   }
+
+  emit(state: "loading" | "ready" | "failed"): void {
+    this.onState(state);
+  }
 }
 
 function makeManager(maxLive?: number) {
   const views: Array<{ partition: string; view: FakeView }> = [];
-  let failNextCreatedLoad = false;
+  let nextCreatedLoadError: unknown = null;
   const manager = new EmbedManager({
-    createView: ({ partition }) => {
-      const view = new FakeView(failNextCreatedLoad);
-      failNextCreatedLoad = false;
+    createView: ({ partition, onState }) => {
+      const view = new FakeView(nextCreatedLoadError, onState);
+      nextCreatedLoadError = null;
       views.push({ partition, view });
       return view;
     },
@@ -62,7 +73,10 @@ function makeManager(maxLive?: number) {
     manager,
     views,
     failNextCreatedLoad: () => {
-      failNextCreatedLoad = true;
+      nextCreatedLoadError = new Error("load failed");
+    },
+    failNextCreatedLoadWith: (err: unknown) => {
+      nextCreatedLoadError = err;
     },
   };
 }
@@ -76,6 +90,26 @@ afterEach(() => {
 });
 
 describe("EmbedManager", () => {
+  it("requires exactly one allowed origin source", () => {
+    const createView: EmbedManagerOptions["createView"] = ({ onState }) => new FakeView(null, onState);
+
+    expect(
+      () =>
+        new EmbedManager({
+          createView,
+        } as EmbedManagerOptions),
+    ).toThrow(/exactly one allowed origin source/);
+
+    expect(
+      () =>
+        new EmbedManager({
+          createView,
+          allowedOrigins: ["https://gw.test"],
+          getAllowedOrigins: () => ["https://gw.test"],
+        } as unknown as EmbedManagerOptions),
+    ).toThrow(/exactly one allowed origin source/);
+  });
+
   it("names partitions persist:hosted-shell and persist:app-<slug>", () => {
     const { manager, views } = makeManager();
     manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
@@ -102,6 +136,33 @@ describe("EmbedManager", () => {
     expect(views).toHaveLength(0);
   });
 
+  it("uses the latest allowed origins when opening after a runtime switch", () => {
+    const views: Array<{ partition: string; view: FakeView }> = [];
+    let gatewayOrigin = "https://first-gw.test";
+    const manager = new EmbedManager({
+      getAllowedOrigins: () => [gatewayOrigin],
+      createView: ({ partition, onState }) => {
+        const view = new FakeView(null, onState);
+        views.push({ partition, view });
+        return view;
+      },
+    });
+
+    const first = manager.open("hosted-shell", null, BOUNDS, "https://first-gw.test/canvas");
+    manager.closeAll();
+    gatewayOrigin = "https://second-gw.test";
+    const second = manager.open("hosted-shell", null, BOUNDS, "https://second-gw.test/canvas");
+
+    expect(first).not.toBe(second);
+    expect(views.map((entry) => entry.view.loadedUrls)).toEqual([
+      ["https://first-gw.test/canvas"],
+      ["https://second-gw.test/canvas"],
+    ]);
+    expect(() =>
+      manager.open("hosted-shell", null, BOUNDS, "https://first-gw.test/canvas"),
+    ).toThrow(/not allowed/);
+  });
+
   it("attaches, sizes, and loads new embeds", () => {
     const { manager, views } = makeManager();
     const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
@@ -113,6 +174,19 @@ describe("EmbedManager", () => {
     expect(view?.events).toContain("attach");
     expect(view?.loadedUrls).toEqual(["https://gw.test/canvas"]);
     expect(view?.bounds).toEqual(BOUNDS);
+  });
+
+  it("propagates adapter lifecycle states to the caller", () => {
+    const { manager, views } = makeManager();
+    const states: string[] = [];
+    manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas", {
+      onState: (state) => states.push(state),
+    });
+
+    views[0]?.view.emit("loading");
+    views[0]?.view.emit("ready");
+
+    expect(states).toEqual(["loading", "ready"]);
   });
 
   it("returns unique embed ids", () => {
@@ -169,11 +243,115 @@ describe("EmbedManager", () => {
     failNextCreatedLoad();
     const id = manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/");
     await flush();
+    expect(views[0]?.view.events).toContain("detach");
     expect(manager.focus(id)).toBe(true);
     expect(views[0]?.view.loadedUrls).toEqual([
       "https://gw.test/apps/notes/",
       "https://gw.test/apps/notes/",
     ]);
+  });
+
+  it("detaches the native view when a live embed fails so the failed overlay is visible", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const states: string[] = [];
+    const { manager, views, failNextCreatedLoad } = makeManager();
+    failNextCreatedLoad();
+
+    manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/", {
+      onState: (state) => states.push(state),
+    });
+    await flush();
+
+    expect(states).toEqual(["failed"]);
+    expect(views[0]?.view.events).toContain("detach");
+    expect(manager.liveCount).toBe(0);
+  });
+
+  it("reload emits loading and reloads the current url", async () => {
+    const { manager, views } = makeManager();
+    const states: string[] = [];
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/", {
+      onState: (state) => states.push(state),
+    });
+
+    expect(manager.reload(id)).toBe(true);
+    await flush();
+
+    expect(states).toEqual(["loading"]);
+    expect(views[0]?.view.loadedUrls).toEqual(["https://gw.test/", "https://gw.test/"]);
+  });
+
+  it("ignores stale loadUrl failures after a newer reload starts", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const states: string[] = [];
+    let rejectFirst!: (err: unknown) => void;
+    let loadCount = 0;
+    const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
+      createView: () => ({
+        setBounds: () => undefined,
+        loadUrl: async () => {
+          loadCount += 1;
+          if (loadCount === 1) {
+            return new Promise<void>((_resolve, reject) => {
+              rejectFirst = reject;
+            });
+          }
+        },
+        attach: () => undefined,
+        detach: () => undefined,
+        destroy: () => undefined,
+      }),
+    });
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/", {
+      onState: (state) => states.push(state),
+    });
+
+    expect(manager.reload(id)).toBe(true);
+    rejectFirst(new Error("stale navigation failed"));
+    await flush();
+
+    expect(states).toEqual(["loading"]);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it("does not mark aborted loadURL redirects as failed", async () => {
+    const { manager, views, failNextCreatedLoadWith } = makeManager();
+    const states: string[] = [];
+    failNextCreatedLoadWith(Object.assign(new Error("ERR_ABORTED"), { errno: -3 }));
+    const id = manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/", {
+      onState: (state) => states.push(state),
+    });
+    await flush();
+    expect(states).toEqual([]);
+
+    expect(manager.focus(id)).toBe(true);
+    expect(views[0]?.view.loadedUrls).toEqual(["https://gw.test/apps/notes/"]);
+  });
+
+  it("emits one failed state when the adapter reports failure and loadUrl rejects", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const states: string[] = [];
+    const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
+      createView: ({ onState }) => ({
+        setBounds: () => undefined,
+        loadUrl: async () => {
+          onState("failed");
+          throw new Error("main frame failed");
+        },
+        attach: () => undefined,
+        detach: () => undefined,
+        destroy: () => undefined,
+      }),
+    });
+
+    manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/", {
+      onState: (state) => states.push(state),
+    });
+    await flush();
+
+    expect(states).toEqual(["failed"]);
   });
 
   it("updates bounds for live embeds", () => {

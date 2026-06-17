@@ -1,0 +1,83 @@
+// Electron WebContentsView adapter implementing EmbedViewLike. Each embed runs
+// in its own isolated partition with no preload/IPC exposure — remote content
+// can never reach the trusted core (FR-064). Navigation is gated by an origin
+// allowlist; external links open in the system browser.
+import { WebContentsView, shell, type BaseWindow } from "electron";
+import { isNavigationAllowed } from "./origin-policy";
+import type { Bounds, EmbedViewLike } from "./embed-manager";
+
+export function createWebContentsView(options: {
+  window: BaseWindow;
+  partition: string;
+  allowedOrigins: string[];
+  onState: (state: "loading" | "ready" | "failed") => void;
+}): EmbedViewLike {
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: options.partition,
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const contents = view.webContents;
+
+  // Block any navigation outside the allowlist; route external links to the
+  // system browser.
+  const blockExternalNavigation = (event: unknown, maybeUrl: unknown) => {
+    const url = typeof maybeUrl === "string" ? maybeUrl : typeof event === "string" ? event : null;
+    const preventDefault =
+      event && typeof event === "object" && "preventDefault" in event
+        ? (event as { preventDefault?: unknown }).preventDefault
+        : null;
+    if (!url || typeof preventDefault !== "function") return;
+    if (!isNavigationAllowed(url, options.allowedOrigins)) {
+      preventDefault.call(event);
+      if (url.startsWith("https://")) void shell.openExternal(url);
+    }
+  };
+  contents.on("will-navigate", blockExternalNavigation);
+  contents.on("will-redirect", blockExternalNavigation);
+  contents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https://")) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  contents.on("did-start-loading", () => options.onState("loading"));
+  contents.on("did-finish-load", () => options.onState("ready"));
+  contents.on("did-fail-load", (_e, errorCode, _description, _validatedUrl, isMainFrame) => {
+    if (isMainFrame === false) return;
+    // -3 is ERR_ABORTED (e.g. a redirect); not a real failure.
+    if (errorCode !== -3) options.onState("failed");
+  });
+
+  let attached = false;
+
+  return {
+    setBounds(bounds: Bounds) {
+      view.setBounds(bounds);
+    },
+    async loadUrl(url: string) {
+      await contents.loadURL(url);
+    },
+    attach() {
+      if (attached) return;
+      options.window.contentView.addChildView(view);
+      attached = true;
+    },
+    detach() {
+      if (!attached) return;
+      options.window.contentView.removeChildView(view);
+      attached = false;
+    },
+    destroy() {
+      if (attached) {
+        options.window.contentView.removeChildView(view);
+        attached = false;
+      }
+      // WebContentsView is GC'd once detached and dereferenced; closing the
+      // contents releases the renderer process promptly.
+      if (!contents.isDestroyed()) contents.close();
+    },
+  };
+}

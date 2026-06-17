@@ -74,6 +74,13 @@ describe("IPC contract", () => {
     ).toBe(false);
   });
 
+  it("requires embed:open to return the initial embed state", () => {
+    const schema = INVOKE_CHANNELS["embed:open"].response;
+    expect(schema.safeParse({ embedId: "e1", state: "loading" }).success).toBe(true);
+    expect(schema.safeParse({ embedId: "e1" }).success).toBe(false);
+    expect(schema.safeParse({ embedId: "e1", state: "auth-required", token: "secret" }).success).toBe(false);
+  });
+
   it("caps state:set values at 64KB and only allows known keys", () => {
     const schema = INVOKE_CHANNELS["state:set"].request;
     expect(schema.safeParse({ key: "appearance", value: { theme: "dark" } }).success).toBe(true);

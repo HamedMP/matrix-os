@@ -42,6 +42,10 @@ export class LaunchTokenCache {
     }
   }
 
+  delete(slug: string): void {
+    this.entries.delete(slug);
+  }
+
   clear(): void {
     this.entries.clear();
   }

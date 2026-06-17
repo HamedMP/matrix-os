@@ -3,6 +3,7 @@
 // and logged with detail on the trusted side only.
 import { INVOKE_CHANNELS, type InvokeChannel, type InvokeRequest, type InvokeResponse } from "../../shared/ipc-contract";
 import type { AuthService } from "../auth/auth-service";
+import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 
 interface IpcMainLike {
@@ -15,6 +16,7 @@ interface IpcMainLike {
 export interface HandlerContext {
   auth: AuthService;
   store: LocalStore;
+  embeds: EmbedService;
   openExternal: (url: string) => Promise<void>;
   setBadgeCount: (count: number) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
@@ -114,13 +116,32 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
-  // Embeds land in Phase 7 (US5); until then the channels exist but refuse.
-  handle("embed:open", () => {
-    throw new Error("embed unavailable");
+  handle("embed:open", async ({ kind, slug, bounds }) => {
+    try {
+      return await ctx.embeds.open({ kind, slug, bounds });
+    } catch (err: unknown) {
+      console.warn(
+        "[ipc] embed:open failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      throw new Error("embed unavailable");
+    }
   });
-  handle("embed:set-bounds", () => ({ ok: false }));
-  handle("embed:close", () => ({ ok: false }));
-  handle("embed:retry-auth", () => ({ ok: false }));
+  handle("embed:set-bounds", ({ embedId, bounds }) => ({
+    ok: ctx.embeds.setBounds(embedId, bounds),
+  }));
+  handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));
+  handle("embed:retry-auth", async ({ embedId }) => {
+    try {
+      return { ok: await ctx.embeds.retryAuth(embedId) };
+    } catch (err: unknown) {
+      console.warn(
+        "[ipc] embed:retry-auth failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return { ok: false };
+    }
+  });
 
   handle("update:check", () => ({ status: "disabled" as const }));
 }

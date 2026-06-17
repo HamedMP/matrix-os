@@ -77,8 +77,9 @@ describe("registerIpcHandlers", () => {
     );
   });
 
-  it("returns the public embed unavailable error for the phase stub", async () => {
+  it("returns the public embed unavailable error when embed open fails", async () => {
     const harness = makeHarness();
+    vi.mocked(harness.ctx.embeds.open).mockRejectedValue(new Error("native view unavailable"));
 
     await expect(
       harness.invoke("embed:open", {
@@ -87,5 +88,15 @@ describe("registerIpcHandlers", () => {
         bounds: { x: 0, y: 0, width: 640, height: 480 },
       }),
     ).rejects.toThrow("embed unavailable");
+  });
+
+  it("returns a failed retry-auth result when embed retry throws", async () => {
+    const harness = makeHarness();
+    vi.mocked(harness.ctx.embeds.retryAuth).mockRejectedValue(new Error("handoff unavailable"));
+
+    await expect(harness.invoke("embed:retry-auth", { embedId: "embed-1" })).resolves.toEqual({
+      ok: false,
+    });
+    expect(console.warn).toHaveBeenCalledWith("[ipc] embed:retry-auth failed:", "handoff unavailable");
   });
 });

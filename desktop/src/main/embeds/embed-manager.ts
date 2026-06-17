@@ -22,15 +22,19 @@ export interface EmbedViewLike {
 
 export type EmbedKind = "hosted-shell" | "app";
 
-export interface EmbedManagerOptions {
-  createView: (opts: { partition: string }) => EmbedViewLike;
-  allowedOrigins: string[];
+type EmbedOriginOptions =
+  | { allowedOrigins: string[]; getAllowedOrigins?: never }
+  | { allowedOrigins?: never; getAllowedOrigins: () => string[] };
+
+export type EmbedManagerOptions = {
+  createView: (opts: { partition: string; onState: (state: "loading" | "ready" | "failed") => void }) => EmbedViewLike;
   maxLive?: number;
-}
+} & EmbedOriginOptions;
 
 export const MAX_TOTAL_EMBEDS = 12;
 const DEFAULT_MAX_LIVE = 3;
 const SAFE_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+const ERR_ABORTED = -3;
 
 interface EmbedRecord {
   id: string;
@@ -38,19 +42,36 @@ interface EmbedRecord {
   view: EmbedViewLike;
   live: boolean;
   loadFailed: boolean;
+  loadGeneration: number;
   lastUsed: number;
+  onState: (state: "loading" | "ready" | "failed") => void;
+}
+
+function isAbortedLoadError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const maybe = err as { code?: unknown; errno?: unknown; message?: unknown };
+  return (
+    maybe.errno === ERR_ABORTED ||
+    maybe.code === "ERR_ABORTED" ||
+    (typeof maybe.message === "string" && maybe.message.includes("ERR_ABORTED"))
+  );
 }
 
 export class EmbedManager {
   private readonly records = new Map<string, EmbedRecord>();
   private readonly createView: EmbedManagerOptions["createView"];
-  private readonly allowedOrigins: string[];
+  private readonly getAllowedOrigins: () => string[];
   private readonly maxLive: number;
   private tick = 0;
 
   constructor(options: EmbedManagerOptions) {
     this.createView = options.createView;
-    this.allowedOrigins = options.allowedOrigins;
+    const dynamicOrigins = options.getAllowedOrigins;
+    const staticOrigins = options.allowedOrigins;
+    if ((dynamicOrigins === undefined) === (staticOrigins === undefined)) {
+      throw new Error("EmbedManager requires exactly one allowed origin source");
+    }
+    this.getAllowedOrigins = dynamicOrigins ?? (() => staticOrigins!);
     this.maxLive = options.maxLive ?? DEFAULT_MAX_LIVE;
     if (this.maxLive > MAX_TOTAL_EMBEDS) {
       throw new Error(
@@ -59,8 +80,14 @@ export class EmbedManager {
     }
   }
 
-  open(kind: EmbedKind, slug: string | null, bounds: Bounds, url: string): string {
-    if (!isNavigationAllowed(url, this.allowedOrigins)) {
+  open(
+    kind: EmbedKind,
+    slug: string | null,
+    bounds: Bounds,
+    url: string,
+    options?: { id?: string; onState?: (state: "loading" | "ready" | "failed") => void },
+  ): string {
+    if (!isNavigationAllowed(url, this.getAllowedOrigins())) {
       throw new Error("embed URL is not allowed");
     }
 
@@ -69,20 +96,37 @@ export class EmbedManager {
         ? "persist:hosted-shell"
         : this.appPartition(slug);
 
-    const id = randomUUID();
-    const view = this.createView({ partition });
-    const record: EmbedRecord = {
+    const id = options?.id ?? randomUUID();
+    if (this.records.has(id)) throw new Error("embed id already exists");
+    const onState = options?.onState ?? (() => undefined);
+    let record: EmbedRecord | null = null;
+    const emitState = (state: "loading" | "ready" | "failed") => {
+      if (state === "loading" && record) record.loadFailed = false;
+      if (state === "failed" && record) {
+        if (record.loadFailed) return;
+        record.loadFailed = true;
+        if (record.live) {
+          record.view.detach();
+          record.live = false;
+        }
+      }
+      onState(state);
+    };
+    const view = this.createView({ partition, onState: emitState });
+    record = {
       id,
       url,
       view,
       live: true,
       loadFailed: false,
+      loadGeneration: 0,
       lastUsed: ++this.tick,
+      onState: emitState,
     };
     view.attach();
     view.setBounds(bounds);
-    this.loadInto(record);
     this.records.set(id, record);
+    this.loadInto(record);
 
     this.enforceMaxLive();
     this.enforceTotalCap();
@@ -108,6 +152,21 @@ export class EmbedManager {
       record.loadFailed = false;
       this.loadInto(record);
     }
+    this.enforceMaxLive();
+    return true;
+  }
+
+  reload(embedId: string): boolean {
+    const record = this.records.get(embedId);
+    if (!record) return false;
+    record.lastUsed = ++this.tick;
+    if (!record.live) {
+      record.view.attach();
+      record.live = true;
+    }
+    record.loadFailed = false;
+    record.onState("loading");
+    this.loadInto(record);
     this.enforceMaxLive();
     return true;
   }
@@ -143,12 +202,15 @@ export class EmbedManager {
   }
 
   private loadInto(record: EmbedRecord): void {
+    const generation = ++record.loadGeneration;
     void record.view.loadUrl(record.url).catch((err: unknown) => {
+      if (this.records.get(record.id) !== record || record.loadGeneration !== generation) return;
+      if (isAbortedLoadError(err)) return;
       console.warn(
         "[embed-manager] embed load failed:",
         err instanceof Error ? err.message : String(err),
       );
-      record.loadFailed = true;
+      record.onState("failed");
     });
   }
 

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
 import { installHeaderInjection } from "./auth/header-injection";
+import { EmbedService } from "./embeds/embed-service";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
@@ -130,9 +131,17 @@ if (!gotLock) {
         () => auth.getGatewayOrigin(),
       );
 
+      const embeds = new EmbedService({
+        getWindow: () => mainWindow,
+        getGatewayOrigin: () => auth.getGatewayOrigin(),
+        getToken: () => auth.getToken(),
+        emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
+      });
+
       registerIpcHandlers(ipcMain, {
         auth,
         store,
+        embeds,
         openExternal: openExternalHttps,
         setBadgeCount: (count) => {
           app.setBadgeCount(count);
@@ -147,7 +156,12 @@ if (!gotLock) {
           });
           notification.show();
         },
-        onRuntimeChanged: (slot) => sendEvent("runtime:changed", { slot }),
+        onRuntimeChanged: (slot) => {
+          // Switching runtime invalidates embed cookies/tokens; tear them down so
+          // they re-handshake against the new slot (Integration Wiring rule).
+          embeds.closeAll();
+          sendEvent("runtime:changed", { slot });
+        },
       });
 
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
