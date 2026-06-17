@@ -91,6 +91,11 @@ if [ -z "${R2_ENDPOINT:-}" ]; then
   R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 fi
 PLATFORM_PUBLIC_URL="${PLATFORM_PUBLIC_URL:-https://app.matrix-os.com}"
+INCREMENTAL_UPLOAD_CONCURRENCY="${HOST_BUNDLE_INCREMENTAL_UPLOAD_CONCURRENCY:-16}"
+if ! [[ "$INCREMENTAL_UPLOAD_CONCURRENCY" =~ ^[0-9]+$ ]] || [ "$INCREMENTAL_UPLOAD_CONCURRENCY" -lt 1 ] || [ "$INCREMENTAL_UPLOAD_CONCURRENCY" -gt 64 ]; then
+  echo "HOST_BUNDLE_INCREMENTAL_UPLOAD_CONCURRENCY must be an integer from 1 to 64" >&2
+  exit 1
+fi
 
 SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
 SIZE="$(stat --printf='%s' "$BUNDLE")"
@@ -223,23 +228,6 @@ verify_existing_checksum() {
   fi
 }
 
-verify_existing_content_object() {
-  local key="$1"
-  local expected_size="$2"
-  local expected_sha256="$3"
-  local existing_size existing_sha256
-  existing_size="$(object_size "$key")"
-  if [ "$existing_size" != "$expected_size" ]; then
-    echo "ERROR: existing immutable object size mismatch for s3://$R2_BUCKET/$key" >&2
-    exit 1
-  fi
-  existing_sha256="$(bundle_object_sha256 "$key")"
-  if [ "$existing_sha256" != "$expected_sha256" ]; then
-    echo "ERROR: existing immutable object content mismatch for s3://$R2_BUCKET/$key" >&2
-    exit 1
-  fi
-}
-
 upload_immutable_object() {
   local source_file="$1"
   local key="$2"
@@ -259,6 +247,53 @@ upload_immutable_object() {
     --metadata "sha256=$metadata_sha256" \
     --if-none-match '*' \
     "${AWS_ARGS[@]}" >/dev/null
+}
+
+upload_content_addressed_object() {
+  local source_file="$1"
+  local key="$2"
+  local content_type="$3"
+  local metadata_sha256="$4"
+  local error_file
+  error_file="$(mktemp)"
+
+  if aws s3api put-object \
+    --bucket "$R2_BUCKET" \
+    --key "$key" \
+    --body "$source_file" \
+    --content-type "$content_type" \
+    --metadata "sha256=$metadata_sha256" \
+    --if-none-match '*' \
+    "${AWS_ARGS[@]}" > /dev/null 2>"$error_file"; then
+    rm -f "$error_file"
+    return 0
+  fi
+
+  local status=$?
+  if grep -Eq 'PreconditionFailed|Precondition Failed|pre-condition|status code: 412|\(412\)' "$error_file"; then
+    rm -f "$error_file"
+    return 0
+  fi
+
+  cat "$error_file" >&2
+  rm -f "$error_file"
+  return "$status"
+}
+
+wait_for_incremental_upload_slot() {
+  while [ "$(jobs -pr | wc -l)" -ge "$INCREMENTAL_UPLOAD_CONCURRENCY" ]; do
+    wait -n
+  done
+}
+
+wait_for_incremental_uploads() {
+  local failed=0
+  while [ "$(jobs -pr | wc -l)" -gt 0 ]; do
+    if ! wait -n; then
+      failed=1
+    fi
+  done
+  return "$failed"
 }
 
 if [ "$DRY_RUN" = "1" ]; then
@@ -305,7 +340,8 @@ if object_exists "$CHECKSUM_KEY"; then
 else
   upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"
 fi
-echo "  Uploading incremental file objects..."
+echo "  Uploading incremental file objects with concurrency $INCREMENTAL_UPLOAD_CONCURRENCY..."
+incremental_upload_failed=0
 while IFS=$'\t' read -r object_sha256 object_size object_key; do
   object_file="$DIST_DIR/objects/sha256/$object_sha256"
   if [ ! -f "$object_file" ]; then
@@ -322,12 +358,18 @@ while IFS=$'\t' read -r object_sha256 object_size object_key; do
     echo "ERROR: incremental object checksum mismatch for $object_file" >&2
     exit 1
   fi
-  if object_exists "$object_key"; then
-    verify_existing_content_object "$object_key" "$object_size" "$object_sha256"
-  else
-    upload_immutable_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256"
+  if ! wait_for_incremental_upload_slot; then
+    incremental_upload_failed=1
   fi
+  upload_content_addressed_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256" &
 done < "$INCREMENTAL_OBJECTS_FILE"
+if ! wait_for_incremental_uploads; then
+  incremental_upload_failed=1
+fi
+if [ "$incremental_upload_failed" -ne 0 ]; then
+  echo "ERROR: one or more incremental file object uploads failed" >&2
+  exit 1
+fi
 if object_exists "$INCREMENTAL_MANIFEST_KEY"; then
   echo "  Verifying existing immutable incremental manifest..."
   verify_existing_incremental_manifest
