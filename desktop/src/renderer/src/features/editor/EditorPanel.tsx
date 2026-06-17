@@ -92,9 +92,11 @@ export function useEditorOpenFile(taskId: string) {
 export function ConflictBar({
   onOverwrite,
   onReload,
+  busy = false,
 }: {
   onOverwrite: () => void;
   onReload: () => void;
+  busy?: boolean;
 }) {
   return (
     <div
@@ -105,10 +107,10 @@ export function ConflictBar({
         This file changed on your computer since you opened it.
       </span>
       <div className="flex gap-2">
-        <Button variant="subtle" onClick={onReload}>
+        <Button variant="subtle" disabled={busy} onClick={onReload}>
           Reload
         </Button>
-        <Button variant="danger" onClick={onOverwrite}>
+        <Button variant="danger" disabled={busy} onClick={onOverwrite}>
           Overwrite
         </Button>
       </div>

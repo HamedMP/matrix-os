@@ -22,6 +22,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const doSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   useEffect(() => {
@@ -91,8 +92,9 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
   async function doSave(): Promise<void> {
     const editor = editorRef.current;
     const file = fileRef.current;
-    if (!api || !editor || !file || saving) return;
+    if (!api || !editor || !file || saveInFlightRef.current) return;
     const content = editor.getValue();
+    saveInFlightRef.current = true;
     setSaving(true);
     try {
       const result = await saveFile(createFilesApi(api), file, content);
@@ -112,6 +114,7 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
       console.warn("[editor] save failed:", err instanceof Error ? err.message : String(err));
       setSaveError(toUserMessage(err));
     } finally {
+      saveInFlightRef.current = false;
       setSaving(false);
     }
   }
@@ -120,8 +123,10 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
 
   async function overwrite(): Promise<void> {
     const editor = editorRef.current;
-    if (!api || !editor) return;
+    if (!api || !editor || saveInFlightRef.current) return;
     const content = editor.getValue();
+    saveInFlightRef.current = true;
+    setSaving(true);
     try {
       const newMtime = await saveFileOverwrite(createFilesApi(api), path, content);
       const overwritten = { path, content, loadedMtime: newMtime };
@@ -134,11 +139,16 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
     } catch (err: unknown) {
       console.warn("[editor] overwrite failed:", err instanceof Error ? err.message : String(err));
       setSaveError(toUserMessage(err));
+    } finally {
+      saveInFlightRef.current = false;
+      setSaving(false);
     }
   }
 
   async function reload(): Promise<void> {
-    if (!api || !editorRef.current) return;
+    if (!api || !editorRef.current || saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    setSaving(true);
     try {
       const file = await openFile(createFilesApi(api), path);
       fileRef.current = file;
@@ -151,6 +161,9 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
     } catch (err: unknown) {
       console.warn("[editor] reload failed:", err instanceof Error ? err.message : String(err));
       setSaveError(toUserMessage(err));
+    } finally {
+      saveInFlightRef.current = false;
+      setSaving(false);
     }
   }
 
@@ -175,7 +188,13 @@ export default function MonacoHost({ taskId, path }: { taskId: string; path: str
           {saveError}
         </div>
       ) : null}
-      {conflict ? <ConflictBar onOverwrite={() => void overwrite()} onReload={() => void reload()} /> : null}
+      {conflict ? (
+        <ConflictBar
+          busy={saving}
+          onOverwrite={() => void overwrite()}
+          onReload={() => void reload()}
+        />
+      ) : null}
     </div>
   );
 }
