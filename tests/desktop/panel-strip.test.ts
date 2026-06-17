@@ -37,14 +37,6 @@ describe("PanelStrip layout adapters", () => {
     });
   });
 
-  it("also accepts positional group layout changes defensively", () => {
-    expect(panelSizesFromGroupLayout(["terminal", "editor"], [61, 39], baseSizes)).toEqual({
-      ...baseSizes,
-      terminal: 61,
-      editor: 39,
-    });
-  });
-
   it("ignores missing and non-finite panel values", () => {
     expect(panelSizesFromGroupLayout(["terminal", "editor"], { terminal: 64, editor: Number.NaN }, baseSizes)).toEqual({
       ...baseSizes,

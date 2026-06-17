@@ -36,12 +36,12 @@ export function groupLayoutForPanels(
 
 export function panelSizesFromGroupLayout(
   visiblePanels: PanelKind[],
-  nextLayout: GroupLayout | number[],
+  nextLayout: GroupLayout,
   previousSizes: Record<PanelKind, number>,
 ): Record<PanelKind, number> {
   const next = { ...previousSizes };
-  visiblePanels.forEach((panel, index) => {
-    const value = Array.isArray(nextLayout) ? nextLayout[index] : nextLayout[panel];
+  visiblePanels.forEach((panel) => {
+    const value = nextLayout[panel];
     if (typeof value === "number" && Number.isFinite(value)) {
       next[panel] = value;
     }
@@ -59,7 +59,7 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
   // Remount the group when the visible set changes so default sizes re-apply.
   const groupKey = visiblePanels.join("-");
 
-  // Library layouts are percentages (0..100), ordered by rendered panel.
+  // react-resizable-panels v4 layouts are keyed by rendered panel id.
   // The workspace store persists them keyed by panel id.
   const defaultGroupLayout = useMemo(() => {
     return groupLayoutForPanels(visiblePanels, layout.sizes);
