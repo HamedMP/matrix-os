@@ -12,6 +12,9 @@ import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 describe("HomeTab", () => {
   beforeEach(() => {
+    vi.stubGlobal("operator", {
+      on: vi.fn(() => () => undefined),
+    });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -32,6 +35,7 @@ describe("HomeTab", () => {
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
