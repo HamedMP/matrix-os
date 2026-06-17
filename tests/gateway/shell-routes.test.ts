@@ -8,6 +8,7 @@ describe("gateway shell routes", () => {
     create: (input: unknown) => Promise<unknown>;
     delete: (name: string, options?: { force?: boolean }) => Promise<void>;
     rename?: (name: string, nextName: string) => Promise<unknown>;
+    reorder?: (order: string[]) => Promise<unknown[]>;
   }, shellBackend?: { health: () => Promise<{ ok: boolean; code: string }> }) {
     const app = new Hono();
     app.route("/api/terminal", createShellRoutes({ registry, shellBackend }));
@@ -142,6 +143,87 @@ describe("gateway shell routes", () => {
 
     expect(res.status).toBe(200);
     expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
+  });
+
+  it("persists session order through a bounded JSON route under both mounts", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+      reorder: vi.fn(async (order: string[]) => order.map((name) => ({ name, status: "active" }))),
+    };
+    const app = appWithRegistry(registry);
+
+    const terminalRes = await app.request("/api/terminal/sessions/order", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: ["bench", "main"] }),
+    });
+    const apiRes = await app.request("/api/sessions/order", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: ["main", "bench"] }),
+    });
+
+    expect(terminalRes.status).toBe(200);
+    await expect(terminalRes.json()).resolves.toEqual({
+      sessions: [
+        { name: "bench", status: "active" },
+        { name: "main", status: "active" },
+      ],
+    });
+    expect(apiRes.status).toBe(200);
+    expect(registry.reorder).toHaveBeenNthCalledWith(1, ["bench", "main"]);
+    expect(registry.reorder).toHaveBeenNthCalledWith(2, ["main", "bench"]);
+  });
+
+  it("accepts large valid session order bodies within the schema cap", async () => {
+    const order = Array.from({ length: 30 }, (_, index) => `s${String(index).padStart(2, "0")}-${"a".repeat(27)}`);
+    expect(JSON.stringify({ order }).length).toBeGreaterThan(1024);
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+      reorder: vi.fn(async (nextOrder: string[]) => nextOrder.map((name) => ({ name, status: "active" }))),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions/order", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(registry.reorder).toHaveBeenCalledWith(order);
+  });
+
+  it("validates session order bodies before dispatch", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+      reorder: vi.fn(),
+    };
+    const app = appWithRegistry(registry);
+
+    const invalidName = await app.request("/api/terminal/sessions/order", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ order: ["Main"] }),
+    });
+    const tooLarge = await app.request("/api/terminal/sessions/order", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": "9000",
+      },
+      body: JSON.stringify({ order: ["main"] }),
+    });
+
+    expect(invalidName.status).toBe(400);
+    expect(tooLarge.status).toBe(413);
+    expect(registry.reorder).not.toHaveBeenCalled();
   });
 
   it("renames sessions through a bounded JSON route", async () => {
