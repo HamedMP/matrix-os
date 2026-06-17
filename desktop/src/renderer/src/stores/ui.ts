@@ -4,11 +4,15 @@ import { create } from "zustand";
 
 interface UiState {
   createTaskOpen: boolean;
+  // The board column a new task should default to (set when opening the create
+  // dialog from a specific column's "+"). null → default ("todo").
+  createTaskStatus: string | null;
   composerOpen: boolean;
   paletteOpen: boolean;
   quickOpenOpen: boolean;
   sidebarCollapsed: boolean;
   setCreateTaskOpen: (open: boolean) => void;
+  openCreateTask: (status?: string) => void;
   setComposerOpen: (open: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   setQuickOpenOpen: (open: boolean) => void;
@@ -18,11 +22,13 @@ interface UiState {
 
 export const useUi = create<UiState>()((set) => ({
   createTaskOpen: false,
+  createTaskStatus: null,
   composerOpen: false,
   paletteOpen: false,
   quickOpenOpen: false,
   sidebarCollapsed: false,
-  setCreateTaskOpen: (open) => set({ createTaskOpen: open }),
+  setCreateTaskOpen: (open) => set({ createTaskOpen: open, createTaskStatus: null }),
+  openCreateTask: (status) => set({ createTaskOpen: true, createTaskStatus: status ?? null }),
   setComposerOpen: (open) => set({ composerOpen: open }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setQuickOpenOpen: (open) => set({ quickOpenOpen: open }),

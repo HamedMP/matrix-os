@@ -10,6 +10,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { useRef, useState } from "react";
 import { useTabs, type Tab, type TabKind } from "../../stores/tabs";
 
 const TAB_ICON: Record<TabKind, LucideIcon> = {
@@ -26,10 +27,32 @@ const TAB_ICON: Record<TabKind, LucideIcon> = {
   settings: Settings,
 };
 
+function TabIcon({ tab, active }: { tab: Tab; active: boolean }) {
+  const Icon = TAB_ICON[tab.kind];
+  const iconUrl = tab.icon && /^https?:\/\//.test(tab.icon) ? tab.icon : null;
+  const [failed, setFailed] = useState(false);
+  const prev = useRef<string | null>(null);
+  if (prev.current !== iconUrl) {
+    prev.current = iconUrl;
+    if (failed) setFailed(false);
+  }
+  if (iconUrl && !failed) {
+    return (
+      <img
+        src={iconUrl}
+        alt=""
+        className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return <Icon size={13} style={{ color: active ? "var(--accent)" : "var(--text-tertiary)", flexShrink: 0 }} />;
+}
+
 function TabChip({ tab, active }: { tab: Tab; active: boolean }) {
   const focusTab = useTabs((s) => s.focusTab);
   const closeTab = useTabs((s) => s.closeTab);
-  const Icon = TAB_ICON[tab.kind];
 
   return (
     <div
@@ -57,7 +80,7 @@ function TabChip({ tab, active }: { tab: Tab; active: boolean }) {
         if (!active) e.currentTarget.style.background = "transparent";
       }}
     >
-      <Icon size={13} style={{ color: active ? "var(--accent)" : "var(--text-tertiary)", flexShrink: 0 }} />
+      <TabIcon tab={tab} active={active} />
       <span className="min-w-0 flex-1 truncate">{tab.title}</span>
       {tab.closable ? (
         <button

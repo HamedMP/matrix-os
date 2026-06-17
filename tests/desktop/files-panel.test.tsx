@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FilesPanel from "../../desktop/src/renderer/src/features/files/FilesPanel";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useEditorTabs } from "../../desktop/src/renderer/src/features/editor/editor-tabs-store";
+import { useFileTree } from "../../desktop/src/renderer/src/stores/file-tree";
 import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 
 describe("FilesPanel", () => {
@@ -17,6 +19,13 @@ describe("FilesPanel", () => {
     });
     useWorkspace.setState({
       layouts: {},
+    });
+    useFileTree.setState({
+      roots: null,
+      childrenByPath: {},
+      expanded: {},
+      loadingRoots: false,
+      loadingPaths: {},
     });
   });
 
@@ -43,7 +52,11 @@ describe("FilesPanel", () => {
       api: { get } as never,
     });
 
-    render(<FilesPanel taskId="task-1" />);
+    render(
+      <Tooltip.Provider>
+        <FilesPanel taskId="task-1" />
+      </Tooltip.Provider>,
+    );
 
     const src = await screen.findByRole("button", { name: /src/i });
     fireEvent.click(src);
@@ -67,7 +80,11 @@ describe("FilesPanel", () => {
       api: { get: offlineGet } as never,
     });
 
-    render(<FilesPanel taskId="task-1" />);
+    render(
+      <Tooltip.Provider>
+        <FilesPanel taskId="task-1" />
+      </Tooltip.Provider>,
+    );
 
     await waitFor(() => {
       expect(offlineGet).toHaveBeenCalledWith("/api/files/list?path=");

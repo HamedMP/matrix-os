@@ -22,13 +22,25 @@ const CATEGORY_MESSAGES: Record<AppErrorCategory, string> = {
 
 export class AppError extends Error {
   readonly category: AppErrorCategory;
+  // An optional safe, app-level reason CODE from the gateway (e.g.
+  // "invalid_session_request", "not_found"). Never a raw provider/DB/path
+  // string — only short slugs the gateway emits as { error: { code } }.
+  readonly detail?: string;
 
-  constructor(category: AppErrorCategory, options?: { cause?: unknown }) {
+  constructor(category: AppErrorCategory, options?: { cause?: unknown; detail?: string }) {
     // The message is always the generic copy — the cause stays internal.
     super(CATEGORY_MESSAGES[category], options);
     this.name = "AppError";
     this.category = category;
+    if (options?.detail) this.detail = options.detail;
   }
+}
+
+// Gateway error codes are short lower_snake slugs; anything else (provider
+// names, paths, long strings) is rejected so it never reaches the UI.
+export function safeErrorDetail(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return /^[a-z][a-z0-9_]{2,48}$/.test(value) ? value : undefined;
 }
 
 export function categoryMessage(category: AppErrorCategory): string {

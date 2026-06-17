@@ -1,58 +1,104 @@
-import { LayoutGrid } from "lucide-react";
-import { useEffect, useState } from "react";
-import { EmptyState } from "../../design/primitives";
+import { LayoutGrid, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Button, EmptyState } from "../../design/primitives";
+import { appIconUrl, useApps } from "../../stores/apps";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 
-interface MatrixApp {
-  slug: string;
-  name: string;
-  icon?: string;
-  category?: string;
-}
-
-function parseApps(value: unknown): MatrixApp[] {
-  const list = Array.isArray(value)
-    ? value
-    : value && typeof value === "object" && Array.isArray((value as { apps?: unknown }).apps)
-      ? (value as { apps: unknown[] }).apps
-      : [];
-  const apps: MatrixApp[] = [];
-  for (const raw of list.slice(0, 200)) {
-    if (!raw || typeof raw !== "object") continue;
-    const app = raw as Partial<MatrixApp>;
-    if (typeof app.slug !== "string" || app.slug.trim().length === 0) continue;
-    const slug = app.slug.trim();
-    const name = typeof app.name === "string" && app.name.trim().length > 0 ? app.name.trim() : slug;
-    const category =
-      typeof app.category === "string" && app.category.trim().length > 0 ? app.category.trim() : undefined;
-    apps.push({ slug, name, category });
+function AppIcon({ url, name }: { url: string | null; name: string }) {
+  const [failed, setFailed] = useState(false);
+  const prev = useRef<string | null>(null);
+  if (prev.current !== url) {
+    prev.current = url;
+    if (failed) setFailed(false);
   }
-  return apps;
+  if (url && !failed) {
+    return (
+      <img
+        src={url}
+        alt=""
+        className="h-11 w-11 rounded-xl object-cover"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return (
+    <div
+      className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-semibold"
+      style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+    >
+      {name.charAt(0).toUpperCase()}
+    </div>
+  );
 }
 
 export default function AppLauncher() {
   const api = useConnection((s) => s.api);
+  const platformHost = useConnection((s) => s.platformHost);
   const openTab = useTabs((s) => s.openTab);
-  const [apps, setApps] = useState<MatrixApp[] | null>(null);
+  const apps = useApps((s) => s.apps);
+  const loaded = useApps((s) => s.loaded);
+  const loading = useApps((s) => s.loading);
+  const error = useApps((s) => s.error);
+  const load = useApps((s) => s.load);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
-    api
-      .get<unknown>("/api/apps")
-      .then((res) => {
-        if (!cancelled) setApps(parseApps(res));
-      })
-      .catch(() => {
-        if (!cancelled) setApps([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api]);
+    if (api) void load(api);
+  }, [api, load]);
 
-  if (apps && apps.length === 0) {
+  // Launcher behavior: focus the search immediately like a desktop launcher.
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return apps;
+    return apps.filter((a) => a.name.toLowerCase().includes(q) || a.slug.toLowerCase().includes(q));
+  }, [apps, query]);
+
+  const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
+
+  const open = (slug: string, name: string) =>
+    openTab({ kind: "app", slug, title: name, ...(appIconUrl(platformHost, slug) ? { icon: appIconUrl(platformHost, slug)! } : {}) });
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (filtered.length === 0) return;
+    if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
+      e.preventDefault();
+      setActive((i) => (i + 1) % filtered.length);
+    } else if (e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey)) {
+      e.preventDefault();
+      setActive((i) => (i - 1 + filtered.length) % filtered.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const app = filtered[activeIndex];
+      if (app) open(app.slug, app.name);
+    }
+  };
+
+  if (error) {
+    return (
+      <EmptyState
+        icon={<LayoutGrid size={26} />}
+        headline="Apps unavailable"
+        description="The app catalog could not be loaded. Try again once your computer is reachable."
+        action={
+          api ? (
+            <Button variant="primary" disabled={loading} onClick={() => void load(api, true)}>
+              {loading ? "Loading..." : "Retry"}
+            </Button>
+          ) : null
+        }
+      />
+    );
+  }
+
+  if (loaded && !loading && apps.length === 0) {
     return (
       <EmptyState
         icon={<LayoutGrid size={26} />}
@@ -62,29 +108,67 @@ export default function AppLauncher() {
     );
   }
 
+  if (!loaded && apps.length === 0) {
+    return (
+      <EmptyState
+        icon={<LayoutGrid size={26} />}
+        headline="Loading apps"
+        description="The app catalog will appear here once your computer responds."
+      />
+    );
+  }
+
   return (
-    <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
-      <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>Apps</h2>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3">
-        {(apps ?? []).map((app) => (
-          <button
-            key={app.slug}
-            type="button"
-            className="flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors duration-100 hover:border-[var(--border-strong)]"
-            style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
-            onClick={() => openTab({ kind: "app", slug: app.slug, title: app.name })}
-          >
-            <div
-              className="flex h-11 w-11 items-center justify-center rounded-xl text-lg font-semibold"
-              style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
-            >
-              {app.name.charAt(0).toUpperCase()}
-            </div>
-            <span className="w-full truncate text-center text-sm" style={{ color: "var(--text-primary)" }}>
-              {app.name}
-            </span>
-          </button>
-        ))}
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="shrink-0 px-6 pt-6 pb-3">
+        <div
+          className="prompt-card flex items-center gap-2 rounded-xl border px-3"
+          style={{ background: "var(--bg-surface)" }}
+        >
+          <Search size={15} style={{ color: "var(--text-tertiary)" }} />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setActive(0);
+            }}
+            onKeyDown={onKeyDown}
+            placeholder="Search apps…"
+            aria-label="Search apps"
+            className="h-11 w-full bg-transparent text-md outline-none"
+            style={{ color: "var(--text-primary)" }}
+          />
+        </div>
+      </div>
+      <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
+        {filtered.length === 0 ? (
+          <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
+        ) : (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(124px,1fr))] gap-3">
+            {filtered.map((app, i) => {
+              const highlighted = i === activeIndex;
+              return (
+                <button
+                  key={app.slug}
+                  type="button"
+                  className="flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors duration-100"
+                  style={{
+                    background: highlighted ? "var(--bg-selected)" : "var(--bg-surface)",
+                    borderColor: highlighted ? "var(--accent)" : "var(--border-subtle)",
+                  }}
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => open(app.slug, app.name)}
+                >
+                  <AppIcon url={appIconUrl(platformHost, app.slug)} name={app.name} />
+                  <span className="w-full truncate text-center text-sm" style={{ color: "var(--text-primary)" }}>
+                    {app.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
