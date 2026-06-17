@@ -25,6 +25,8 @@ export default defineConfig({
     conditions: ["node"],
     alias: {
       "@": path.resolve(__dirname, "shell/src"),
+      "@desktop": path.resolve(__dirname, "desktop/src"),
+      "@renderer": path.resolve(__dirname, "desktop/src/renderer/src"),
       "@matrix-os/observability/client": path.resolve(
         __dirname,
         "packages/observability/src/client.ts",
@@ -69,8 +71,18 @@ export default defineConfig({
     exclude: ["tests/**/*.integration.ts", "node_modules", "dist", ".next"],
     coverage: {
       provider: "v8",
-      include: ["packages/kernel/src/**", "packages/gateway/src/**", "packages/platform/src/**"],
-      exclude: ["**/*.test.ts", "**/*.test.tsx", "**/*.integration.ts"],
+      include: [
+        "packages/kernel/src/**",
+        "packages/gateway/src/**",
+        "packages/platform/src/**",
+        "desktop/src/renderer/src/**",
+      ],
+      exclude: [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.integration.ts",
+        "desktop/src/renderer/src/main.tsx",
+      ],
       thresholds: {
         statements: 99,
         branches: 95,
