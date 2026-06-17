@@ -35,6 +35,15 @@ describe("tabs store", () => {
     expect(useTabs.getState().tabs.find((t) => t.id === id)!.closable).toBe(false);
   });
 
+  it("does not close a non-closable tab", () => {
+    const id = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });
+
+    useTabs.getState().closeTab(id);
+
+    expect(useTabs.getState().tabs).toHaveLength(1);
+    expect(useTabs.getState().activeTabId).toBe(id);
+  });
+
   it("closing the active tab focuses the left neighbour", () => {
     const a = useTabs.getState().openTab({ kind: "board", projectSlug: "a", title: "A" });
     const b = useTabs.getState().openTab({ kind: "board", projectSlug: "b", title: "B" });

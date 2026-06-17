@@ -66,6 +66,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
     set((state) => {
       const idx = state.tabs.findIndex((t) => t.id === id);
       if (idx === -1) return state;
+      if (!state.tabs[idx]!.closable) return state;
       const tabs = state.tabs.filter((t) => t.id !== id);
       let activeTabId = state.activeTabId;
       if (activeTabId === id) {

@@ -24,6 +24,7 @@ interface TerminalViewProps {
 export default function TerminalView({ sessionName, active = true, onRecreate }: TerminalViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [stateSessionName, setStateSessionName] = useState(sessionName);
+  const [stateActive, setStateActive] = useState(active);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const serializeRef = useRef<SerializeAddon | null>(null);
@@ -35,6 +36,13 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
     setStateSessionName(sessionName);
     setSocketState("connecting");
     setExitCode(null);
+  }
+  if (stateActive !== active) {
+    setStateActive(active);
+    if (active) {
+      setSocketState("connecting");
+      setExitCode(null);
+    }
   }
 
   // xterm lifecycle — mount once, dispose only on real unmount (tab close).

@@ -25,6 +25,7 @@ describe("HomeTab", () => {
       createTaskOpen: false,
       composerOpen: false,
       paletteOpen: false,
+      quickOpenOpen: false,
     });
     useSessions.setState(useSessions.getInitialState(), true);
   });
