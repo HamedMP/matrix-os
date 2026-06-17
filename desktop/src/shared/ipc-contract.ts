@@ -81,12 +81,15 @@ export const INVOKE_CHANNELS = {
       .object({
         signedIn: z.boolean(),
         handle: z.string().max(64).optional(),
+        displayName: z.string().max(256).optional(),
+        imageUrl: z.string().url().max(2048).optional(),
         runtimeSlot: z.string().max(64),
         platformHost: z.string().max(256),
       })
       .strict(),
   },
   "auth:sign-out": { request: Empty, response: Ok },
+  "auth:session-expired": { request: Empty, response: Ok },
   "runtime:select": {
     request: z.object({ slot: z.string().min(1).max(64) }).strict(),
     response: Ok,
@@ -113,6 +116,7 @@ export const INVOKE_CHANNELS = {
         kind: z.enum(["hosted-shell", "app"]),
         slug: z.string().min(1).max(128).optional(),
         bounds: BoundsSchema,
+        active: z.boolean().optional(),
       })
       .strict(),
     response: z.object({ embedId: z.string().min(1).max(64), state: EmbedStateSchema }).strict(),
@@ -121,6 +125,10 @@ export const INVOKE_CHANNELS = {
     request: z
       .object({ embedId: z.string().min(1).max(64), bounds: BoundsSchema })
       .strict(),
+    response: Ok,
+  },
+  "embed:set-active": {
+    request: z.object({ embedId: z.string().min(1).max(64), active: z.boolean() }).strict(),
     response: Ok,
   },
   "embed:close": {
@@ -166,14 +174,19 @@ export const INVOKE_CHANNELS = {
   "update:check": {
     request: Empty,
     response: z
-      .object({ status: z.enum(["disabled", "checking", "up-to-date", "downloading", "ready"]) })
+      .object({ status: z.enum(["disabled", "checking", "up-to-date", "downloading", "ready", "error"]) })
       .strict(),
   },
 } as const;
 
 export const EVENT_CHANNELS = {
   "auth:changed": z
-    .object({ signedIn: z.boolean(), handle: z.string().max(64).optional() })
+    .object({
+      signedIn: z.boolean(),
+      handle: z.string().max(64).optional(),
+      displayName: z.string().max(256).optional(),
+      imageUrl: z.string().url().max(2048).optional(),
+    })
     .strict(),
   "runtime:changed": z.object({ slot: z.string().min(1).max(64) }).strict(),
   "embed:state": z

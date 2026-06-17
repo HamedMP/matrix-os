@@ -18,6 +18,7 @@ interface SessionsState {
   loading: boolean;
   error: AppErrorCategory | null;
   load(api: ApiClient): Promise<void>;
+  create(api: ApiClient): Promise<AttachableSession | null>;
   resolveAttachName(linkedSessionId: string | null): string | null;
 }
 
@@ -26,6 +27,11 @@ function asArray<T>(value: unknown): T[] {
 }
 
 let loadSequence = 0;
+
+function nextSessionName(): string {
+  const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  return `operator-${Date.now().toString(36)}-${suffix}`;
+}
 
 export const useSessions = create<SessionsState>()((set, get) => ({
   sessions: [],
@@ -59,6 +65,38 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         loading: false,
         error: err instanceof AppError ? err.category : "server",
       });
+    }
+  },
+
+  create: async (api) => {
+    const name = nextSessionName();
+    set({ loading: true, error: null });
+    try {
+      const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
+      const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
+      const refreshSequence = loadSequence + 1;
+      await get().load(api);
+      const refreshError = get().error;
+      const created = get().sessions.find((session) => session.attachName === attachName) ?? {
+        name: attachName,
+        attachName,
+        status: "active" as const,
+        source: "zellij" as const,
+      };
+      set((state) => {
+        const loadingPatch = refreshSequence === loadSequence && state.loading ? { loading: false } : {};
+        return state.sessions.some((session) => session.attachName === created.attachName)
+          ? { ...loadingPatch, error: refreshError }
+          : { sessions: [created, ...state.sessions], ...loadingPatch, error: refreshError };
+      });
+      return created;
+    } catch (err: unknown) {
+      console.error("[sessions] Failed to create session:", err);
+      set({
+        loading: false,
+        error: err instanceof AppError ? err.category : "server",
+      });
+      return null;
     }
   },
 

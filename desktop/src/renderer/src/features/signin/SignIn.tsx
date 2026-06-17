@@ -129,8 +129,15 @@ export default function SignIn() {
                   {userCode}
                 </div>
                 {verificationUri ? (
-                  <button type="button" className="text-sm underline-offset-2 hover:underline" style={{ color: "var(--highlight)" }} onClick={() => void invoke("shell:open-external", { url: verificationUri })}>
-                    Reopen approval page
+                  <button
+                    type="button"
+                    className="no-drag flex h-10 w-full items-center justify-center rounded-lg text-sm font-semibold transition-colors duration-100"
+                    style={{ background: "var(--accent)", color: "var(--text-on-accent)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-hover)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent)")}
+                    onClick={() => void invoke("shell:open-external", { url: verificationUri })}
+                  >
+                    Open approval page
                   </button>
                 ) : null}
                 <span className="status-pulse text-xs" style={{ color: "var(--text-tertiary)" }}>
@@ -177,7 +184,7 @@ export default function SignIn() {
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-hover)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent)")}
                 >
-                  {phase === "starting" ? "Opening browser…" : tab === "signin" ? "Sign in" : "Create account"}
+                  {phase === "starting" ? "Starting…" : tab === "signin" ? "Sign in" : "Create account"}
                 </button>
 
                 {phase === "expired" ? (

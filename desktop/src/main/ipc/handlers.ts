@@ -5,6 +5,7 @@ import { INVOKE_CHANNELS, type InvokeChannel, type InvokeRequest, type InvokeRes
 import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
+import type { UpdateStatus } from "../updates";
 
 interface IpcMainLike {
   handle(
@@ -21,6 +22,7 @@ export interface HandlerContext {
   setBadgeCount: (count: number) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
+  getUpdateStatus: () => UpdateStatus;
 }
 
 type Handler<C extends InvokeChannel> = (
@@ -64,6 +66,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("auth:status", () => ctx.auth.getStatus());
   handle("auth:sign-out", async () => {
     await ctx.auth.signOut();
+    return { ok: true };
+  });
+  handle("auth:session-expired", async () => {
+    await ctx.auth.expireSession();
     return { ok: true };
   });
 
@@ -116,9 +122,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
 
-  handle("embed:open", async ({ kind, slug, bounds }) => {
+  handle("embed:open", async ({ kind, slug, bounds, active }) => {
     try {
-      return await ctx.embeds.open({ kind, slug, bounds });
+      return await ctx.embeds.open({ kind, slug, bounds, active });
     } catch (err: unknown) {
       console.warn(
         "[ipc] embed:open failed:",
@@ -129,6 +135,9 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("embed:set-bounds", ({ embedId, bounds }) => ({
     ok: ctx.embeds.setBounds(embedId, bounds),
+  }));
+  handle("embed:set-active", ({ embedId, active }) => ({
+    ok: ctx.embeds.setActive(embedId, active),
   }));
   handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));
   handle("embed:retry-auth", async ({ embedId }) => {
@@ -143,5 +152,5 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     }
   });
 
-  handle("update:check", () => ({ status: "disabled" as const }));
+  handle("update:check", () => ({ status: ctx.getUpdateStatus() }));
 }

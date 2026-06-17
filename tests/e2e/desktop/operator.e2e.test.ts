@@ -21,6 +21,13 @@ suite("operator desktop e2e", () => {
   let page: Page;
   let userDataDir: string;
 
+  async function attachedNativeViewCount(): Promise<number> {
+    return app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return window?.contentView.children.length ?? 0;
+    });
+  }
+
   beforeAll(async () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
     gateway = await startStubGateway();
@@ -87,10 +94,49 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents.png") });
   }, 30_000);
 
-  it("renders the app launcher from the gateway catalog", async () => {
-    await page.getByRole("button", { name: "Apps" }).click();
-    await page.getByText("Notes").waitFor({ timeout: 10_000 });
-    await page.getByText("Pomodoro").waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-apps.png") });
+  it("opens the Terminal workspace with a session sidebar", async () => {
+    await page.locator("aside button", { hasText: "Terminal" }).first().click();
+    // Inner sessions sidebar lists the VPS session as a clickable button
+    // (the hidden task-tab chip with the same name is a span, not matched here).
+    await page.getByText("Sessions").first().waitFor({ timeout: 10_000 });
+    await page.locator("button", { hasText: "matrix-task-1" }).first().waitFor({ state: "visible", timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05-terminal-workspace.png") });
   }, 30_000);
+
+  it("lists apps and opens one as a tab", async () => {
+    await page.locator("aside button", { hasText: "Apps" }).first().click();
+    await page.getByText("Notes").first().waitFor({ timeout: 10_000 });
+    await page.getByText("Pomodoro").first().waitFor({ timeout: 10_000 });
+    await page.getByText("Notes").first().click();
+    // The app opens in its own tab (tab chip with the app name).
+    await page.locator('[role="tab"]', { hasText: "Notes" }).first().waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "06-apps.png") });
+  }, 30_000);
+
+  it("detaches the hosted shell while non-Home tabs are active", async () => {
+    await page.locator("aside button", { hasText: "Home" }).first().click();
+    await page.getByText(/Welcome back/i).first().waitFor({ timeout: 10_000 });
+    await expect.poll(attachedNativeViewCount).toBe(1);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "07-home-shell-active.png") });
+
+    await page.locator("aside button", { hasText: "Settings" }).first().click();
+    await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
+    await expect.poll(attachedNativeViewCount).toBe(0);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "08-settings-no-shell-overlay.png") });
+
+    await page.locator("aside button", { hasText: "Chat" }).first().click();
+    await page.getByRole("heading", { name: /What should we build/i }).waitFor({ timeout: 10_000 });
+    await expect.poll(attachedNativeViewCount).toBe(0);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09-chat-no-shell-overlay.png") });
+
+    await page.locator("aside button", { hasText: "Apps" }).first().click();
+    await page.getByText("Notes").first().waitFor({ timeout: 10_000 });
+    await expect.poll(attachedNativeViewCount).toBe(0);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "10-apps-no-shell-overlay.png") });
+
+    await page.locator("aside button", { hasText: "Home" }).first().click();
+    await page.getByText(/Welcome back/i).first().waitFor({ timeout: 10_000 });
+    await expect.poll(attachedNativeViewCount).toBe(1);
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "11-home-shell-restored.png") });
+  }, 40_000);
 });

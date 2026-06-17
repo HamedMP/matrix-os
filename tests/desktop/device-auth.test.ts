@@ -65,6 +65,41 @@ describe("pollForToken", () => {
     expect(sleeps).toEqual([5000, 5000]);
   });
 
+  it("parses the optional display profile when present", async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce(
+      jsonResponse(200, {
+        accessToken: "tok",
+        expiresAt: 1,
+        userId: "u1",
+        handle: "neo",
+        displayName: "Thomas Anderson",
+        imageUrl: "https://img.clerk.com/neo.png",
+        email: "neo@matrix-os.com",
+      }),
+    );
+    const result = await pollForToken({ ...base, fetchFn, intervalSeconds: 5, expiresInSeconds: 600, sleep: async () => {} });
+    expect(result.displayName).toBe("Thomas Anderson");
+    expect(result.imageUrl).toBe("https://img.clerk.com/neo.png");
+    expect(result.email).toBe("neo@matrix-os.com");
+  });
+
+  it("ignores a non-string display profile and still returns the token", async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce(
+      jsonResponse(200, {
+        accessToken: "tok",
+        expiresAt: 1,
+        userId: "u1",
+        handle: "neo",
+        displayName: 42,
+        imageUrl: { not: "a string" },
+      }),
+    );
+    const result = await pollForToken({ ...base, fetchFn, intervalSeconds: 5, expiresInSeconds: 600, sleep: async () => {} });
+    expect(result.accessToken).toBe("tok");
+    expect(result.displayName).toBeUndefined();
+    expect(result.imageUrl).toBeUndefined();
+  });
+
   it("adds 5 seconds to the interval on 429 slow_down", async () => {
     const fetchFn = vi
       .fn()

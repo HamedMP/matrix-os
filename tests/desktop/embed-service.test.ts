@@ -12,6 +12,42 @@ vi.mock("electron", () => ({
 const BOUNDS: Bounds = { x: 0, y: 0, width: 800, height: 600 };
 
 describe("EmbedService", () => {
+  it("honors pending hosted-shell inactive state when retry auth finishes", async () => {
+    const emitState = vi.fn();
+    const service = new EmbedService({
+      getWindow: () => null,
+      getGatewayOrigin: () => "https://gateway.test",
+      getToken: () => "token",
+      emitState,
+    });
+    const internals = service as unknown as {
+      pendingHostedShells: Map<string, Bounds>;
+      performHostedShellHandoff: (gatewayOrigin: string) => Promise<boolean>;
+      manager: { open: (kind: string, slug: string | null, bounds: Bounds, url: string, options: { active?: boolean }) => string };
+    };
+    const open = vi.spyOn(internals.manager, "open").mockReturnValue("embed-shell");
+    let resolveHandoff!: (ok: boolean) => void;
+    vi.spyOn(internals, "performHostedShellHandoff").mockImplementation(
+      () => new Promise((resolve) => { resolveHandoff = resolve; }),
+    );
+
+    internals.pendingHostedShells.set("embed-shell", BOUNDS);
+    const retry = service.retryAuth("embed-shell");
+    expect(service.setActive("embed-shell", false)).toBe(true);
+
+    resolveHandoff(true);
+    await expect(retry).resolves.toBe(true);
+
+    expect(open).toHaveBeenCalledWith(
+      "hosted-shell",
+      null,
+      BOUNDS,
+      "https://gateway.test/",
+      expect.objectContaining({ id: "embed-shell", active: false }),
+    );
+    expect(emitState).toHaveBeenCalledWith("embed-shell", "loading");
+  });
+
   it("rejects gateway requests when the response stream errors", async () => {
     const service = new EmbedService({
       getWindow: () => null,

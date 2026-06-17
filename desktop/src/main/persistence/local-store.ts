@@ -40,6 +40,9 @@ const ProfileSchema = z
     userId: z.string().min(1).max(128),
     platformHost: z.string().min(1).max(256),
     runtimeSlot: z.string().min(1).max(64),
+    displayName: z.string().max(256).optional(),
+    imageUrl: z.string().url().max(2048).optional(),
+    email: z.string().max(320).optional(),
   })
   .strict();
 

@@ -141,11 +141,12 @@ describe("useSessions store", () => {
     useSessions.setState(useSessions.getInitialState(), true);
   });
 
-  function makeApi(get: ReturnType<typeof vi.fn>): ApiClient {
+  function makeApi(get: ReturnType<typeof vi.fn>, post: ReturnType<typeof vi.fn> = vi.fn()): ApiClient {
     return {
       baseUrl: "https://x.test",
       get,
-      post: vi.fn(),
+      post,
+      put: vi.fn(),
       patch: vi.fn(),
       delete: vi.fn(),
       putText: vi.fn(),
@@ -252,5 +253,79 @@ describe("useSessions store", () => {
 
     resolveTerminal?.({ sessions: [] });
     await load;
+  });
+
+  it("creates a terminal session and selects the attachable result", async () => {
+    const get = vi.fn().mockImplementation((path: string) => {
+      if (path === "/api/terminal/sessions") {
+        return Promise.resolve({ sessions: [{ name: "operator-new", status: "active" }] });
+      }
+      return Promise.resolve({ sessions: [], nextCursor: null });
+    });
+    const post = vi.fn().mockResolvedValue({ name: "operator-new", created: true });
+
+    const created = await useSessions.getState().create(makeApi(get, post));
+
+    expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
+      name: expect.stringMatching(/^operator-[a-z0-9]+-[a-f0-9]{8}$/),
+    });
+    expect(created?.attachName).toBe("operator-new");
+    expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["operator-new"]);
+    expect(useSessions.getState().error).toBeNull();
+  });
+
+  it("clears a stale session error while create is pending", async () => {
+    const created = deferred<{ name: string; created: true }>();
+    const get = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const post = vi.fn().mockReturnValue(created.promise);
+
+    useSessions.setState({ error: "offline" });
+    const create = useSessions.getState().create(makeApi(get, post));
+
+    expect(useSessions.getState().loading).toBe(true);
+    expect(useSessions.getState().error).toBeNull();
+
+    created.resolve({ name: "operator-new", created: true });
+    await create;
+  });
+
+  it("keeps the created session visible and preserves refresh errors after create", async () => {
+    const get = vi.fn().mockRejectedValue(new AppError("offline"));
+    const post = vi.fn().mockResolvedValue({ name: "operator-new", created: true });
+
+    const created = await useSessions.getState().create(makeApi(get, post));
+
+    expect(created?.attachName).toBe("operator-new");
+    expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["operator-new"]);
+    expect(useSessions.getState().error).toBe("offline");
+  });
+
+  it("keeps a superseding load in progress after create refresh is preempted", async () => {
+    const internalTerminal = deferred<{ sessions: unknown[] }>();
+    const internalWorkspace = deferred<{ sessions: unknown[]; nextCursor: null }>();
+    const competingTerminal = new Promise<{ sessions: unknown[] }>(() => undefined);
+    const competingWorkspace = new Promise<{ sessions: unknown[]; nextCursor: null }>(() => undefined);
+    const post = vi.fn().mockResolvedValue({ name: "operator-new", created: true });
+    let call = 0;
+    const get = vi.fn((path: string) => {
+      call += 1;
+      if (call === 1 && path === "/api/terminal/sessions") return internalTerminal.promise;
+      if (call === 2 && path === "/api/sessions") return internalWorkspace.promise;
+      if (path === "/api/terminal/sessions") return competingTerminal;
+      return competingWorkspace;
+    });
+
+    const createPromise = useSessions.getState().create(makeApi(get, post));
+    while (call < 2) {
+      await Promise.resolve();
+    }
+    void useSessions.getState().load(makeApi(get));
+    expect(useSessions.getState().loading).toBe(true);
+
+    internalTerminal.resolve({ sessions: [{ name: "operator-new", status: "active" }] });
+    internalWorkspace.resolve({ sessions: [], nextCursor: null });
+
+    await expect(createPromise).resolves.toMatchObject({ attachName: "operator-new" });
+    expect(useSessions.getState().loading).toBe(true);
   });
 });

@@ -2,11 +2,12 @@ import { app, BrowserWindow, ipcMain, Notification, safeStorage, session, shell 
 import { join } from "node:path";
 import { AuthService } from "./auth/auth-service";
 import { createCredentialStore } from "./auth/credential-store";
-import { installHeaderInjection } from "./auth/header-injection";
+import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
+import { createUpdater } from "./updates";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
@@ -18,6 +19,7 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
   const parsed = EVENT_CHANNELS[channel].safeParse(payload);
@@ -101,6 +103,19 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
+      // Packaged builds get the icon from build/icon.icns automatically; in dev
+      // the dock shows Electron's default icon unless we set the brand icon.
+      if (process.platform === "darwin" && !app.isPackaged && app.dock) {
+        try {
+          app.dock.setIcon(join(app.getAppPath(), "build", "icon.png"));
+        } catch (err: unknown) {
+          console.warn(
+            "[main] could not set dev dock icon:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
@@ -110,7 +125,6 @@ if (!gotLock) {
       const auth = new AuthService({
         credentialStore,
         platformHost,
-        openExternal: openExternalHttps,
         loadProfile: () => store.get("profile"),
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
@@ -118,6 +132,8 @@ if (!gotLock) {
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.handle ? { handle: status.handle } : {}),
+            ...(status.displayName ? { displayName: status.displayName } : {}),
+            ...(status.imageUrl ? { imageUrl: status.imageUrl } : {}),
           });
         },
       });
@@ -130,12 +146,31 @@ if (!gotLock) {
         () => auth.getToken(),
         () => auth.getGatewayOrigin(),
       );
+      // The renderer is a different origin than the gateway (file:// in prod,
+      // localhost in dev), so allow its cross-origin fetches to the gateway.
+      const rendererOrigin = process.env.ELECTRON_RENDERER_URL
+        ? new URL(process.env.ELECTRON_RENDERER_URL).origin
+        : "null";
+      installGatewayCors(session.defaultSession, () => auth.getGatewayOrigin(), rendererOrigin);
 
       const embeds = new EmbedService({
         getWindow: () => mainWindow,
         getGatewayOrigin: () => auth.getGatewayOrigin(),
         getToken: () => auth.getToken(),
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
+      });
+      const updater = createUpdater({
+        onAvailable: (version) => {
+          console.info(`[updates] downloading Matrix OS ${version}`);
+        },
+        onReady: (version) => {
+          if (!Notification.isSupported()) return;
+          new Notification({
+            title: "Matrix OS update ready",
+            body: `Version ${version} will install after you quit and reopen the app.`,
+            silent: false,
+          }).show();
+        },
       });
 
       registerIpcHandlers(ipcMain, {
@@ -162,6 +197,7 @@ if (!gotLock) {
           embeds.closeAll();
           sendEvent("runtime:changed", { slot });
         },
+        getUpdateStatus: () => updater.status(),
       });
 
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -194,6 +230,11 @@ if (!gotLock) {
       await openMainWindow();
       installAppMenu(() => mainWindow);
 
+      void updater.check();
+      updateCheckTimer = setInterval(() => {
+        void updater.check();
+      }, 60 * 60 * 1000);
+
       app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) {
           void openMainWindow();
@@ -203,6 +244,13 @@ if (!gotLock) {
     .catch((err: unknown) => {
       logMainError("failed to start app", err);
     });
+
+  app.on("before-quit", () => {
+    if (updateCheckTimer) {
+      clearInterval(updateCheckTimer);
+      updateCheckTimer = null;
+    }
+  });
 
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();

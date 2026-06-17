@@ -11,6 +11,12 @@ interface WebRequestLike {
       callback: (response: { requestHeaders: Record<string, string> }) => void,
     ) => void,
   ): void;
+  onHeadersReceived(
+    listener: (
+      details: { url: string; method: string; responseHeaders?: Record<string, string[]> },
+      callback: (response: { responseHeaders?: Record<string, string[]>; statusLine?: string }) => void,
+    ) => void,
+  ): void;
 }
 
 interface SessionLike {
@@ -51,5 +57,45 @@ export function installHeaderInjection(
       details.requestHeaders["Authorization"] = `Bearer ${token}`;
     }
     callback({ requestHeaders: details.requestHeaders });
+  });
+}
+
+// The renderer (file:// in production, http://localhost in dev) is a different
+// origin than the gateway, so its fetch() calls are cross-origin and the
+// gateway does not send Access-Control-Allow-Origin for them. Since the trusted
+// core owns the network layer, we inject CORS response headers for the gateway
+// origin on the renderer session only — scoped to our own backend, never a
+// server-side wildcard. Preflight OPTIONS are answered 200 so mutations pass.
+export function installGatewayCors(
+  rendererSession: SessionLike,
+  getGatewayOrigin: () => string | null,
+  rendererOrigin: string,
+): void {
+  rendererSession.webRequest.onHeadersReceived((details, callback) => {
+    if (!shouldInjectAuth(details.url, getGatewayOrigin())) {
+      callback({});
+      return;
+    }
+    const responseHeaders: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(details.responseHeaders ?? {})) {
+      const lower = key.toLowerCase();
+      if (
+        lower !== "access-control-allow-origin" &&
+        lower !== "access-control-allow-methods" &&
+        lower !== "access-control-allow-headers" &&
+        lower !== "access-control-allow-credentials"
+      ) {
+        responseHeaders[key] = value;
+      }
+    }
+    responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
+    responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
+    responseHeaders["Access-Control-Allow-Headers"] = ["Authorization, Content-Type, x-runtime-slot"];
+    responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
+    if (details.method === "OPTIONS") {
+      callback({ responseHeaders, statusLine: "HTTP/1.1 200 OK" });
+      return;
+    }
+    callback({ responseHeaders });
   });
 }

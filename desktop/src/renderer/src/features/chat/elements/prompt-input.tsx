@@ -33,8 +33,8 @@ export function PromptInput({
 
   return (
     <div
-      className="flex flex-col overflow-hidden rounded-2xl border"
-      style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
+      className="prompt-card flex flex-col overflow-hidden rounded-2xl border"
+      style={{ background: "var(--bg-surface)" }}
     >
       <textarea
         ref={ref}
@@ -42,6 +42,7 @@ export function PromptInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        aria-label={placeholder}
         rows={1}
         className="w-full resize-none bg-transparent px-4 pt-3.5 text-md outline-none"
         style={{ color: "var(--text-primary)", maxHeight: 220 }}

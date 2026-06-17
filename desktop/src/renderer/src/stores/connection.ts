@@ -9,6 +9,8 @@ export type ConnectionStatus = "loading" | "signed-out" | "signed-in";
 interface ConnectionState {
   status: ConnectionStatus;
   handle: string | null;
+  displayName: string | null;
+  imageUrl: string | null;
   platformHost: string;
   runtimeSlot: string;
   api: ApiClient | null;
@@ -20,6 +22,8 @@ interface ConnectionState {
 export const useConnection = create<ConnectionState>()((set, get) => ({
   status: "loading",
   handle: null,
+  displayName: null,
+  imageUrl: null,
   platformHost: "",
   runtimeSlot: "primary",
   api: null,
@@ -31,18 +35,25 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         ? createApiClient({
             baseUrl: status.platformHost,
             getRuntimeSlot: () => get().runtimeSlot,
+            // A 401 means the session token expired/was revoked. Drop it in the
+            // trusted core (which emits auth:changed → refresh → sign-in screen).
+            onUnauthorized: () => {
+              void invoke("auth:session-expired", {});
+            },
           })
         : null;
       set({
         status: status.signedIn ? "signed-in" : "signed-out",
         handle: status.handle ?? null,
+        displayName: status.displayName ?? null,
+        imageUrl: status.imageUrl ?? null,
         platformHost: status.platformHost,
         runtimeSlot: status.runtimeSlot,
         api,
       });
     } catch (err: unknown) {
       console.warn("[connection] failed to refresh auth status:", err instanceof Error ? err.message : String(err));
-      set({ status: "signed-out", handle: null, api: null });
+      set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
     }
   },
 
@@ -53,7 +64,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
 
   signOut: async () => {
     await invoke("auth:sign-out", {});
-    set({ status: "signed-out", handle: null, api: null });
+    set({ status: "signed-out", handle: null, displayName: null, imageUrl: null, api: null });
   },
 }));
 

@@ -18,6 +18,9 @@ export interface ApiClientOptions {
   baseUrl: string;
   getRuntimeSlot: () => string;
   fetchFn?: FetchFn;
+  // Invoked once when the gateway rejects the request with 401 (token expired
+  // or revoked), so the app can drop the stale session and prompt re-auth.
+  onUnauthorized?: () => void;
 }
 
 export interface ApiClient {
@@ -25,6 +28,7 @@ export interface ApiClient {
   getText(path: string): Promise<string>;
   post<T>(path: string, body: unknown): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
+  put<T>(path: string, body: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
   putText<T>(path: string, body: string): Promise<T>;
   baseUrl: string;
@@ -45,6 +49,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       throw new AppError(classifyTransportError(err), { cause: err });
     }
     if (!response.ok) {
+      if (response.status === 401) options.onUnauthorized?.();
       throw new AppError(classifyHttpStatus(response.status));
     }
     return response;
@@ -81,6 +86,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     patch: (path, body) =>
       request(path, {
         method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    put: (path, body) =>
+      request(path, {
+        method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       }),

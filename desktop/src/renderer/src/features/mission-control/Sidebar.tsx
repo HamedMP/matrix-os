@@ -8,7 +8,7 @@ import {
   Sparkles,
   SquareTerminal,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MatrixMark } from "../../design/BrandPanel";
 import { IconButton } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
@@ -65,19 +65,34 @@ export default function Sidebar() {
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
   const openTab = useTabs((s) => s.openTab);
-  const focusTab = useTabs((s) => s.focusTab);
   const projects = useBoard((s) => s.projects);
   const signOut = useConnection((s) => s.signOut);
   const handle = useConnection((s) => s.handle);
+  const profileName = useConnection((s) => s.displayName);
+  const imageUrl = useConnection((s) => s.imageUrl);
   const platformHost = useConnection((s) => s.platformHost);
   const unread = useThreads((s) => s.threads.filter((t) => t.unread || t.status === "needs-attention").length);
   const collapsed = useUi((s) => s.sidebarCollapsed);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const [projectsOpen, setProjectsOpen] = useState(true);
 
+  // Reset the avatar fallback whenever the URL changes so a new image gets a
+  // fresh load attempt (lesson: track prev URL, reset imgFailed on differ).
+  const [imgFailed, setImgFailed] = useState(false);
+  const prevImg = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevImg.current !== imageUrl) {
+      prevImg.current = imageUrl;
+      setImgFailed(false);
+    }
+  }, [imageUrl]);
+
+  const primaryLabel = profileName ?? (handle ? `@${handle}` : "Signed in");
+  const secondaryLabel = profileName && handle ? `@${handle}` : null;
+  const avatarInitial = (profileName ?? handle ?? "?").charAt(0).toUpperCase();
+  const showAvatar = Boolean(imageUrl) && !imgFailed;
+
   const activeTab = tabs.find((t) => t.id === activeTabId);
-  const terminalTabs = tabs.filter((t) => t.kind === "terminal");
-  const displayName = handle ? `@${handle}` : "Signed in";
   const width = collapsed ? 56 : 240;
 
   return (
@@ -105,33 +120,12 @@ export default function Sidebar() {
         <nav className="flex flex-col gap-0.5">
           <NavRow icon={<Home size={15} />} label="Home" collapsed={collapsed} active={activeTab?.kind === "home"} onClick={() => openTab({ kind: "home", title: "Home", closable: false })} />
           <NavRow icon={<Sparkles size={15} />} label="Chat" collapsed={collapsed} active={activeTab?.kind === "chat"} onClick={() => openTab({ kind: "chat", title: "Hermes", closable: false })} />
-          <NavRow icon={<LayoutGrid size={15} />} label="Apps" collapsed={collapsed} active={activeTab?.kind === "apps"} onClick={() => openTab({ kind: "apps", title: "Apps" })} />
+          <NavRow icon={<SquareTerminal size={15} />} label="Terminal" collapsed={collapsed} active={activeTab?.kind === "terminals"} onClick={() => openTab({ kind: "terminals", title: "Terminal" })} />
+          <NavRow icon={<LayoutGrid size={15} />} label="Apps" collapsed={collapsed} active={activeTab?.kind === "apps" || activeTab?.kind === "app"} onClick={() => openTab({ kind: "apps", title: "Apps" })} />
         </nav>
 
         {!collapsed ? (
           <>
-            <div className="mt-4 mb-1 flex items-center justify-between px-2.5">
-              <span className="text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>Terminals</span>
-            </div>
-            {terminalTabs.length === 0 ? (
-              <p className="px-2.5 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>Open a session from a project or Home.</p>
-            ) : (
-              terminalTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors duration-100"
-                  style={{ background: tab.id === activeTabId ? "var(--bg-selected)" : "transparent", color: "var(--text-secondary)" }}
-                  onMouseEnter={(e) => { if (tab.id !== activeTabId) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                  onMouseLeave={(e) => { if (tab.id !== activeTabId) e.currentTarget.style.background = "transparent"; }}
-                  onClick={() => focusTab(tab.id)}
-                >
-                  <SquareTerminal size={14} style={{ color: "var(--text-tertiary)" }} />
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{tab.title}</span>
-                </button>
-              ))
-            )}
-
             <button type="button" className="mt-4 mb-1 flex w-full items-center gap-1 px-2.5" onClick={() => setProjectsOpen((v) => !v)}>
               <ChevronRight size={12} style={{ color: "var(--text-tertiary)", transform: projectsOpen ? "rotate(90deg)" : "none", transition: "transform 120ms" }} />
               <span className="text-xs font-semibold tracking-wide uppercase" style={{ color: "var(--text-tertiary)" }}>Projects</span>
@@ -155,15 +149,7 @@ export default function Sidebar() {
               <p className="px-2.5 py-1 text-xs" style={{ color: "var(--text-tertiary)" }}>No projects yet.</p>
             ) : null}
           </>
-        ) : (
-          <div className="mt-2 flex flex-col items-center gap-1">
-            {terminalTabs.map((tab) => (
-              <IconButton key={tab.id} label={tab.title} active={tab.id === activeTabId} onClick={() => focusTab(tab.id)}>
-                <SquareTerminal size={15} />
-              </IconButton>
-            ))}
-          </div>
-        )}
+        ) : null}
       </div>
 
       <div className="flex flex-col border-t" style={{ borderColor: "var(--border-subtle)" }}>
@@ -174,15 +160,30 @@ export default function Sidebar() {
           <button
             type="button"
             title="Manage account"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
+            className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold"
             style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
             onClick={() => void invoke("shell:open-external", { url: platformHost.startsWith("https://") ? platformHost : "https://app.matrix-os.com" })}
           >
-            {(handle ?? "?").charAt(0).toUpperCase()}
+            {showAvatar && imageUrl ? (
+              <img
+                src={imageUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={() => setImgFailed(true)}
+              />
+            ) : (
+              avatarInitial
+            )}
           </button>
           {!collapsed ? (
             <>
-              <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--text-primary)" }}>{displayName}</span>
+              <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
+                {secondaryLabel ? (
+                  <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span>
+                ) : null}
+              </div>
               <IconButton label="Collapse sidebar" onClick={toggleSidebar}>
                 <PanelLeftClose size={15} />
               </IconButton>

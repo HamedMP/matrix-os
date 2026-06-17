@@ -176,6 +176,23 @@ describe("EmbedManager", () => {
     expect(view?.bounds).toEqual(BOUNDS);
   });
 
+  it("can open embeds detached so inactive tabs do not flash a native overlay", () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas", {
+      active: false,
+    });
+    const view = views[0]?.view;
+
+    expect(manager.liveCount).toBe(0);
+    expect(view?.events).not.toContain("attach");
+    expect(view?.bounds).toEqual(BOUNDS);
+    expect(view?.loadedUrls).toEqual(["https://gw.test/canvas"]);
+
+    manager.setActive(id, true);
+    expect(manager.liveCount).toBe(1);
+    expect(view?.events).toContain("attach");
+  });
+
   it("propagates adapter lifecycle states to the caller", () => {
     const { manager, views } = makeManager();
     const states: string[] = [];
@@ -384,6 +401,30 @@ describe("EmbedManager", () => {
     expect(manager.setBounds("nope", BOUNDS)).toBe(false);
     expect(manager.close("nope")).toBe(false);
     expect(manager.has("nope")).toBe(false);
+  });
+
+  it("setActive(false) detaches the native view so it can't overlay other tabs", () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    expect(views[0]?.view.events).toContain("attach");
+    expect(manager.setActive(id, false)).toBe(true);
+    expect(views[0]?.view.events).toContain("detach");
+    expect(manager.liveCount).toBe(0);
+  });
+
+  it("setActive(true) re-attaches a detached embed without reloading", () => {
+    const { manager, views } = makeManager();
+    const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");
+    manager.setActive(id, false);
+    manager.setActive(id, true);
+    expect(views[0]?.view.events.filter((e) => e === "attach")).toHaveLength(2);
+    expect(views[0]?.view.loadedUrls).toHaveLength(1);
+    expect(manager.liveCount).toBe(1);
+  });
+
+  it("setActive returns false for unknown ids", () => {
+    const { manager } = makeManager();
+    expect(manager.setActive("nope", false)).toBe(false);
   });
 
   it("closeAll destroys every embed including suspended ones", () => {

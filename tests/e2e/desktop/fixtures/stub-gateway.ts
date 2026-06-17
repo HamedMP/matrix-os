@@ -24,6 +24,11 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+function html(res: ServerResponse, status: number, body: string): void {
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
+  res.end(body);
+}
+
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -109,13 +114,44 @@ export async function startStubGateway(): Promise<StubGateway> {
         expiresAt: Date.now() + 3_600_000,
         userId: "user-1",
         handle: "neo",
+        displayName: "Thomas Anderson",
       });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/") {
+      html(
+        res,
+        200,
+        `<!doctype html>
+          <html>
+            <body style="margin:0;background:#083344;color:#ecfeff;font:600 20px system-ui;display:grid;place-items:center;min-height:100vh">
+              <main style="text-align:center">
+                <div>Stub Hosted Shell</div>
+                <small style="display:block;margin-top:8px;font-size:13px;color:#a5f3fc">Canvas preview</small>
+              </main>
+            </body>
+          </html>`,
+      );
       return;
     }
 
     // Everything below requires the bearer header (verifies header injection).
     if (req.headers.authorization !== `Bearer ${TOKEN}`) {
       json(res, 401, { error: "unauthorized" });
+      return;
+    }
+
+    if (req.method === "POST" && path === "/api/auth/app-session") {
+      await readBody(req);
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "set-cookie": [
+          "matrix_app_session=stub-app-session; Path=/; HttpOnly; SameSite=Lax",
+          "matrix_native_app_session=stub-native-session; Path=/; HttpOnly; SameSite=Lax",
+        ],
+      });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
 

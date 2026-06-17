@@ -13,6 +13,9 @@ export interface ConnectionProfile {
   userId: string;
   platformHost: string;
   runtimeSlot: string;
+  displayName?: string;
+  imageUrl?: string;
+  email?: string;
 }
 
 export interface AuthStatus {
@@ -20,6 +23,8 @@ export interface AuthStatus {
   handle?: string;
   runtimeSlot: string;
   platformHost: string;
+  displayName?: string;
+  imageUrl?: string;
 }
 
 export type PollResult = {
@@ -29,11 +34,15 @@ export type PollResult = {
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
+// Re-authenticate slightly before the token's real expiry so an in-flight
+// request doesn't race the cutoff.
+const EXPIRY_SKEW_MS = 30_000;
+
 interface AuthServiceDeps {
   credentialStore: CredentialStore;
   platformHost: string;
   fetchFn?: FetchFn;
-  openExternal: (url: string) => Promise<void>;
+  now?: () => number;
   loadProfile: () => Promise<ConnectionProfile | null>;
   saveProfile: (profile: ConnectionProfile) => Promise<void>;
   clearProfile: () => Promise<void>;
@@ -55,9 +64,8 @@ export class AuthService {
   async init(): Promise<void> {
     this.credential = await this.deps.credentialStore.load();
     this.profile = await this.deps.loadProfile();
-    if (this.credential && !this.isCredentialValid(this.credential)) {
+    if (this.isExpired()) {
       this.credential = null;
-      this.profile = null;
       try {
         await this.deps.credentialStore.clear();
       } catch (err: unknown) {
@@ -66,15 +74,17 @@ export class AuthService {
           err instanceof Error ? err.message : String(err),
         );
       }
-      try {
-        await this.deps.clearProfile();
-      } catch (err: unknown) {
-        console.warn(
-          "[auth] failed to clear expired profile:",
-          err instanceof Error ? err.message : String(err),
-        );
-      }
     }
+  }
+
+  private now(): number {
+    return this.deps.now ? this.deps.now() : Date.now();
+  }
+
+  // A credential past (or within the skew window of) its expiry is unusable;
+  // sending it would just earn a 401, so treat it as signed-out.
+  private isExpired(): boolean {
+    return this.credential !== null && this.credential.expiresAt <= this.now() + EXPIRY_SKEW_MS;
   }
 
   getToken(): string | null {
@@ -93,10 +103,12 @@ export class AuthService {
   }
 
   private currentStatus(): AuthStatus {
-    const signedIn = this.credential !== null && this.isCredentialValid(this.credential);
+    const signedIn = this.credential !== null && !this.isExpired();
     return {
       signedIn,
       ...(signedIn && this.profile ? { handle: this.profile.handle } : {}),
+      ...(signedIn && this.profile?.displayName ? { displayName: this.profile.displayName } : {}),
+      ...(signedIn && this.profile?.imageUrl ? { imageUrl: this.profile.imageUrl } : {}),
       runtimeSlot: this.profile?.runtimeSlot ?? "primary",
       platformHost: this.getGatewayOrigin(),
     };
@@ -136,17 +148,28 @@ export class AuthService {
     })
       .then(async (token) => {
         if (nonce !== this.flowNonce) return;
-        const profile = {
+        // The encrypted credential holds only the secret token + identity; the
+        // non-secret display profile lives in the plain profile store.
+        const credential: StoredCredential = {
+          accessToken: token.accessToken,
+          expiresAt: token.expiresAt,
+          userId: token.userId,
+          handle: token.handle,
+        };
+        this.credential = credential;
+        const profile: ConnectionProfile = {
           handle: token.handle,
           userId: token.userId,
           platformHost: baseUrl,
           runtimeSlot: this.profile?.runtimeSlot ?? "primary",
+          ...(token.displayName ? { displayName: token.displayName } : {}),
+          ...(token.imageUrl ? { imageUrl: token.imageUrl } : {}),
+          ...(token.email ? { email: token.email } : {}),
         };
-        this.credential = token;
         this.profile = profile;
         try {
           if (nonce !== this.flowNonce) return;
-          await this.deps.credentialStore.save(token);
+          await this.deps.credentialStore.save(credential);
           if (nonce !== this.flowNonce) {
             await this.clearStaleFlowPersistence();
             return;
@@ -193,13 +216,10 @@ export class AuthService {
         this.pendingDeviceCode = null;
       });
 
-    void this.deps.openExternal(code.verificationUri).catch((err: unknown) => {
-      console.warn(
-        "[auth] failed to open verification url:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
-
+    // Do NOT auto-open the browser. The renderer shows the user code and an
+    // explicit "Open approval page" button (shell:open-external) — auto-opening
+    // popped a surprise tab on every launch (and on every e2e run, which points
+    // at a stub whose verification URL is unroutable).
     return pendingDeviceCode;
   }
 
@@ -218,6 +238,25 @@ export class AuthService {
     if (!this.profile) return;
     this.profile = { ...this.profile, runtimeSlot: slot };
     await this.deps.saveProfile(this.profile);
+  }
+
+  // The session token expired or the gateway rejected it (401). Drop the
+  // credential but KEEP the profile so platformHost/runtime survive for a
+  // one-click re-auth, then notify the renderer to show sign-in. Idempotent.
+  async expireSession(): Promise<void> {
+    if (!this.credential) return;
+    this.credential = null;
+    this.flowState = "idle";
+    try {
+      await this.deps.credentialStore.clear();
+    } catch (err: unknown) {
+      console.warn(
+        "[auth] failed to clear expired credential:",
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      this.deps.onAuthChanged(this.getStatus());
+    }
   }
 
   async signOut(): Promise<void> {
@@ -269,27 +308,16 @@ export class AuthService {
     }
   }
 
-  private isCredentialValid(credential: StoredCredential): boolean {
-    return credential.expiresAt > Date.now();
-  }
-
   private expireCredentialIfNeeded(): void {
-    if (!this.credential || this.isCredentialValid(this.credential)) return;
+    if (!this.isExpired()) return;
     this.flowNonce += 1;
     this.pendingDeviceCode = null;
     this.credential = null;
-    this.profile = null;
     this.flowState = "idle";
     this.deps.onAuthChanged(this.currentStatus());
     void this.deps.credentialStore.clear().catch((err: unknown) => {
       console.warn(
         "[auth] failed to clear expired credential:",
-        err instanceof Error ? err.message : String(err),
-      );
-    });
-    void this.deps.clearProfile().catch((err: unknown) => {
-      console.warn(
-        "[auth] failed to clear expired profile:",
         err instanceof Error ? err.message : String(err),
       );
     });
