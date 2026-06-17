@@ -63,16 +63,32 @@ describe("EmbedService", () => {
     };
     const open = vi.spyOn(internals.manager, "open").mockReturnValue("embed-app");
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.spyOn(internals, "fetchLaunchToken").mockResolvedValue({
-      launchUrl: "https://evil.test/apps/notes/",
-      expiresAt: Date.now() + 60_000,
-    });
+    const fetchLaunchToken = vi.spyOn(internals, "fetchLaunchToken");
+    fetchLaunchToken
+      .mockResolvedValueOnce({
+        launchUrl: "https://evil.test/apps/notes/",
+        expiresAt: Date.now() + 60_000,
+      })
+      .mockResolvedValueOnce({
+        launchUrl: "/apps/notes/",
+        expiresAt: Date.now() + 60_000,
+      });
 
     internals.pendingApps.set("embed-app", { slug: "notes", bounds: BOUNDS });
 
     await expect(service.retryAuth("embed-app")).resolves.toBe(false);
     expect(open).not.toHaveBeenCalled();
     expect(emitState).toHaveBeenCalledWith("embed-app", "auth-required");
+
+    await expect(service.retryAuth("embed-app")).resolves.toBe(true);
+    expect(fetchLaunchToken).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenCalledWith(
+      "app",
+      "notes",
+      BOUNDS,
+      "https://gateway.test/apps/notes/",
+      expect.objectContaining({ id: "embed-app" }),
+    );
   });
 
   it("does not attach a pending app after it closes during retry auth", async () => {

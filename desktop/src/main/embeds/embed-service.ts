@@ -261,6 +261,7 @@ export class EmbedService {
     const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
     if (!resolved) {
       console.warn("[embed-service] app launch url failed origin check:", cached.launchUrl);
+      this.tokenCache.delete(slug);
       return false;
     }
     this.manager.open("app", slug, bounds, resolved, {
