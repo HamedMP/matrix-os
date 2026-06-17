@@ -76,10 +76,13 @@ export const useFileTree = create<FileTreeState>()((set, get) => ({
       set((s) => ({ loadingPaths: { ...s.loadingPaths, [path]: true } }));
       try {
         const children = await listDir(api, path);
-        set((s) => ({
-          childrenByPath: { ...s.childrenByPath, [path]: children },
-          loadingPaths: { ...s.loadingPaths, [path]: false },
-        }));
+        set((s) => {
+          if (!s.loadingPaths[path]) return s;
+          return {
+            childrenByPath: { ...s.childrenByPath, [path]: children },
+            loadingPaths: { ...s.loadingPaths, [path]: false },
+          };
+        });
       } catch (err: unknown) {
         console.warn("[files] list failed:", err instanceof Error ? err.message : String(err));
         set((s) => {
