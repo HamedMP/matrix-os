@@ -155,7 +155,7 @@ The user drives the app with the keyboard: a command palette opens tasks, projec
 #### Projects & Board
 
 - **FR-010**: The app MUST list the user's projects and render each project's tasks as a kanban board using the project's status columns.
-- **FR-011**: Users MUST be able to create, rename, move (status/order), archive, and delete tasks; mutations go to the gateway (owner Postgres is the source of truth) with optimistic concurrency — stale writes refresh, never silently overwrite.
+- **FR-011**: Users MUST be able to create, rename, move (status/order), archive, and delete tasks; mutations go to the gateway (owner Postgres is the source of truth), are serialized per task within the desktop client, and refresh after writes. Concurrent writes from web shell, CLI, or agents follow the gateway's documented last-write-wins PATCH behavior until a conditional-update gateway dependency is introduced.
 - **FR-012**: Task creation MUST offer both "create" and "create + open" completion actions.
 - **FR-013**: Board reads MUST be stale-while-revalidate: cached cards render immediately, refresh happens in the background; full-screen skeletons appear only on first load.
 - **FR-014**: Board changes made elsewhere (web shell, CLI, agents) MUST appear in the app within 2 seconds. Event push is the target mechanism; bounded REST polling/SWR refresh is acceptable only while the full task-event push dependency remains outstanding.
