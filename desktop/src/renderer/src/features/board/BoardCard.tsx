@@ -74,7 +74,7 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
     cardPreviews.length > 0;
 
   const startAgent = async (agent: "claude" | "codex") => {
-    if (!api) return;
+    if (!api || sessionLive) return;
     setStartError(null);
     try {
       const ok = await startTaskSession(api, {
@@ -98,8 +98,12 @@ export default function BoardCard({ card, overlay = false }: { card: Card; overl
 
   const menuItems: MenuItem[] = [
     { label: "Open", onSelect: openCard },
-    { label: "Start Claude", onSelect: () => void startAgent("claude") },
-    { label: "Start Codex", onSelect: () => void startAgent("codex") },
+    ...(sessionLive
+      ? []
+      : [
+          { label: "Start Claude", onSelect: () => void startAgent("claude") },
+          { label: "Start Codex", onSelect: () => void startAgent("codex") },
+        ]),
     ...(previewUrl
       ? [{ label: "Open preview", onSelect: () => void invoke("shell:open-external", { url: previewUrl }) }]
       : []),
