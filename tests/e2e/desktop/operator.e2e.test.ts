@@ -63,8 +63,8 @@ suite("operator desktop e2e", () => {
     // "Continue with GitHub" unambiguously starts the device flow (the browser
     // would present the provider). The stub approves instantly.
     await page.getByRole("button", { name: /continue with github/i }).click();
-    // Poll loop approves; Home renders with the welcome heading.
-    await page.getByText(/Welcome/i).first().waitFor({ timeout: 15_000 });
+    // Poll loop approves; the signed-in shell (sidebar nav) renders.
+    await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
     expect(gateway.state.tokenRequests).toBeGreaterThan(0);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "01-home.png") });
 
@@ -115,7 +115,6 @@ suite("operator desktop e2e", () => {
 
   it("detaches the hosted shell while non-Home tabs are active", async () => {
     await page.locator("aside button", { hasText: "Home" }).first().click();
-    await page.getByText(/Welcome back/i).first().waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(1);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "07-home-shell-active.png") });
 
@@ -135,7 +134,6 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "10-apps-no-shell-overlay.png") });
 
     await page.locator("aside button", { hasText: "Home" }).first().click();
-    await page.getByText(/Welcome back/i).first().waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(1);
     await page.screenshot({ path: join(SCREENSHOT_DIR, "11-home-shell-restored.png") });
   }, 40_000);

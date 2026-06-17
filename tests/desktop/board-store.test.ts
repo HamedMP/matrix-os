@@ -93,6 +93,59 @@ describe("groupCardsByColumn", () => {
   });
 });
 
+describe("createProject", () => {
+  it("POSTs a scratch project and refreshes the list", async () => {
+    const post = vi.fn().mockResolvedValue({ project: { slug: "my-app", name: "My App" } });
+    const get = vi.fn().mockResolvedValue({ projects: [{ slug: "my-app", name: "My App" }] });
+    const api = makeApi({ post, get });
+
+    const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
+    expect(post).toHaveBeenCalledWith("/api/projects", { name: "My App", mode: "scratch" });
+    expect(project).toEqual({ slug: "my-app", name: "My App" });
+    expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App" }]);
+  });
+
+  it("sends the url for a github project", async () => {
+    const post = vi.fn().mockResolvedValue({ project: { slug: "repo", name: "repo" } });
+    const api = makeApi({ post, get: vi.fn().mockResolvedValue({ projects: [] }) });
+    await useBoard.getState().createProject(api, { name: "repo", mode: "github", url: "https://github.com/o/repo" });
+    expect(post).toHaveBeenCalledWith("/api/projects", { name: "repo", mode: "github", url: "https://github.com/o/repo" });
+  });
+
+  it("preserves the refresh error when creation succeeds but the project list reload fails", async () => {
+    const api = makeApi({
+      post: vi.fn().mockResolvedValue({ project: { slug: "my-app", name: "My App" } }),
+      get: vi.fn().mockRejectedValue(new AppError("offline")),
+    });
+
+    const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
+
+    expect(project).toEqual({ slug: "my-app", name: "My App" });
+    expect(useBoard.getState().error).toBe("offline");
+  });
+
+  it("refreshes projects even when a successful create response is malformed", async () => {
+    const api = makeApi({
+      post: vi.fn().mockResolvedValue({ project: { name: "Missing slug" } }),
+      get: vi.fn().mockResolvedValue({ projects: [{ slug: "my-app", name: "My App" }] }),
+    });
+
+    const project = await useBoard.getState().createProject(api, { name: "My App", mode: "scratch" });
+
+    expect(project).toBeNull();
+    expect(api.get).toHaveBeenCalledWith("/api/workspace/projects");
+    expect(useBoard.getState().projects).toEqual([{ slug: "my-app", name: "My App" }]);
+    expect(useBoard.getState().error).toBe("server");
+  });
+
+  it("returns null and sets an error category on failure", async () => {
+    const api = makeApi({ post: vi.fn().mockRejectedValue(new AppError("server")) });
+    const project = await useBoard.getState().createProject(api, { name: "x", mode: "scratch" });
+    expect(project).toBeNull();
+    expect(useBoard.getState().error).toBe("server");
+  });
+});
+
 describe("linkSession", () => {
   it("optimistically links a session and persists the patch", async () => {
     const patched = wireTask({ linkedSessionId: "sess_1", status: "running" });

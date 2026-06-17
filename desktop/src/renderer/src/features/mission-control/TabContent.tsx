@@ -8,7 +8,6 @@ import TerminalView from "../terminal/TerminalView";
 import ThreadView from "../threads/ThreadView";
 import SettingsView from "../settings/SettingsView";
 import HomeTab from "./HomeTab";
-import AgentsTab from "../threads/AgentsTab";
 import ChatTab from "../chat/ChatTab";
 import { AppLauncher } from "../embeds";
 import TerminalsTab from "../terminal/TerminalsTab";
@@ -33,7 +32,8 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "terminal":
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "agents":
-      return <AgentsTab />;
+      // Agent threads now live inside the unified chat (rail on the left).
+      return <ChatTab />;
     case "thread":
       return tab.threadId ? <ThreadView threadId={tab.threadId} /> : null;
     case "settings":
@@ -50,7 +50,12 @@ export default function TabContent() {
   // we treat embeds as inactive (detached) — otherwise the palette/composer/
   // dialogs would render behind the embed.
   const overlayOpen = useUi(
-    (s) => s.paletteOpen || s.composerOpen || s.quickOpenOpen || s.createTaskOpen,
+    (s) =>
+      s.paletteOpen ||
+      s.composerOpen ||
+      s.quickOpenOpen ||
+      s.createTaskOpen ||
+      s.createProjectOpen,
   );
 
   if (tabs.length === 0) {
