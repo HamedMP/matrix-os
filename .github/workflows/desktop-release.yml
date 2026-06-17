@@ -78,6 +78,10 @@ jobs:
             exit 1
           fi
           case "$CHANNEL" in stable|beta|canary) ;; *) echo "invalid channel: $CHANNEL" >&2; exit 1 ;; esac
+          if [ "$CHANNEL" != "stable" ] && [[ "$VERSION" != *-* ]]; then
+            echo "Non-stable desktop channels require a prerelease semver version." >&2
+            exit 1
+          fi
           PRERELEASE=false
           if [ "$CHANNEL" != "stable" ] || [[ "$VERSION" == *-* ]]; then
             PRERELEASE=true

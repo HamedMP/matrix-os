@@ -67,6 +67,13 @@ describe("desktop release workflows", () => {
     expect(release).toContain("Prerelease desktop versions must be released with workflow_dispatch");
   });
 
+  it("rejects stable semver versions on prerelease desktop channels", () => {
+    const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
+
+    expect(release).toContain('if [ "$CHANNEL" != "stable" ] && [[ "$VERSION" != *-* ]]; then');
+    expect(release).toContain("Non-stable desktop channels require a prerelease semver version.");
+  });
+
   it("merges mac manifests in deterministic filename order", () => {
     const dir = mkdtempSync(join(tmpdir(), "matrix-desktop-release-"));
     try {
