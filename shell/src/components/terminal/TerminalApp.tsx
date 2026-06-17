@@ -4890,7 +4890,7 @@ function ShellCard({
                 opacity: showActions ? 1 : 0,
                 pointerEvents: showActions ? "auto" : "none",
                 transition: "opacity 120ms ease",
-                width: 86,
+                width: 90,
               }}
             >
               <button
