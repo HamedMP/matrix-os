@@ -5,6 +5,10 @@ import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { useGit } from "../../stores/git";
 
+export function canOpenPreviewUrl(url: string | null | undefined): url is string {
+  return typeof url === "string" && (url.startsWith("https://") || url.startsWith("http://"));
+}
+
 export default function ArtifactsPanel({
   projectSlug,
   taskId,
@@ -53,7 +57,7 @@ export default function ArtifactsPanel({
           className="flex flex-col gap-0.5 rounded-lg border p-2.5 text-left hover:border-[var(--border-strong)]"
           style={{ borderColor: "var(--border-subtle)", background: "var(--bg-raised)" }}
           onClick={() => {
-            if (preview.url && preview.url.startsWith("https://")) {
+            if (canOpenPreviewUrl(preview.url)) {
               void invoke("shell:open-external", { url: preview.url });
             }
           }}

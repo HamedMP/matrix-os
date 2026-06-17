@@ -37,7 +37,9 @@ export { monaco };
 // Model cache so open files survive panel/workspace remounts (SC-006).
 const models = new Map<string, monaco.editor.ITextModel>();
 const modelBaselines = new Map<string, string>();
+const evictedDirtyModels = new Map<string, { value: string; baseline: string }>();
 const MODEL_CACHE_CAP = 32;
+const EVICTED_DIRTY_MODEL_CAP = 32;
 
 function modelKey(taskId: string, path: string): string {
   return `${taskId}\u0000${path}`;
@@ -52,7 +54,17 @@ function isModelClean(key: string, model: monaco.editor.ITextModel): boolean {
   return baseline === undefined || model.getValue() === baseline;
 }
 
-function evictOldestCleanModel(): void {
+function rememberEvictedDirtyModel(key: string, value: string, baseline: string): void {
+  evictedDirtyModels.delete(key);
+  evictedDirtyModels.set(key, { value, baseline });
+  while (evictedDirtyModels.size > EVICTED_DIRTY_MODEL_CAP) {
+    const oldest = evictedDirtyModels.keys().next();
+    if (oldest.done) break;
+    evictedDirtyModels.delete(oldest.value);
+  }
+}
+
+function evictOldestModel(): void {
   for (const [key, model] of models) {
     if (model.isDisposed() || isModelClean(key, model)) {
       model.dispose();
@@ -61,6 +73,14 @@ function evictOldestCleanModel(): void {
       return;
     }
   }
+  const oldest = models.entries().next();
+  if (oldest.done) return;
+  const [key, model] = oldest.value;
+  const value = model.getValue();
+  rememberEvictedDirtyModel(key, value, modelBaselines.get(key) ?? value);
+  model.dispose();
+  models.delete(key);
+  modelBaselines.delete(key);
 }
 
 export function getOrCreateModel(taskId: string, path: string, content: string): monaco.editor.ITextModel {
@@ -69,6 +89,7 @@ export function getOrCreateModel(taskId: string, path: string, content: string):
   if (existing && !existing.isDisposed()) {
     models.delete(key);
     models.set(key, existing);
+    evictedDirtyModels.delete(key);
     const baseline = modelBaselines.get(key);
     if (baseline === undefined) {
       modelBaselines.set(key, existing.getValue());
@@ -85,11 +106,17 @@ export function getOrCreateModel(taskId: string, path: string, content: string):
     modelBaselines.delete(key);
   }
   if (models.size >= MODEL_CACHE_CAP) {
-    evictOldestCleanModel();
+    evictOldestModel();
   }
-  const model = monaco.editor.createModel(content, undefined, monaco.Uri.file(modelUriPath(taskId, path)));
+  const evictedDirty = evictedDirtyModels.get(key);
+  evictedDirtyModels.delete(key);
+  const model = monaco.editor.createModel(
+    evictedDirty?.value ?? content,
+    undefined,
+    monaco.Uri.file(modelUriPath(taskId, path)),
+  );
   models.set(key, model);
-  modelBaselines.set(key, content);
+  modelBaselines.set(key, evictedDirty?.baseline ?? content);
   return model;
 }
 
@@ -97,6 +124,8 @@ export function markModelBaseline(taskId: string, path: string, content: string)
   const key = modelKey(taskId, path);
   if (models.has(key)) {
     modelBaselines.set(key, content);
+  } else if (evictedDirtyModels.has(key)) {
+    rememberEvictedDirtyModel(key, content, content);
   }
 }
 
@@ -108,4 +137,5 @@ export function dropModel(taskId: string, path: string): void {
     models.delete(key);
   }
   modelBaselines.delete(key);
+  evictedDirtyModels.delete(key);
 }

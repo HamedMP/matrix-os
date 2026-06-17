@@ -79,6 +79,23 @@ describe("monaco model cache", () => {
     expect(dirty.isDisposed()).toBe(false);
   });
 
+  it("caps the live cache while preserving evicted dirty content", async () => {
+    const { getOrCreateModel } = await loadMonacoSetup();
+    const dirtyModels: TestModel[] = [];
+
+    for (let i = 0; i < 32; i += 1) {
+      const model = getOrCreateModel("task-a", `dirty-${i}.ts`, `server-${i}`) as TestModel;
+      model.setValue(`unsaved-${i}`);
+      dirtyModels.push(model);
+    }
+
+    const extra = getOrCreateModel("task-a", "extra.ts", "server-extra");
+
+    expect(extra.getValue()).toBe("server-extra");
+    expect(dirtyModels[0]?.isDisposed()).toBe(true);
+    expect(getOrCreateModel("task-a", "dirty-0.ts", "server-0").getValue()).toBe("unsaved-0");
+  });
+
   it("isolates same-path dirty models by task", async () => {
     const { getOrCreateModel } = await loadMonacoSetup();
     const taskA = getOrCreateModel("task-a", "src/app.ts", "server-a");

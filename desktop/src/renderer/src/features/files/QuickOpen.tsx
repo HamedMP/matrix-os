@@ -12,7 +12,6 @@ export default function QuickOpen() {
   const open = useUi((s) => s.quickOpenOpen);
   const setOpen = useUi((s) => s.setQuickOpenOpen);
   const view = useUi((s) => s.view);
-  const navigate = useUi((s) => s.navigate);
   const api = useConnection((s) => s.api);
   const openTab = useEditorTabs((s) => s.openTab);
   const togglePanel = useWorkspace((s) => s.togglePanel);
@@ -102,7 +101,6 @@ export default function QuickOpen() {
     if (view.kind !== "task") return;
     openTab(view.taskId, path);
     if (!layoutFor(view.taskId).visible.editor) togglePanel(view.taskId, "editor");
-    navigate(view);
   };
 
   return (
