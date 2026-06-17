@@ -1,15 +1,19 @@
 import {
   Activity,
+  CircleStop,
   FileCode2,
   FolderTree,
   GitBranch,
-  Package,
+  Globe,
+  ListTree,
+  Sparkles,
   SquareTerminal,
 } from "lucide-react";
-import { useEffect, useMemo } from "react";
-import { Button, EmptyState, IconButton } from "../../design/primitives";
+import { useEffect, useMemo, useState } from "react";
+import { EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
+import { useGit } from "../../stores/git";
 import { useSessions } from "../../stores/sessions";
 import { useWorkspace, type PanelKind } from "../../stores/workspace";
 import EditorPanel from "../editor/EditorPanel";
@@ -20,14 +24,17 @@ import { getAttachManager } from "../terminal/terminal-runtime";
 import ArtifactsPanel from "./ArtifactsPanel";
 import PanelStrip, { PANEL_TITLES } from "./PanelStrip";
 import ProcessesPanel from "./ProcessesPanel";
+import StartSessionControls from "./StartSessionControls";
+import TimelinePanel from "./TimelinePanel";
 
 const PANEL_ICONS: Record<PanelKind, React.ReactNode> = {
   terminal: <SquareTerminal size={14} />,
   editor: <FileCode2 size={14} />,
   git: <GitBranch size={14} />,
   browser: <FolderTree size={14} />,
-  artifacts: <Package size={14} />,
+  artifacts: <Globe size={14} />,
   processes: <Activity size={14} />,
+  timeline: <ListTree size={14} />,
 };
 
 const PANEL_SHORTCUT_ORDER: PanelKind[] = [
@@ -37,10 +44,32 @@ const PANEL_SHORTCUT_ORDER: PanelKind[] = [
   "browser",
   "artifacts",
   "processes",
+  "timeline",
 ];
 
 function warnSessionLoadFailure(err: unknown): void {
   console.warn("[task-workspace] load sessions failed:", err instanceof Error ? err.message : String(err));
+}
+
+// Map an agent session's runtime status to a label/color and whether it can
+// still be stopped (running/waiting are abortable; exited/failed are terminal).
+function describeAgentRun(
+  agent: string | undefined,
+  runtimeStatus: string | undefined,
+): { label: string; color: string; stoppable: boolean } {
+  const name = agent ? agent[0]!.toUpperCase() + agent.slice(1) : "Agent";
+  switch (runtimeStatus) {
+    case "waiting":
+      return { label: `${name} · needs input`, color: "var(--warning)", stoppable: true };
+    case "failed":
+      return { label: `${name} · failed`, color: "var(--danger)", stoppable: false };
+    case "exited":
+      return { label: `${name} · done`, color: "var(--text-tertiary)", stoppable: false };
+    case "idle":
+      return { label: `${name} · idle`, color: "var(--text-secondary)", stoppable: true };
+    default:
+      return { label: `${name} · running`, color: "var(--success)", stoppable: true };
+  }
 }
 
 export default function TaskWorkspace({
@@ -55,12 +84,23 @@ export default function TaskWorkspace({
   const api = useConnection((s) => s.api);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessionsLoad = useSessions((s) => s.load);
+  const killSession = useSessions((s) => s.kill);
   const aliasMap = useSessions((s) => s.aliasMap);
+  const sessionList = useSessions((s) => s.sessions);
+  const worktrees = useGit((s) => s.worktrees);
+  const previews = useGit((s) => s.previews);
+  const gitLoadAll = useGit((s) => s.loadAll);
+  const gitLoadPreviews = useGit((s) => s.loadPreviews);
   const openTask = useWorkspace((s) => s.openTask);
   const focusTask = useWorkspace((s) => s.focusTask);
   const togglePanel = useWorkspace((s) => s.togglePanel);
   const layouts = useWorkspace((s) => s.layouts);
   const layoutFor = useWorkspace((s) => s.layoutFor);
+  const [stopAgentState, setStopAgentState] = useState<{
+    attachName: string | null;
+    pending: boolean;
+    error: string | null;
+  }>({ attachName: null, pending: false, error: null });
 
   const card = useMemo(() => {
     for (const cards of Object.values(cardsByProject)) {
@@ -75,6 +115,14 @@ export default function TaskWorkspace({
   useEffect(() => {
     if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
   }, [api, sessionsLoad]);
+
+  // Worktree + preview state powers the task header chips (branch/dirty/preview
+  // health). Scoped to this task's project so the header reflects live work.
+  useEffect(() => {
+    if (!api || !projectSlug) return;
+    void gitLoadAll(api, projectSlug);
+    void gitLoadPreviews(api, projectSlug, taskId);
+  }, [api, projectSlug, taskId, gitLoadAll, gitLoadPreviews]);
 
   useEffect(() => {
     // LRU eviction releases attach buffers for tasks pushed out of the cap.
@@ -108,6 +156,46 @@ export default function TaskWorkspace({
 
   const attachName = card?.linkedSessionId ? (aliasMap[card.linkedSessionId] ?? null) : null;
   const layout = layouts[taskId] ?? layoutFor(taskId);
+  useEffect(() => {
+    setStopAgentState((current) =>
+      current.attachName === attachName ? current : { attachName, pending: false, error: null },
+    );
+  }, [attachName]);
+  const stopAgentPending = stopAgentState.attachName === attachName && stopAgentState.pending;
+  const stopAgentError = stopAgentState.attachName === attachName ? stopAgentState.error : null;
+
+  // Header chips: live session, agent run, worktree branch/dirty, preview health.
+  const liveSession = useMemo(
+    () => (attachName ? sessionList.find((s) => s.attachName === attachName) ?? null : null),
+    [attachName, sessionList],
+  );
+  const sessionLive = liveSession?.status === "active";
+  const agentRun = liveSession?.kind === "agent" ? describeAgentRun(liveSession.agent, liveSession.runtimeStatus) : null;
+  const worktree = useMemo(
+    () => (card?.linkedWorktreeId ? worktrees.find((w) => w.id === card.linkedWorktreeId) ?? null : null),
+    [worktrees, card?.linkedWorktreeId],
+  );
+  const taskPreviews = useMemo(
+    () => previews.filter((p) => p.taskId === taskId),
+    [previews, taskId],
+  );
+  const previewHealth: "ok" | "failed" | "unknown" | null =
+    taskPreviews.length === 0
+      ? null
+      : taskPreviews.some((p) => p.lastStatus === "failed")
+        ? "failed"
+        : taskPreviews.every((p) => p.lastStatus === "ok")
+          ? "ok"
+          : "unknown";
+  const previewColor =
+    previewHealth === "ok" ? "var(--success)" : previewHealth === "failed" ? "var(--danger)" : "var(--text-tertiary)";
+
+  const stopAgent = async () => {
+    if (!api || !attachName || stopAgentPending) return;
+    setStopAgentState({ attachName, pending: true, error: null });
+    const ok = await killSession(api, attachName);
+    setStopAgentState({ attachName, pending: false, error: ok ? null : "Stop failed" });
+  };
 
   const renderPanel = (panel: PanelKind): React.ReactNode => {
     switch (panel) {
@@ -120,18 +208,19 @@ export default function TaskWorkspace({
             headline="No live session"
             description={
               card?.linkedSessionId
-                ? "This task's session has ended on your computer."
-                : "This task has no linked terminal session yet."
+                ? "This task's session has ended. Start a new one on your cloud computer."
+                : "Start a cloud terminal or coding agent for this task."
             }
             action={
-              <Button
-                variant="primary"
-                onClick={() => {
-                  if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
-                }}
-              >
-                Refresh sessions
-              </Button>
+              projectSlug && card ? (
+                <StartSessionControls
+                  projectSlug={projectSlug}
+                  taskId={taskId}
+                  worktreeId={card.linkedWorktreeId}
+                  title={card.title}
+                  description={card.description}
+                />
+              ) : null
             }
           />
         );
@@ -145,6 +234,8 @@ export default function TaskWorkspace({
         return projectSlug ? <ArtifactsPanel projectSlug={projectSlug} taskId={taskId} /> : null;
       case "processes":
         return <ProcessesPanel />;
+      case "timeline":
+        return <TimelinePanel taskId={taskId} />;
     }
   };
 
@@ -154,17 +245,82 @@ export default function TaskWorkspace({
         className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+        <span className="min-w-0 max-w-[40%] truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
           {card?.title ?? "Task"}
         </span>
-        {attachName ? (
-          <span
-            className="rounded-full border px-2 py-0.5 font-mono text-xs"
-            style={{ borderColor: "var(--border-default)", color: "var(--text-tertiary)" }}
-          >
-            {attachName}
-          </span>
+
+        {/* Work-state chips: session, worktree/branch + dirty, preview health. */}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+          {attachName ? (
+            <span
+              className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
+              style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+              title={sessionLive ? "Live session" : "Session ended"}
+            >
+              <StatusDot color={sessionLive ? "var(--success)" : "var(--text-tertiary)"} pulse={sessionLive} />
+              <span className="font-mono">{attachName}</span>
+            </span>
+          ) : null}
+          {agentRun ? (
+            <span
+              className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
+              style={{ borderColor: "var(--border-default)", color: agentRun.color }}
+            >
+              <Sparkles size={11} />
+              {agentRun.label}
+              {agentRun.stoppable && attachName ? (
+                <button
+                  type="button"
+                  aria-label="Stop agent"
+                  aria-busy={stopAgentPending}
+                  disabled={!api || stopAgentPending}
+                  title={stopAgentPending ? "Stopping agent" : stopAgentError ?? "Stop agent"}
+                  className="ml-0.5 flex h-4 w-4 items-center justify-center rounded"
+                  style={{ color: stopAgentPending ? "var(--text-tertiary)" : "var(--danger)" }}
+                  onClick={() => void stopAgent()}
+                >
+                  <CircleStop size={12} />
+                </button>
+              ) : null}
+              {stopAgentError ? <span style={{ color: "var(--danger)" }}>{stopAgentError}</span> : null}
+            </span>
+          ) : null}
+          {worktree ? (
+            <span
+              className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+              style={{ borderColor: "var(--border-default)", color: "var(--text-secondary)" }}
+              title={worktree.dirtyState === "dirty" ? "Uncommitted changes" : "Clean working tree"}
+            >
+              <GitBranch size={11} />
+              <span className="max-w-[140px] truncate font-mono">{worktree.currentBranch ?? worktree.sourceBranch ?? "worktree"}</span>
+              {worktree.dirtyCount ? (
+                <span style={{ color: "var(--highlight)" }}>±{worktree.dirtyCount}</span>
+              ) : null}
+            </span>
+          ) : null}
+          {previewHealth ? (
+            <span
+              className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+              style={{ borderColor: "var(--border-default)", color: previewColor }}
+              title={`Preview ${previewHealth}`}
+            >
+              <Globe size={11} />
+              {taskPreviews.length}
+            </span>
+          ) : null}
+        </div>
+
+        {projectSlug && card && !sessionLive ? (
+          <StartSessionControls
+            projectSlug={projectSlug}
+            taskId={taskId}
+            worktreeId={card.linkedWorktreeId}
+            title={card.title}
+            description={card.description}
+            compact
+          />
         ) : null}
+
         <div className="flex items-center gap-0.5">
           {PANEL_SHORTCUT_ORDER.map((panel, i) => (
             <IconButton

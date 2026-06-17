@@ -3,6 +3,7 @@ import { Group, Panel, Separator, type Layout as GroupLayout } from "react-resiz
 import {
   useWorkspace,
   defaultLayout,
+  normalizeLayout,
   PANEL_MIN_PCT,
   type PanelKind,
   type PanelLayout,
@@ -13,8 +14,9 @@ export const PANEL_TITLES: Record<PanelKind, string> = {
   editor: "Editor",
   git: "Git",
   browser: "Files",
-  artifacts: "Artifacts",
+  artifacts: "Preview",
   processes: "Processes",
+  timeline: "Timeline",
 };
 
 interface PanelStripProps {
@@ -53,7 +55,7 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
   const layouts = useWorkspace((s) => s.layouts);
   const setPanelSizes = useWorkspace((s) => s.setPanelSizes);
 
-  const layout: PanelLayout = useMemo(() => layouts[taskId] ?? defaultLayout(), [layouts, taskId]);
+  const layout: PanelLayout = useMemo(() => normalizeLayout(layouts[taskId] ?? defaultLayout()), [layouts, taskId]);
   const visiblePanels = useMemo(() => layout.order.filter((panel) => layout.visible[panel]), [layout]);
 
   // Remount the group when the visible set changes so default sizes re-apply.
@@ -69,7 +71,7 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <span className="text-sm" style={{ color: "var(--text-tertiary)" }}>
-          All panels hidden. Toggle one from the toolbar (⌘1–⌘6).
+          All panels hidden. Toggle one from the toolbar (⌘1–⌘7).
         </span>
       </div>
     );

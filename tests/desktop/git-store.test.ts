@@ -135,7 +135,7 @@ describe("loadAll", () => {
     expect(state.error).toBeNull();
   });
 
-  it("sets loading while requests are in flight", async () => {
+  it("sets loading without clearing existing surfaces while requests are in flight", async () => {
     const d = deferred<unknown>();
     const get = vi.fn((path: string) => {
       if (path.includes("/branches")) return d.promise;
@@ -152,10 +152,10 @@ describe("loadAll", () => {
 
     const pending = useGit.getState().loadAll(api, "proj");
     expect(useGit.getState().loading).toBe(true);
-    expect(useGit.getState().branches).toEqual([]);
-    expect(useGit.getState().prs).toEqual([]);
-    expect(useGit.getState().worktrees).toEqual([]);
-    expect(useGit.getState().refreshedAt).toBeNull();
+    expect(useGit.getState().branches).toEqual([{ name: "stale" }]);
+    expect(useGit.getState().prs).toEqual([wirePr({ number: 99 })]);
+    expect(useGit.getState().worktrees).toEqual([wireWorktree({ id: "stale_wt" })]);
+    expect(useGit.getState().refreshedAt).toBe(T2);
     d.resolve({ branches: [], refreshedAt: T1 });
     await pending;
     expect(useGit.getState().loading).toBe(false);
@@ -220,7 +220,7 @@ describe("loadAll", () => {
     expect(useGit.getState().loading).toBe(false);
   });
 
-  it("keeps failed surfaces empty after the project-scoped pre-clear and updates the others", async () => {
+  it("keeps stale surfaces visible when refresh fails and updates the others", async () => {
     useGit.setState({ branches: [{ name: "previous" }] });
     const get = routedGet({
       "/branches": new AppError("offline"),
@@ -232,7 +232,7 @@ describe("loadAll", () => {
     await useGit.getState().loadAll(api, "proj");
 
     const state = useGit.getState();
-    expect(state.branches).toEqual([]);
+    expect(state.branches).toEqual([{ name: "previous" }]);
     expect(state.prs).toHaveLength(1);
     expect(state.worktrees).toHaveLength(1);
     expect(state.error).toBe("offline");
@@ -282,7 +282,6 @@ describe("loadPreviews", () => {
     await useGit.getState().loadPreviews(api, "proj");
 
     expect(get).toHaveBeenCalledWith("/api/projects/proj/previews?limit=100");
-    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: null });
     expect(useGit.getState().previews).toEqual([
       {
         id: "prev_1",
@@ -308,7 +307,56 @@ describe("loadPreviews", () => {
     expect(get).toHaveBeenCalledWith("/api/projects/proj/previews?limit=100&taskId=task_a");
   });
 
-  it("clears stale previews and sets the error category on failure", async () => {
+  it("merges task-scoped previews without removing other task badges", async () => {
+    useGit.setState({
+      previews: [
+        {
+          ...wirePreview({ id: "prev_task_a", taskId: "task_a", label: "Task A" }),
+          updatedAt: T1,
+        },
+        {
+          ...wirePreview({ id: "prev_task_b", taskId: "task_b", label: "Task B" }),
+          updatedAt: T1,
+        },
+      ],
+    });
+    const get = vi.fn().mockResolvedValue({
+      previews: [wirePreview({ id: "prev_task_a", taskId: "task_a", label: "Task A refreshed" })],
+      nextCursor: null,
+    });
+    const api = makeApi({ get: get as never });
+
+    await useGit.getState().loadPreviews(api, "proj", "task_a");
+
+    expect(Object.fromEntries(useGit.getState().previews.map((preview) => [preview.id, preview.label]))).toEqual({
+      prev_task_a: "Task A refreshed",
+      prev_task_b: "Task B",
+    });
+  });
+
+  it("replaces stale preview records when a preview is reassigned into the loaded scope", async () => {
+    useGit.setState({
+      previews: [
+        {
+          ...wirePreview({ id: "prev_move", taskId: "task_b", label: "Old task" }),
+          updatedAt: T1,
+        },
+      ],
+    });
+    const get = vi.fn().mockResolvedValue({
+      previews: [wirePreview({ id: "prev_move", taskId: "task_a", label: "New task" })],
+      nextCursor: null,
+    });
+    const api = makeApi({ get: get as never });
+
+    await useGit.getState().loadPreviews(api, "proj", "task_a");
+
+    expect(useGit.getState().previews).toMatchObject([
+      { id: "prev_move", taskId: "task_a", label: "New task" },
+    ]);
+  });
+
+  it("keeps existing previews and sets the error category on failure", async () => {
     const existing = {
       id: "prev_keep",
       projectSlug: "proj",
@@ -323,7 +371,7 @@ describe("loadPreviews", () => {
 
     await useGit.getState().loadPreviews(api, "proj");
 
-    expect(useGit.getState().previews).toEqual([]);
+    expect(useGit.getState().previews).toEqual([existing]);
     expect(useGit.getState().previewError).toBe("timeout");
   });
 
@@ -348,7 +396,7 @@ describe("loadPreviews", () => {
     expect(useGit.getState().previewError).toBe("timeout");
   });
 
-  it("ignores stale preview responses from a previous task scope", async () => {
+  it("allows concurrent preview responses from different scopes", async () => {
     const first = deferred<{ previews: unknown[] }>();
     const second = deferred<{ previews: unknown[] }>();
     const get = vi
@@ -364,8 +412,53 @@ describe("loadPreviews", () => {
     first.resolve({ previews: [wirePreview({ id: "prev_a", taskId: "task_a" })] });
     await firstLoad;
 
-    expect(useGit.getState().previewScope).toEqual({ projectSlug: "proj", taskId: "task_b" });
-    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_b"]);
+    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_b", "prev_a"]);
+  });
+
+  it("ignores stale preview responses from an older request for the same scope", async () => {
+    const first = deferred<{ previews: unknown[] }>();
+    const second = deferred<{ previews: unknown[] }>();
+    const get = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const api = makeApi({ get: get as never });
+
+    const firstLoad = useGit.getState().loadPreviews(api, "proj", "task_a");
+    const secondLoad = useGit.getState().loadPreviews(api, "proj", "task_a");
+    second.resolve({ previews: [wirePreview({ id: "prev_new", taskId: "task_a" })] });
+    await secondLoad;
+    first.resolve({ previews: [wirePreview({ id: "prev_old", taskId: "task_a" })] });
+    await firstLoad;
+
+    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual(["prev_new"]);
+  });
+
+  it("does not discard a concurrent project-wide preview response after a task-scoped load starts", async () => {
+    const projectWide = deferred<{ previews: unknown[] }>();
+    const taskScoped = deferred<{ previews: unknown[] }>();
+    const get = vi
+      .fn()
+      .mockReturnValueOnce(projectWide.promise)
+      .mockReturnValueOnce(taskScoped.promise);
+    const api = makeApi({ get: get as never });
+
+    const projectLoad = useGit.getState().loadPreviews(api, "proj");
+    const taskLoad = useGit.getState().loadPreviews(api, "proj", "task_a");
+    taskScoped.resolve({ previews: [wirePreview({ id: "prev_task", taskId: "task_a" })] });
+    await taskLoad;
+    projectWide.resolve({
+      previews: [
+        wirePreview({ id: "prev_project_a", taskId: "task_a" }),
+        wirePreview({ id: "prev_project_b", taskId: "task_b" }),
+      ],
+    });
+    await projectLoad;
+
+    expect(useGit.getState().previews.map((preview) => preview.id)).toEqual([
+      "prev_project_a",
+      "prev_project_b",
+    ]);
   });
 });
 

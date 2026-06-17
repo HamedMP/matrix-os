@@ -1,17 +1,57 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
-import ArtifactsPanel, { canOpenPreviewUrl } from "../../desktop/src/renderer/src/features/workspace/ArtifactsPanel";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import ArtifactsPanel, {
+  canOpenPreviewUrl,
+} from "../../desktop/src/renderer/src/features/workspace/ArtifactsPanel";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useGit } from "../../desktop/src/renderer/src/stores/git";
 
-afterEach(() => {
-  cleanup();
-});
+describe("ArtifactsPanel", () => {
+  beforeEach(() => {
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: null,
+    });
+    useGit.setState({
+      previews: [
+        {
+          id: "preview_task_a",
+          projectSlug: "proj",
+          taskId: "task_a",
+          label: "Task preview",
+          url: "https://preview.example.com",
+          lastStatus: "ok",
+        },
+      ],
+      previewScope: { projectSlug: "proj", taskId: null },
+      error: null,
+      previewError: null,
+    });
+  });
 
-describe("artifacts preview URLs", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("renders task previews even after a project-wide preview load changes scope", () => {
+    render(
+      <Tooltip.Provider>
+        <ArtifactsPanel projectSlug="proj" taskId="task_a" />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText("Task preview")).toBeTruthy();
+    expect(screen.queryByText("No previews")).toBeNull();
+  });
+
   it("allows only secure HTTP preview links", () => {
     expect(canOpenPreviewUrl("http://127.0.0.1:5173")).toBe(false);
     expect(canOpenPreviewUrl("https://preview.example.com")).toBe(true);
@@ -33,10 +73,14 @@ describe("artifacts preview URLs", () => {
       previewError: "timeout",
     });
 
-    render(<ArtifactsPanel projectSlug="matrix-os" taskId="task-1" />);
+    render(
+      <Tooltip.Provider>
+        <ArtifactsPanel projectSlug="matrix-os" taskId="task-1" />
+      </Tooltip.Provider>,
+    );
 
-    expect(screen.getByText("Couldn't load artifacts")).toBeTruthy();
-    expect(screen.queryByText("No artifacts")).toBeNull();
+    expect(screen.getByText("Couldn't load previews")).toBeTruthy();
+    expect(screen.queryByText("No previews")).toBeNull();
   });
 
   it("does not show list load failures as artifact failures", () => {
@@ -48,9 +92,13 @@ describe("artifacts preview URLs", () => {
       previewError: null,
     });
 
-    render(<ArtifactsPanel projectSlug="matrix-os" taskId="task-1" />);
+    render(
+      <Tooltip.Provider>
+        <ArtifactsPanel projectSlug="matrix-os" taskId="task-1" />
+      </Tooltip.Provider>,
+    );
 
-    expect(screen.queryByText("Couldn't load artifacts")).toBeNull();
-    expect(screen.getByText("No artifacts")).toBeTruthy();
+    expect(screen.queryByText("Couldn't load previews")).toBeNull();
+    expect(screen.getByText("No previews")).toBeTruthy();
   });
 });

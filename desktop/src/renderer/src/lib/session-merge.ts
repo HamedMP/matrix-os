@@ -13,6 +13,11 @@ export interface WorkspaceSessionDTO {
   id?: string;
   sessionId?: string;
   name?: string;
+  kind?: string;
+  agent?: string;
+  projectSlug?: string;
+  taskId?: string | null;
+  worktreeId?: string | null;
   runtime?: { zellijSession?: string | null; status?: string } | null;
   status?: string;
 }
@@ -22,6 +27,15 @@ export interface AttachableSession {
   attachName: string;
   status: "active" | "exited";
   source: "zellij" | "workspace";
+  // Workspace-only metadata (absent for plain zellij shells): the session kind,
+  // the agent CLI when kind==="agent", and the fine-grained runtime status
+  // (running | waiting | idle | failed | …) that drives the agent-run badge.
+  kind?: "shell" | "agent";
+  agent?: string;
+  projectSlug?: string;
+  taskId?: string;
+  worktreeId?: string;
+  runtimeStatus?: string;
 }
 
 export interface SessionMergeResult {
@@ -36,11 +50,28 @@ function workspaceStatus(record: WorkspaceSessionDTO): "active" | "exited" {
   return status !== undefined && EXITED_STATUSES.has(status) ? "exited" : "active";
 }
 
+// Optional workspace metadata, added only when present so plain zellij shells
+// keep their minimal shape.
+function workspaceMeta(
+  record: WorkspaceSessionDTO,
+): Partial<Pick<AttachableSession, "kind" | "agent" | "projectSlug" | "taskId" | "worktreeId" | "runtimeStatus">> {
+  const meta: Partial<Pick<AttachableSession, "kind" | "agent" | "projectSlug" | "taskId" | "worktreeId" | "runtimeStatus">> = {};
+  if (record.kind === "shell" || record.kind === "agent") meta.kind = record.kind;
+  if (typeof record.agent === "string" && record.agent.length > 0) meta.agent = record.agent;
+  if (typeof record.projectSlug === "string" && record.projectSlug.length > 0) meta.projectSlug = record.projectSlug;
+  if (typeof record.taskId === "string" && record.taskId.length > 0) meta.taskId = record.taskId;
+  if (typeof record.worktreeId === "string" && record.worktreeId.length > 0) meta.worktreeId = record.worktreeId;
+  const runtimeStatus = record.runtime?.status;
+  if (typeof runtimeStatus === "string" && runtimeStatus.length > 0) meta.runtimeStatus = runtimeStatus;
+  return meta;
+}
+
 export function mergeAttachableSessions(
   zellij: ZellijSessionDTO[],
   workspace: WorkspaceSessionDTO[],
 ): SessionMergeResult {
   const sessions: AttachableSession[] = [];
+  const byAttach = new Map<string, AttachableSession>();
   const aliasMap: Record<string, string> = {};
   const seenAttachNames = new Set<string>();
 
@@ -48,12 +79,14 @@ export function mergeAttachableSessions(
     const name = entry.name;
     if (!name || name.trim().length === 0 || seenAttachNames.has(name)) continue;
     seenAttachNames.add(name);
-    sessions.push({
+    const session: AttachableSession = {
       name,
       attachName: name,
       status: entry.status === "exited" ? "exited" : "active",
       source: "zellij",
-    });
+    };
+    sessions.push(session);
+    byAttach.set(name, session);
     aliasMap[name] = name;
   }
 
@@ -65,16 +98,23 @@ export function mergeAttachableSessions(
       if (alias && alias.trim().length > 0) aliasMap[alias] = attachName;
     }
 
-    // Zellij (or an earlier record) already owns this attach name — its
-    // status wins, only the aliases above are added.
-    if (seenAttachNames.has(attachName)) continue;
+    // Zellij (or an earlier record) already owns this attach name — its status
+    // wins, but enrich it with the workspace metadata (kind/agent/run status).
+    if (seenAttachNames.has(attachName)) {
+      const existing = byAttach.get(attachName);
+      if (existing) Object.assign(existing, workspaceMeta(record));
+      continue;
+    }
     seenAttachNames.add(attachName);
-    sessions.push({
+    const session: AttachableSession = {
       name: record.name && record.name.trim().length > 0 ? record.name : attachName,
       attachName,
       status: workspaceStatus(record),
       source: "workspace",
-    });
+      ...workspaceMeta(record),
+    };
+    sessions.push(session);
+    byAttach.set(attachName, session);
   }
 
   return { sessions, aliasMap };
