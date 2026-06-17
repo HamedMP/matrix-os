@@ -115,6 +115,33 @@ describe("EmbedManager", () => {
     expect(views).toHaveLength(0);
   });
 
+  it("uses the latest allowed origins when opening after a runtime switch", () => {
+    const views: Array<{ partition: string; view: FakeView }> = [];
+    let gatewayOrigin = "https://first-gw.test";
+    const manager = new EmbedManager({
+      getAllowedOrigins: () => [gatewayOrigin],
+      createView: ({ partition, onState }) => {
+        const view = new FakeView(null, onState);
+        views.push({ partition, view });
+        return view;
+      },
+    });
+
+    const first = manager.open("hosted-shell", null, BOUNDS, "https://first-gw.test/canvas");
+    manager.closeAll();
+    gatewayOrigin = "https://second-gw.test";
+    const second = manager.open("hosted-shell", null, BOUNDS, "https://second-gw.test/canvas");
+
+    expect(first).not.toBe(second);
+    expect(views.map((entry) => entry.view.loadedUrls)).toEqual([
+      ["https://first-gw.test/canvas"],
+      ["https://second-gw.test/canvas"],
+    ]);
+    expect(() =>
+      manager.open("hosted-shell", null, BOUNDS, "https://first-gw.test/canvas"),
+    ).toThrow(/not allowed/);
+  });
+
   it("attaches, sizes, and loads new embeds", () => {
     const { manager, views } = makeManager();
     const id = manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");

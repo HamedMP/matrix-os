@@ -24,7 +24,8 @@ export type EmbedKind = "hosted-shell" | "app";
 
 export interface EmbedManagerOptions {
   createView: (opts: { partition: string; onState: (state: "loading" | "ready" | "failed") => void }) => EmbedViewLike;
-  allowedOrigins: string[];
+  allowedOrigins?: string[];
+  getAllowedOrigins?: () => string[];
   maxLive?: number;
 }
 
@@ -57,13 +58,13 @@ function isAbortedLoadError(err: unknown): boolean {
 export class EmbedManager {
   private readonly records = new Map<string, EmbedRecord>();
   private readonly createView: EmbedManagerOptions["createView"];
-  private readonly allowedOrigins: string[];
+  private readonly getAllowedOrigins: () => string[];
   private readonly maxLive: number;
   private tick = 0;
 
   constructor(options: EmbedManagerOptions) {
     this.createView = options.createView;
-    this.allowedOrigins = options.allowedOrigins;
+    this.getAllowedOrigins = options.getAllowedOrigins ?? (() => options.allowedOrigins ?? []);
     this.maxLive = options.maxLive ?? DEFAULT_MAX_LIVE;
     if (this.maxLive > MAX_TOTAL_EMBEDS) {
       throw new Error(
@@ -79,7 +80,7 @@ export class EmbedManager {
     url: string,
     options?: { id?: string; onState?: (state: "loading" | "ready" | "failed") => void },
   ): string {
-    if (!isNavigationAllowed(url, this.allowedOrigins)) {
+    if (!isNavigationAllowed(url, this.getAllowedOrigins())) {
       throw new Error("embed URL is not allowed");
     }
 
