@@ -40,20 +40,6 @@ export default function EmbedHost({
       height: Math.round(rect.height),
     };
 
-    void invoke("embed:open", { kind, ...(slug ? { slug } : {}), bounds })
-      .then(({ embedId, state: initialState }) => {
-        if (disposed) {
-          void invoke("embed:close", { embedId });
-          return;
-        }
-        embedIdRef.current = embedId;
-        setState(pendingStates.get(embedId) ?? initialState);
-        pendingStates.delete(embedId);
-      })
-      .catch(() => {
-        if (!disposed) setState("failed");
-      });
-
     const reportBounds = () => {
       const id = embedIdRef.current;
       if (!id) return;
@@ -68,6 +54,22 @@ export default function EmbedHost({
         },
       });
     };
+
+    void invoke("embed:open", { kind, ...(slug ? { slug } : {}), bounds })
+      .then(({ embedId, state: initialState }) => {
+        if (disposed) {
+          void invoke("embed:close", { embedId });
+          return;
+        }
+        embedIdRef.current = embedId;
+        setState(pendingStates.get(embedId) ?? initialState);
+        pendingStates.delete(embedId);
+        reportBounds();
+      })
+      .catch(() => {
+        if (!disposed) setState("failed");
+      });
+
     // ResizeObserver catches size changes; window resize catches position
     // shifts that don't change this element's own box.
     const observer = new ResizeObserver(reportBounds);
