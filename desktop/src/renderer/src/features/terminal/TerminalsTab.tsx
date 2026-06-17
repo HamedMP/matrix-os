@@ -20,7 +20,13 @@ export default function TerminalsTab() {
   }, [api, load]);
 
   useEffect(() => {
-    if (!selected && sessions[0]) setSelected(sessions[0].attachName);
+    if (sessions.length === 0) {
+      if (selected) setSelected(null);
+      return;
+    }
+    if (!selected || !sessions.some((s) => s.attachName === selected)) {
+      setSelected(sessions[0]?.attachName ?? null);
+    }
   }, [sessions, selected]);
 
   return (

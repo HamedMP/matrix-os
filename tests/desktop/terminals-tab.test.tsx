@@ -64,4 +64,30 @@ describe("TerminalsTab", () => {
       expect(buttons.some((nextButton) => !nextButton.disabled)).toBe(true);
     });
   });
+
+  it("selects a remaining session when the selected session disappears", async () => {
+    useSessions.setState({
+      sessions: [
+        { attachName: "main", name: "main", status: "active", source: "workspace" },
+        { attachName: "next", name: "next", status: "active", source: "workspace" },
+      ],
+    });
+
+    render(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    await screen.findByText("Terminal main");
+
+    act(() => {
+      useSessions.setState({
+        sessions: [{ attachName: "next", name: "next", status: "active", source: "workspace" }],
+      });
+    });
+
+    await screen.findByText("Terminal next");
+    expect(screen.queryByText("Terminal main")).toBeNull();
+  });
 });

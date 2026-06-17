@@ -184,6 +184,20 @@ function ModelEffortCard() {
   const [base, setBase] = useState<{ model: string | null; effort: string | null }>({ model: null, effort: null });
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const saveSeqRef = useRef(0);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      saveSeqRef.current += 1;
+      if (savedTimerRef.current) {
+        clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!api) return;
@@ -210,14 +224,25 @@ function ModelEffortCard() {
   const dirty = model !== base.model || effort !== base.effort;
   const save = async () => {
     if (!api || !dirty || !model || !effort) return;
+    const saveSeq = saveSeqRef.current + 1;
+    saveSeqRef.current = saveSeq;
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = null;
+    }
     setStatus("saving");
     setError(null);
     try {
       await api.put(AGENT_PATH, { model, effort });
+      if (!mountedRef.current || saveSeqRef.current !== saveSeq) return;
       setBase({ model, effort });
       setStatus("saved");
-      setTimeout(() => setStatus("idle"), 1500);
+      savedTimerRef.current = setTimeout(() => {
+        savedTimerRef.current = null;
+        if (mountedRef.current && saveSeqRef.current === saveSeq) setStatus("idle");
+      }, 1500);
     } catch (err: unknown) {
+      if (!mountedRef.current || saveSeqRef.current !== saveSeq) return;
       setError(toUserMessage(err));
       setStatus("error");
     }
