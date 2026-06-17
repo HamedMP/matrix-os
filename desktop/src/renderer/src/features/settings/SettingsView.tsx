@@ -62,7 +62,7 @@ export default function SettingsView() {
       .then((result) => {
         const value = result.value as { theme?: string } | null;
         if (value?.theme === "light" || value?.theme === "system" || value?.theme === "dark") {
-          setTheme(value.theme);
+          applyTheme(value.theme);
         }
       })
       .catch((err: unknown) => {
