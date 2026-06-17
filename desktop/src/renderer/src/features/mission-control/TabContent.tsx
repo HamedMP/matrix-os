@@ -16,7 +16,7 @@ function TabPane({ tab, active }: { tab: Tab; active: boolean }) {
     case "board":
       return <Board projectSlug={tab.projectSlug} active={active} />;
     case "task":
-      return tab.taskId ? <TaskWorkspace taskId={tab.taskId} active={active} /> : null;
+      return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":
       return tab.sessionName ? <TerminalView sessionName={tab.sessionName} active={active} /> : null;
     case "agents":

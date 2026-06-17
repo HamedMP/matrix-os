@@ -43,7 +43,15 @@ function warnSessionLoadFailure(err: unknown): void {
   console.warn("[task-workspace] load sessions failed:", err instanceof Error ? err.message : String(err));
 }
 
-export default function TaskWorkspace({ taskId, active = true }: { taskId: string; active?: boolean }) {
+export default function TaskWorkspace({
+  taskId,
+  projectSlug: initialProjectSlug,
+  active = true,
+}: {
+  taskId: string;
+  projectSlug?: string;
+  active?: boolean;
+}) {
   const api = useConnection((s) => s.api);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessionsLoad = useSessions((s) => s.load);
@@ -62,7 +70,7 @@ export default function TaskWorkspace({ taskId, active = true }: { taskId: strin
     return null;
   }, [cardsByProject, taskId]);
 
-  const projectSlug = card?.projectSlug ?? null;
+  const projectSlug = initialProjectSlug ?? card?.projectSlug ?? null;
 
   useEffect(() => {
     if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
