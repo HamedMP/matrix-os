@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GitPanel from "../../desktop/src/renderer/src/features/git/GitPanel";
@@ -28,7 +29,11 @@ describe("GitPanel", () => {
   });
 
   it("surfaces git load failures instead of rendering only empty counts", () => {
-    render(<GitPanel projectSlug="matrix-os" />);
+    render(
+      <Tooltip.Provider>
+        <GitPanel projectSlug="matrix-os" />
+      </Tooltip.Provider>,
+    );
 
     expect(screen.getByRole("status").textContent).toMatch(/connection/i);
   });

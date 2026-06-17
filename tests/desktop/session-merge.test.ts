@@ -322,7 +322,7 @@ describe("useSessions store", () => {
     useSessions.setState({ error: "offline" });
     const create = useSessions.getState().create(makeApi(get, post));
 
-    expect(useSessions.getState().loading).toBe(true);
+    expect(useSessions.getState().creating).toBe(true);
     expect(useSessions.getState().error).toBeNull();
 
     created.resolve({ name: "operator-new", created: true });
