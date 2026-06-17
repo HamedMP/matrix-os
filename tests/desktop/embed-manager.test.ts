@@ -222,6 +222,7 @@ describe("EmbedManager", () => {
     let rejectFirst!: (err: unknown) => void;
     let loadCount = 0;
     const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
       createView: () => ({
         setBounds: () => undefined,
         loadUrl: async () => {
@@ -267,6 +268,7 @@ describe("EmbedManager", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const states: string[] = [];
     const manager = new EmbedManager({
+      allowedOrigins: ["https://gw.test"],
       createView: ({ onState }) => ({
         setBounds: () => undefined,
         loadUrl: async () => {

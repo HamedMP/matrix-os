@@ -52,6 +52,7 @@ export class EmbedService {
     this.deps = deps;
     this.manager = new EmbedManager({
       maxLive: 3,
+      allowedOrigins: [this.deps.getGatewayOrigin()],
       createView: ({ partition, onState }) => {
         const window = this.deps.getWindow();
         if (!window) throw new Error("no window for embed");
