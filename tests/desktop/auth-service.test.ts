@@ -22,6 +22,16 @@ function makeProfile(overrides: Partial<ConnectionProfile> = {}): ConnectionProf
   };
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  let reject!: (err: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function makeCredentialStore(initial: StoredCredential | null): CredentialStore & {
   saved: StoredCredential | null;
   cleared: boolean;
@@ -224,6 +234,61 @@ describe("AuthService", () => {
     );
     await Promise.resolve();
     await Promise.resolve();
+
+    expect(auth.getStatus().signedIn).toBe(false);
+    expect(credentialStore.saved).toBeNull();
+    expect(saveProfile).not.toHaveBeenCalled();
+    expect(onAuthChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears a credential save that completes after sign-out invalidates the device flow", async () => {
+    const credentialStore = makeCredentialStore(null);
+    const saveStarted = deferred<void>();
+    const finishSave = deferred<void>();
+    credentialStore.save = vi.fn(async (credential) => {
+      saveStarted.resolve();
+      await finishSave.promise;
+      credentialStore.saved = credential;
+    });
+    credentialStore.clear = vi.fn(async () => {
+      credentialStore.cleared = true;
+      credentialStore.saved = null;
+    });
+    const saveProfile = vi.fn(async () => undefined);
+    const onAuthChanged = vi.fn();
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/auth/device/code")) {
+        return jsonResponse({
+          deviceCode: "device-1",
+          userCode: "ABCD",
+          verificationUri: "https://app.matrix-os.com/device",
+          expiresIn: 600,
+          interval: 5,
+        });
+      }
+      return jsonResponse({
+        accessToken: "late-token",
+        expiresAt: Date.now() + 60_000,
+        userId: "user-1",
+        handle: "neo",
+      });
+    });
+    const auth = new AuthService({
+      credentialStore,
+      platformHost: "https://app.matrix-os.com",
+      fetchFn,
+      openExternal: vi.fn(async () => undefined),
+      loadProfile: async () => null,
+      saveProfile,
+      clearProfile: vi.fn(async () => undefined),
+      onAuthChanged,
+    });
+
+    await auth.startDeviceFlow();
+    await saveStarted.promise;
+    await auth.signOut();
+    finishSave.resolve();
+    await flushAuthFlow();
 
     expect(auth.getStatus().signedIn).toBe(false);
     expect(credentialStore.saved).toBeNull();

@@ -145,7 +145,12 @@ export class AuthService {
         this.credential = token;
         this.profile = profile;
         try {
+          if (nonce !== this.flowNonce) return;
           await this.deps.credentialStore.save(token);
+          if (nonce !== this.flowNonce) {
+            await this.clearStaleFlowPersistence();
+            return;
+          }
         } catch (err: unknown) {
           console.warn(
             "[auth] failed to persist credential:",
@@ -153,7 +158,15 @@ export class AuthService {
           );
         }
         try {
+          if (nonce !== this.flowNonce) {
+            await this.clearStaleFlowPersistence();
+            return;
+          }
           await this.deps.saveProfile(profile);
+          if (nonce !== this.flowNonce) {
+            await this.clearStaleFlowPersistence();
+            return;
+          }
         } catch (err: unknown) {
           console.warn(
             "[auth] failed to persist profile:",
@@ -235,6 +248,25 @@ export class AuthService {
       );
     }
     if (cleanupError) throw cleanupError;
+  }
+
+  private async clearStaleFlowPersistence(): Promise<void> {
+    try {
+      await this.deps.credentialStore.clear();
+    } catch (err: unknown) {
+      console.warn(
+        "[auth] failed to clear stale credential after canceled sign-in:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    try {
+      await this.deps.clearProfile();
+    } catch (err: unknown) {
+      console.warn(
+        "[auth] failed to clear stale profile after canceled sign-in:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   private isCredentialValid(credential: StoredCredential): boolean {
