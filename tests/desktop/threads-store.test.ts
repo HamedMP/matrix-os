@@ -191,6 +191,18 @@ describe("status transitions", () => {
     expect(got.transcript[got.transcript.length - 1]!.content).toBe("Stopped.");
   });
 
+  it("ignores kernel:aborted after a thread is already done", () => {
+    const t = useThreads.getState().startThread({ text: "x", requestId: "r1", now: 1 });
+    useThreads.getState().handleKernelMessage({ type: "kernel:text", text: "done", requestId: "r1" });
+    useThreads.getState().handleKernelMessage({ type: "kernel:result", data: {}, requestId: "r1" });
+
+    useThreads.getState().handleKernelMessage({ type: "kernel:aborted", requestId: "r1" });
+
+    const got = getThread(t.id);
+    expect(got.status).toBe("done");
+    expect(got.transcript.map((m) => m.content)).not.toContain("Stopped.");
+  });
+
   it("approval:request marks the most recent running thread needs-attention", () => {
     const store = useThreads.getState();
     const t1 = store.startThread({ text: "one", requestId: "r1", now: 1 });

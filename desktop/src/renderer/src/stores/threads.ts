@@ -226,6 +226,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       case "kernel:aborted": {
         const thread = byRequestId(event.requestId);
         if (!thread) return {};
+        if (isTerminal(thread.status)) return {};
         return apply(thread, {
           status: "aborted",
           transcript: capTranscript(reduceChat(thread.transcript, event)),
