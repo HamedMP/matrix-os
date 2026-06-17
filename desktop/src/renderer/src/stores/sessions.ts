@@ -70,7 +70,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
 
   create: async (api) => {
     const name = nextSessionName();
-    set({ loading: true });
+    set({ loading: true, error: null });
     try {
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
       const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;

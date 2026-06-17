@@ -274,6 +274,21 @@ describe("useSessions store", () => {
     expect(useSessions.getState().error).toBeNull();
   });
 
+  it("clears a stale session error while create is pending", async () => {
+    const created = deferred<{ name: string; created: true }>();
+    const get = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const post = vi.fn().mockReturnValue(created.promise);
+
+    useSessions.setState({ error: "offline" });
+    const create = useSessions.getState().create(makeApi(get, post));
+
+    expect(useSessions.getState().loading).toBe(true);
+    expect(useSessions.getState().error).toBeNull();
+
+    created.resolve({ name: "operator-new", created: true });
+    await create;
+  });
+
   it("keeps the created session visible and preserves refresh errors after create", async () => {
     const get = vi.fn().mockRejectedValue(new AppError("offline"));
     const post = vi.fn().mockResolvedValue({ name: "operator-new", created: true });
