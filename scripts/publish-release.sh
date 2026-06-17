@@ -157,6 +157,27 @@ for entry in manifest.get('files', []):
 " "$INCREMENTAL_MANIFEST"
 }
 
+validate_incremental_object_list() {
+  local object_sha256 object_size object_key object_file actual_size actual_sha256
+  while IFS=$'\t' read -r object_sha256 object_size object_key; do
+    object_file="$DIST_DIR/objects/sha256/$object_sha256"
+    if [ ! -f "$object_file" ]; then
+      echo "ERROR: missing incremental object file $object_file" >&2
+      exit 1
+    fi
+    actual_size="$(stat --printf='%s' "$object_file")"
+    if [ "$actual_size" != "$object_size" ]; then
+      echo "ERROR: incremental object size mismatch for $object_file" >&2
+      exit 1
+    fi
+    actual_sha256="$(sha256sum "$object_file" | awk '{print $1}')"
+    if [ "$actual_sha256" != "$object_sha256" ]; then
+      echo "ERROR: incremental object checksum mismatch for $object_file" >&2
+      exit 1
+    fi
+  done < "$INCREMENTAL_OBJECTS_FILE"
+}
+
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
 object_exists() {
@@ -270,7 +291,7 @@ upload_content_addressed_object() {
   fi
 
   local status=$?
-  if grep -Eq 'PreconditionFailed|Precondition Failed|pre-condition|status code: 412|\(412\)' "$error_file"; then
+  if grep -Eq 'PreconditionFailed|Precondition Failed|pre-condition|status code: 412|\(412\)|(^|[^0-9])412([^0-9]|$)' "$error_file"; then
     rm -f "$error_file"
     return 0
   fi
@@ -282,7 +303,7 @@ upload_content_addressed_object() {
 
 wait_for_incremental_upload_slot() {
   while [ "$(jobs -pr | wc -l)" -ge "$INCREMENTAL_UPLOAD_CONCURRENCY" ]; do
-    wait -n
+    wait -n || return
   done
 }
 
@@ -326,6 +347,7 @@ cleanup_temp_files() { rm -f "$AUTH_HEADER_FILE" "$CHECKSUM_FILE" "$INCREMENTAL_
 trap cleanup_temp_files EXIT
 printf '%s  matrix-host-bundle.tar.gz\n' "$SHA256" > "$CHECKSUM_FILE"
 write_incremental_object_list > "$INCREMENTAL_OBJECTS_FILE"
+validate_incremental_object_list
 
 echo "  Uploading versioned archive..."
 if object_exists "$BUNDLE_KEY"; then
@@ -344,20 +366,6 @@ echo "  Uploading incremental file objects with concurrency $INCREMENTAL_UPLOAD_
 incremental_upload_failed=0
 while IFS=$'\t' read -r object_sha256 object_size object_key; do
   object_file="$DIST_DIR/objects/sha256/$object_sha256"
-  if [ ! -f "$object_file" ]; then
-    echo "ERROR: missing incremental object file $object_file" >&2
-    exit 1
-  fi
-  actual_size="$(stat --printf='%s' "$object_file")"
-  if [ "$actual_size" != "$object_size" ]; then
-    echo "ERROR: incremental object size mismatch for $object_file" >&2
-    exit 1
-  fi
-  actual_sha256="$(sha256sum "$object_file" | awk '{print $1}')"
-  if [ "$actual_sha256" != "$object_sha256" ]; then
-    echo "ERROR: incremental object checksum mismatch for $object_file" >&2
-    exit 1
-  fi
   if ! wait_for_incremental_upload_slot; then
     incremental_upload_failed=1
   fi

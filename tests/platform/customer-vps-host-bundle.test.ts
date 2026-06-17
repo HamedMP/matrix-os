@@ -168,6 +168,10 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('upload_content_addressed_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256"');
     expect(publishScript).not.toContain('verify_existing_content_object()');
     expect(publishScript).not.toContain('verify_existing_content_object "$object_key" "$object_size" "$object_sha256"');
+    expect(publishScript).toContain('validate_incremental_object_list()');
+    expect(publishScript).toContain('validate_incremental_object_list');
+    expect(publishScript).toContain('wait -n || return');
+    expect(publishScript).toContain('(^|[^0-9])412([^0-9]|$)');
     expect(publishScript).toContain('upload_immutable_object "$INCREMENTAL_MANIFEST" "$INCREMENTAL_MANIFEST_KEY" "application/json; charset=utf-8" "$INCREMENTAL_MANIFEST_SHA256"');
     expect(publishScript).toContain(': "${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID or R2_ENDPOINT}"');
     expect(publishScript).toContain('if [ -z "${R2_ENDPOINT:-}" ]; then');
