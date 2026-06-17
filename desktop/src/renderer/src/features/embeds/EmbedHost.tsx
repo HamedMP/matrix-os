@@ -106,7 +106,13 @@ export default function EmbedHost({
               const id = embedIdRef.current;
               if (id) {
                 setState("loading");
-                void invoke("embed:retry-auth", { embedId: id });
+                void invoke("embed:retry-auth", { embedId: id })
+                  .then((result) => {
+                    if (embedIdRef.current === id && !result.ok) setState("auth-required");
+                  })
+                  .catch(() => {
+                    if (embedIdRef.current === id) setState("auth-required");
+                  });
               }
             }}
           >
