@@ -153,6 +153,10 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('write_incremental_object_list()');
     expect(publishScript).toContain('HOST_BUNDLE_INCREMENTAL_UPLOAD_CONCURRENCY');
     expect(publishScript).toContain('upload_content_addressed_object()');
+    expect(publishScript).toContain('incremental_requires_full_bundle()');
+    expect(publishScript).toContain('Incremental manifest requires full bundle; skipping incremental file object uploads.');
+    expect(publishScript).toContain('if incremental_requires_full_bundle; then');
+    expect(publishScript).toContain('if ! incremental_requires_full_bundle; then');
     expect(publishScript).toContain('PreconditionFailed');
     expect(publishScript).toContain('incremental_upload_pids=()');
     expect(publishScript).toContain('incremental_upload_pids+=("$!")');
@@ -196,6 +200,10 @@ describe('customer VPS host bundle', () => {
     expect(nodePublisher).toContain('incrementalManifestKey');
     expect(nodePublisher).toContain('incremental-manifest.json');
     expect(nodePublisher).toContain('incrementalObjectEntries');
+    expect(nodePublisher).toContain('incrementalRequiresFullBundle');
+    expect(nodePublisher).toContain('validateIncrementalObjects');
+    expect(nodePublisher).toContain('await validateIncrementalObjects(incrementalObjects);');
+    expect(nodePublisher).toContain('Incremental manifest requires full bundle; skipping incremental file object uploads.');
     expect(nodePublisher).toContain('system-bundles/objects/sha256/${file.sha256}');
     expect(nodePublisher).toContain('Uploading ${incrementalObjects.length} incremental file objects');
     expect(nodePublisher).toContain('"application/octet-stream"');
