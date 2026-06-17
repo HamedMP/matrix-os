@@ -60,6 +60,41 @@ describe('CI workflows', () => {
     expect(dockerBuildActionUses).toHaveLength(1);
   });
 
+  it('runs sync-client CI only on the supported Node 20 runtime', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const readme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
+
+    expect(workflow).toContain('name: Sync Client Package');
+    expect(workflow).toContain('node-version: 20');
+    expect(workflow).not.toContain('matrix:\n        node: [20, 24]');
+    expect(workflow).not.toContain('Sync Client Package (Node 20/24)');
+    expect(readme).toContain('Sync Client Package (Node 20)');
+    expect(readme).not.toContain('Sync Client Package (Node 20/24)');
+  });
+
+  it('uses Node 20 for the dedicated installable CLI release jobs', () => {
+    const root = process.cwd();
+    const cliReleaseWorkflow = readFileSync(join(root, '.github/workflows/cli-release.yml'), 'utf8');
+
+    const setupNodeBlocks = cliReleaseWorkflow.match(/uses: actions\/setup-node@v6[\s\S]*?node-version: \d+/g) ?? [];
+    expect(setupNodeBlocks.length).toBeGreaterThan(0);
+    expect(setupNodeBlocks.every((block) => block.includes('node-version: 20'))).toBe(true);
+  });
+
+  it('publishes the installable CLI from cli-v tags without requiring manual inputs', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/cli-release.yml'), 'utf8');
+
+    expect(workflow).toContain("group: cli-release-${{ github.ref_type == 'tag' && github.ref_name || format('cli-v{0}', inputs.version) }}");
+    expect(workflow).not.toContain("group: cli-release-${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}");
+    expect(workflow).toContain('tags:\n      - "cli-v*"');
+    expect(workflow).toContain('if [ "$GITHUB_REF_TYPE" = "tag" ]; then');
+    expect(workflow).toContain('VERSION="${GITHUB_REF_NAME#cli-v}"');
+    expect(workflow).toContain("if: ${{ github.event_name == 'push' || inputs.update_homebrew }}");
+    expect(workflow).toContain('if [ "$GITHUB_REF_TYPE" != "tag" ] && git ls-remote --exit-code --tags origin "refs/tags/cli-v${VERSION}"');
+  });
+
   it('uses compatible artifact actions in CLI release workflows', () => {
     const root = process.cwd();
     const cliReleaseWorkflow = readFileSync(join(root, '.github/workflows/cli-release.yml'), 'utf8');
@@ -203,5 +238,23 @@ describe('CI workflows', () => {
     expect(workflow).toContain('${build_id}');
     expect(workflow).toContain('- cache_image:');
     expect(workflow).toContain('${cache_image}');
+  });
+
+  it('deploys published dev host bundles by exact version on main by default', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+
+    expect(workflow).toContain('deploy_after_publish:');
+    expect(workflow).toContain('Deploy published host bundle');
+    expect(workflow).toContain("github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name == 'main'");
+    expect(workflow).toContain('|| inputs.deploy_after_publish');
+    expect(workflow).not.toContain("|| inputs.severity == 'security'");
+    expect(workflow).toContain('VERSION="${{ needs.build.outputs.version }}"');
+    expect(workflow).toContain('DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \\');
+    expect(workflow).toContain('failed="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.failed // 0\')"');
+    expect(workflow).toContain('triggered="$(printf \'%s\' "$DEPLOY_RESPONSE" | jq -r \'.triggered // 0\')"');
+    expect(workflow).toContain('if [ "$failed" -gt 0 ] || [ "$triggered" -eq 0 ]; then');
+    expect(workflow).toContain('-d "{\\"version\\":\\"$VERSION\\"}"');
+    expect(workflow).not.toContain('Auto-deploy on security severity');
   });
 });

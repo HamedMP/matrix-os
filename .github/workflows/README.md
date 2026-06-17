@@ -16,7 +16,7 @@ protection is also updated when the shard list changes.
 - `Type Check`
 - `Pattern Scan`
 - `React Doctor`
-- `Sync Client Package (Node 20/24)`
+- `Sync Client Package (Node 20)`
 - `Unit Tests`
 - `E2E Tests`
 
