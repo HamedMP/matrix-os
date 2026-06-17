@@ -19,6 +19,7 @@ export default function QuickOpen() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<string[]>([]);
   const [selected, setSelected] = useState(0);
+  const [openError, setOpenError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,6 +30,7 @@ export default function QuickOpen() {
       setQuery("");
       setResults([]);
       setSelected(0);
+      setOpenError(null);
       if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
       focusTimerRef.current = setTimeout(() => {
         focusTimerRef.current = null;
@@ -97,10 +99,13 @@ export default function QuickOpen() {
   if (!open) return null;
 
   const openPath = (path: string) => {
-    setOpen(false);
-    if (view.kind !== "task") return;
+    if (view.kind !== "task") {
+      setOpenError("Open a task tab before opening files.");
+      return;
+    }
     openTab(view.taskId, path);
     if (!layoutFor(view.taskId).visible.editor) togglePanel(view.taskId, "editor");
+    setOpen(false);
   };
 
   return (
@@ -122,7 +127,10 @@ export default function QuickOpen() {
         <input
           ref={inputRef}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpenError(null);
+          }}
           placeholder="Go to file…"
           className="w-full border-b bg-transparent px-4 py-3 text-md outline-none"
           style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
@@ -161,6 +169,11 @@ export default function QuickOpen() {
           {query.trim().length > 0 && results.length === 0 ? (
             <p className="px-3 py-4 text-center text-sm" style={{ color: "var(--text-tertiary)" }}>
               No files found.
+            </p>
+          ) : null}
+          {openError ? (
+            <p className="px-3 py-2 text-sm" style={{ color: "var(--danger)" }} role="status">
+              {openError}
             </p>
           ) : null}
         </div>

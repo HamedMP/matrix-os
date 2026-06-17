@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useUi } from "../../stores/ui";
-import { useWorkspace } from "../../stores/workspace";
+import { useWorkspace, type PanelLayout } from "../../stores/workspace";
 import Sidebar from "./Sidebar";
 import Titlebar from "./Titlebar";
 import Board from "../board/Board";
@@ -33,7 +33,7 @@ export default function MissionControl() {
     configure({
       loadLayouts: async () => {
         const result = await invoke("state:get", { key: "panelLayouts" });
-        return (result.value as Record<string, never> | null) ?? null;
+        return (result.value as Record<string, PanelLayout> | null) ?? null;
       },
       saveLayout: async (taskKey, layout) => {
         await invoke("state:set-panel-layout", { taskKey, layout });
