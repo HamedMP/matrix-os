@@ -201,7 +201,6 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           return {
             sessions: next.sessions,
             aliasMap: next.aliasMap,
-            loading: false,
             creating: false,
             error: null,
           };

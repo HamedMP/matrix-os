@@ -205,7 +205,7 @@ describe("useSessions.create", () => {
     expect(useSessions.getState().sessions.some((session) => session.attachName === "matrix-task-9")).toBe(true);
   });
 
-  it("clears loading when another load preempts the create reload", async () => {
+  it("keeps loading when another load preempts the create reload", async () => {
     const internalTerminal = deferred<{ sessions: unknown[] }>();
     const internalWorkspace = deferred<{ sessions: unknown[]; nextCursor: null }>();
     const competingTerminal = new Promise<{ sessions: unknown[] }>(() => undefined);
@@ -232,7 +232,7 @@ describe("useSessions.create", () => {
     internalWorkspace.resolve({ sessions: [], nextCursor: null });
     await createPromise;
 
-    expect(useSessions.getState().loading).toBe(false);
+    expect(useSessions.getState().loading).toBe(true);
     expect(useSessions.getState().creating).toBe(false);
   });
 
