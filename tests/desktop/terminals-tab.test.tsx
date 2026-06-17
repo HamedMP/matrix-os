@@ -125,6 +125,30 @@ describe("TerminalsTab", () => {
     expect(await screen.findByText("Something went wrong. Please try again.")).toBeTruthy();
   });
 
+  it("deletes a shell workspace session when start returns no attach name", async () => {
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const create = vi.fn().mockResolvedValue({ sessionId: "sess_orphan", attachName: null });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: { delete: del } as never,
+    });
+    useSessions.setState({ create });
+
+    render(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: /new session/i })[0]!);
+
+    await screen.findByText(/start failed/i);
+    expect(del).toHaveBeenCalledWith("/api/sessions/sess_orphan");
+  });
+
   it("selects a remaining session when the selected session disappears", async () => {
     useSessions.setState({
       sessions: [

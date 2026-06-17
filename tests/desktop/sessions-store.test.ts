@@ -205,6 +205,37 @@ describe("useSessions.create", () => {
     expect(useSessions.getState().sessions.some((session) => session.attachName === "matrix-task-9")).toBe(true);
   });
 
+  it("clears loading when another load preempts the create reload", async () => {
+    const internalTerminal = deferred<{ sessions: unknown[] }>();
+    const internalWorkspace = deferred<{ sessions: unknown[]; nextCursor: null }>();
+    const competingTerminal = new Promise<{ sessions: unknown[] }>(() => undefined);
+    const competingWorkspace = new Promise<{ sessions: unknown[]; nextCursor: null }>(() => undefined);
+    const post = vi.fn().mockResolvedValue({ session: { id: "sess_new", runtime: {} } });
+    let call = 0;
+    const get = vi.fn((path: string) => {
+      call += 1;
+      if (call === 1 && path === "/api/terminal/sessions") return internalTerminal.promise;
+      if (call === 2 && path === "/api/sessions") return internalWorkspace.promise;
+      if (path === "/api/terminal/sessions") return competingTerminal;
+      return competingWorkspace;
+    });
+    const api = makeApi({ post, get });
+
+    const createPromise = useSessions.getState().create(api, { kind: "shell", taskId: "task_a" });
+    while (call < 2) {
+      await Promise.resolve();
+    }
+    void useSessions.getState().load(api);
+    expect(useSessions.getState().loading).toBe(true);
+
+    internalTerminal.resolve({ sessions: [] });
+    internalWorkspace.resolve({ sessions: [], nextCursor: null });
+    await createPromise;
+
+    expect(useSessions.getState().loading).toBe(false);
+    expect(useSessions.getState().creating).toBe(false);
+  });
+
   it("surfaces an error category and clears the creating flag on failure", async () => {
     const api = makeApi({ post: vi.fn().mockRejectedValue(new AppError("offline")) });
     const created = await useSessions.getState().create(api, { kind: "shell", taskId: "task_a" });

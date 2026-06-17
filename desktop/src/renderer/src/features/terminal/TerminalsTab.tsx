@@ -94,8 +94,18 @@ export default function TerminalsTab() {
     if (!api || creating) return;
     setActionError(null);
     const created = await create(api, { kind: "shell" });
-    if (created?.attachName) setSelected(created.attachName);
-    else setActionError("Start failed");
+    if (created?.attachName) {
+      setSelected(created.attachName);
+      return;
+    }
+    if (created?.sessionId) {
+      try {
+        await api.delete(`/api/sessions/${encodeURIComponent(created.sessionId)}`);
+      } catch (err: unknown) {
+        console.error("[terminal] Failed to clean up unattached shell session:", err);
+      }
+    }
+    setActionError("Start failed");
   };
 
   const killSession = async (attachName: string) => {
