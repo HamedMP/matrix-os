@@ -16,7 +16,8 @@ export default function TaskWorkspace({ taskId }: { taskId: string }) {
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessionsLoad = useSessions((s) => s.load);
-  const resolveAttachName = useSessions((s) => s.resolveAttachName);
+  // Select the map itself (not the resolver fn) so the load triggers a render.
+  const aliasMap = useSessions((s) => s.aliasMap);
   const navigate = useUi((s) => s.navigate);
 
   const card = useMemo(() => {
@@ -31,7 +32,7 @@ export default function TaskWorkspace({ taskId }: { taskId: string }) {
     if (api) void sessionsLoad(api).catch(warnSessionLoadFailure);
   }, [api, sessionsLoad]);
 
-  const attachName = resolveAttachName(card?.linkedSessionId ?? null);
+  const attachName = card?.linkedSessionId ? (aliasMap[card.linkedSessionId] ?? null) : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

@@ -13,7 +13,9 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    // Sandboxed preloads cannot require external packages — bundle everything
+    // (zod for contract validation) except the electron builtin.
+    plugins: [externalizeDepsPlugin({ exclude: ["zod"] })],
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, "src/preload/index.ts") },

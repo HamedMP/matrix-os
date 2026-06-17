@@ -13,6 +13,7 @@ import StandaloneSession from "../sessions/StandaloneSession";
 import Composer from "../threads/Composer";
 import CommandPalette from "../palette/CommandPalette";
 import { useGlobalShortcuts } from "./shortcuts";
+import { invoke } from "../../lib/operator";
 import { wireKernel } from "../../lib/kernel-wiring";
 
 export default function MissionControl() {
@@ -30,21 +31,34 @@ export default function MissionControl() {
     void (async () => {
       await loadProjects(api);
       if (cancelled) return;
+      // Boot to the last-used project (FR-013/SC-001); fall back to the first.
       const { projects, activeProjectSlug, selectProject } = useBoard.getState();
       if (activeProjectSlug || projects.length === 0) return;
+      let saved: unknown = null;
       try {
-        await selectProject(api, projects[0].slug);
+        saved = (await invoke("state:get", { key: "lastProjectSlug" })).value;
       } catch (err: unknown) {
-        if (!cancelled) {
-          console.warn(
-            "[mission-control] select initial project failed:",
-            err instanceof Error ? err.message : String(err),
-          );
+        console.warn(
+          "[mission-control] load last project failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      const target = projects.find((p) => p.slug === saved) ?? projects[0];
+      if (target && !cancelled) {
+        try {
+          await selectProject(api, target.slug);
+        } catch (err: unknown) {
+          if (!cancelled) {
+            console.warn(
+              "[mission-control] restore last project failed:",
+              err instanceof Error ? err.message : String(err),
+            );
+          }
         }
       }
     })().catch((err: unknown) => {
       console.warn(
-        "[mission-control] load projects failed:",
+        "[mission-control] initial project load failed:",
         err instanceof Error ? err.message : String(err),
       );
     });
