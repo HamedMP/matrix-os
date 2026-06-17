@@ -342,6 +342,12 @@ importers:
       react-resizable-panels:
         specifier: ^4.0.0
         version: 4.11.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      rehype-highlight:
+        specifier: ^7.0.2
+        version: 7.0.2
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)

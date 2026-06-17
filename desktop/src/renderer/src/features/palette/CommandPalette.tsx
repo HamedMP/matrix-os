@@ -2,6 +2,7 @@ import { Command } from "cmdk";
 import { useEffect } from "react";
 import { Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
+import { friendlySessionName } from "../../lib/session-name";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
@@ -116,16 +117,19 @@ export default function CommandPalette() {
 
           {sessions.length > 0 ? (
             <Command.Group heading="Sessions" style={{ color: "var(--text-tertiary)" }}>
-              {sessions.slice(0, 20).map((session) => (
-                <PaletteItem
-                  key={session.attachName}
-                  icon={<SquareTerminal size={14} />}
-                  label={session.name}
-                  onSelect={() =>
-                    run(() => openTab({ kind: "terminal", sessionName: session.attachName, title: session.name }))
-                  }
-                />
-              ))}
+              {sessions.slice(0, 20).map((session) => {
+                const label = friendlySessionName(session.attachName);
+                return (
+                  <PaletteItem
+                    key={session.attachName}
+                    icon={<SquareTerminal size={14} />}
+                    label={label}
+                    onSelect={() =>
+                      run(() => openTab({ kind: "terminal", sessionName: session.attachName, title: label }))
+                    }
+                  />
+                );
+              })}
             </Command.Group>
           ) : null}
 

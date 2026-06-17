@@ -74,6 +74,49 @@ textarea,
   border-radius: var(--radius-sm);
 }
 
+/* ── Markdown code highlighting (rehype-highlight) ────────────────
+   Brand-variable token colors so highlighting works in light + dark
+   without shipping a fixed highlight.js theme. The <pre> owns the bg. */
+.hljs {
+  color: var(--text-primary);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: var(--highlight);
+}
+.hljs-string,
+.hljs-attr,
+.hljs-addition,
+.hljs-template-tag {
+  color: var(--success);
+}
+.hljs-number,
+.hljs-type,
+.hljs-built_in,
+.hljs-class .hljs-title {
+  color: var(--accent);
+}
+.hljs-title,
+.hljs-name,
+.hljs-function .hljs-title {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.hljs-attribute,
+.hljs-variable,
+.hljs-meta {
+  color: var(--text-secondary);
+}
+
 /* ── Composer card: brand focus-within, no inner ring ─────────── */
 .prompt-card {
   border-color: var(--border-default);
