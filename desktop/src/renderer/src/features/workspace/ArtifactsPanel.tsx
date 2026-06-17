@@ -6,7 +6,7 @@ import { useConnection } from "../../stores/connection";
 import { useGit } from "../../stores/git";
 
 export function canOpenPreviewUrl(url: string | null | undefined): url is string {
-  return typeof url === "string" && (url.startsWith("https://") || url.startsWith("http://"));
+  return typeof url === "string" && url.startsWith("https://");
 }
 
 export default function ArtifactsPanel({

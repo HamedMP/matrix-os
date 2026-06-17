@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { canOpenPreviewUrl } from "../../desktop/src/renderer/src/features/workspace/ArtifactsPanel";
 
 describe("artifacts preview URLs", () => {
-  it("allows local and secure HTTP preview links", () => {
-    expect(canOpenPreviewUrl("http://127.0.0.1:5173")).toBe(true);
+  it("allows only secure HTTP preview links", () => {
+    expect(canOpenPreviewUrl("http://127.0.0.1:5173")).toBe(false);
     expect(canOpenPreviewUrl("https://preview.example.com")).toBe(true);
   });
 
