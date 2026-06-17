@@ -170,4 +170,38 @@ describe('CI workflows', () => {
     expect(workflow).toContain('select(.revisionName == env.CANDIDATE_REVISION) | .percent');
     expect(workflow).toContain('select(.revisionName != env.CANDIDATE_REVISION and (.percent // 0) > 0)');
   });
+
+  it('uses a registry-backed BuildKit cache for platform Cloud Build', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const cloudbuild = readFileSync(join(root, 'cloudbuild.platform.yaml'), 'utf8');
+
+    expect(workflow).toContain('CACHE_IMAGE=$cache_image');
+    expect(workflow).toContain('matrix-platform:buildcache');
+    expect(workflow).toContain('_CACHE_IMAGE=$cache_image');
+
+    expect(cloudbuild).toContain('_CACHE_IMAGE:');
+    expect(cloudbuild).toContain('DOCKER_BUILDKIT=1');
+    expect(cloudbuild).toContain('BUILDKIT_INLINE_CACHE=1');
+    expect(cloudbuild).toContain('--cache-from');
+    expect(cloudbuild).toContain('${_CACHE_IMAGE}');
+    expect(cloudbuild).toContain('- ${_CACHE_IMAGE}');
+  });
+
+  it('writes platform build evidence to the workflow summary before promotion', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain('### Platform Cloud Run build');
+    expect(workflow).toContain('- source_sha:');
+    expect(workflow).toContain('${GITHUB_SHA}');
+    expect(workflow).toContain('- lane:');
+    expect(workflow).toContain('platform');
+    expect(workflow).toContain('- image:');
+    expect(workflow).toContain('${image}');
+    expect(workflow).toContain('- build_id:');
+    expect(workflow).toContain('${build_id}');
+    expect(workflow).toContain('- cache_image:');
+    expect(workflow).toContain('${cache_image}');
+  });
 });

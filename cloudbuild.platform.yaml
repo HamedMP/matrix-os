@@ -1,5 +1,6 @@
 substitutions:
   _IMAGE: europe-west3-docker.pkg.dev/matrix-os-1144/matrix-os/matrix-platform:manual
+  _CACHE_IMAGE: europe-west3-docker.pkg.dev/matrix-os-1144/matrix-os/matrix-platform:buildcache
   _NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ''
   _NEXT_PUBLIC_CLERK_SIGN_IN_URL: '/sign-in'
   _NEXT_PUBLIC_CLERK_SIGN_UP_URL: '/sign-up'
@@ -11,10 +12,16 @@ substitutions:
 
 steps:
   - name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
     args:
       - build
       - -f
       - Dockerfile.platform
+      - --build-arg
+      - BUILDKIT_INLINE_CACHE=1
+      - --cache-from
+      - ${_CACHE_IMAGE}
       - --build-arg
       - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
       - --build-arg
@@ -33,7 +40,10 @@ steps:
       - NEXT_PUBLIC_MATRIX_APP_URL=${_NEXT_PUBLIC_MATRIX_APP_URL}
       - -t
       - ${_IMAGE}
+      - -t
+      - ${_CACHE_IMAGE}
       - .
 
 images:
   - ${_IMAGE}
+  - ${_CACHE_IMAGE}

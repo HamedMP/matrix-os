@@ -206,7 +206,9 @@ jobs:
         run: |
           set -euo pipefail
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:${GITHUB_SHA::12}"
+          cache_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:buildcache"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
+          echo "CACHE_IMAGE=$cache_image" >> "$GITHUB_ENV"
           next_public_clerk_publishable_key="$(gcloud secrets versions access latest --secret next-public-clerk-publishable-key --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
           next_public_posthog_key="$(gcloud secrets versions access latest --secret next-public-posthog-key --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
           next_public_posthog_project_token="$(gcloud secrets versions access latest --secret next-public-posthog-project-token --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
@@ -218,7 +220,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --config cloudbuild.platform.yaml \
-            --substitutions "_IMAGE=$image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_POSTHOG_KEY=$next_public_posthog_key,_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$next_public_posthog_project_token,_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST,_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST,_NEXT_PUBLIC_MATRIX_APP_URL=$MATRIX_APP_URL" \
+            --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_POSTHOG_KEY=$next_public_posthog_key,_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$next_public_posthog_project_token,_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST,_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST,_NEXT_PUBLIC_MATRIX_APP_URL=$MATRIX_APP_URL" \
             --async \
             --format 'value(metadata.build.id)' \
             --timeout=1200s)
@@ -235,6 +237,15 @@ jobs:
             echo "Could not resolve Cloud Build id for $image" >&2
             exit 1
           fi
+
+          {
+            echo "### Platform Cloud Run build"
+            echo "- source_sha: \`${GITHUB_SHA}\`"
+            echo "- lane: \`platform\`"
+            echo "- image: \`${image}\`"
+            echo "- build_id: \`${build_id}\`"
+            echo "- cache_image: \`${cache_image}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           for attempt in $(seq 1 240); do
             status=$(gcloud builds describe "$build_id" \
