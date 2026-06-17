@@ -26,6 +26,7 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "shell/src"),
       "@desktop": path.resolve(__dirname, "desktop/src"),
+      "@renderer": path.resolve(__dirname, "desktop/src/renderer/src"),
       "@matrix-os/observability/client": path.resolve(
         __dirname,
         "packages/observability/src/client.ts",

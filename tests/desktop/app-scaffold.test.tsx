@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import App from "../../desktop/src/renderer/src/App";
+import App from "@renderer/App";
 
 describe("desktop app scaffold", () => {
   it("renders the Matrix OS scaffold shell", () => {
