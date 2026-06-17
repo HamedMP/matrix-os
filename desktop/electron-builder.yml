@@ -1,5 +1,7 @@
 appId: com.matrix-os.operator
 productName: Matrix OS
+artifactName: Matrix-OS-${version}-${os}-${arch}.${ext}
+generateUpdatesFilesForAllChannels: true
 directories:
   buildResources: build
   output: dist
@@ -7,6 +9,10 @@ files:
   - out/**
   - "!**/.vite/**"
 asarUnpack: []
+protocols:
+  - name: Matrix OS
+    schemes:
+      - matrix-os
 mac:
   category: public.app-category.productivity
   target:
@@ -18,13 +24,15 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # Notarization activates only when APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
-  # APPLE_TEAM_ID are present in the release environment.
-  notarize: false
-dmg:
-  sign: false
-# Update feed: generic provider pointed at the R2-backed desktop release feed
-# (gateway/platform delta #4). electron-updater no-ops until the feed exists.
+  notarize: true
+linux:
+  category: Utility
+  target:
+    - target: AppImage
+      arch: [x64]
+# Update feed: GitHub releases by default. OPERATOR_UPDATE_FEED can still
+# override to a generic feed for break-glass or self-hosted release channels.
 publish:
-  - provider: generic
-    url: https://releases.matrix-os.com/desktop/${channel}
+  - provider: github
+    owner: HamedMP
+    repo: matrix-os

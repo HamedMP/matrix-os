@@ -1,7 +1,8 @@
 // Auto-update (FR-091): background download, apply on relaunch, never
-// force-restarts attached work. No-ops cleanly until the desktop release feed
-// (gateway delta #4) exists and the build is signed.
+// force-restarts attached work. Packaged builds default to GitHub release
+// manifests; OPERATOR_UPDATE_FEED remains as a generic-provider override.
 import { app } from "electron";
+import { resolveUpdateFeedConfig } from "./update-config";
 
 export type UpdateStatus =
   | "disabled"
@@ -20,6 +21,7 @@ const UPDATER_EVENT_NAMES = [
   "update-available",
   "update-downloaded",
   "update-not-available",
+  "error",
 ] as const;
 
 export interface Updater {
@@ -29,9 +31,9 @@ export interface Updater {
 
 export function createUpdater(events: UpdateEvents): Updater {
   let status: UpdateStatus = "disabled";
-  const feedConfigured = Boolean(process.env.OPERATOR_UPDATE_FEED) && app.isPackaged;
+  const feed = resolveUpdateFeedConfig(process.env, app.isPackaged);
 
-  if (!feedConfigured) {
+  if (!feed.enabled) {
     return {
       check: async () => {
         status = "disabled";
@@ -42,12 +44,23 @@ export function createUpdater(events: UpdateEvents): Updater {
 
   return {
     async check() {
+      if (status === "checking" || status === "downloading" || status === "ready") return;
       status = "checking";
       try {
         const { autoUpdater } = await import("electron-updater");
         autoUpdater.autoDownload = true;
         autoUpdater.autoInstallOnAppQuit = true;
-        autoUpdater.setFeedURL({ provider: "generic", url: process.env.OPERATOR_UPDATE_FEED! });
+        autoUpdater.allowPrerelease = feed.allowPrerelease;
+        if (feed.provider === "generic") {
+          autoUpdater.setFeedURL({ provider: "generic", url: feed.url });
+        } else {
+          autoUpdater.setFeedURL({
+            provider: "github",
+            owner: feed.owner,
+            repo: feed.repo,
+            ...(feed.channel === "stable" ? {} : { channel: feed.channel }),
+          });
+        }
         for (const eventName of UPDATER_EVENT_NAMES) {
           autoUpdater.removeAllListeners(eventName);
         }
@@ -61,6 +74,13 @@ export function createUpdater(events: UpdateEvents): Updater {
         });
         autoUpdater.once("update-not-available", () => {
           status = "up-to-date";
+        });
+        autoUpdater.once("error", (err) => {
+          console.warn(
+            "[updates] download failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+          status = "error";
         });
         await autoUpdater.checkForUpdates();
       } catch (err: unknown) {

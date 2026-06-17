@@ -112,8 +112,8 @@ secondary surfaces not yet exercised against the VPS.
 
 | Item | Status | Evidence |
 |---|---|---|
-| Signed + notarized macOS build | 🟡 | `electron-builder.yml` (hardenedRuntime, notarize-when-credentialed); needs signing creds |
-| Self-update over release channel | ⛔ | gateway delta #4 (desktop release feed); `updates.ts` no-ops without feed |
+| Signed + notarized macOS build | 🟢 | `desktop-build.yml` packages mac arm64/x64 with Developer ID signing + notarization secrets |
+| Self-update over release channel | 🟢 | packaged builds default to GitHub release manifests; `OPERATOR_UPDATE_FEED` remains a generic-feed override |
 | Single instance | ✅ | `requestSingleInstanceLock` in `index.ts` |
 | Platform-clean core (mac bits isolated) | ✅ | `platform/` layer; no mac-only deps elsewhere |
 
