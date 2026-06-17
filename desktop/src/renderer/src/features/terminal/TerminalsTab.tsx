@@ -1,6 +1,7 @@
 import { Plus, RefreshCw, SquareTerminal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button, EmptyState, IconButton, StatusDot } from "../../design/primitives";
+import { categoryMessage } from "../../../../shared/app-error";
 import { useConnection } from "../../stores/connection";
 import { useSessions } from "../../stores/sessions";
 import TerminalView from "./TerminalView";
@@ -10,6 +11,8 @@ import TerminalView from "./TerminalView";
 export default function TerminalsTab() {
   const api = useConnection((s) => s.api);
   const sessions = useSessions((s) => s.sessions);
+  const loading = useSessions((s) => s.loading);
+  const error = useSessions((s) => s.error);
   const load = useSessions((s) => s.load);
   const create = useSessions((s) => s.create);
   const [selected, setSelected] = useState<string | null>(null);
@@ -42,7 +45,14 @@ export default function TerminalsTab() {
           </IconButton>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-1.5">
-          {sessions.length === 0 ? (
+          {error ? (
+            <p className="rounded-md px-2.5 py-2 text-xs" style={{ color: "var(--danger)", background: "var(--danger-muted)" }}>
+              {categoryMessage(error)}
+            </p>
+          ) : null}
+          {loading && sessions.length === 0 ? (
+            <p className="px-2.5 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading sessions...</p>
+          ) : sessions.length === 0 && !error ? (
             <p className="px-2.5 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>No sessions on your computer yet.</p>
           ) : (
             sessions.map((s) => {

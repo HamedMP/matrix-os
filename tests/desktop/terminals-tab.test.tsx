@@ -65,6 +65,49 @@ describe("TerminalsTab", () => {
     });
   });
 
+  it("shows loading and load errors instead of the empty session state", async () => {
+    useSessions.setState({ loading: true, error: null, sessions: [] });
+
+    const { rerender } = render(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText("Loading sessions...")).toBeTruthy();
+    expect(screen.queryByText("No sessions on your computer yet.")).toBeNull();
+
+    act(() => {
+      useSessions.setState({ loading: false, error: "offline", sessions: [] });
+    });
+    rerender(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText("Can't reach Matrix OS. Check your connection.")).toBeTruthy();
+    expect(screen.queryByText("No sessions on your computer yet.")).toBeNull();
+  });
+
+  it("surfaces session creation failures", async () => {
+    const create = vi.fn(async () => {
+      useSessions.setState({ error: "server" });
+      return null;
+    });
+    useSessions.setState({ create });
+
+    render(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /new session/i }));
+
+    expect(await screen.findByText("Something went wrong. Please try again.")).toBeTruthy();
+  });
+
   it("selects a remaining session when the selected session disappears", async () => {
     useSessions.setState({
       sessions: [
