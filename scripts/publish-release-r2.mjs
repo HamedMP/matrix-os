@@ -184,6 +184,22 @@ function incrementalObjectEntries(incrementalManifest) {
   });
 }
 
+function incrementalRequiresFullBundle(incrementalManifest) {
+  return incrementalManifest.requiresFullBundle !== false;
+}
+
+async function validateIncrementalObjects(incrementalObjects) {
+  for (const object of incrementalObjects) {
+    const objectStat = await stat(object.path);
+    if (objectStat.size !== object.size) {
+      throw new Error(`incremental object size mismatch for ${object.path}`);
+    }
+    if ((await sha256(object.path)) !== object.sha256) {
+      throw new Error(`incremental object checksum mismatch for ${object.path}`);
+    }
+  }
+}
+
 const bundleStat = await stat(bundlePath);
 const checksum = await sha256(bundlePath);
 const checksumText = `${checksum}  ${bundleName}\n`;
@@ -194,7 +210,9 @@ const incrementalManifestSha256 = await sha256(incrementalManifestPath);
 const release = await readJson(releasePath);
 const manifest = await readJson(manifestPath);
 const incrementalManifest = await readJson(incrementalManifestPath);
-const incrementalObjects = incrementalObjectEntries(incrementalManifest);
+const incrementalObjects = incrementalRequiresFullBundle(incrementalManifest)
+  ? []
+  : incrementalObjectEntries(incrementalManifest);
 
 const registrationBody = {
   version,
@@ -220,12 +238,18 @@ if (dryRun) {
   console.log("=== DRY RUN ===");
   console.log(`Would upload ${bundlePath} to s3://${bucket}/${bundleKey}`);
   console.log(`Would upload checksum to s3://${bucket}/${checksumKey}`);
-  console.log(`Would upload ${incrementalObjects.length} incremental file objects`);
+  if (incrementalRequiresFullBundle(incrementalManifest)) {
+    console.log("Incremental manifest requires full bundle; skipping incremental file object uploads.");
+  } else {
+    console.log(`Would upload ${incrementalObjects.length} incremental file objects`);
+  }
   console.log(`Would upload incremental manifest to s3://${bucket}/${incrementalManifestKey}`);
   console.log("Would register release:");
   console.log(JSON.stringify(registrationBody, null, 2));
   process.exit(0);
 }
+
+await validateIncrementalObjects(incrementalObjects);
 
 const accountId = process.env.R2_ACCOUNT_ID;
 const accessKeyId = process.env.AWS_ACCESS_KEY_ID || required("R2_ACCESS_KEY_ID");
@@ -250,24 +274,21 @@ if (!(await verifyExistingChecksum(s3, checksumKey, checksum))) {
   await uploadImmutable(s3, checksumPath, checksumKey, "text/plain; charset=utf-8", checksum, checksumStat.size);
 }
 
-console.log(`  Uploading ${incrementalObjects.length} incremental file objects...`);
-for (const object of incrementalObjects) {
-  const objectStat = await stat(object.path);
-  if (objectStat.size !== object.size) {
-    throw new Error(`incremental object size mismatch for ${object.path}`);
-  }
-  if ((await sha256(object.path)) !== object.sha256) {
-    throw new Error(`incremental object checksum mismatch for ${object.path}`);
-  }
-  if (!(await verifyExistingBundle(s3, object.key, object.size, object.sha256))) {
-    await uploadImmutable(
-      s3,
-      object.path,
-      object.key,
-      "application/octet-stream",
-      object.sha256,
-      object.size,
-    );
+if (incrementalRequiresFullBundle(incrementalManifest)) {
+  console.log("  Incremental manifest requires full bundle; skipping incremental file object uploads.");
+} else {
+  console.log(`  Uploading ${incrementalObjects.length} incremental file objects...`);
+  for (const object of incrementalObjects) {
+    if (!(await verifyExistingBundle(s3, object.key, object.size, object.sha256))) {
+      await uploadImmutable(
+        s3,
+        object.path,
+        object.key,
+        "application/octet-stream",
+        object.sha256,
+        object.size,
+      );
+    }
   }
 }
 

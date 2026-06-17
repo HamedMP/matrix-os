@@ -136,6 +136,10 @@ incremental_object_count() {
   python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('files', [])))" "$INCREMENTAL_MANIFEST"
 }
 
+incremental_requires_full_bundle() {
+  python3 -c "import json,sys; manifest=json.load(open(sys.argv[1])); sys.exit(0 if manifest.get('requiresFullBundle', True) is not False else 1)" "$INCREMENTAL_MANIFEST"
+}
+
 write_incremental_object_list() {
   python3 -c "
 import json, re, sys
@@ -335,7 +339,11 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "Would upload immutable artifacts:"
   echo "  $BUNDLE → s3://$R2_BUCKET/$BUNDLE_KEY"
   echo "  sha256 → s3://$R2_BUCKET/$CHECKSUM_KEY"
-  echo "  $(incremental_object_count) incremental file objects"
+  if incremental_requires_full_bundle; then
+    echo "  Incremental manifest requires full bundle; would skip incremental file object uploads."
+  else
+    echo "  $(incremental_object_count) incremental file objects"
+  fi
   echo "  incremental manifest → s3://$R2_BUCKET/$INCREMENTAL_MANIFEST_KEY"
   echo ""
   echo "Would register release in platform DB:"
@@ -352,8 +360,10 @@ INCREMENTAL_OBJECTS_FILE="$(mktemp)"
 cleanup_temp_files() { rm -f "$AUTH_HEADER_FILE" "$CHECKSUM_FILE" "$INCREMENTAL_OBJECTS_FILE"; }
 trap cleanup_temp_files EXIT
 printf '%s  matrix-host-bundle.tar.gz\n' "$SHA256" > "$CHECKSUM_FILE"
-write_incremental_object_list > "$INCREMENTAL_OBJECTS_FILE"
-validate_incremental_object_list
+if ! incremental_requires_full_bundle; then
+  write_incremental_object_list > "$INCREMENTAL_OBJECTS_FILE"
+  validate_incremental_object_list
+fi
 
 echo "  Uploading versioned archive..."
 if object_exists "$BUNDLE_KEY"; then
@@ -368,22 +378,27 @@ if object_exists "$CHECKSUM_KEY"; then
 else
   upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"
 fi
-echo "  Uploading incremental file objects with concurrency $INCREMENTAL_UPLOAD_CONCURRENCY..."
-incremental_upload_failed=0
-while IFS=$'\t' read -r object_sha256 object_size object_key; do
-  object_file="$DIST_DIR/objects/sha256/$object_sha256"
-  if ! wait_for_incremental_upload_slot; then
+
+if incremental_requires_full_bundle; then
+  echo "  Incremental manifest requires full bundle; skipping incremental file object uploads."
+else
+  echo "  Uploading incremental file objects with concurrency $INCREMENTAL_UPLOAD_CONCURRENCY..."
+  incremental_upload_failed=0
+  while IFS=$'\t' read -r object_sha256 object_size object_key; do
+    object_file="$DIST_DIR/objects/sha256/$object_sha256"
+    if ! wait_for_incremental_upload_slot; then
+      incremental_upload_failed=1
+    fi
+    upload_content_addressed_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256" &
+    incremental_upload_pids+=("$!")
+  done < "$INCREMENTAL_OBJECTS_FILE"
+  if ! wait_for_incremental_uploads; then
     incremental_upload_failed=1
   fi
-  upload_content_addressed_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256" &
-  incremental_upload_pids+=("$!")
-done < "$INCREMENTAL_OBJECTS_FILE"
-if ! wait_for_incremental_uploads; then
-  incremental_upload_failed=1
-fi
-if [ "$incremental_upload_failed" -ne 0 ]; then
-  echo "ERROR: one or more incremental file object uploads failed" >&2
-  exit 1
+  if [ "$incremental_upload_failed" -ne 0 ]; then
+    echo "ERROR: one or more incremental file object uploads failed" >&2
+    exit 1
+  fi
 fi
 if object_exists "$INCREMENTAL_MANIFEST_KEY"; then
   echo "  Verifying existing immutable incremental manifest..."
