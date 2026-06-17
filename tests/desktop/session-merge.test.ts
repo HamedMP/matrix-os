@@ -273,4 +273,15 @@ describe("useSessions store", () => {
     expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["operator-new"]);
     expect(useSessions.getState().error).toBeNull();
   });
+
+  it("keeps the created session visible and preserves refresh errors after create", async () => {
+    const get = vi.fn().mockRejectedValue(new AppError("offline"));
+    const post = vi.fn().mockResolvedValue({ name: "operator-new", created: true });
+
+    const created = await useSessions.getState().create(makeApi(get, post));
+
+    expect(created?.attachName).toBe("operator-new");
+    expect(useSessions.getState().sessions.map((s) => s.attachName)).toEqual(["operator-new"]);
+    expect(useSessions.getState().error).toBe("offline");
+  });
 });

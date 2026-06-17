@@ -174,7 +174,7 @@ export const INVOKE_CHANNELS = {
   "update:check": {
     request: Empty,
     response: z
-      .object({ status: z.enum(["disabled", "checking", "up-to-date", "downloading", "ready"]) })
+      .object({ status: z.enum(["disabled", "checking", "up-to-date", "downloading", "ready", "error"]) })
       .strict(),
   },
 } as const;

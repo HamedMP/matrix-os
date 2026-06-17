@@ -35,6 +35,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     setBadgeCount: vi.fn(),
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
+    getUpdateStatus: vi.fn(() => "disabled"),
     ...overrides,
   } as unknown as HandlerContext;
 
@@ -98,5 +99,11 @@ describe("registerIpcHandlers", () => {
       ok: false,
     });
     expect(console.warn).toHaveBeenCalledWith("[ipc] embed:retry-auth failed:", "handoff unavailable");
+  });
+
+  it("reports the live updater status from the handler context", async () => {
+    const harness = makeHarness({ getUpdateStatus: vi.fn(() => "ready") });
+
+    await expect(harness.invoke("update:check")).resolves.toEqual({ status: "ready" });
   });
 });

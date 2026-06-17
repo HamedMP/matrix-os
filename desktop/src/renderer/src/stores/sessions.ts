@@ -75,6 +75,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
       const response = await api.post<{ name?: unknown }>("/api/terminal/sessions", { name });
       const attachName = typeof response.name === "string" && response.name.trim() ? response.name.trim() : name;
       await get().load(api);
+      const refreshError = get().error;
       const created = get().sessions.find((session) => session.attachName === attachName) ?? {
         name: attachName,
         attachName,
@@ -83,8 +84,8 @@ export const useSessions = create<SessionsState>()((set, get) => ({
       };
       set((state) =>
         state.sessions.some((session) => session.attachName === created.attachName)
-          ? { loading: false, error: null }
-          : { sessions: [created, ...state.sessions], loading: false, error: null },
+          ? { loading: false, error: refreshError }
+          : { sessions: [created, ...state.sessions], loading: false, error: refreshError },
       );
       return created;
     } catch (err: unknown) {

@@ -159,6 +159,19 @@ if (!gotLock) {
         getToken: () => auth.getToken(),
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
       });
+      const updater = createUpdater({
+        onAvailable: (version) => {
+          console.info(`[updates] downloading Matrix OS ${version}`);
+        },
+        onReady: (version) => {
+          if (!Notification.isSupported()) return;
+          new Notification({
+            title: "Matrix OS update ready",
+            body: `Version ${version} will install after you quit and reopen the app.`,
+            silent: false,
+          }).show();
+        },
+      });
 
       registerIpcHandlers(ipcMain, {
         auth,
@@ -184,6 +197,7 @@ if (!gotLock) {
           embeds.closeAll();
           sendEvent("runtime:changed", { slot });
         },
+        getUpdateStatus: () => updater.status(),
       });
 
       let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -216,19 +230,6 @@ if (!gotLock) {
       await openMainWindow();
       installAppMenu(() => mainWindow);
 
-      const updater = createUpdater({
-        onAvailable: (version) => {
-          console.info(`[updates] downloading Matrix OS ${version}`);
-        },
-        onReady: (version) => {
-          if (!Notification.isSupported()) return;
-          new Notification({
-            title: "Matrix OS update ready",
-            body: `Version ${version} will install after you quit and reopen the app.`,
-            silent: false,
-          }).show();
-        },
-      });
       void updater.check();
       updateCheckTimer = setInterval(() => {
         void updater.check();

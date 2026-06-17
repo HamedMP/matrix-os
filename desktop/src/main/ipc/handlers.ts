@@ -5,6 +5,7 @@ import { INVOKE_CHANNELS, type InvokeChannel, type InvokeRequest, type InvokeRes
 import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
+import type { UpdateStatus } from "../updates";
 
 interface IpcMainLike {
   handle(
@@ -21,6 +22,7 @@ export interface HandlerContext {
   setBadgeCount: (count: number) => void;
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
+  getUpdateStatus: () => UpdateStatus;
 }
 
 type Handler<C extends InvokeChannel> = (
@@ -150,5 +152,5 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     }
   });
 
-  handle("update:check", () => ({ status: "disabled" as const }));
+  handle("update:check", () => ({ status: ctx.getUpdateStatus() }));
 }
