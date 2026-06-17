@@ -25,6 +25,20 @@ afterEach(() => {
 });
 
 describe("connection event wiring", () => {
+  it("recovers from an initial auth status failure instead of staying loading", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    window.operator = {
+      invoke: vi.fn().mockRejectedValue(new Error("ipc unavailable")),
+      on: vi.fn(),
+    };
+
+    await useConnection.getState().refresh();
+
+    expect(useConnection.getState().status).toBe("signed-out");
+    expect(useConnection.getState().api).toBeNull();
+    expect(warn).toHaveBeenCalledWith("[connection] failed to refresh auth status:", "ipc unavailable");
+  });
+
   it("unwires auth and runtime listeners so tests can reinitialize the bridge", async () => {
     const listeners = new Map<string, Listener>();
     const invoke = vi.fn().mockResolvedValue({

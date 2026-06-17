@@ -25,20 +25,25 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   api: null,
 
   refresh: async () => {
-    const status = await invoke("auth:status", {});
-    const api = status.signedIn
-      ? createApiClient({
-          baseUrl: status.platformHost,
-          getRuntimeSlot: () => get().runtimeSlot,
-        })
-      : null;
-    set({
-      status: status.signedIn ? "signed-in" : "signed-out",
-      handle: status.handle ?? null,
-      platformHost: status.platformHost,
-      runtimeSlot: status.runtimeSlot,
-      api,
-    });
+    try {
+      const status = await invoke("auth:status", {});
+      const api = status.signedIn
+        ? createApiClient({
+            baseUrl: status.platformHost,
+            getRuntimeSlot: () => get().runtimeSlot,
+          })
+        : null;
+      set({
+        status: status.signedIn ? "signed-in" : "signed-out",
+        handle: status.handle ?? null,
+        platformHost: status.platformHost,
+        runtimeSlot: status.runtimeSlot,
+        api,
+      });
+    } catch (err: unknown) {
+      console.warn("[connection] failed to refresh auth status:", err instanceof Error ? err.message : String(err));
+      set({ status: "signed-out", handle: null, api: null });
+    }
   },
 
   selectRuntime: async (slot) => {
