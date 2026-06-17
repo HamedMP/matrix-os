@@ -19,7 +19,7 @@ class Matrix < Formula
 
   license "AGPL-3.0-or-later"
 
-  depends_on "node@24"
+  depends_on "node@20"
 
   def install
     # Install the package into libexec, then symlink the bins into HOMEBREW_PREFIX/bin.
