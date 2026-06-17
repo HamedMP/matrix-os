@@ -297,6 +297,18 @@ describe("useSessions.kill", () => {
     expect(ok).toBe(false);
     expect(useSessions.getState().error).toBe("server");
   });
+
+  it("treats an already-deleted session as a successful kill", async () => {
+    const del = vi.fn().mockRejectedValue(new AppError("notFound"));
+    const get = vi.fn().mockResolvedValue({ sessions: [], nextCursor: null });
+    const api = makeApi({ delete: del, get });
+
+    const ok = await useSessions.getState().kill(api, "matrix-task-1");
+
+    expect(ok).toBe(true);
+    expect(get).toHaveBeenCalled();
+    expect(useSessions.getState().error).toBeNull();
+  });
 });
 
 describe("useSessions.restart", () => {

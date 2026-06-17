@@ -221,13 +221,20 @@ export const useSessions = create<SessionsState>()((set, get) => ({
   kill: async (api, attachName) => {
     try {
       await deleteAttachableSession(api, attachName);
-      await get().load(api);
-      return true;
     } catch (err: unknown) {
-      console.error("[sessions] Failed to kill session:", err);
-      set({ error: err instanceof AppError ? err.category : "server" });
-      return false;
+      if (!(err instanceof AppError && err.category === "notFound")) {
+        console.error("[sessions] Failed to kill session:", err);
+        set({ error: err instanceof AppError ? err.category : "server" });
+        return false;
+      }
     }
+    try {
+      await get().load(api);
+    } catch (err: unknown) {
+      console.error("[sessions] Failed to reload after kill:", err);
+      set({ error: err instanceof AppError ? err.category : "server" });
+    }
+    return true;
   },
 
   restart: async (api, attachName) => {
