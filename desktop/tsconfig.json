@@ -14,10 +14,10 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["node"],
+    "types": [],
     "paths": {
       "@renderer/*": ["./src/renderer/src/*"]
     }
   },
-  "include": ["src", "electron.vite.config.ts"]
+  "include": ["src/renderer/src/**/*", "src/shared/**/*"]
 }
