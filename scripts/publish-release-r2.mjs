@@ -69,8 +69,10 @@ const bundlePath = join(distDir, bundleName);
 const checksumPath = join(await mkdtemp(join(tmpdir(), "matrix-bundle-")), `${bundleName}.sha256`);
 const manifestPath = join(distDir, "manifest.json");
 const releasePath = join(distDir, "release.json");
+const incrementalManifestPath = join(distDir, "incremental-manifest.json");
 const bundleKey = `system-bundles/${version}/${bundleName}`;
 const checksumKey = `${bundleKey}.sha256`;
+const incrementalManifestKey = `system-bundles/${version}/incremental-manifest.json`;
 const bucket = process.env.R2_BUCKET || "matrixos-sync";
 const platformPublicUrl = process.env.PLATFORM_PUBLIC_URL || "https://app.matrix-os.com";
 const updateType = severity === "security" ? "auto" : "manual";
@@ -157,13 +159,42 @@ async function uploadImmutable(s3, path, key, contentType, metadataSha256, size)
   }));
 }
 
+function incrementalObjectEntries(incrementalManifest) {
+  if (!Array.isArray(incrementalManifest.files)) return [];
+  return incrementalManifest.files.map((file) => {
+    if (
+      !file ||
+      file.type !== "file" ||
+      typeof file.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(file.sha256) ||
+      typeof file.url !== "string" ||
+      file.url !== `system-bundles/objects/sha256/${file.sha256}` ||
+      typeof file.size !== "number" ||
+      !Number.isSafeInteger(file.size) ||
+      file.size < 0
+    ) {
+      throw new Error("incremental manifest contains an invalid file object entry");
+    }
+    return {
+      key: file.url,
+      path: join(distDir, "objects", "sha256", file.sha256),
+      sha256: file.sha256,
+      size: file.size,
+    };
+  });
+}
+
 const bundleStat = await stat(bundlePath);
 const checksum = await sha256(bundlePath);
 const checksumText = `${checksum}  ${bundleName}\n`;
 await writeFile(checksumPath, checksumText);
 const checksumStat = await stat(checksumPath);
+const incrementalManifestStat = await stat(incrementalManifestPath);
+const incrementalManifestSha256 = await sha256(incrementalManifestPath);
 const release = await readJson(releasePath);
 const manifest = await readJson(manifestPath);
+const incrementalManifest = await readJson(incrementalManifestPath);
+const incrementalObjects = incrementalObjectEntries(incrementalManifest);
 
 const registrationBody = {
   version,
@@ -172,6 +203,8 @@ const registrationBody = {
   buildTime: manifest.buildTime || release.buildTime || new Date().toISOString(),
   bundleKey,
   checksumKey,
+  incrementalManifestKey,
+  incrementalManifestSha256,
   sha256: checksum,
   size: bundleStat.size,
   severity,
@@ -187,6 +220,8 @@ if (dryRun) {
   console.log("=== DRY RUN ===");
   console.log(`Would upload ${bundlePath} to s3://${bucket}/${bundleKey}`);
   console.log(`Would upload checksum to s3://${bucket}/${checksumKey}`);
+  console.log(`Would upload ${incrementalObjects.length} incremental file objects`);
+  console.log(`Would upload incremental manifest to s3://${bucket}/${incrementalManifestKey}`);
   console.log("Would register release:");
   console.log(JSON.stringify(registrationBody, null, 2));
   process.exit(0);
@@ -213,6 +248,39 @@ if (!(await verifyExistingBundle(s3, bundleKey, bundleStat.size, checksum))) {
 console.log("  Uploading checksum...");
 if (!(await verifyExistingChecksum(s3, checksumKey, checksum))) {
   await uploadImmutable(s3, checksumPath, checksumKey, "text/plain; charset=utf-8", checksum, checksumStat.size);
+}
+
+console.log(`  Uploading ${incrementalObjects.length} incremental file objects...`);
+for (const object of incrementalObjects) {
+  const objectStat = await stat(object.path);
+  if (objectStat.size !== object.size) {
+    throw new Error(`incremental object size mismatch for ${object.path}`);
+  }
+  if ((await sha256(object.path)) !== object.sha256) {
+    throw new Error(`incremental object checksum mismatch for ${object.path}`);
+  }
+  if (!(await verifyExistingBundle(s3, object.key, object.size, object.sha256))) {
+    await uploadImmutable(
+      s3,
+      object.path,
+      object.key,
+      "application/octet-stream",
+      object.sha256,
+      object.size,
+    );
+  }
+}
+
+console.log("  Uploading incremental manifest...");
+if (!(await verifyExistingBundle(s3, incrementalManifestKey, incrementalManifestStat.size, incrementalManifestSha256))) {
+  await uploadImmutable(
+    s3,
+    incrementalManifestPath,
+    incrementalManifestKey,
+    "application/json; charset=utf-8",
+    incrementalManifestSha256,
+    incrementalManifestStat.size,
+  );
 }
 
 console.log("  Registering release in platform DB...");

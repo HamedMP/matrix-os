@@ -181,6 +181,7 @@ const HOST_BUNDLE_IMAGE_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
 const HOST_BUNDLE_FILES = new Set([
   'matrix-host-bundle.tar.gz',
   'matrix-host-bundle.tar.gz.sha256',
+  'incremental-manifest.json',
   'manifest.json',
   'release.json',
 ]);
@@ -247,6 +248,8 @@ const HostBundleReleaseBodySchema = z.object({
   buildTime: z.string().min(1).max(128),
   bundleKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/matrix-host-bundle\.tar\.gz$/),
   checksumKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/matrix-host-bundle\.tar\.gz\.sha256$/).nullable().optional(),
+  incrementalManifestKey: z.string().regex(/^system-bundles\/[A-Za-z0-9._-]{1,128}\/incremental-manifest\.json$/).nullable().optional(),
+  incrementalManifestSha256: z.string().regex(/^[a-f0-9]{64}$/i).nullable().optional(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/i),
   size: z.number().int().positive(),
   severity: z.enum(['normal', 'security']).optional(),
@@ -468,6 +471,8 @@ function hostBundleReleaseResponse(
     buildTime: release.buildTime,
     bundleKey: release.bundleKey,
     checksumKey: release.checksumKey,
+    incrementalManifestKey: release.incrementalManifestKey,
+    incrementalManifestSha256: release.incrementalManifestSha256,
     sha256: release.sha256,
     bundleSha256: release.sha256,
     size: release.size,
@@ -2129,6 +2134,10 @@ export function createApp(deps: {
   }
 
   async function getSignedBundleUrl(release: HostBundleReleaseRecord): Promise<string> {
+    return getSignedHostBundleObjectUrl(release.bundleKey);
+  }
+
+  async function getSignedHostBundleObjectUrl(key: string): Promise<string> {
     const hostBundleObjectStore = getHostBundleObjectStore();
     if (!hostBundleObjectStore) {
       throw new Error('Host bundle storage unavailable');
@@ -2136,7 +2145,7 @@ export function createApp(deps: {
     if (!hostBundleObjectStore.getPresignedGetUrl) {
       throw new Error('Host bundle storage cannot create signed URLs');
     }
-    return hostBundleObjectStore.getPresignedGetUrl(release.bundleKey, 3600);
+    return hostBundleObjectStore.getPresignedGetUrl(key, 3600);
   }
 
   function requireHostBundleAdmin(c: Context): Response | null {
@@ -2265,6 +2274,57 @@ export function createApp(deps: {
     }
   });
 
+  app.get('/system-bundles/objects/sha256/:sha256', async (c) => {
+    const hostBundleObjectStore = getHostBundleObjectStore();
+    if (!hostBundleObjectStore) {
+      return c.json({ error: 'Host bundle storage unavailable' }, 503);
+    }
+
+    const sha256 = c.req.param('sha256');
+    if (!/^[a-f0-9]{64}$/i.test(sha256)) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+
+    const objectKey = `system-bundles/objects/sha256/${sha256.toLowerCase()}`;
+    if (hostBundleObjectStore.getPresignedGetUrl) {
+      try {
+        const url = await getSignedHostBundleObjectUrl(objectKey);
+        return c.redirect(url, 302);
+      } catch (err: unknown) {
+        if (isObjectNotFoundError(err)) {
+          return c.json({ error: 'Not found' }, 404);
+        }
+        logPlatformRouteError('/system-bundles/objects/sha256/:sha256', err);
+        return c.json({ error: 'Host bundle unavailable' }, 502);
+      }
+    }
+
+    try {
+      const object = await hostBundleObjectStore.getObject(
+        objectKey,
+        { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
+      );
+      if (!object.body) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      return new Response(object.body, {
+        status: 200,
+        headers: {
+          'content-type': 'application/octet-stream',
+          'cache-control': 'public, max-age=31536000, immutable',
+          'cdn-cache-control': 'public, max-age=31536000, immutable',
+          'cloudflare-cdn-cache-control': 'public, max-age=31536000, immutable',
+        },
+      });
+    } catch (err: unknown) {
+      if (isObjectNotFoundError(err)) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      logPlatformRouteError('/system-bundles/objects/sha256/:sha256 getObject', err);
+      return c.json({ error: 'Host bundle unavailable' }, 502);
+    }
+  });
+
   // Public, immutable host-service bundles used by customer VPS cloud-init.
   // Metadata comes from Postgres; R2 only stores the bytes.
   app.get('/system-bundles/:imageVersion/:file', async (c) => {
@@ -2342,6 +2402,48 @@ export function createApp(deps: {
         'content-type': 'text/plain; charset=utf-8',
         ...cacheHeaders,
       });
+    }
+
+    if (file === 'incremental-manifest.json') {
+      if (!release.incrementalManifestKey) {
+        return c.json({ error: 'Not found' }, 404);
+      }
+      if (hostBundleObjectStore.getPresignedGetUrl) {
+        try {
+          const url = await getSignedHostBundleObjectUrl(release.incrementalManifestKey);
+          return c.redirect(url, 302);
+        } catch (err: unknown) {
+          if (isObjectNotFoundError(err)) {
+            return c.json({ error: 'Not found' }, 404);
+          }
+          logPlatformRouteError('/system-bundles/:imageVersion/incremental-manifest.json', err);
+          return c.json({ error: 'Host bundle unavailable' }, 502);
+        }
+      }
+      try {
+        const object = await hostBundleObjectStore.getObject(
+          release.incrementalManifestKey,
+          { signal: AbortSignal.timeout(HOST_BUNDLE_READ_TIMEOUT_MS) },
+        );
+        if (!object.body) {
+          return c.json({ error: 'Not found' }, 404);
+        }
+        return new Response(object.body, {
+          status: 200,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'public, max-age=31536000, immutable',
+            'cdn-cache-control': 'public, max-age=31536000, immutable',
+            'cloudflare-cdn-cache-control': 'public, max-age=31536000, immutable',
+          },
+        });
+      } catch (err: unknown) {
+        if (isObjectNotFoundError(err)) {
+          return c.json({ error: 'Not found' }, 404);
+        }
+        logPlatformRouteError('/system-bundles/:imageVersion/incremental-manifest.json getObject', err);
+        return c.json({ error: 'Host bundle unavailable' }, 502);
+      }
     }
 
     if (file.endsWith('.json')) {

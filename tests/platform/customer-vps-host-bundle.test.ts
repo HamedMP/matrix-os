@@ -47,10 +47,13 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('scripts/reset-shipped-icons.mjs');
     expect(script).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
+    expect(script).toContain('HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}"');
+    expect(script).toContain('scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-manifest');
-    expect(script).toContain('bin app runtime systemd release.json');
+    expect(script).toContain('bin app runtime systemd release.json incremental-manifest.json');
     expect(script).toContain('manifest.json');
     expect(script).toContain('release.json');
+    expect(script).toContain('incremental-manifest.json');
     expect(script).toContain('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:?set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY before building the customer host bundle');
     expect(script).toContain('GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"');
     expect(script).toContain('GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"');
@@ -124,6 +127,8 @@ describe('customer VPS host bundle', () => {
     expect(releaseScript).toContain('severity');
     expect(releaseScript).toContain('updateType');
     expect(releaseScript).toContain('bundleSha256: checksum');
+    expect(releaseScript).toContain('incrementalManifest');
+    expect(releaseScript).toContain('system-bundles/${release.version}/incremental-manifest.json');
   });
 
   it('publish script keeps platform secrets out of curl arguments', () => {
@@ -144,15 +149,21 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('object_exists()');
     expect(publishScript).toContain('verify_existing_bundle()');
     expect(publishScript).toContain('verify_existing_checksum()');
+    expect(publishScript).toContain('verify_existing_incremental_manifest()');
+    expect(publishScript).toContain('verify_existing_content_object()');
+    expect(publishScript).toContain('write_incremental_object_list()');
     expect(publishScript).toContain('object_size "$BUNDLE_KEY"');
     expect(publishScript).toContain('bundle_object_sha256 "$BUNDLE_KEY"');
     expect(publishScript).toContain('checksum_object_sha256 "$CHECKSUM_KEY"');
     expect(publishScript).not.toContain('existing immutable bundle is missing checksum object');
     expect(publishScript).toContain('aws s3api put-object');
     expect(publishScript).toContain('--if-none-match');
-    expect(publishScript).toContain('--metadata "sha256=$SHA256"');
+    expect(publishScript).toContain('local metadata_sha256="${4:-$SHA256}"');
+    expect(publishScript).toContain('--metadata "sha256=$metadata_sha256"');
     expect(publishScript).toContain('upload_immutable_object "$BUNDLE" "$BUNDLE_KEY" "application/gzip"');
     expect(publishScript).toContain('upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"');
+    expect(publishScript).toContain('upload_immutable_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256"');
+    expect(publishScript).toContain('upload_immutable_object "$INCREMENTAL_MANIFEST" "$INCREMENTAL_MANIFEST_KEY" "application/json; charset=utf-8" "$INCREMENTAL_MANIFEST_SHA256"');
     expect(publishScript).toContain(': "${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID or R2_ENDPOINT}"');
     expect(publishScript).toContain('if [ -z "${R2_ENDPOINT:-}" ]; then');
     expect(publishScript).not.toContain('aws s3 cp "$BUNDLE" "s3://$R2_BUCKET/$BUNDLE_KEY"');
@@ -168,6 +179,12 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('exec node "$ROOT_DIR/scripts/publish-release-r2.mjs"');
     expect(nodePublisher).toContain('IfNoneMatch: "*"');
     expect(nodePublisher).toContain('existing immutable bundle has no checksum metadata');
+    expect(nodePublisher).toContain('incrementalManifestKey');
+    expect(nodePublisher).toContain('incremental-manifest.json');
+    expect(nodePublisher).toContain('incrementalObjectEntries');
+    expect(nodePublisher).toContain('system-bundles/objects/sha256/${file.sha256}');
+    expect(nodePublisher).toContain('Uploading ${incrementalObjects.length} incremental file objects');
+    expect(nodePublisher).toContain('"application/octet-stream"');
     expect(nodePublisher).not.toContain('head.Metadata?.sha256 && head.Metadata.sha256 !== expectedSha256');
     expect(nodePublisher).toContain('R2_ACCESS_KEY_ID');
     expect(nodePublisher).toContain('R2_SECRET_ACCESS_KEY');
@@ -255,6 +272,8 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('name: Upload bundle artifact');
     expect(workflow).toContain('dist/host-bundle/matrix-host-bundle.tar.gz');
     expect(workflow).toContain('dist/host-bundle/matrix-host-bundle.tar.gz.sha256');
+    expect(workflow).toContain('dist/host-bundle/incremental-manifest.json');
+    expect(workflow).toContain('dist/host-bundle/objects/**');
     expect(workflow).toContain('dist/host-bundle/manifest.json');
     expect(workflow).toContain('dist/host-bundle/release.json');
     expect(workflow).not.toContain('path: dist/host-bundle/');
@@ -269,8 +288,9 @@ describe('customer VPS host bundle', () => {
     expect(workflow).toContain('name: Normalize downloaded bundle artifact');
     expect(workflow).toContain('BUNDLE_FILE="$(find "$ARTIFACT_DIR" -type f -name matrix-host-bundle.tar.gz -print -quit)"');
     expect(workflow).toContain('TARGET_DIR="dist/host-bundle"');
-    expect(workflow).toContain('for file in matrix-host-bundle.tar.gz matrix-host-bundle.tar.gz.sha256 manifest.json release.json; do');
+    expect(workflow).toContain('for file in matrix-host-bundle.tar.gz matrix-host-bundle.tar.gz.sha256 incremental-manifest.json manifest.json release.json; do');
     expect(workflow).toContain('cp "$SOURCE_DIR/$file" "$TARGET_DIR/$file"');
+    expect(workflow).toContain('cp -a "$SOURCE_DIR/objects" "$TARGET_DIR/objects"');
   });
 
   it('host bundle release workflow cancels only superseded dev-channel builds', () => {

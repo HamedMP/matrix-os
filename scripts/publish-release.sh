@@ -21,6 +21,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${HOST_BUNDLE_DIST_DIR:-$ROOT_DIR/dist/host-bundle}"
 BUNDLE="$DIST_DIR/matrix-host-bundle.tar.gz"
+INCREMENTAL_MANIFEST="$DIST_DIR/incremental-manifest.json"
 CHANNEL="${HOST_BUNDLE_CHANNEL:-${MATRIX_IMAGE_VERSION:-dev}}"
 VERSION=""
 DRY_RUN=""
@@ -65,6 +66,10 @@ if [ ! -f "$BUNDLE" ]; then
   echo "Bundle not found at $BUNDLE — run build-host-bundle.sh first" >&2
   exit 1
 fi
+if [ ! -f "$INCREMENTAL_MANIFEST" ]; then
+  echo "Incremental manifest not found at $INCREMENTAL_MANIFEST — run build-host-bundle.sh first" >&2
+  exit 1
+fi
 
 if ! command -v aws >/dev/null 2>&1; then
   echo "aws CLI not found; publishing through scripts/publish-release-r2.mjs"
@@ -89,6 +94,8 @@ PLATFORM_PUBLIC_URL="${PLATFORM_PUBLIC_URL:-https://app.matrix-os.com}"
 
 SHA256="$(sha256sum "$BUNDLE" | awk '{print $1}')"
 SIZE="$(stat --printf='%s' "$BUNDLE")"
+INCREMENTAL_MANIFEST_SHA256="$(sha256sum "$INCREMENTAL_MANIFEST" | awk '{print $1}')"
+INCREMENTAL_MANIFEST_SIZE="$(stat --printf='%s' "$INCREMENTAL_MANIFEST")"
 PUBLISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 GIT_COMMIT="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('gitCommit',''))" "$DIST_DIR/manifest.json" 2>/dev/null || true)"
 GIT_REF="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('gitRef',''))" "$DIST_DIR/manifest.json" 2>/dev/null || true)"
@@ -98,6 +105,7 @@ GIT_REF="${GIT_REF:-$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD)}"
 BUILD_TIME="${BUILD_TIME:-$PUBLISHED}"
 BUNDLE_KEY="system-bundles/$VERSION/matrix-host-bundle.tar.gz"
 CHECKSUM_KEY="system-bundles/$VERSION/matrix-host-bundle.tar.gz.sha256"
+INCREMENTAL_MANIFEST_KEY="system-bundles/$VERSION/incremental-manifest.json"
 
 REGISTRATION_BODY=$(python3 -c "
 import json, sys
@@ -108,14 +116,41 @@ print(json.dumps({
     'buildTime': sys.argv[4],
     'bundleKey': sys.argv[5],
     'checksumKey': sys.argv[6],
-    'sha256': sys.argv[7],
-    'size': int(sys.argv[8]),
-    'severity': sys.argv[9],
-    'updateType': sys.argv[10],
-    'changelog': sys.argv[11] or None,
-    **({} if sys.argv[12] == 'none' else {'channel': sys.argv[12]}),
+    'incrementalManifestKey': sys.argv[7],
+    'incrementalManifestSha256': sys.argv[8],
+    'sha256': sys.argv[9],
+    'size': int(sys.argv[10]),
+    'severity': sys.argv[11],
+    'updateType': sys.argv[12],
+    'changelog': sys.argv[13] or None,
+    **({} if sys.argv[14] == 'none' else {'channel': sys.argv[14]}),
 }, indent=2))
-" "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL")
+" "$VERSION" "$GIT_COMMIT" "$GIT_REF" "$BUILD_TIME" "$BUNDLE_KEY" "$CHECKSUM_KEY" "$INCREMENTAL_MANIFEST_KEY" "$INCREMENTAL_MANIFEST_SHA256" "$SHA256" "$SIZE" "$SEVERITY" "$UPDATE_TYPE" "$CHANGELOG" "$CHANNEL")
+
+incremental_object_count() {
+  python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('files', [])))" "$INCREMENTAL_MANIFEST"
+}
+
+write_incremental_object_list() {
+  python3 -c "
+import json, re, sys
+manifest = json.load(open(sys.argv[1]))
+for entry in manifest.get('files', []):
+    sha = entry.get('sha256')
+    key = entry.get('url')
+    size = entry.get('size')
+    if (
+        entry.get('type') != 'file'
+        or not isinstance(sha, str)
+        or not re.fullmatch(r'[a-f0-9]{64}', sha)
+        or key != f'system-bundles/objects/sha256/{sha}'
+        or not isinstance(size, int)
+        or size < 0
+    ):
+        raise SystemExit('incremental manifest contains an invalid file object entry')
+    print(f'{sha}\t{size}\t{key}')
+" "$INCREMENTAL_MANIFEST"
+}
 
 AWS_ARGS=(--endpoint-url "$R2_ENDPOINT" --region auto)
 
@@ -142,6 +177,20 @@ checksum_object_sha256() {
 bundle_object_sha256() {
   local key="$1"
   aws s3 cp "s3://$R2_BUCKET/$key" - "${AWS_ARGS[@]}" 2>/dev/null | sha256sum | awk '{print $1}'
+}
+
+verify_existing_incremental_manifest() {
+  local existing_size existing_sha256
+  existing_size="$(object_size "$INCREMENTAL_MANIFEST_KEY")"
+  if [ "$existing_size" != "$INCREMENTAL_MANIFEST_SIZE" ]; then
+    echo "ERROR: existing immutable incremental manifest size mismatch for s3://$R2_BUCKET/$INCREMENTAL_MANIFEST_KEY" >&2
+    exit 1
+  fi
+  existing_sha256="$(bundle_object_sha256 "$INCREMENTAL_MANIFEST_KEY")"
+  if [ "$existing_sha256" != "$INCREMENTAL_MANIFEST_SHA256" ]; then
+    echo "ERROR: existing immutable incremental manifest content mismatch for s3://$R2_BUCKET/$INCREMENTAL_MANIFEST_KEY" >&2
+    exit 1
+  fi
 }
 
 verify_existing_bundle() {
@@ -174,10 +223,28 @@ verify_existing_checksum() {
   fi
 }
 
+verify_existing_content_object() {
+  local key="$1"
+  local expected_size="$2"
+  local expected_sha256="$3"
+  local existing_size existing_sha256
+  existing_size="$(object_size "$key")"
+  if [ "$existing_size" != "$expected_size" ]; then
+    echo "ERROR: existing immutable object size mismatch for s3://$R2_BUCKET/$key" >&2
+    exit 1
+  fi
+  existing_sha256="$(bundle_object_sha256 "$key")"
+  if [ "$existing_sha256" != "$expected_sha256" ]; then
+    echo "ERROR: existing immutable object content mismatch for s3://$R2_BUCKET/$key" >&2
+    exit 1
+  fi
+}
+
 upload_immutable_object() {
   local source_file="$1"
   local key="$2"
   local content_type="$3"
+  local metadata_sha256="${4:-$SHA256}"
 
   if object_exists "$key"; then
     echo "  Immutable object already exists: s3://$R2_BUCKET/$key"
@@ -189,7 +256,7 @@ upload_immutable_object() {
     --key "$key" \
     --body "$source_file" \
     --content-type "$content_type" \
-    --metadata "sha256=$SHA256" \
+    --metadata "sha256=$metadata_sha256" \
     --if-none-match '*' \
     "${AWS_ARGS[@]}" >/dev/null
 }
@@ -206,6 +273,8 @@ if [ "$DRY_RUN" = "1" ]; then
   echo "Would upload immutable artifacts:"
   echo "  $BUNDLE → s3://$R2_BUCKET/$BUNDLE_KEY"
   echo "  sha256 → s3://$R2_BUCKET/$CHECKSUM_KEY"
+  echo "  $(incremental_object_count) incremental file objects"
+  echo "  incremental manifest → s3://$R2_BUCKET/$INCREMENTAL_MANIFEST_KEY"
   echo ""
   echo "Would register release in platform DB:"
   echo "$REGISTRATION_BODY"
@@ -217,9 +286,11 @@ echo "  Bundle: $SIZE bytes, sha256: $SHA256"
 
 AUTH_HEADER_FILE=""
 CHECKSUM_FILE="$(mktemp)"
-cleanup_temp_files() { rm -f "$AUTH_HEADER_FILE" "$CHECKSUM_FILE"; }
+INCREMENTAL_OBJECTS_FILE="$(mktemp)"
+cleanup_temp_files() { rm -f "$AUTH_HEADER_FILE" "$CHECKSUM_FILE" "$INCREMENTAL_OBJECTS_FILE"; }
 trap cleanup_temp_files EXIT
 printf '%s  matrix-host-bundle.tar.gz\n' "$SHA256" > "$CHECKSUM_FILE"
+write_incremental_object_list > "$INCREMENTAL_OBJECTS_FILE"
 
 echo "  Uploading versioned archive..."
 if object_exists "$BUNDLE_KEY"; then
@@ -233,6 +304,35 @@ if object_exists "$CHECKSUM_KEY"; then
   verify_existing_checksum
 else
   upload_immutable_object "$CHECKSUM_FILE" "$CHECKSUM_KEY" "text/plain; charset=utf-8"
+fi
+echo "  Uploading incremental file objects..."
+while IFS=$'\t' read -r object_sha256 object_size object_key; do
+  object_file="$DIST_DIR/objects/sha256/$object_sha256"
+  if [ ! -f "$object_file" ]; then
+    echo "ERROR: missing incremental object file $object_file" >&2
+    exit 1
+  fi
+  actual_size="$(stat --printf='%s' "$object_file")"
+  if [ "$actual_size" != "$object_size" ]; then
+    echo "ERROR: incremental object size mismatch for $object_file" >&2
+    exit 1
+  fi
+  actual_sha256="$(sha256sum "$object_file" | awk '{print $1}')"
+  if [ "$actual_sha256" != "$object_sha256" ]; then
+    echo "ERROR: incremental object checksum mismatch for $object_file" >&2
+    exit 1
+  fi
+  if object_exists "$object_key"; then
+    verify_existing_content_object "$object_key" "$object_size" "$object_sha256"
+  else
+    upload_immutable_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256"
+  fi
+done < "$INCREMENTAL_OBJECTS_FILE"
+if object_exists "$INCREMENTAL_MANIFEST_KEY"; then
+  echo "  Verifying existing immutable incremental manifest..."
+  verify_existing_incremental_manifest
+else
+  upload_immutable_object "$INCREMENTAL_MANIFEST" "$INCREMENTAL_MANIFEST_KEY" "application/json; charset=utf-8" "$INCREMENTAL_MANIFEST_SHA256"
 fi
 
 echo "  Registering release in platform DB..."
