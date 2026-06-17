@@ -366,7 +366,7 @@ describe("AuthService expireSession", () => {
     expect(changes.at(-1)).toMatchObject({ signedIn: false });
   });
 
-  it("still emits signed-out status when credential cleanup fails", async () => {
+  it("logs credential cleanup failures without re-throwing after expiry", async () => {
     const { auth, store, changes } = makeService({
       credential: VALID,
       profile: PROFILE,
@@ -378,13 +378,14 @@ describe("AuthService expireSession", () => {
     try {
       await auth.init();
 
-      await expect(auth.expireSession()).rejects.toThrow(cleanupError);
+      await expect(auth.expireSession()).resolves.toBeUndefined();
 
       expect(auth.getStatus().signedIn).toBe(false);
       expect(changes.at(-1)).toMatchObject({
         signedIn: false,
         platformHost: "https://app.matrix-os.com",
       });
+      expect(warn).toHaveBeenCalledWith("[auth] failed to clear expired credential:", "credential clear failed");
     } finally {
       warn.mockRestore();
     }

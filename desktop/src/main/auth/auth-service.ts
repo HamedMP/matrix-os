@@ -247,11 +247,9 @@ export class AuthService {
     if (!this.credential) return;
     this.credential = null;
     this.flowState = "idle";
-    let cleanupError: unknown = null;
     try {
       await this.deps.credentialStore.clear();
     } catch (err: unknown) {
-      cleanupError = err;
       console.warn(
         "[auth] failed to clear expired credential:",
         err instanceof Error ? err.message : String(err),
@@ -259,7 +257,6 @@ export class AuthService {
     } finally {
       this.deps.onAuthChanged(this.getStatus());
     }
-    if (cleanupError) throw cleanupError;
   }
 
   async signOut(): Promise<void> {
