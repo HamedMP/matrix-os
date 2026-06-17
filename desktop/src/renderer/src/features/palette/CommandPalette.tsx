@@ -22,14 +22,15 @@ export default function CommandPalette() {
   const cardsByProject = useBoard((s) => s.cardsByProject);
   const sessions = useSessions((s) => s.sessions);
   const apps = useApps((s) => s.apps);
+  const appsError = useApps((s) => s.error);
   const loadApps = useApps((s) => s.load);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
 
   // Make sure apps are available the first time the palette opens.
   useEffect(() => {
-    if (open && api) void loadApps(api);
-  }, [open, api, loadApps]);
+    if (open && api) void loadApps(api, Boolean(appsError));
+  }, [open, api, appsError, loadApps]);
 
   if (!open) return null;
 
