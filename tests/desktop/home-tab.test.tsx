@@ -60,4 +60,21 @@ describe("HomeTab", () => {
       );
     });
   });
+
+  it("does not open the hosted shell embed before sign-in is confirmed", () => {
+    useConnection.setState({
+      status: "loading",
+      handle: null,
+      platformHost: "https://platform.test",
+      runtimeSlot: "primary",
+      api: null,
+    });
+
+    render(<HomeTab />);
+
+    expect(invoke).not.toHaveBeenCalledWith(
+      "embed:open",
+      expect.objectContaining({ kind: "hosted-shell" }),
+    );
+  });
 });

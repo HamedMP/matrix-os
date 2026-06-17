@@ -9,10 +9,12 @@ import { EmbedHost } from "../embeds";
 // Home previews the user's live hosted Matrix OS shell (Canvas) with a thin
 // action bar on top. The shell embed authenticates via session handoff.
 export default function HomeTab({ active = true }: { active?: boolean }) {
+  const status = useConnection((s) => s.status);
   const handle = useConnection((s) => s.handle);
   const platformHost = useConnection((s) => s.platformHost);
   const projects = useBoard((s) => s.projects);
   const openTab = useTabs((s) => s.openTab);
+  const signedIn = status === "signed-in";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -46,7 +48,7 @@ export default function HomeTab({ active = true }: { active?: boolean }) {
           Open in browser
         </Button>
       </div>
-      <EmbedHost kind="hosted-shell" active={active} />
+      {signedIn ? <EmbedHost kind="hosted-shell" active={active} /> : null}
     </div>
   );
 }

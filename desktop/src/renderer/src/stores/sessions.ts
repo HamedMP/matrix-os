@@ -82,11 +82,12 @@ export const useSessions = create<SessionsState>()((set, get) => ({
         status: "active" as const,
         source: "zellij" as const,
       };
-      set((state) =>
-        state.sessions.some((session) => session.attachName === created.attachName)
-          ? { loading: false, error: refreshError }
-          : { sessions: [created, ...state.sessions], loading: false, error: refreshError },
-      );
+      set((state) => {
+        const loadingPatch = state.loading ? { loading: false } : {};
+        return state.sessions.some((session) => session.attachName === created.attachName)
+          ? { ...loadingPatch, error: refreshError }
+          : { sessions: [created, ...state.sessions], ...loadingPatch, error: refreshError };
+      });
       return created;
     } catch (err: unknown) {
       console.error("[sessions] Failed to create session:", err);
