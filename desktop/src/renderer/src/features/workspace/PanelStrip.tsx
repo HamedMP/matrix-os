@@ -80,7 +80,7 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
       key={groupKey}
       orientation="horizontal"
       defaultLayout={defaultGroupLayout}
-      onLayoutChange={(next) =>
+      onLayoutChanged={(next) =>
         setPanelSizes(taskId, panelSizesFromGroupLayout(visiblePanels, next, layout.sizes))
       }
       className="flex min-h-0 min-w-0 flex-1"
