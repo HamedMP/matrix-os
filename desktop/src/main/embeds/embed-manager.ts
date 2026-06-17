@@ -3,6 +3,7 @@
 // but restorable. Total records are capped so a runaway open loop can't grow
 // unbounded.
 import { randomUUID } from "node:crypto";
+import { isNavigationAllowed } from "./origin-policy";
 
 export interface Bounds {
   x: number;
@@ -23,6 +24,7 @@ export type EmbedKind = "hosted-shell" | "app";
 
 export interface EmbedManagerOptions {
   createView: (opts: { partition: string }) => EmbedViewLike;
+  allowedOrigins: string[];
   maxLive?: number;
 }
 
@@ -42,11 +44,13 @@ interface EmbedRecord {
 export class EmbedManager {
   private readonly records = new Map<string, EmbedRecord>();
   private readonly createView: EmbedManagerOptions["createView"];
+  private readonly allowedOrigins: string[];
   private readonly maxLive: number;
   private tick = 0;
 
   constructor(options: EmbedManagerOptions) {
     this.createView = options.createView;
+    this.allowedOrigins = options.allowedOrigins;
     this.maxLive = options.maxLive ?? DEFAULT_MAX_LIVE;
     if (this.maxLive > MAX_TOTAL_EMBEDS) {
       throw new Error(
@@ -56,6 +60,10 @@ export class EmbedManager {
   }
 
   open(kind: EmbedKind, slug: string | null, bounds: Bounds, url: string): string {
+    if (!isNavigationAllowed(url, this.allowedOrigins)) {
+      throw new Error("embed URL is not allowed");
+    }
+
     const partition =
       kind === "hosted-shell"
         ? "persist:hosted-shell"

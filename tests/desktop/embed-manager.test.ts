@@ -55,6 +55,7 @@ function makeManager(maxLive?: number) {
       views.push({ partition, view });
       return view;
     },
+    allowedOrigins: ["https://gw.test"],
     ...(maxLive === undefined ? {} : { maxLive }),
   });
   return {
@@ -87,6 +88,18 @@ describe("EmbedManager", () => {
     expect(() => manager.open("app", null, BOUNDS, "https://gw.test/")).toThrow();
     expect(() => manager.open("app", "../evil", BOUNDS, "https://gw.test/")).toThrow();
     expect(() => manager.open("app", "a b", BOUNDS, "https://gw.test/")).toThrow();
+  });
+
+  it("rejects embeds outside the allowed origin before creating a view", () => {
+    const { manager, views } = makeManager();
+
+    expect(() => manager.open("app", "notes", BOUNDS, "https://evil.test/apps/notes/")).toThrow(
+      /not allowed/,
+    );
+    expect(() => manager.open("hosted-shell", null, BOUNDS, "file:///tmp/index.html")).toThrow(
+      /not allowed/,
+    );
+    expect(views).toHaveLength(0);
   });
 
   it("attaches, sizes, and loads new embeds", () => {
