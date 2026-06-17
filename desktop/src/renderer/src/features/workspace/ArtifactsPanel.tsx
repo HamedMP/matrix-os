@@ -1,5 +1,6 @@
 import { Package, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
+import { categoryMessage } from "../../../../shared/app-error";
 import { EmptyState, IconButton } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
@@ -19,6 +20,7 @@ export default function ArtifactsPanel({
   const api = useConnection((s) => s.api);
   const previews = useGit((s) => s.previews);
   const previewScope = useGit((s) => s.previewScope);
+  const error = useGit((s) => s.error);
   const loadPreviews = useGit((s) => s.loadPreviews);
 
   useEffect(() => {
@@ -27,6 +29,16 @@ export default function ArtifactsPanel({
 
   const scopedPreviews =
     previewScope?.projectSlug === projectSlug && previewScope.taskId === taskId ? previews : [];
+
+  if (error && scopedPreviews.length === 0) {
+    return (
+      <EmptyState
+        icon={<Package size={22} />}
+        headline="Couldn't load artifacts"
+        description={categoryMessage(error)}
+      />
+    );
+  }
 
   if (scopedPreviews.length === 0) {
     return (

@@ -1,5 +1,6 @@
 import { GitBranch, GitPullRequest, FolderGit2, RefreshCw, Sparkles } from "lucide-react";
 import { useEffect } from "react";
+import { categoryMessage } from "../../../../shared/app-error";
 import { Button, IconButton } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
 import { useGit } from "../../stores/git";
@@ -21,6 +22,7 @@ export default function GitPanel({ projectSlug }: { projectSlug: string }) {
   const branches = useGit((s) => s.branches);
   const prs = useGit((s) => s.prs);
   const worktrees = useGit((s) => s.worktrees);
+  const error = useGit((s) => s.error);
   const loadAll = useGit((s) => s.loadAll);
   const setComposerOpen = useUi((s) => s.setComposerOpen);
 
@@ -43,6 +45,16 @@ export default function GitPanel({ projectSlug }: { projectSlug: string }) {
           <RefreshCw size={12} />
         </IconButton>
       </div>
+
+      {error ? (
+        <div
+          role="status"
+          className="mt-2 rounded-lg border px-2.5 py-2 text-xs"
+          style={{ borderColor: "var(--danger)", color: "var(--danger)", background: "var(--bg-raised)" }}
+        >
+          {categoryMessage(error)}
+        </div>
+      ) : null}
 
       <SectionHeading icon={<GitBranch size={12} />} label={`Branches (${branches.length})`} />
       {branches.slice(0, 20).map((branch) => (
