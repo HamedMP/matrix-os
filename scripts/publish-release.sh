@@ -301,19 +301,25 @@ upload_content_addressed_object() {
   return "$status"
 }
 
+incremental_upload_pids=()
+
 wait_for_incremental_upload_slot() {
-  while [ "$(jobs -pr | wc -l)" -ge "$INCREMENTAL_UPLOAD_CONCURRENCY" ]; do
-    wait -n || return
+  local first_pid
+  while [ "${#incremental_upload_pids[@]}" -ge "$INCREMENTAL_UPLOAD_CONCURRENCY" ]; do
+    first_pid="${incremental_upload_pids[0]}"
+    incremental_upload_pids=("${incremental_upload_pids[@]:1}")
+    wait "$first_pid" || return
   done
 }
 
 wait_for_incremental_uploads() {
-  local failed=0
-  while [ "$(jobs -pr | wc -l)" -gt 0 ]; do
-    if ! wait -n; then
+  local failed=0 upload_pid
+  for upload_pid in "${incremental_upload_pids[@]}"; do
+    if ! wait "$upload_pid"; then
       failed=1
     fi
   done
+  incremental_upload_pids=()
   return "$failed"
 }
 
@@ -370,6 +376,7 @@ while IFS=$'\t' read -r object_sha256 object_size object_key; do
     incremental_upload_failed=1
   fi
   upload_content_addressed_object "$object_file" "$object_key" "application/octet-stream" "$object_sha256" &
+  incremental_upload_pids+=("$!")
 done < "$INCREMENTAL_OBJECTS_FILE"
 if ! wait_for_incremental_uploads; then
   incremental_upload_failed=1

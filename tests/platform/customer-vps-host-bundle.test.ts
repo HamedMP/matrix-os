@@ -154,7 +154,13 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).toContain('HOST_BUNDLE_INCREMENTAL_UPLOAD_CONCURRENCY');
     expect(publishScript).toContain('upload_content_addressed_object()');
     expect(publishScript).toContain('PreconditionFailed');
-    expect(publishScript).toContain('wait -n');
+    expect(publishScript).toContain('incremental_upload_pids=()');
+    expect(publishScript).toContain('incremental_upload_pids+=("$!")');
+    expect(publishScript).toContain('while [ "${#incremental_upload_pids[@]}" -ge "$INCREMENTAL_UPLOAD_CONCURRENCY" ]; do');
+    expect(publishScript).toContain('wait "$first_pid" || return');
+    expect(publishScript).toContain('for upload_pid in "${incremental_upload_pids[@]}"; do');
+    expect(publishScript).not.toContain('jobs -pr');
+    expect(publishScript).not.toContain('wait -n');
     expect(publishScript).toContain('object_size "$BUNDLE_KEY"');
     expect(publishScript).toContain('bundle_object_sha256 "$BUNDLE_KEY"');
     expect(publishScript).toContain('checksum_object_sha256 "$CHECKSUM_KEY"');
@@ -170,7 +176,6 @@ describe('customer VPS host bundle', () => {
     expect(publishScript).not.toContain('verify_existing_content_object "$object_key" "$object_size" "$object_sha256"');
     expect(publishScript).toContain('validate_incremental_object_list()');
     expect(publishScript).toContain('validate_incremental_object_list');
-    expect(publishScript).toContain('wait -n || return');
     expect(publishScript).toContain('(^|[^0-9])412([^0-9]|$)');
     expect(publishScript).toContain('upload_immutable_object "$INCREMENTAL_MANIFEST" "$INCREMENTAL_MANIFEST_KEY" "application/json; charset=utf-8" "$INCREMENTAL_MANIFEST_SHA256"');
     expect(publishScript).toContain(': "${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID or R2_ENDPOINT}"');
