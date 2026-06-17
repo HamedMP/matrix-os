@@ -17,7 +17,7 @@ relative to repo root. `[P]` = parallelizable with neighbors.
 
 - [ ] T010 [P] Tests for error mapper in `tests/desktop/errors.test.ts`: HTTP status→category mapping (401/404/5xx/timeout/network/misconfigured), display-boundary allowlist (300-char cap, path/db/provider marker rejection, generic copy per category)
 - [ ] T011 [P] Implement error mapper in `desktop/src/renderer/src/lib/errors.ts` (single `AppError` enum + `toUserMessage()` display boundary; FR-080)
-- [ ] T012 [P] Tests for IPC contract schemas in `tests/desktop/ipc-contract.test.ts`: every channel schema from contracts/ipc-contract.md accepts valid + rejects oversized/malformed/unknown payloads, including rejecting `embed:open` `{kind:"app", bounds}` without a non-empty `slug`
+- [ ] T012 [P] Tests for IPC contract schemas in `tests/desktop/ipc-contract.test.ts`: every channel schema from contracts/ipc-contract.md accepts valid + rejects oversized/malformed/unknown payloads, including rejecting `embed:open` `{kind:"app", bounds}` without a non-empty `slug`, and covering `shell:open-external` rejection for a non-allowlisted `https:` origin (gateway-origin-or-explicit-allowlist only)
 - [ ] T013 [P] Implement IPC contract in `desktop/src/main/ipc/contract.ts` (zod schemas, channel name constants, request/response/event types — single source imported by main + preload)
 - [ ] T014 [P] Tests for atomic local store in `tests/desktop/local-store.test.ts`: tmp+rename writes, schema-validated keys, bounded values, panel-layout pruning (90d), corrupt-file recovery
 - [ ] T015 [P] Implement local store in `desktop/src/main/persistence/local-store.ts` (atomic JSON, typed keys: profile, windowBounds, lastProjectSlug, panelLayouts, appearance)
