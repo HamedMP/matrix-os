@@ -104,7 +104,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
 
   // Embeds land in Phase 7 (US5); until then the channels exist but refuse.
   handle("embed:open", () => {
-    throw new Error("not available");
+    throw new Error("embed unavailable");
   });
   handle("embed:set-bounds", () => ({ ok: false }));
   handle("embed:close", () => ({ ok: false }));

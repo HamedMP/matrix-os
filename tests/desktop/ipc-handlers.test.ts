@@ -76,4 +76,16 @@ describe("registerIpcHandlers", () => {
       "invalid request",
     );
   });
+
+  it("returns the public embed unavailable error for the phase stub", async () => {
+    const harness = makeHarness();
+
+    await expect(
+      harness.invoke("embed:open", {
+        kind: "app",
+        slug: "workspace",
+        bounds: { x: 0, y: 0, width: 640, height: 480 },
+      }),
+    ).rejects.toThrow("embed unavailable");
+  });
 });
