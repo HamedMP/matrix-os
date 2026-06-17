@@ -9,7 +9,7 @@ import {
 import { Button, Dialog } from "../../design/primitives";
 import { useBoard, BOARD_COLUMNS, type CardPriority, type CardStatus } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
-import { useUi } from "../../stores/ui";
+import { useTabs } from "../../stores/tabs";
 
 const PRIORITIES: CardPriority[] = ["low", "normal", "high", "urgent"];
 const SELECT_STYLE: CSSProperties = {
@@ -36,13 +36,19 @@ function CreateTaskForm({
   const api = useConnection((s) => s.api);
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const createTask = useBoard((s) => s.createTask);
-  const navigate = useUi((s) => s.navigate);
+  const openTab = useTabs((s) => s.openTab);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<CardStatus>("todo");
   const [priority, setPriority] = useState<CardPriority>("normal");
   const [submitting, setSubmitting] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failureMessage, setFailureMessage] = useState<string | null>(null);
+  const unavailableMessage = !activeSlug
+    ? "Select a project before creating a task."
+    : !api
+      ? "Connect to Matrix OS before creating a task."
+      : null;
+  const canSubmit = !unavailableMessage && !submitting && title.trim().length > 0;
 
   const closeFromUser = useCallback(() => {
     dialogGenerationRef.current += 1;
@@ -66,10 +72,14 @@ function CreateTaskForm({
   }, []);
 
   const submit = async (openAfter: boolean) => {
-    if (!api || !activeSlug || title.trim().length === 0 || submitting) return;
+    if (title.trim().length === 0 || submitting) return;
+    if (!api || !activeSlug) {
+      setFailureMessage(unavailableMessage ?? "Couldn't create the task. Please try again.");
+      return;
+    }
     const submitGeneration = dialogGenerationRef.current;
     setSubmitting(true);
-    setFailed(false);
+    setFailureMessage(null);
     let card: Awaited<ReturnType<typeof createTask>>;
     try {
       card = await createTask(api, activeSlug, {
@@ -82,17 +92,17 @@ function CreateTaskForm({
       logSubmitFailure(err);
       if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
       setSubmitting(false);
-      setFailed(true);
+      setFailureMessage("Couldn't create the task. Please try again.");
       return;
     }
     if (dialogClosedRef.current || dialogGenerationRef.current !== submitGeneration) return;
     setSubmitting(false);
     if (!card) {
-      setFailed(true);
+      setFailureMessage("Couldn't create the task. Please try again.");
       return;
     }
     onClose();
-    if (openAfter) navigate({ kind: "task", taskId: card.id });
+    if (openAfter) openTab({ kind: "task", taskId: card.id, projectSlug: card.projectSlug, title: card.title });
   };
 
   return (
@@ -154,9 +164,9 @@ function CreateTaskForm({
           ))}
         </select>
       </div>
-      {failed ? (
+      {unavailableMessage || failureMessage ? (
         <p className="text-sm" style={{ color: "var(--danger)" }}>
-          Couldn't create the task. Please try again.
+          {unavailableMessage ?? failureMessage}
         </p>
       ) : null}
       <div
@@ -168,7 +178,7 @@ function CreateTaskForm({
         </Button>
         <Button
           variant="subtle"
-          disabled={submitting || title.trim().length === 0}
+          disabled={!canSubmit}
           onClick={() => void submit(true).catch(logSubmitFailure)}
           title="Create and open (Cmd+Shift+Enter)"
         >
@@ -176,7 +186,7 @@ function CreateTaskForm({
         </Button>
         <Button
           variant="primary"
-          disabled={submitting || title.trim().length === 0}
+          disabled={!canSubmit}
           onClick={() => void submit(false).catch(logSubmitFailure)}
           title="Create (Cmd+Enter)"
         >

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import QuickOpen from "../../desktop/src/renderer/src/features/files/QuickOpen";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useEditorTabs } from "../../desktop/src/renderer/src/features/editor/editor-tabs-store";
 import { useWorkspace } from "../../desktop/src/renderer/src/stores/workspace";
 
@@ -27,12 +28,12 @@ describe("QuickOpen", () => {
       } as never,
     });
     useUi.setState({
-      view: { kind: "board" },
       createTaskOpen: false,
       composerOpen: false,
       paletteOpen: false,
       quickOpenOpen: true,
     });
+    useTabs.setState(useTabs.getInitialState(), true);
     useEditorTabs.setState(useEditorTabs.getInitialState(), true);
     useWorkspace.setState(useWorkspace.getInitialState(), true);
   });
@@ -55,7 +56,12 @@ describe("QuickOpen", () => {
   });
 
   it("opens the file and dismisses from a task view", async () => {
-    useUi.setState({ view: { kind: "task", taskId: "task_a" } });
+    useTabs.getState().openTab({
+      kind: "task",
+      taskId: "task_a",
+      projectSlug: "alpha",
+      title: "Task A",
+    });
     render(<QuickOpen />);
 
     await searchForFile("app");

@@ -87,4 +87,20 @@ describe("TerminalView session switching", () => {
     expect(screen.queryByText("Session exited (code 7).")).toBeNull();
     expect(screen.getByText(/Connecting/)).toBeTruthy();
   });
+
+  it("preserves the ended banner when re-activating an ended terminal", () => {
+    const { rerender } = render(<TerminalView sessionName="alpha" active />);
+    const alphaEvents = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
+    act(() => {
+      alphaEvents.onExit(7);
+    });
+    expect(screen.getByText("Session exited (code 7).")).toBeTruthy();
+
+    rerender(<TerminalView sessionName="alpha" active={false} />);
+    rerender(<TerminalView sessionName="alpha" active />);
+
+    expect(screen.getByText("Session exited (code 7).")).toBeTruthy();
+    expect(screen.queryByText(/Connecting/)).toBeNull();
+    expect(attachMock).toHaveBeenCalledTimes(1);
+  });
 });

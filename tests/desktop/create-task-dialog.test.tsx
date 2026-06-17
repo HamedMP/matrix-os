@@ -158,4 +158,20 @@ describe("CreateTaskDialog", () => {
     expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(false);
     expect(console.warn).toHaveBeenCalledWith("[create-task] failed to submit task:", "offline");
   });
+
+  it("disables task creation and explains when no project is active", () => {
+    const createTask = vi.fn();
+    useBoard.setState({ activeProjectSlug: null, createTask });
+
+    render(<CreateTaskDialog open onClose={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Task title"), {
+      target: { value: "Ship desktop" },
+    });
+
+    expect(screen.getByText("Select a project before creating a task.")).not.toBeNull();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Create + open" }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Create" }).disabled).toBe(true);
+    expect(createTask).not.toHaveBeenCalled();
+  });
 });

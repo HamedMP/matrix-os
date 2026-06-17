@@ -21,10 +21,7 @@ export default function App() {
           </span>
         </div>
       ) : status === "signed-out" ? (
-        <>
-          <header className="titlebar-drag" style={{ height: "var(--titlebar-height)" }} />
-          <SignIn />
-        </>
+        <SignIn />
       ) : (
         <MissionControl />
       )}

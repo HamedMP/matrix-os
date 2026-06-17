@@ -22,14 +22,23 @@ sign in on a new machine and everything is restored from your computer in the cl
 Signing out clears the local credential and any embedded web sessions, but never touches data
 on your VPS.
 
+## Navigation
+
+The sidebar holds your platform links — **Home** and **Agents** — then your open **Terminals**,
+then your **Projects**. Nothing in the sidebar is project-specific noise: it's your whole cloud
+computer at a glance. Everything you open — a project board, a task, a terminal — opens as a
+**tab** in the main area. Tabs are cached: switching away from a terminal never kills it, and
+coming back is instant. Close a tab with its ✕ or a middle-click; the Home tab always stays.
+
 ## Board
 
-Your projects appear in the title bar's project switcher. Each project is a kanban board with
-**Todo, Running, Waiting, Blocked, Complete** columns. Drag cards between columns, right-click a
-card for status/priority/archive/delete, and press **C** (or **⌘N**) to create a task. Create
-dialogs offer both **Create** (⌘↵) and **Create + open** (⌘⇧↵). Changes made on the web shell,
-CLI, or by agents are wired through the shared gateway events; full-field live sync is still
-being verified against the VPS gateway before it is treated as complete parity.
+Open a project from the sidebar to get its kanban board in a tab, with **Todo, Running, Waiting,
+Blocked, Complete** columns. Drag cards between columns, right-click a card for
+status/priority/archive/delete, and press **C** (or **⌘N**) to create a task. Create dialogs
+offer both **Create** (⌘↵) and **Create + open** (⌘⇧↵). Each task opens as its own tab. Changes
+made on the web shell, CLI, or by agents are wired through the shared gateway events; full-field
+live sync is still being verified against the VPS gateway before it is treated as complete
+parity.
 
 ## Terminals
 

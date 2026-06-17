@@ -1,6 +1,7 @@
 import { File } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../stores/connection";
+import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { useEditorTabs } from "../editor/editor-tabs-store";
 import { useWorkspace } from "../../stores/workspace";
@@ -11,9 +12,9 @@ const MAX_RESULTS = 30;
 // Mounted only while open (fresh state per open, autoFocus instead of a focus
 // timeout). The search debounce timer is cleared on each change and unmount.
 function QuickOpenInner({ onClose }: { onClose: () => void }) {
-  const view = useUi((s) => s.view);
+  const activeTab = useTabs((s) => s.tabs.find((t) => t.id === s.activeTabId));
   const api = useConnection((s) => s.api);
-  const openTab = useEditorTabs((s) => s.openTab);
+  const openEditorTab = useEditorTabs((s) => s.openTab);
   const togglePanel = useWorkspace((s) => s.togglePanel);
   const layoutFor = useWorkspace((s) => s.layoutFor);
   const [query, setQuery] = useState("");
@@ -66,12 +67,13 @@ function QuickOpenInner({ onClose }: { onClose: () => void }) {
   }, [api, query]);
 
   const openPath = (path: string) => {
-    if (view.kind !== "task") {
+    if (activeTab?.kind !== "task" || !activeTab.taskId) {
       setOpenError("Open a task tab before opening files.");
       return;
     }
-    openTab(view.taskId, path);
-    if (!layoutFor(view.taskId).visible.editor) togglePanel(view.taskId, "editor");
+    const taskId = activeTab.taskId;
+    openEditorTab(taskId, path);
+    if (!layoutFor(taskId).visible.editor) togglePanel(taskId, "editor");
     onClose();
   };
 

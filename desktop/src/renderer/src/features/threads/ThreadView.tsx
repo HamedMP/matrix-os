@@ -1,11 +1,10 @@
-import { ArrowLeft, CircleStop, Wrench } from "lucide-react";
+import { CircleStop, Wrench } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
-import { Button, IconButton, StatusDot } from "../../design/primitives";
+import { Button, StatusDot } from "../../design/primitives";
 import { groupMessages, type ChatMessage } from "../../lib/chat";
 import { abortKernelRequest } from "../../lib/kernel-wiring";
 import { useThreads, type ThreadStatus } from "../../stores/threads";
-import { useUi } from "../../stores/ui";
 
 const STATUS_META: Record<ThreadStatus, { label: string; color: string }> = {
   running: { label: "Running", color: "var(--status-running)" },
@@ -56,10 +55,10 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-export default function ThreadView({ threadId }: { threadId: string }) {
+export default function ThreadView({ threadId, embedded = false }: { threadId: string; embedded?: boolean }) {
   const thread = useThreads((s) => s.threads.find((t) => t.id === threadId));
-  const navigate = useUi((s) => s.navigate);
   const scrollRef = useRef<HTMLDivElement>(null);
+  void embedded;
 
   const groups = useMemo(
     () => (thread ? groupMessages(thread.transcript) : []),
@@ -89,9 +88,6 @@ export default function ThreadView({ threadId }: { threadId: string }) {
         className="flex shrink-0 items-center gap-2 border-b px-3 py-2"
         style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
       >
-        <IconButton label="Back" onClick={() => navigate({ kind: "board" })}>
-          <ArrowLeft size={15} />
-        </IconButton>
         <span className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
           {thread.title}
         </span>
