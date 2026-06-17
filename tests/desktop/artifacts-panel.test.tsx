@@ -29,12 +29,28 @@ describe("artifacts preview URLs", () => {
     useGit.setState({
       previews: [],
       previewScope: { projectSlug: "matrix-os", taskId: "task-1" },
-      error: "timeout",
+      error: null,
+      previewError: "timeout",
     });
 
     render(<ArtifactsPanel projectSlug="matrix-os" taskId="task-1" />);
 
     expect(screen.getByText("Couldn't load artifacts")).toBeTruthy();
     expect(screen.queryByText("No artifacts")).toBeNull();
+  });
+
+  it("does not show list load failures as artifact failures", () => {
+    useConnection.setState({ api: null });
+    useGit.setState({
+      previews: [],
+      previewScope: { projectSlug: "matrix-os", taskId: "task-1" },
+      error: "timeout",
+      previewError: null,
+    });
+
+    render(<ArtifactsPanel projectSlug="matrix-os" taskId="task-1" />);
+
+    expect(screen.queryByText("Couldn't load artifacts")).toBeNull();
+    expect(screen.getByText("No artifacts")).toBeTruthy();
   });
 });

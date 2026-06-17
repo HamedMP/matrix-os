@@ -296,7 +296,7 @@ describe("loadPreviews", () => {
         updatedAt: T1,
       },
     ]);
-    expect(useGit.getState().error).toBeNull();
+    expect(useGit.getState().previewError).toBeNull();
   });
 
   it("scopes previews by taskId via query param", async () => {
@@ -324,7 +324,28 @@ describe("loadPreviews", () => {
     await useGit.getState().loadPreviews(api, "proj");
 
     expect(useGit.getState().previews).toEqual([]);
-    expect(useGit.getState().error).toBe("timeout");
+    expect(useGit.getState().previewError).toBe("timeout");
+  });
+
+  it("keeps preview loads from clearing git list errors", async () => {
+    useGit.setState({ error: "unauthorized" });
+    const get = vi.fn().mockResolvedValue({ previews: [wirePreview()], nextCursor: null });
+    const api = makeApi({ get: get as never });
+
+    await useGit.getState().loadPreviews(api, "proj");
+
+    expect(useGit.getState().error).toBe("unauthorized");
+    expect(useGit.getState().previewError).toBeNull();
+  });
+
+  it("keeps preview failures out of git list errors", async () => {
+    const get = vi.fn().mockRejectedValue(new AppError("timeout"));
+    const api = makeApi({ get: get as never });
+
+    await useGit.getState().loadPreviews(api, "proj");
+
+    expect(useGit.getState().error).toBeNull();
+    expect(useGit.getState().previewError).toBe("timeout");
   });
 
   it("ignores stale preview responses from a previous task scope", async () => {

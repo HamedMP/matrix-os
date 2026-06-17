@@ -102,6 +102,7 @@ interface GitState {
   refreshedAt: string | null;
   loading: boolean;
   error: AppErrorCategory | null;
+  previewError: AppErrorCategory | null;
   loadAll(api: ApiClient, slug: string): Promise<void>;
   loadPreviews(api: ApiClient, slug: string, taskId?: string): Promise<void>;
   createWorktree(api: ApiClient, slug: string, input: { branch: string } | { pr: number }): Promise<Worktree | null>;
@@ -116,6 +117,7 @@ export const useGit = create<GitState>()((set, get) => ({
   refreshedAt: null,
   loading: false,
   error: null,
+  previewError: null,
 
   loadAll: async (api, slug) => {
     const requestSeq = ++loadAllRequestSeq;
@@ -174,7 +176,7 @@ export const useGit = create<GitState>()((set, get) => ({
   loadPreviews: async (api, slug, taskId) => {
     const scope: PreviewScope = { projectSlug: slug, taskId: taskId ?? null };
     const query = taskId ? `?limit=100&taskId=${encodeURIComponent(taskId)}` : "?limit=100";
-    set({ previews: [], previewScope: scope });
+    set({ previews: [], previewScope: scope, previewError: null });
     try {
       const res = await api.get<{ previews?: unknown }>(`/api/projects/${slug}/previews${query}`);
       set((state) => {
@@ -184,7 +186,7 @@ export const useGit = create<GitState>()((set, get) => ({
         ) {
           return {};
         }
-        return { previews: parseRows(PreviewSchema, res.previews), error: null };
+        return { previews: parseRows(PreviewSchema, res.previews), previewError: null };
       });
     } catch (err: unknown) {
       set((state) => {
@@ -194,7 +196,7 @@ export const useGit = create<GitState>()((set, get) => ({
         ) {
           return {};
         }
-        return { error: categoryOf(err) };
+        return { previewError: categoryOf(err) };
       });
     }
   },

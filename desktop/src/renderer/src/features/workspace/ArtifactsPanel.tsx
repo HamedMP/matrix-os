@@ -20,22 +20,22 @@ export default function ArtifactsPanel({
   const api = useConnection((s) => s.api);
   const previews = useGit((s) => s.previews);
   const previewScope = useGit((s) => s.previewScope);
-  const error = useGit((s) => s.error);
+  const previewError = useGit((s) => s.previewError);
   const loadPreviews = useGit((s) => s.loadPreviews);
 
   useEffect(() => {
     if (api) void loadPreviews(api, projectSlug, taskId);
   }, [api, loadPreviews, projectSlug, taskId]);
 
-  const scopedPreviews =
-    previewScope?.projectSlug === projectSlug && previewScope.taskId === taskId ? previews : [];
+  const scopeMatches = previewScope?.projectSlug === projectSlug && previewScope.taskId === taskId;
+  const scopedPreviews = scopeMatches ? previews : [];
 
-  if (error && scopedPreviews.length === 0) {
+  if (scopeMatches && previewError && scopedPreviews.length === 0) {
     return (
       <EmptyState
         icon={<Package size={22} />}
         headline="Couldn't load artifacts"
-        description={categoryMessage(error)}
+        description={categoryMessage(previewError)}
       />
     );
   }
