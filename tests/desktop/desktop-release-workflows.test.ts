@@ -60,6 +60,13 @@ describe("desktop release workflows", () => {
     expect(canary).toContain("output: canary-mac.yml");
   });
 
+  it("rejects prerelease desktop tags on the push release path", () => {
+    const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
+
+    expect(release).toContain('if [ "$EVENT_NAME" = "push" ] && [[ "$VERSION" == *-* ]]; then');
+    expect(release).toContain("Prerelease desktop versions must be released with workflow_dispatch");
+  });
+
   it("merges mac manifests in deterministic filename order", () => {
     const dir = mkdtempSync(join(tmpdir(), "matrix-desktop-release-"));
     try {

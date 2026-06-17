@@ -73,6 +73,10 @@ jobs:
             echo "invalid desktop version: $VERSION" >&2
             exit 1
           fi
+          if [ "$EVENT_NAME" = "push" ] && [[ "$VERSION" == *-* ]]; then
+            echo "Prerelease desktop versions must be released with workflow_dispatch so the channel is explicit." >&2
+            exit 1
+          fi
           case "$CHANNEL" in stable|beta|canary) ;; *) echo "invalid channel: $CHANNEL" >&2; exit 1 ;; esac
           PRERELEASE=false
           if [ "$CHANNEL" != "stable" ] || [[ "$VERSION" == *-* ]]; then
