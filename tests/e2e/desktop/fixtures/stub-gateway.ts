@@ -31,7 +31,8 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   if (!raw) return {};
   try {
     return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
+  } catch (err: unknown) {
+    console.warn("[stub-gateway] failed to parse request body:", err instanceof Error ? err.message : String(err));
     return {};
   }
 }
@@ -213,7 +214,11 @@ export async function startStubGateway(): Promise<StubGateway> {
       let msg: Record<string, unknown>;
       try {
         msg = JSON.parse(String(raw)) as Record<string, unknown>;
-      } catch {
+      } catch (err: unknown) {
+        console.warn(
+          "[stub-gateway] failed to parse terminal websocket frame:",
+          err instanceof Error ? err.message : String(err),
+        );
         return;
       }
       if (msg.type === "input" && typeof msg.data === "string") {
@@ -232,7 +237,11 @@ export async function startStubGateway(): Promise<StubGateway> {
       let msg: Record<string, unknown>;
       try {
         msg = JSON.parse(String(raw)) as Record<string, unknown>;
-      } catch {
+      } catch (err: unknown) {
+        console.warn(
+          "[stub-gateway] failed to parse kernel websocket frame:",
+          err instanceof Error ? err.message : String(err),
+        );
         return;
       }
       state.kernelMessages.push(msg);

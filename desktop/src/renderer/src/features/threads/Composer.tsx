@@ -28,7 +28,8 @@ export default function Composer() {
   useEffect(() => {
     if (open) {
       setText("");
-      setTimeout(() => inputRef.current?.focus(), 0);
+      const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [open]);
 

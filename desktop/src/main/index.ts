@@ -9,6 +9,12 @@ import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 
+// Test isolation: e2e runs point userData at a temp dir so they never touch
+// the real profile or credential.
+if (process.env.OPERATOR_USER_DATA_DIR) {
+  app.setPath("userData", process.env.OPERATOR_USER_DATA_DIR);
+}
+
 let mainWindow: BrowserWindow | null = null;
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {

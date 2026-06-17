@@ -1,0 +1,94 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createUpdater } from "@desktop/main/updates";
+
+const electronMock = vi.hoisted(() => ({
+  app: { isPackaged: true },
+}));
+
+const updaterMock = vi.hoisted(() => {
+  type UpdateHandler = (info: { version: string }) => void;
+  const handlers = new Map<string, UpdateHandler>();
+  const autoUpdater = {
+    autoDownload: false,
+    autoInstallOnAppQuit: false,
+    setFeedURL: vi.fn(),
+    removeAllListeners: vi.fn((eventName: string) => {
+      handlers.delete(eventName);
+      return autoUpdater;
+    }),
+    once: vi.fn((eventName: string, handler: UpdateHandler) => {
+      handlers.set(eventName, handler);
+      return autoUpdater;
+    }),
+    checkForUpdates: vi.fn(),
+  };
+  return { autoUpdater, handlers };
+});
+
+vi.mock("electron", () => electronMock);
+vi.mock("electron-updater", () => ({ autoUpdater: updaterMock.autoUpdater }));
+
+beforeEach(() => {
+  process.env.OPERATOR_UPDATE_FEED = "https://updates.example.com";
+  electronMock.app.isPackaged = true;
+  updaterMock.handlers.clear();
+  updaterMock.autoUpdater.autoDownload = false;
+  updaterMock.autoUpdater.autoInstallOnAppQuit = false;
+  updaterMock.autoUpdater.setFeedURL.mockClear();
+  updaterMock.autoUpdater.removeAllListeners.mockClear();
+  updaterMock.autoUpdater.once.mockClear();
+  updaterMock.autoUpdater.checkForUpdates.mockReset().mockResolvedValue({});
+});
+
+describe("createUpdater", () => {
+  it("replaces one-shot update listeners on each check", async () => {
+    const onAvailable = vi.fn();
+    const updater = createUpdater({ onAvailable, onReady: vi.fn() });
+
+    await updater.check();
+    await updater.check();
+
+    expect(updaterMock.autoUpdater.removeAllListeners).toHaveBeenCalledWith("update-available");
+    expect(updaterMock.autoUpdater.removeAllListeners).toHaveBeenCalledWith("update-downloaded");
+    expect(updaterMock.autoUpdater.removeAllListeners).toHaveBeenCalledWith("update-not-available");
+
+    updaterMock.handlers.get("update-available")?.({ version: "1.2.3" });
+    expect(onAvailable).toHaveBeenCalledOnce();
+    expect(onAvailable).toHaveBeenCalledWith("1.2.3");
+    expect(updater.status()).toBe("downloading");
+  });
+
+  it("reports ready through callbacks instead of check return timing", async () => {
+    const onReady = vi.fn();
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady });
+
+    await updater.check();
+    expect(updater.status()).toBe("checking");
+
+    updaterMock.handlers.get("update-downloaded")?.({ version: "1.2.4" });
+    expect(onReady).toHaveBeenCalledWith("1.2.4");
+    expect(updater.status()).toBe("ready");
+  });
+
+  it("sets an error status when the update check fails", async () => {
+    updaterMock.autoUpdater.checkForUpdates.mockRejectedValue(new Error("network down"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+
+    expect(updater.status()).toBe("error");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("stays disabled when no packaged update feed is configured", async () => {
+    delete process.env.OPERATOR_UPDATE_FEED;
+    const updater = createUpdater({ onAvailable: vi.fn(), onReady: vi.fn() });
+
+    await updater.check();
+
+    expect(updater.status()).toBe("disabled");
+    expect(updaterMock.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+});
