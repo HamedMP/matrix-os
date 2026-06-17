@@ -2727,6 +2727,62 @@ function applyShellUiStatePatch(shell: ShellSessionSummary, patch: ShellUiStateP
   return deriveShellUnread({ ...shell, ...patch });
 }
 
+function snapshotShellUiStatePatchValue(
+  previousValues: ShellUiStatePatch,
+  shell: ShellSessionSummary,
+  key: ShellUiStatePatchKey,
+): void {
+  switch (key) {
+    case "placement":
+      previousValues.placement = shell.placement;
+      return;
+    case "lastSeenSeq":
+      previousValues.lastSeenSeq = shell.lastSeenSeq;
+      return;
+    case "visualStatus":
+      previousValues.visualStatus = shell.visualStatus;
+      return;
+    default: {
+      const unhandledKey: never = key;
+      throw new Error(`Unhandled shell UI state patch key: ${String(unhandledKey)}`);
+    }
+  }
+}
+
+function snapshotShellUiStatePatch(shell: ShellSessionSummary, patch: ShellUiStatePatch): ShellUiStatePatch {
+  const previousValues: ShellUiStatePatch = {};
+  for (const key of getShellUiStatePatchKeys(patch)) {
+    snapshotShellUiStatePatchValue(previousValues, shell, key);
+  }
+  return previousValues;
+}
+
+function rollbackShellUiStatePatchValue(
+  shell: ShellSessionSummary,
+  patch: ShellUiStatePatch,
+  previousValues: ShellUiStatePatch,
+  key: ShellUiStatePatchKey,
+): ShellSessionSummary {
+  switch (key) {
+    case "placement":
+      return Object.is(shell.placement, patch.placement)
+        ? { ...shell, placement: previousValues.placement }
+        : shell;
+    case "lastSeenSeq":
+      return Object.is(shell.lastSeenSeq, patch.lastSeenSeq)
+        ? { ...shell, lastSeenSeq: previousValues.lastSeenSeq }
+        : shell;
+    case "visualStatus":
+      return Object.is(shell.visualStatus, patch.visualStatus)
+        ? { ...shell, visualStatus: previousValues.visualStatus }
+        : shell;
+    default: {
+      const unhandledKey: never = key;
+      throw new Error(`Unhandled shell UI state patch key: ${String(unhandledKey)}`);
+    }
+  }
+}
+
 function rollbackShellUiStatePatch(
   shell: ShellSessionSummary,
   patch: ShellUiStatePatch,
@@ -2734,9 +2790,7 @@ function rollbackShellUiStatePatch(
 ): ShellSessionSummary {
   let next = shell;
   for (const key of getShellUiStatePatchKeys(patch)) {
-    if (Object.is(next[key], patch[key])) {
-      next = { ...next, [key]: previousValues[key] };
-    }
+    next = rollbackShellUiStatePatchValue(next, patch, previousValues, key);
   }
   return deriveShellUnread(next);
 }
@@ -3054,9 +3108,7 @@ function LocalTerminalSidebar() {
     const previousValues: ShellUiStatePatch = {};
     setShells((prev) => prev.map((shell) => {
       if (shell.name !== name) return shell;
-      for (const key of getShellUiStatePatchKeys(patch)) {
-        previousValues[key] = shell[key];
-      }
+      Object.assign(previousValues, snapshotShellUiStatePatch(shell, patch));
       return applyShellUiStatePatch(shell, patch);
     }));
     const rollback = () => {
