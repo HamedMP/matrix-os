@@ -24,25 +24,19 @@ interface TerminalViewProps {
 export default function TerminalView({ sessionName, active = true, onRecreate }: TerminalViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [stateSessionName, setStateSessionName] = useState(sessionName);
-  const [stateActive, setStateActive] = useState(active);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
+  const endedRef = useRef(false);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
   const [exitCode, setExitCode] = useState<number | null>(null);
 
   if (stateSessionName !== sessionName) {
     setStateSessionName(sessionName);
+    endedRef.current = false;
     setSocketState("connecting");
     setExitCode(null);
-  }
-  if (stateActive !== active) {
-    setStateActive(active);
-    if (active) {
-      setSocketState("connecting");
-      setExitCode(null);
-    }
   }
 
   // xterm lifecycle — mount once, dispose only on real unmount (tab close).
@@ -112,7 +106,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
   useEffect(() => {
     const terminal = termRef.current;
     const fit = fitRef.current;
-    if (!terminal || !active) return;
+    if (!terminal || !active || endedRef.current) return;
 
     const manager = getAttachManager();
     const attachment = manager.attach(sessionName, {
@@ -123,6 +117,7 @@ export default function TerminalView({ sessionName, active = true, onRecreate }:
         terminal.write(GAP_MARKER);
       },
       onExit: (code) => {
+        endedRef.current = true;
         setExitCode(code);
         setSocketState("ended");
       },
