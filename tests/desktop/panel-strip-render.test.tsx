@@ -42,14 +42,14 @@ describe("PanelStrip layout persistence", () => {
     useWorkspace.setState({ layouts: {} });
   });
 
-  it("persists panel sizes from the settled layout callback", () => {
+  it("persists panel sizes from the layout change callback", () => {
     render(<PanelStrip taskId="task-1" renderPanel={(panel) => <div>{panel}</div>} />);
 
-    expect(groupHarness.props?.onLayoutChange).toBeUndefined();
-    expect(groupHarness.props?.onLayoutChanged).toEqual(expect.any(Function));
+    expect(groupHarness.props?.onLayoutChange).toEqual(expect.any(Function));
+    expect(groupHarness.props?.onLayoutChanged).toBeUndefined();
 
     act(() => {
-      groupHarness.props?.onLayoutChanged?.({ terminal: 64, editor: 36 });
+      groupHarness.props?.onLayoutChange?.({ terminal: 64, editor: 36 });
     });
 
     expect(useWorkspace.getState().layouts["task-1"]?.sizes).toMatchObject({
