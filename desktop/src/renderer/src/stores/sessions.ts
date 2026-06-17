@@ -79,6 +79,29 @@ async function fetchMergedSessions(api: ApiClient): Promise<{
   );
 }
 
+function mergeCreatedSessionState(
+  state: Pick<SessionsState, "sessions" | "aliasMap">,
+  merged: { sessions: AttachableSession[]; aliasMap: Record<string, string> },
+  sessionId: string,
+  directAttachName: string | null,
+): { sessions: AttachableSession[]; aliasMap: Record<string, string>; attachName: string | null } {
+  const attachName = merged.aliasMap[sessionId] ?? directAttachName;
+  if (!attachName) return { sessions: state.sessions, aliasMap: state.aliasMap, attachName: null };
+  const created = merged.sessions.find((session) => session.attachName === attachName) ?? null;
+  const existingIndex = state.sessions.findIndex((session) => session.attachName === attachName);
+  const sessions =
+    created === null
+      ? state.sessions
+      : existingIndex >= 0
+        ? state.sessions.map((session, index) => (index === existingIndex ? created : session))
+        : [created, ...state.sessions];
+  return {
+    sessions,
+    aliasMap: { ...state.aliasMap, [sessionId]: attachName },
+    attachName,
+  };
+}
+
 export const useSessions = create<SessionsState>()((set, get) => ({
   sessions: [],
   aliasMap: {},
@@ -170,10 +193,24 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           error: null,
         });
       } else {
-        set({ creating: false, error: null });
+        set((state) => {
+          const next =
+            sessionId === null
+              ? { sessions: state.sessions, aliasMap: state.aliasMap }
+              : mergeCreatedSessionState(state, merged, sessionId, directAttachName);
+          return {
+            sessions: next.sessions,
+            aliasMap: next.aliasMap,
+            creating: false,
+            error: null,
+          };
+        });
       }
       if (!sessionId) return null;
-      return { sessionId, attachName: merged.aliasMap[sessionId] ?? directAttachName };
+      return {
+        sessionId,
+        attachName: merged.aliasMap[sessionId] ?? directAttachName,
+      };
     } catch (err: unknown) {
       console.error("[sessions] Failed to create session:", err);
       set({ creating: false, error: err instanceof AppError ? err.category : "server" });
@@ -236,6 +273,7 @@ export const useSessions = create<SessionsState>()((set, get) => ({
           set({ creating: false, error: err instanceof AppError ? err.category : "server" });
           return null;
         }
+        let nextAttachName = merged.aliasMap[sessionId] ?? directAttachName;
         if (sequence === loadSequence) {
           set({
             sessions: merged.sessions,
@@ -244,8 +282,17 @@ export const useSessions = create<SessionsState>()((set, get) => ({
             creating: true,
             error: null,
           });
+        } else {
+          set((state) => {
+            const next = mergeCreatedSessionState(state, merged, sessionId, directAttachName);
+            nextAttachName = next.attachName;
+            return {
+              sessions: next.sessions,
+              aliasMap: next.aliasMap,
+              error: null,
+            };
+          });
         }
-        const nextAttachName = merged.aliasMap[sessionId] ?? directAttachName;
         let linkError: unknown = null;
         if (existing.projectSlug && existing.taskId) {
           try {

@@ -175,6 +175,36 @@ describe("useSessions.create", () => {
     await expect(createPromise).resolves.toEqual({ sessionId: "sess_new", attachName: "matrix-task-9" });
   });
 
+  it("keeps the created alias in state when another load preempts the create reload", async () => {
+    const internalTerminal = deferred<{ sessions: unknown[] }>();
+    const internalWorkspace = deferred<{ sessions: unknown[]; nextCursor: null }>();
+    const post = vi.fn().mockResolvedValue({ session: { id: "sess_new", runtime: {} } });
+    let call = 0;
+    const get = vi.fn((path: string) => {
+      call += 1;
+      if (call === 1 && path === "/api/terminal/sessions") return internalTerminal.promise;
+      if (call === 2 && path === "/api/sessions") return internalWorkspace.promise;
+      if (path === "/api/terminal/sessions") return Promise.resolve({ sessions: [] });
+      return Promise.resolve({ sessions: [], nextCursor: null });
+    });
+    const api = makeApi({ post, get });
+
+    const createPromise = useSessions.getState().create(api, { kind: "shell", taskId: "task_a" });
+    await Promise.resolve();
+    await Promise.resolve();
+    await useSessions.getState().load(api);
+
+    internalTerminal.resolve({ sessions: [{ name: "matrix-task-9", status: "active" }] });
+    internalWorkspace.resolve({
+      sessions: [{ id: "sess_new", runtime: { zellijSession: "matrix-task-9" } }],
+      nextCursor: null,
+    });
+    await createPromise;
+
+    expect(useSessions.getState().resolveAttachName("sess_new")).toBe("matrix-task-9");
+    expect(useSessions.getState().sessions.some((session) => session.attachName === "matrix-task-9")).toBe(true);
+  });
+
   it("surfaces an error category and clears the creating flag on failure", async () => {
     const api = makeApi({ post: vi.fn().mockRejectedValue(new AppError("offline")) });
     const created = await useSessions.getState().create(api, { kind: "shell", taskId: "task_a" });
@@ -428,5 +458,75 @@ describe("useSessions.restart", () => {
     expect(del).toHaveBeenCalledWith("/api/sessions/sess_next");
     expect(useSessions.getState().creating).toBe(false);
     expect(useSessions.getState().error).toBe("offline");
+  });
+
+  it("cleans up the restarted attachable session when a concurrent load preempts the restart reload", async () => {
+    const card: Card = {
+      id: "task_a",
+      projectSlug: "proj",
+      title: "Review",
+      description: "",
+      status: "running",
+      priority: "normal",
+      order: 1,
+      parentTaskId: null,
+      linkedSessionId: "sess_old",
+      linkedWorktreeId: "wt_1",
+      previewIds: [],
+      tags: [],
+      updatedAt: null,
+      revision: 1,
+    };
+    useBoard.setState({ cardsByProject: { proj: [card] } });
+    useSessions.setState({
+      sessions: [
+        {
+          name: "Review",
+          attachName: "matrix-agent-1",
+          status: "exited",
+          source: "workspace",
+          kind: "agent",
+          agent: "codex",
+          projectSlug: "proj",
+          taskId: "task_a",
+          worktreeId: "wt_1",
+        },
+      ],
+      aliasMap: { sess_old: "matrix-agent-1" },
+    });
+    const internalTerminal = deferred<{ sessions: unknown[] }>();
+    const internalWorkspace = deferred<{ sessions: unknown[]; nextCursor: null }>();
+    let getCall = 0;
+    const get = vi.fn((path: string) => {
+      getCall += 1;
+      if (getCall === 1 && path === "/api/terminal/sessions") return internalTerminal.promise;
+      if (getCall === 2 && path === "/api/sessions") return internalWorkspace.promise;
+      if (path === "/api/terminal/sessions") return Promise.resolve({ sessions: [] });
+      return Promise.resolve({ sessions: [], nextCursor: null });
+    });
+    const del = vi.fn().mockResolvedValue({ ok: true });
+    const api = makeApi({
+      delete: del,
+      post: vi.fn().mockResolvedValue({ session: { id: "sess_next", runtime: {} } }),
+      get,
+      patch: vi.fn().mockRejectedValue(new AppError("offline")),
+    });
+
+    const restartPromise = useSessions.getState().restart(api, "matrix-agent-1");
+    while (getCall < 2) {
+      await Promise.resolve();
+    }
+    const competingLoad = useSessions.getState().load(api);
+    internalTerminal.resolve({ sessions: [{ name: "matrix-agent-2", status: "active" }] });
+    internalWorkspace.resolve({
+      sessions: [{ id: "sess_next", runtime: { zellijSession: "matrix-agent-2" } }],
+      nextCursor: null,
+    });
+
+    await expect(restartPromise).resolves.toBeNull();
+    await competingLoad;
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-agent-1?force=1");
+    expect(del).toHaveBeenCalledWith("/api/terminal/sessions/matrix-agent-2?force=1");
+    expect(del).not.toHaveBeenCalledWith("/api/sessions/sess_next");
   });
 });

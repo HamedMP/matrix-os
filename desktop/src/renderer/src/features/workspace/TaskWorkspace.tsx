@@ -156,9 +156,11 @@ export default function TaskWorkspace({
 
   const attachName = card?.linkedSessionId ? (aliasMap[card.linkedSessionId] ?? null) : null;
   const layout = layouts[taskId] ?? layoutFor(taskId);
-  if (stopAgentState.attachName !== attachName) {
-    setStopAgentState({ attachName, pending: false, error: null });
-  }
+  useEffect(() => {
+    setStopAgentState((current) =>
+      current.attachName === attachName ? current : { attachName, pending: false, error: null },
+    );
+  }, [attachName]);
   const stopAgentPending = stopAgentState.attachName === attachName && stopAgentState.pending;
   const stopAgentError = stopAgentState.attachName === attachName ? stopAgentState.error : null;
 
@@ -308,7 +310,7 @@ export default function TaskWorkspace({
           ) : null}
         </div>
 
-        {projectSlug && card ? (
+        {projectSlug && card && !sessionLive ? (
           <StartSessionControls
             projectSlug={projectSlug}
             taskId={taskId}

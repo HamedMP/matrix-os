@@ -32,6 +32,7 @@ describe("TerminalsTab", () => {
     useSessions.setState({
       sessions: [],
       error: null,
+      creating: false,
       load: vi.fn().mockResolvedValue(undefined),
       kill: vi.fn().mockResolvedValue(true),
       restart: vi.fn().mockResolvedValue(null),
@@ -197,5 +198,24 @@ describe("TerminalsTab", () => {
     expect(killButton.disabled).toBe(true);
     fireEvent.click(killButton);
     expect(kill).not.toHaveBeenCalled();
+  });
+
+  it("surfaces restart failures", async () => {
+    const restart = vi.fn().mockResolvedValue(null);
+    useSessions.setState({
+      sessions: [{ attachName: "main", name: "main", status: "exited" }],
+      restart,
+    });
+
+    render(
+      <Tooltip.Provider>
+        <TerminalsTab />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /restart session/i }));
+
+    await screen.findByText(/restart failed/i);
+    expect(restart).toHaveBeenCalledWith(expect.any(Object), "main");
   });
 });

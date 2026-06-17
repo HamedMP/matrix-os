@@ -32,6 +32,7 @@ export default function TerminalsTab() {
   const projects = useBoard((s) => s.projects);
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (api) void load(api);
@@ -91,15 +92,19 @@ export default function TerminalsTab() {
 
   const newSession = async () => {
     if (!api || creating) return;
+    setActionError(null);
     const created = await create(api, { kind: "shell" });
     if (created?.attachName) setSelected(created.attachName);
+    else setActionError("Start failed");
   };
 
   const killSession = async (attachName: string) => {
     if (!api || busy) return;
+    setActionError(null);
     setBusy(attachName);
     try {
-      await kill(api, attachName);
+      const ok = await kill(api, attachName);
+      if (!ok) setActionError("Kill failed");
     } finally {
       setBusy(null);
     }
@@ -107,8 +112,10 @@ export default function TerminalsTab() {
 
   const restartSession = async (attachName: string) => {
     if (!api || creating || busy !== null) return;
+    setActionError(null);
     const restarted = await restart(api, attachName);
     if (restarted?.attachName) setSelected(restarted.attachName);
+    else setActionError("Restart failed");
   };
 
   const selectedSession = sessions.find((s) => s.attachName === selected) ?? null;
@@ -187,6 +194,11 @@ export default function TerminalsTab() {
           )}
         </div>
         <div className="border-t p-2" style={{ borderColor: "var(--border-subtle)" }}>
+          {actionError ? (
+            <p className="mb-2 text-xs" role="status" aria-live="polite" style={{ color: "var(--danger)" }}>
+              {actionError}
+            </p>
+          ) : null}
           <Button variant="subtle" className="w-full justify-center" disabled={!api || creating} onClick={() => void newSession()}>
             <Plus size={13} />
             {creating ? "Starting…" : "New session"}
