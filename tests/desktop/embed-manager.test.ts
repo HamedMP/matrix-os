@@ -3,6 +3,7 @@ import {
   EmbedManager,
   MAX_TOTAL_EMBEDS,
   type Bounds,
+  type EmbedManagerOptions,
   type EmbedViewLike,
 } from "@desktop/main/embeds/embed-manager";
 
@@ -89,6 +90,26 @@ afterEach(() => {
 });
 
 describe("EmbedManager", () => {
+  it("requires exactly one allowed origin source", () => {
+    const createView: EmbedManagerOptions["createView"] = ({ onState }) => new FakeView(null, onState);
+
+    expect(
+      () =>
+        new EmbedManager({
+          createView,
+        } as EmbedManagerOptions),
+    ).toThrow(/exactly one allowed origin source/);
+
+    expect(
+      () =>
+        new EmbedManager({
+          createView,
+          allowedOrigins: ["https://gw.test"],
+          getAllowedOrigins: () => ["https://gw.test"],
+        } as unknown as EmbedManagerOptions),
+    ).toThrow(/exactly one allowed origin source/);
+  });
+
   it("names partitions persist:hosted-shell and persist:app-<slug>", () => {
     const { manager, views } = makeManager();
     manager.open("hosted-shell", null, BOUNDS, "https://gw.test/canvas");

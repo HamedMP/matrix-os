@@ -22,12 +22,14 @@ export interface EmbedViewLike {
 
 export type EmbedKind = "hosted-shell" | "app";
 
-export interface EmbedManagerOptions {
+type EmbedOriginOptions =
+  | { allowedOrigins: string[]; getAllowedOrigins?: never }
+  | { allowedOrigins?: never; getAllowedOrigins: () => string[] };
+
+export type EmbedManagerOptions = {
   createView: (opts: { partition: string; onState: (state: "loading" | "ready" | "failed") => void }) => EmbedViewLike;
-  allowedOrigins?: string[];
-  getAllowedOrigins?: () => string[];
   maxLive?: number;
-}
+} & EmbedOriginOptions;
 
 export const MAX_TOTAL_EMBEDS = 12;
 const DEFAULT_MAX_LIVE = 3;
@@ -64,7 +66,12 @@ export class EmbedManager {
 
   constructor(options: EmbedManagerOptions) {
     this.createView = options.createView;
-    this.getAllowedOrigins = options.getAllowedOrigins ?? (() => options.allowedOrigins ?? []);
+    const dynamicOrigins = options.getAllowedOrigins;
+    const staticOrigins = options.allowedOrigins;
+    if ((dynamicOrigins === undefined) === (staticOrigins === undefined)) {
+      throw new Error("EmbedManager requires exactly one allowed origin source");
+    }
+    this.getAllowedOrigins = dynamicOrigins ?? (() => staticOrigins!);
     this.maxLive = options.maxLive ?? DEFAULT_MAX_LIVE;
     if (this.maxLive > MAX_TOTAL_EMBEDS) {
       throw new Error(
