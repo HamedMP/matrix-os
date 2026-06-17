@@ -13,6 +13,7 @@ import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 describe("HomeTab", () => {
   beforeEach(() => {
     vi.stubGlobal("operator", {
+      invoke: vi.fn(async () => ({ embedId: "embed-test", state: "ready" })),
       on: vi.fn(() => () => undefined),
     });
     useConnection.setState({
