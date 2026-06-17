@@ -48,6 +48,21 @@ describe("published CLI package runners", () => {
     expect(script).toContain('MATRIX_CLI_STANDALONE: "1"');
   });
 
+  it("creates isolated package-manager homes before validating package runners", async () => {
+    const script = await readFile(
+      resolve(repoRoot, "packages/sync-client/scripts/validate-package-runners.mjs"),
+      "utf8",
+    );
+
+    expect(script).toContain("async function run(");
+    expect(script).toContain('await mkdir(runHome, { recursive: true });');
+    expect(script).toContain('await mkdir(pnpmHome, { recursive: true });');
+    expect(script).toContain('PNPM_HOME: pnpmHome');
+    expect(script).toContain('pnpmHome: join(tempRoot, "npm-pack-pnpm-home")');
+    expect(script).toContain('pnpmHome: join(tempRoot, "npm-exec-pnpm-home")');
+    expect(script).toContain('pnpmHome: join(tempRoot, "pnpm-dlx-pnpm-home")');
+  });
+
   it("installs standalone binary upgrades atomically", async () => {
     const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
 
