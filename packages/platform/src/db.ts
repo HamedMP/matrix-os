@@ -68,6 +68,8 @@ interface HostBundleReleasesTable {
   build_time: string;
   bundle_key: string;
   checksum_key: string | null;
+  incremental_manifest_key: string | null;
+  incremental_manifest_sha256: string | null;
   sha256: string;
   size: number;
   severity: string;
@@ -423,6 +425,8 @@ export interface HostBundleReleaseRecord {
   buildTime: string;
   bundleKey: string;
   checksumKey: string | null;
+  incrementalManifestKey: string | null;
+  incrementalManifestSha256: string | null;
   sha256: string;
   size: number;
   severity: string;
@@ -439,6 +443,8 @@ export interface NewHostBundleRelease {
   buildTime: string;
   bundleKey: string;
   checksumKey?: string | null;
+  incrementalManifestKey?: string | null;
+  incrementalManifestSha256?: string | null;
   sha256: string;
   size: number;
   severity?: string;
@@ -783,6 +789,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       build_time TEXT NOT NULL,
       bundle_key TEXT NOT NULL,
       checksum_key TEXT,
+      incremental_manifest_key TEXT,
+      incremental_manifest_sha256 TEXT,
       sha256 TEXT NOT NULL,
       size INTEGER NOT NULL,
       severity TEXT NOT NULL DEFAULT 'normal',
@@ -792,6 +800,8 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
     )
   `.execute(db);
   await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS channel TEXT`.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS incremental_manifest_key TEXT`.execute(db);
+  await sql`ALTER TABLE host_bundle_releases ADD COLUMN IF NOT EXISTS incremental_manifest_sha256 TEXT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_channel ON host_bundle_releases(channel)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_host_bundle_releases_created_at ON host_bundle_releases(created_at)`.execute(db);
 
@@ -1188,6 +1198,8 @@ function mapHostBundleRelease(row: HostBundleReleasesTable): HostBundleReleaseRe
     buildTime: row.build_time,
     bundleKey: row.bundle_key,
     checksumKey: row.checksum_key,
+    incrementalManifestKey: row.incremental_manifest_key,
+    incrementalManifestSha256: row.incremental_manifest_sha256,
     sha256: row.sha256,
     size: row.size,
     severity: row.severity,
@@ -1207,6 +1219,8 @@ function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleRelease
     build_time: record.buildTime,
     bundle_key: record.bundleKey,
     checksum_key: record.checksumKey ?? null,
+    incremental_manifest_key: record.incrementalManifestKey ?? null,
+    incremental_manifest_sha256: record.incrementalManifestSha256 ?? null,
     sha256: record.sha256,
     size: record.size,
     severity: record.severity ?? 'normal',
@@ -2070,9 +2084,13 @@ export async function upsertHostBundleRelease(
           severity: row.severity,
           update_type: row.update_type,
           changelog: row.changelog,
+          incremental_manifest_key: row.incremental_manifest_key,
+          incremental_manifest_sha256: row.incremental_manifest_sha256,
         })
           .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
           .where(sql<boolean>`host_bundle_releases.checksum_key IS NOT DISTINCT FROM ${row.checksum_key}`)
+          .where(sql<boolean>`host_bundle_releases.incremental_manifest_key IS NOT DISTINCT FROM ${row.incremental_manifest_key}`)
+          .where(sql<boolean>`host_bundle_releases.incremental_manifest_sha256 IS NOT DISTINCT FROM ${row.incremental_manifest_sha256}`)
           .where(sql<boolean>`host_bundle_releases.sha256 = ${row.sha256}`)
           .where(sql<boolean>`host_bundle_releases.size = ${row.size}`),
       )

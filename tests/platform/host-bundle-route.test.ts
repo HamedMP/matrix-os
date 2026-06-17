@@ -384,6 +384,63 @@ describe('platform host bundle route', () => {
     expect(res.headers.get('cloudflare-cdn-cache-control')).toBe('private, max-age=30');
   });
 
+  it('redirects incremental manifests to signed object-store URLs', async () => {
+    await upsertHostBundleRelease(db, {
+      version: 'v2026.05.12-8',
+      gitCommit: 'c1598218',
+      gitRef: 'refs/tags/v2026.05.12-8',
+      buildTime: '2026-05-12T00:00:00.000Z',
+      bundleKey: 'system-bundles/v2026.05.12-8/matrix-host-bundle.tar.gz',
+      checksumKey: 'system-bundles/v2026.05.12-8/matrix-host-bundle.tar.gz.sha256',
+      incrementalManifestKey: 'system-bundles/v2026.05.12-8/incremental-manifest.json',
+      incrementalManifestSha256: 'c'.repeat(64),
+      sha256: 'a'.repeat(64),
+      size: 1234,
+    });
+    const getPresignedGetUrl = vi.fn().mockResolvedValue('https://r2.example/signed-incremental-manifest');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const res = await app.request('/system-bundles/v2026.05.12-8/incremental-manifest.json');
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://r2.example/signed-incremental-manifest');
+    expect(getPresignedGetUrl).toHaveBeenCalledWith(
+      'system-bundles/v2026.05.12-8/incremental-manifest.json',
+      3600,
+    );
+  });
+
+  it('redirects incremental file objects to signed object-store URLs', async () => {
+    const sha256 = 'd'.repeat(64);
+    const getPresignedGetUrl = vi.fn().mockResolvedValue('https://r2.example/signed-incremental-object');
+    const app = createApp({
+      db,
+      orchestrator,
+      customerVpsObjectStore: {
+        getObject: vi.fn(),
+        getPresignedGetUrl,
+        putObject: vi.fn(),
+      } as unknown as CustomerVpsObjectStore,
+    });
+
+    const res = await app.request(`/system-bundles/objects/sha256/${sha256}`);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://r2.example/signed-incremental-object');
+    expect(getPresignedGetUrl).toHaveBeenCalledWith(
+      `system-bundles/objects/sha256/${sha256}`,
+      3600,
+    );
+  });
+
   it('registers release metadata in platform DB and promotes channels', async () => {
     const app = createApp({
       db,
@@ -408,6 +465,8 @@ describe('platform host bundle route', () => {
         buildTime: '2026-05-12T01:00:00.000Z',
         bundleKey: 'system-bundles/v2026.05.12-2/matrix-host-bundle.tar.gz',
         checksumKey: 'system-bundles/v2026.05.12-2/matrix-host-bundle.tar.gz.sha256',
+        incrementalManifestKey: 'system-bundles/v2026.05.12-2/incremental-manifest.json',
+        incrementalManifestSha256: 'c'.repeat(64),
         sha256: 'b'.repeat(64),
         size: 5678,
         channel: 'canary',
@@ -420,6 +479,8 @@ describe('platform host bundle route', () => {
         version: 'v2026.05.12-2',
         channel: 'canary',
         gitCommit: 'c15982181234567890',
+        incrementalManifestKey: 'system-bundles/v2026.05.12-2/incremental-manifest.json',
+        incrementalManifestSha256: 'c'.repeat(64),
       },
       channel: {
         channel: 'canary',
@@ -482,6 +543,8 @@ describe('platform host bundle route', () => {
         buildTime: '2026-05-12T01:00:00.000Z',
         bundleKey: 'system-bundles/v2026.05.12-2/matrix-host-bundle.tar.gz',
         checksumKey: 'system-bundles/v2026.05.12-2/matrix-host-bundle.tar.gz.sha256',
+        incrementalManifestKey: 'system-bundles/v2026.05.12-2/incremental-manifest.json',
+        incrementalManifestSha256: 'c'.repeat(64),
         sha256: 'b'.repeat(64),
         size: 5678,
         channel: 'stable',

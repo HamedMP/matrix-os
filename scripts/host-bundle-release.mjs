@@ -68,8 +68,11 @@ async function writeManifest() {
   const release = JSON.parse(await readFile(join(distDir, "release.json"), "utf8"));
   const policy = releasePolicy();
   const bundlePath = join(distDir, bundleName);
+  const incrementalManifestPath = join(distDir, "incremental-manifest.json");
   const checksum = await sha256(bundlePath);
   const bundleStat = await stat(bundlePath);
+  const incrementalManifestChecksum = await sha256(incrementalManifestPath);
+  const incrementalManifestStat = await stat(incrementalManifestPath);
   const checksumText = `${checksum}  ${bundleName}\n`;
   await writeFile(join(distDir, `${bundleName}.sha256`), checksumText);
   const manifest = {
@@ -89,6 +92,11 @@ async function writeManifest() {
         path: `system-bundles/${release.version}/${bundleName}.sha256`,
         sha256: await sha256(join(distDir, `${bundleName}.sha256`)),
         size: Buffer.byteLength(checksumText),
+      },
+      incrementalManifest: {
+        path: `system-bundles/${release.version}/incremental-manifest.json`,
+        sha256: incrementalManifestChecksum,
+        size: incrementalManifestStat.size,
       },
     },
   };

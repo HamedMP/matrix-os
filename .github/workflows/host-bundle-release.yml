@@ -265,6 +265,8 @@ jobs:
           path: |
             dist/host-bundle/matrix-host-bundle.tar.gz
             dist/host-bundle/matrix-host-bundle.tar.gz.sha256
+            dist/host-bundle/incremental-manifest.json
+            dist/host-bundle/objects/**
             dist/host-bundle/manifest.json
             dist/host-bundle/release.json
           if-no-files-found: error
@@ -308,7 +310,7 @@ jobs:
           fi
           SOURCE_DIR="$(dirname "$BUNDLE_FILE")"
           mkdir -p "$TARGET_DIR"
-          for file in matrix-host-bundle.tar.gz matrix-host-bundle.tar.gz.sha256 manifest.json release.json; do
+          for file in matrix-host-bundle.tar.gz matrix-host-bundle.tar.gz.sha256 incremental-manifest.json manifest.json release.json; do
             if [ ! -f "$SOURCE_DIR/$file" ]; then
               echo "Downloaded host bundle artifact is missing $file" >&2
               find "$ARTIFACT_DIR" -maxdepth 4 -type f -print >&2
@@ -316,6 +318,12 @@ jobs:
             fi
             cp "$SOURCE_DIR/$file" "$TARGET_DIR/$file"
           done
+          if [ ! -d "$SOURCE_DIR/objects" ]; then
+            echo "Downloaded host bundle artifact is missing objects/" >&2
+            find "$ARTIFACT_DIR" -maxdepth 4 -type f -print >&2
+            exit 1
+          fi
+          cp -a "$SOURCE_DIR/objects" "$TARGET_DIR/objects"
 
       - name: Install AWS CLI
         run: |
