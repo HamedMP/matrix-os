@@ -78,4 +78,26 @@ describe("AgentSection", () => {
 
     expect(clearTimeoutSpy).toHaveBeenCalled();
   });
+
+  it("clears a stale model save error after a successful retry", async () => {
+    api.put
+      .mockRejectedValueOnce(new Error("first save failed"))
+      .mockResolvedValueOnce({ ok: true });
+    render(<AgentSection />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Opus" }));
+    const findEnabledSave = () =>
+      (screen.getAllByRole("button", { name: /save/i }) as HTMLButtonElement[]).find(
+        (button) => !button.disabled,
+      );
+
+    fireEvent.click(findEnabledSave()!);
+    await screen.findByText("Something went wrong. Please try again.");
+
+    fireEvent.click(findEnabledSave()!);
+
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2));
+    await screen.findByText("Saved");
+    expect(screen.queryByText("Something went wrong. Please try again.")).toBeNull();
+  });
 });

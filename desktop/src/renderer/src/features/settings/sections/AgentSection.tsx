@@ -236,6 +236,7 @@ function ModelEffortCard() {
       await api.put(AGENT_PATH, { model, effort });
       if (!mountedRef.current || saveSeqRef.current !== saveSeq) return;
       setBase({ model, effort });
+      setError(null);
       setStatus("saved");
       savedTimerRef.current = setTimeout(() => {
         savedTimerRef.current = null;
