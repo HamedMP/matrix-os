@@ -180,6 +180,32 @@ describe("status transitions", () => {
     });
   });
 
+  it("ignores kernel:error after a thread is already done", () => {
+    const t = useThreads.getState().startThread({ text: "x", requestId: "r1", now: 1 });
+    useThreads.getState().handleKernelMessage({ type: "kernel:text", text: "done", requestId: "r1" });
+    useThreads.getState().handleKernelMessage({ type: "kernel:result", data: {}, requestId: "r1" });
+
+    useThreads.getState().handleKernelMessage({ type: "kernel:error", message: "late failure", requestId: "r1" });
+
+    const got = getThread(t.id);
+    expect(got.status).toBe("done");
+    expect(got.transcript.map((m) => m.content)).not.toContain("late failure");
+  });
+
+  it("ignores kernel:result after a thread has already failed", () => {
+    const t = useThreads.getState().startThread({ text: "x", requestId: "r1", now: 1 });
+    useThreads.getState().handleKernelMessage({ type: "kernel:error", message: "Run failed", requestId: "r1" });
+
+    useThreads.getState().handleKernelMessage({ type: "kernel:result", data: {}, requestId: "r1" });
+
+    const got = getThread(t.id);
+    expect(got.status).toBe("failed");
+    expect(got.transcript[got.transcript.length - 1]).toMatchObject({
+      role: "system",
+      content: "Run failed",
+    });
+  });
+
   it("kernel:aborted marks the thread aborted and stops in-flight tools", () => {
     const t = useThreads.getState().startThread({ text: "x", requestId: "r1", now: 1 });
     useThreads.getState().setActiveThread(t.id);

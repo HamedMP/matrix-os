@@ -208,12 +208,12 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       }
       case "kernel:result": {
         const thread = byRequestId(event.requestId);
-        if (!thread) return {};
+        if (!thread || isTerminal(thread.status)) return {};
         return apply(thread, { status: "done" }, "done");
       }
       case "kernel:error": {
         const thread = byRequestId(event.requestId);
-        if (!thread) return {};
+        if (!thread || isTerminal(thread.status)) return {};
         return apply(
           thread,
           {
