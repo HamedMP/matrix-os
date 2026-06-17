@@ -575,6 +575,83 @@ describe("TerminalApp", () => {
     expect(getOrder()).toEqual(["docs", "review", "main"]);
   });
 
+  it("keeps an optimistic shell reorder visible while polling returns the old order", async () => {
+    let shellList = [
+      { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", tabs: [] },
+      { name: "review", status: "active", placement: "active", attachCommand: "mos shell attach review", tabs: [] },
+      { name: "docs", status: "active", placement: "active", attachCommand: "mos shell attach docs", tabs: [] },
+    ];
+    let resolveOrder: ((value: Response) => void) | undefined;
+    const orderPromise = new Promise<Response>((resolve) => {
+      resolveOrder = resolve;
+    });
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions/order") && init?.method === "PUT") {
+        return orderPromise;
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ sessions: shellList }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const activeGroup = screen.getByTestId("terminal-session-group-active");
+    const getOrder = () => Array.from(activeGroup.querySelectorAll("[data-session-name]"))
+      .map((node) => node.getAttribute("data-session-name"));
+    expect(getOrder()).toEqual(["main", "review", "docs"]);
+
+    const dataTransfer = createDragDataTransfer();
+    fireEvent.mouseEnter(screen.getByTestId("terminal-session-card-main"));
+    fireEvent.dragStart(screen.getByRole("button", { name: "Drag matrix-main session" }), { dataTransfer });
+    fireEvent.dragOver(screen.getByTestId("terminal-session-card-docs"), { dataTransfer });
+
+    await act(async () => {
+      fireEvent.drop(screen.getByTestId("terminal-session-card-docs"), { dataTransfer });
+      await Promise.resolve();
+    });
+    expect(getOrder()).toEqual(["review", "docs", "main"]);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getOrder()).toEqual(["review", "docs", "main"]);
+
+    shellList = [
+      { name: "docs", status: "active", placement: "active", attachCommand: "mos shell attach docs", tabs: [] },
+      { name: "review", status: "active", placement: "active", attachCommand: "mos shell attach review", tabs: [] },
+      { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", tabs: [] },
+    ];
+    await act(async () => {
+      resolveOrder?.({
+        ok: true,
+        json: async () => ({ sessions: shellList }),
+      } as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(getOrder()).toEqual(["docs", "review", "main"]);
+  });
+
   it("renames sessions from the Paper pencil affordance", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {

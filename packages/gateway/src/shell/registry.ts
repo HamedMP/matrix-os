@@ -282,7 +282,7 @@ export class ShellRegistry {
           const nextLive = new Set(live);
           nextLive.delete(safeName);
           nextLive.add(safeNextName);
-          this.normalizeCustomOrder(file, Array.from(nextLive).map((liveName) => file.sessions[liveName] ?? this.adoptSession(liveName, now)));
+          void this.normalizeCustomOrder(file, Array.from(nextLive).map((liveName) => file.sessions[liveName] ?? this.adoptSession(liveName, now)));
         }
         await this.write(file);
       } catch (err: unknown) {

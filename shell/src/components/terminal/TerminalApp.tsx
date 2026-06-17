@@ -2862,6 +2862,7 @@ function LocalTerminalSidebar() {
   const [shellsLoading, setShellsLoading] = useState(false);
   const [shellsError, setShellsError] = useState<string | null>(null);
   const creatingShellRef = useRef(false);
+  const reorderSaveCountRef = useRef(0);
   const [creatingShell, setCreatingShell] = useState(false);
   const deletingShellsRef = useRef<Set<string> | null>(null);
   if (deletingShellsRef.current === null) deletingShellsRef.current = new Set();
@@ -2915,7 +2916,7 @@ function LocalTerminalSidebar() {
   }, [tab, fetchProjects]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load useEffect below and command handlers.
-  const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal } = {}) => {
+  const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal; preserveOrderDuringReorder?: boolean } = {}) => {
     const silent = options.silent === true;
     if (!silent) setShellsLoading(true);
     if (!silent) setShellsError(null);
@@ -2928,6 +2929,9 @@ function LocalTerminalSidebar() {
         if (!silent) {
           setShellsError("Failed to load shells");
         }
+        return;
+      }
+      if (options.preserveOrderDuringReorder === true && reorderSaveCountRef.current > 0) {
         return;
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
@@ -2952,7 +2956,7 @@ function LocalTerminalSidebar() {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the shell-session list when the Shells tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     void fetchShells({ signal: controller.signal });
     const refreshTimer = window.setInterval(() => {
-      void fetchShells({ silent: true, signal: controller.signal });
+      void fetchShells({ silent: true, signal: controller.signal, preserveOrderDuringReorder: true });
     }, SHELLS_REFRESH_INTERVAL_MS);
     return () => {
       controller.abort();
@@ -3333,8 +3337,12 @@ function LocalTerminalSidebar() {
     const [moved] = nextShells.splice(fromIndex, 1);
     if (!moved) return;
     nextShells.splice(toIndex, 0, moved);
+    reorderSaveCountRef.current += 1;
     setShells(nextShells);
     setShellsError(null);
+    const finishReorderSave = () => {
+      reorderSaveCountRef.current = Math.max(0, reorderSaveCountRef.current - 1);
+    };
     try {
       const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/order`, {
         method: "PUT",
@@ -3345,6 +3353,7 @@ function LocalTerminalSidebar() {
       if (!res.ok) {
         setShellsError("Shell order could not be saved");
         await fetchShells({ silent: true });
+        finishReorderSave();
         return;
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
@@ -3353,10 +3362,12 @@ function LocalTerminalSidebar() {
       } else {
         await fetchShells({ silent: true });
       }
+      finishReorderSave();
     } catch (err: unknown) {
       console.warn("Failed to save shell order:", err instanceof Error ? err.message : err);
       setShellsError("Shell order could not be saved");
       await fetchShells({ silent: true });
+      finishReorderSave();
     }
   };
 
