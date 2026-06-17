@@ -29,14 +29,28 @@ export function Conversation({ children }: { children: ReactNode; scrollKey?: st
   // catches every growth without depending on a render tick.
   useEffect(() => {
     const el = ref.current;
-    const content = el?.firstElementChild;
-    if (!el || !content) return;
-    el.scrollTop = el.scrollHeight;
-    const observer = new ResizeObserver(() => {
+    if (!el) return;
+    let observedContent: Element | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    const scrollIfPinned = () => {
       if (atBottomRef.current) el.scrollTop = el.scrollHeight;
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
+    };
+    const observeContent = () => {
+      const content = el.firstElementChild;
+      if (!content || content === observedContent) return;
+      resizeObserver?.disconnect();
+      observedContent = content;
+      resizeObserver = new ResizeObserver(scrollIfPinned);
+      resizeObserver.observe(content);
+      scrollIfPinned();
+    };
+    observeContent();
+    const mutationObserver = new MutationObserver(observeContent);
+    mutationObserver.observe(el, { childList: true });
+    return () => {
+      mutationObserver.disconnect();
+      resizeObserver?.disconnect();
+    };
   }, []);
 
   return (
