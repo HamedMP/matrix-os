@@ -222,11 +222,28 @@ describe("EmbedManager", () => {
     failNextCreatedLoad();
     const id = manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/");
     await flush();
+    expect(views[0]?.view.events).toContain("detach");
     expect(manager.focus(id)).toBe(true);
     expect(views[0]?.view.loadedUrls).toEqual([
       "https://gw.test/apps/notes/",
       "https://gw.test/apps/notes/",
     ]);
+  });
+
+  it("detaches the native view when a live embed fails so the failed overlay is visible", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const states: string[] = [];
+    const { manager, views, failNextCreatedLoad } = makeManager();
+    failNextCreatedLoad();
+
+    manager.open("app", "notes", BOUNDS, "https://gw.test/apps/notes/", {
+      onState: (state) => states.push(state),
+    });
+    await flush();
+
+    expect(states).toEqual(["failed"]);
+    expect(views[0]?.view.events).toContain("detach");
+    expect(manager.liveCount).toBe(0);
   });
 
   it("reload emits loading and reloads the current url", async () => {

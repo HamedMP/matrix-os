@@ -98,6 +98,10 @@ export class EmbedManager {
       if (state === "failed" && record) {
         if (record.loadFailed) return;
         record.loadFailed = true;
+        if (record.live) {
+          record.view.detach();
+          record.live = false;
+        }
       }
       onState(state);
     };
