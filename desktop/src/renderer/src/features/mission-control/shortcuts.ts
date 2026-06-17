@@ -1,5 +1,12 @@
 import { useEffect } from "react";
-import { useUi } from "../../stores/ui";
+import { onEvent } from "../../lib/operator";
+import { useUi, type MainView } from "../../stores/ui";
+
+type MenuNavigateKind = Extract<MainView, { kind: "board" | "settings" }>["kind"];
+
+function isMenuNavigateKind(kind: string): kind is MenuNavigateKind {
+  return kind === "board" || kind === "settings";
+}
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -23,6 +30,11 @@ export function useGlobalShortcuts(): void {
         ui.setComposerOpen(!ui.composerOpen);
         return;
       }
+      if (meta && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        ui.setQuickOpenOpen(!ui.quickOpenOpen);
+        return;
+      }
       if (!meta && e.key.toLowerCase() === "c" && !isTypingTarget(e.target)) {
         if (ui.paletteOpen || ui.composerOpen || ui.createTaskOpen) return;
         e.preventDefault();
@@ -30,6 +42,22 @@ export function useGlobalShortcuts(): void {
       }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    const offAction = onEvent("menu:action", ({ action }) => {
+      const ui = useUi.getState();
+      if (action === "new-task") ui.setCreateTaskOpen(true);
+      if (action === "new-thread") ui.setComposerOpen(true);
+      if (action === "palette") ui.setPaletteOpen(!ui.paletteOpen);
+      if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
+    });
+    const offNavigate = onEvent("menu:navigate", ({ kind }) => {
+      if (isMenuNavigateKind(kind)) {
+        useUi.getState().navigate({ kind });
+      }
+    });
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      offAction();
+      offNavigate();
+    };
   }, []);
 }

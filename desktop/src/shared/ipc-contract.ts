@@ -24,6 +24,15 @@ const BoundsSchema = z
   })
   .strict();
 
+const PanelLayoutSchema = z
+  .object({
+    order: z.array(z.string().max(32)).max(12),
+    visible: z.record(z.string().max(32), z.boolean()),
+    sizes: z.record(z.string().max(32), z.number().min(0).max(100)),
+    touchedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+
 const STATE_KEYS = [
   "windowBounds",
   "lastProjectSlug",
@@ -88,6 +97,12 @@ export const INVOKE_CHANNELS = {
   "state:set": {
     request: z
       .object({ key: z.enum(STATE_KEYS), value: BoundedJsonValue })
+      .strict(),
+    response: Ok,
+  },
+  "state:set-panel-layout": {
+    request: z
+      .object({ taskKey: z.string().min(1).max(256), layout: PanelLayoutSchema })
       .strict(),
     response: Ok,
   },

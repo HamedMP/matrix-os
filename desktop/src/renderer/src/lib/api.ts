@@ -22,6 +22,7 @@ export interface ApiClientOptions {
 
 export interface ApiClient {
   get<T>(path: string): Promise<T>;
+  getText(path: string): Promise<string>;
   post<T>(path: string, body: unknown): Promise<T>;
   patch<T>(path: string, body: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
@@ -32,7 +33,7 @@ export interface ApiClient {
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const fetchFn: FetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
 
-  async function request<T>(path: string, init: RequestInit): Promise<T> {
+  async function send(path: string, init: RequestInit): Promise<Response> {
     const url = buildGatewayUrl(options.baseUrl, path, options.getRuntimeSlot());
     let response: Response;
     try {
@@ -46,8 +47,22 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     if (!response.ok) {
       throw new AppError(classifyHttpStatus(response.status));
     }
+    return response;
+  }
+
+  async function request<T>(path: string, init: RequestInit): Promise<T> {
+    const response = await send(path, init);
     try {
       return (await response.json()) as T;
+    } catch (err: unknown) {
+      throw new AppError("server", { cause: err });
+    }
+  }
+
+  async function requestText(path: string, init: RequestInit): Promise<string> {
+    const response = await send(path, init);
+    try {
+      return await response.text();
     } catch (err: unknown) {
       throw new AppError("server", { cause: err });
     }
@@ -56,6 +71,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   return {
     baseUrl: options.baseUrl,
     get: (path) => request(path, { method: "GET" }),
+    getText: (path) => requestText(path, { method: "GET" }),
     post: (path, body) =>
       request(path, {
         method: "POST",
