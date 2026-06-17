@@ -1,0 +1,90 @@
+---
+title: Desktop App (Operator)
+description: The native macOS desktop app for Matrix OS — board, terminals, agent threads, and your apps in one window.
+---
+
+# Desktop App (Operator)
+
+Operator is the Matrix OS desktop app for macOS: a keyboard-first mission control where
+your projects, tasks, agent runs, terminals, files, and Matrix OS apps live in one window,
+connected as a thin client to your personal VPS. Nothing runs locally except the app itself —
+sign in on a new machine and everything is restored from your computer in the cloud.
+
+## Install and sign in
+
+1. Download the internal macOS build and drag it to Applications. Public signed/notarized
+   distribution is tracked in the desktop release pipeline.
+2. Launch it and click **Sign in with Matrix OS**. A browser opens to approve the device; no
+   tokens to copy by hand.
+3. Once approved, your board renders automatically. The credential is stored in the macOS
+   Keychain and never leaves the app's trusted process.
+
+Signing out clears the local credential and any embedded web sessions, but never touches data
+on your VPS.
+
+## Board
+
+Your projects appear in the title bar's project switcher. Each project is a kanban board with
+**Todo, Running, Waiting, Blocked, Complete** columns. Drag cards between columns, right-click a
+card for status/priority/archive/delete, and press **C** (or **⌘N**) to create a task. Create
+dialogs offer both **Create** (⌘↵) and **Create + open** (⌘⇧↵). Changes made on the web shell,
+CLI, or by agents are wired through the shared gateway events; full-field live sync is still
+being verified against the VPS gateway before it is treated as complete parity.
+
+## Terminals
+
+Click a task with a linked session to attach its terminal — the live shell on your VPS, with
+scrollback intact. Terminals reconnect automatically after a network drop or sleep/wake without
+duplicating output. If a session has ended on the server, the terminal shows a clear "session
+ended" state with a one-click recreate action rather than retrying forever. Standalone sessions
+are listed under **Sessions**.
+
+## Agent threads (Hermes)
+
+Press **⌘J** anywhere to open the composer and start an agent run. Each run is a thread with
+live status (running, needs attention, done, failed). Run several at once and switch freely
+between them; the sidebar shows status dots and unread markers. When a thread finishes or needs
+input while the app is in the background, the native notification path is wired, but background
+completion notifications still need live-VPS verification before public release.
+
+## Task workspace
+
+Opening a task reveals a resizable panel strip — terminal, editor, git, files, artifacts,
+and a processes panel that shows an explicit unavailable state until the gateway process-list
+endpoint lands. Toggle panels with **⌘1–⌘6**, drag the dividers to resize, and the layout
+persists per task. The editor is VS Code-class (Monaco) with multiple files, find/replace,
+and conflict-safe saves (it warns if a file changed on the server since you opened it).
+Switching between open tasks is instant — terminals keep their buffers and editors keep their
+open files. Press **⌘P** to quick-open a file by name.
+
+## Apps and Canvas
+
+Open your hosted Matrix OS shell as the **Canvas** tab. The desktop app uses the same session
+handoff path as the hosted shell, but the live Clerk handoff is still being verified before the
+desktop release treats "no second login" as guaranteed. Launch your installed Matrix OS apps
+from the **Apps** tab; they run with the same data and bridge you get on the web, in an isolated
+browser context with no access to the app's privileged APIs.
+
+## Keyboard-first
+
+- **⌘K** — command palette (tasks, projects, apps, files, actions)
+- **⌘J** — new agent thread
+- **⌘P** — go to file
+- **C / ⌘N** — new task
+- **⌘1–⌘6** — toggle workspace panels
+- Standard macOS menus, shortcuts, full-screen, and window controls.
+
+## Settings
+
+Native settings cover account, runtime/VM selection, appearance (dark/light/system), and system
+info. Channels, integrations, billing, and cron are being brought to read parity with the web
+shell as the remaining gateway-read wiring is verified. Switching runtime re-targets every
+surface — board, terminals, chat, and apps.
+
+## Privacy and updates
+
+The app holds no durable workspace data locally: only the credential, your connection profile,
+window and layout state, and bounded caches. Losing the machine loses no work. Internal builds
+can check the configured update feed when one is present, but signed/notarized public
+distribution and automatic release-channel updates remain gated on the desktop release feed and
+macOS signing credentials.

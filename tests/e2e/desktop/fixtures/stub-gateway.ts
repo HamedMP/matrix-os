@@ -162,6 +162,15 @@ export async function startStubGateway(): Promise<StubGateway> {
       });
       return;
     }
+    if (path === "/api/apps") {
+      json(res, 200, {
+        apps: [
+          { slug: "notes", name: "Notes", category: "productivity" },
+          { slug: "pomodoro", name: "Pomodoro", category: "productivity" },
+        ],
+      });
+      return;
+    }
     if (path === "/api/system/info") {
       json(res, 200, {
         version: "stub",
