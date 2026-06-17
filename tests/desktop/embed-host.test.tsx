@@ -93,4 +93,31 @@ describe("EmbedHost", () => {
       expect(screen.getByRole("button", { name: "Retry sign-in" })).toBeTruthy();
     });
   });
+
+  it("refreshes bounds after a successful auth retry", async () => {
+    vi.mocked(invoke).mockImplementation((channel: string) => {
+      if (channel === "embed:open") {
+        return Promise.resolve({ embedId: "embed-1", state: "auth-required" }) as ReturnType<typeof invoke>;
+      }
+      if (channel === "embed:retry-auth") {
+        return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+      }
+      return Promise.resolve({ ok: true }) as ReturnType<typeof invoke>;
+    });
+
+    render(<EmbedHost kind="hosted-shell" />);
+
+    await screen.findByRole("button", { name: "Retry sign-in" });
+    vi.mocked(invoke).mockClear();
+    rect = { left: 90, top: 100, width: 700, height: 500 };
+    fireEvent.click(screen.getByRole("button", { name: "Retry sign-in" }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("embed:retry-auth", { embedId: "embed-1" });
+      expect(invoke).toHaveBeenCalledWith("embed:set-bounds", {
+        embedId: "embed-1",
+        bounds: { x: 90, y: 100, width: 700, height: 500 },
+      });
+    });
+  });
 });

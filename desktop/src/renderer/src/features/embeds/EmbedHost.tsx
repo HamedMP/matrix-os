@@ -16,6 +16,22 @@ export default function EmbedHost({
   const embedIdRef = useRef<string | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
 
+  function reportBounds(): void {
+    const id = embedIdRef.current;
+    const host = hostRef.current;
+    if (!id || !host) return;
+    const r = host.getBoundingClientRect();
+    void invoke("embed:set-bounds", {
+      embedId: id,
+      bounds: {
+        x: Math.round(r.left),
+        y: Math.round(r.top),
+        width: Math.round(r.width),
+        height: Math.round(r.height),
+      },
+    });
+  }
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -40,21 +56,6 @@ export default function EmbedHost({
       height: Math.round(rect.height),
     };
 
-    const reportBounds = () => {
-      const id = embedIdRef.current;
-      if (!id) return;
-      const r = host.getBoundingClientRect();
-      void invoke("embed:set-bounds", {
-        embedId: id,
-        bounds: {
-          x: Math.round(r.left),
-          y: Math.round(r.top),
-          width: Math.round(r.width),
-          height: Math.round(r.height),
-        },
-      });
-    };
-
     void invoke("embed:open", { kind, ...(slug ? { slug } : {}), bounds })
       .then(({ embedId, state: initialState }) => {
         if (disposed) {
@@ -72,18 +73,20 @@ export default function EmbedHost({
 
     // ResizeObserver catches size changes; window resize catches position
     // shifts that don't change this element's own box.
-    const observer = new ResizeObserver(reportBounds);
+    const observer = new ResizeObserver(() => reportBounds());
     observer.observe(host);
-    window.addEventListener("resize", reportBounds);
+    const onWindowResize = () => reportBounds();
+    window.addEventListener("resize", onWindowResize);
 
     return () => {
       disposed = true;
       observer.disconnect();
-      window.removeEventListener("resize", reportBounds);
+      window.removeEventListener("resize", onWindowResize);
       offState?.();
       const id = embedIdRef.current;
       if (id) void invoke("embed:close", { embedId: id });
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, slug]);
 
   return (
@@ -108,7 +111,9 @@ export default function EmbedHost({
                 setState("loading");
                 void invoke("embed:retry-auth", { embedId: id })
                   .then((result) => {
-                    if (embedIdRef.current === id && !result.ok) setState("auth-required");
+                    if (embedIdRef.current !== id) return;
+                    if (result.ok) reportBounds();
+                    else setState("auth-required");
                   })
                   .catch(() => {
                     if (embedIdRef.current === id) setState("auth-required");
