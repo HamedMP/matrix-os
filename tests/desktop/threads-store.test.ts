@@ -261,6 +261,25 @@ describe("status transitions", () => {
     expect(getThread(t2.id).status).toBe("running");
   });
 
+  it("approval:request ignores a matching terminal thread by requestId", () => {
+    const store = useThreads.getState();
+    const terminal = store.startThread({ text: "done", requestId: "r1", now: 1 });
+    const running = store.startThread({ text: "running", requestId: "r2", now: 2 });
+    useThreads.getState().handleKernelMessage({ type: "kernel:result", data: {}, requestId: "r1" });
+
+    useThreads.getState().handleKernelMessage({
+      type: "approval:request",
+      id: "ap-1",
+      toolName: "Bash",
+      args: {},
+      timeout: 30,
+      requestId: "r1",
+    });
+
+    expect(getThread(terminal.id).status).toBe("done");
+    expect(getThread(running.id).status).toBe("running");
+  });
+
   it("approval:request without a matching requestId does not guess when multiple threads are running", () => {
     const store = useThreads.getState();
     const t1 = store.startThread({ text: "one", requestId: "r1", now: 1 });

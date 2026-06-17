@@ -237,8 +237,14 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
         // is running (unambiguous). With multiple running threads, guessing by
         // array order would flag the wrong one, so drop the event instead.
         const running = state.threads.filter((t) => t.status === "running");
-        const thread =
-          byRequestId(rawRequestId) ?? (running.length === 1 ? running[0] : undefined);
+        let thread: AgentThread | undefined;
+        if (rawRequestId) {
+          const matched = byRequestId(rawRequestId);
+          if (!matched || isTerminal(matched.status)) return {};
+          thread = matched;
+        } else {
+          thread = running.length === 1 ? running[0] : undefined;
+        }
         if (!thread) return {};
         return apply(thread, { status: "needs-attention" }, "attention");
       }
