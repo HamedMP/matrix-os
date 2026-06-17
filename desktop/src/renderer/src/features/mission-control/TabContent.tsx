@@ -56,6 +56,7 @@ export default function TabContent() {
             className="absolute inset-0 flex min-h-0 flex-col"
             style={{ visibility: active ? "visible" : "hidden", zIndex: active ? 1 : 0 }}
             aria-hidden={!active}
+            inert={!active}
           >
             <TabPane tab={tab} active={active} />
           </div>
