@@ -19,10 +19,14 @@ function parseApps(value: unknown): MatrixApp[] {
       : [];
   const apps: MatrixApp[] = [];
   for (const raw of list.slice(0, 200)) {
-    if (raw && typeof raw === "object" && typeof (raw as MatrixApp).slug === "string") {
-      const app = raw as MatrixApp;
-      apps.push({ slug: app.slug, name: app.name ?? app.slug, category: app.category });
-    }
+    if (!raw || typeof raw !== "object") continue;
+    const app = raw as Partial<MatrixApp>;
+    if (typeof app.slug !== "string" || app.slug.trim().length === 0) continue;
+    const slug = app.slug.trim();
+    const name = typeof app.name === "string" && app.name.trim().length > 0 ? app.name.trim() : slug;
+    const category =
+      typeof app.category === "string" && app.category.trim().length > 0 ? app.category.trim() : undefined;
+    apps.push({ slug, name, category });
   }
   return apps;
 }
