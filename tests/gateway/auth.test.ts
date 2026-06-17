@@ -269,10 +269,29 @@ describe("T133: Auth token middleware", () => {
     const mw = authMiddleware(undefined);
     let nextCalled = false;
     await mw(
-      mockContext("/api/internal/upgrade", "Bearer upgrade-token", undefined, "10.77.77.77"),
+      mockContext("/api/internal/upgrade", "Bearer upgrade-token", undefined, "10.77.77.78"),
       async () => { nextCalled = true; },
     );
     expect(nextCalled).toBe(true);
+  });
+
+  it("rate-limits internal upgrade requests before the route-scoped token check", async () => {
+    const mw = authMiddleware(undefined);
+    const testIp = "10.77.77.79";
+    for (let i = 0; i < 10; i++) {
+      await mw(
+        mockContext("/api/internal/upgrade", "Bearer invalid-upgrade-token", undefined, testIp),
+        async () => {},
+      );
+    }
+
+    let nextCalled = false;
+    const result = await mw(
+      mockContext("/api/internal/upgrade", "Bearer invalid-upgrade-token", undefined, testIp),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(429);
   });
 
   it("rate-limits integrations webhook separately from auth failures", async () => {
