@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CodeMirrorHost from "@desktop/renderer/src/features/editor/CodeMirrorHost";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { useEditorTabs } from "@desktop/renderer/src/features/editor/editor-tabs-store";
 
 const editorHarness = vi.hoisted(() => {
   type FakeDoc = {
@@ -148,7 +149,37 @@ describe("CodeMirrorHost conflict actions", () => {
 
   afterEach(() => {
     cleanup();
+    useEditorTabs.setState({ tabsByTask: {}, activePathByTask: {}, dirtyPathsByTask: {} });
     vi.restoreAllMocks();
+  });
+
+  it("preserves unsaved edits across editor remounts", async () => {
+    const api = makeApi({
+      get: vi.fn().mockResolvedValue(wireStat(OLD_MODIFIED)),
+      getText: vi.fn().mockResolvedValue("server body"),
+    });
+    useConnection.setState({
+      status: "signed-in",
+      handle: "operator",
+      platformHost: "https://x.test",
+      runtimeSlot: "primary",
+      api,
+    });
+
+    const { unmount } = render(<CodeMirrorHost taskId="task-cache" path="projects/draft.md" />);
+    await waitFor(() => expect(editorHarness.view).not.toBeNull());
+
+    act(() => {
+      editorHarness.view?.dispatch({ changes: { insert: "unsaved local edit" } });
+    });
+    expect(useEditorTabs.getState().dirtyPathsByTask["task-cache"]).toContain("projects/draft.md");
+
+    unmount();
+    render(<CodeMirrorHost taskId="task-cache" path="projects/draft.md" />);
+    await waitFor(() => expect(editorHarness.view).not.toBeNull());
+
+    expect(editorHarness.view?.state.doc.toString()).toBe("unsaved local edit");
+    expect(useEditorTabs.getState().dirtyPathsByTask["task-cache"]).toContain("projects/draft.md");
   });
 
   it("ignores a second overwrite click while the first overwrite is pending", async () => {

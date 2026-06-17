@@ -16,6 +16,37 @@ import { ConflictBar } from "./EditorPanel";
 import { useEditorTabs } from "./editor-tabs-store";
 import { createFilesApi, openFile, saveFile, saveFileOverwrite, type OpenedFile } from "./editor-save";
 
+const MAX_DOCUMENT_CACHE_ENTRIES = 64;
+
+type CachedDocument = {
+  file: OpenedFile;
+  content: string;
+};
+
+const documentCache = new Map<string, CachedDocument>();
+
+function cacheKey(taskId: string, path: string): string {
+  return `${taskId}\0${path}`;
+}
+
+function getCachedDocument(key: string): CachedDocument | null {
+  const cached = documentCache.get(key);
+  if (!cached) return null;
+  documentCache.delete(key);
+  documentCache.set(key, cached);
+  return cached;
+}
+
+function setCachedDocument(key: string, cached: CachedDocument): void {
+  if (documentCache.has(key)) documentCache.delete(key);
+  documentCache.set(key, cached);
+  while (documentCache.size > MAX_DOCUMENT_CACHE_ENTRIES) {
+    const oldest = documentCache.keys().next().value;
+    if (typeof oldest !== "string") break;
+    documentCache.delete(oldest);
+  }
+}
+
 function languageExtension(filename: string) {
   const ext = filename.includes(".") ? `.${filename.split(".").pop()!.toLowerCase()}` : "";
   switch (ext) {
@@ -59,14 +90,20 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
     if (!api || !hostRef.current) return;
     const files = createFilesApi(api);
     const host = hostRef.current;
+    const key = cacheKey(taskId, path);
     let disposed = false;
 
     void openFile(files, path)
       .then((file) => {
         if (disposed) return;
-        fileRef.current = file;
+        const cached = getCachedDocument(key);
+        const dirtyCached = cached && cached.content !== cached.file.content ? cached : null;
+        const initialContent = dirtyCached?.content ?? file.content;
+        fileRef.current = dirtyCached?.file ?? file;
+        setCachedDocument(key, { file: fileRef.current, content: initialContent });
+        setDirty(taskId, path, initialContent !== fileRef.current.content);
         const state = EditorState.create({
-          doc: file.content,
+          doc: initialContent,
           extensions: [
             lineNumbers(),
             highlightActiveLine(),
@@ -77,7 +114,11 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
             oneDark,
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
-                setDirty(taskId, path, update.state.doc.toString() !== fileRef.current?.content);
+                const content = update.state.doc.toString();
+                if (fileRef.current) {
+                  setCachedDocument(key, { file: fileRef.current, content });
+                }
+                setDirty(taskId, path, content !== fileRef.current?.content);
               }
             }),
             EditorView.theme({
@@ -94,6 +135,9 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
 
     return () => {
       disposed = true;
+      if (viewRef.current && fileRef.current) {
+        setCachedDocument(key, { file: fileRef.current, content: viewRef.current.state.doc.toString() });
+      }
       viewRef.current?.destroy();
       viewRef.current = null;
     };
@@ -121,6 +165,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
       const result = await saveFile(createFilesApi(api), file, content);
       if (result.ok) {
         fileRef.current = { ...file, content, loadedMtime: result.newMtime };
+        setCachedDocument(cacheKey(taskId, path), { file: fileRef.current, content });
         setDirty(taskId, path, false);
         setConflict(false);
         setSaveError(null);
@@ -148,6 +193,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
     try {
       const newMtime = await saveFileOverwrite(createFilesApi(api), path, content);
       fileRef.current = { path, content, loadedMtime: newMtime };
+      setCachedDocument(cacheKey(taskId, path), { file: fileRef.current, content });
       setDirty(taskId, path, false);
       setConflict(false);
       setSaveError(null);
@@ -168,6 +214,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
     try {
       const file = await openFile(createFilesApi(api), path);
       fileRef.current = file;
+      setCachedDocument(cacheKey(taskId, path), { file, content: file.content });
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: file.content } });
       setDirty(taskId, path, false);
       setConflict(false);
