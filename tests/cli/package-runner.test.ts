@@ -108,4 +108,11 @@ describe("published CLI package runners", () => {
       /macOS package not available for \$TAG; installing CLI-only standalone binary"\n\s+rm -rf "\$INSTALL_TMPDIR"\n\s+install_cli_binary "darwin" "\$TAG"/,
     );
   });
+
+  it("keeps the checked-in Homebrew formula on the CLI Node 20 runtime", async () => {
+    const formula = await readFile(resolve(repoRoot, "homebrew-tap/Formula/matrix.rb"), "utf8");
+
+    expect(formula).toContain('depends_on "node@20"');
+    expect(formula).not.toContain('depends_on "node@24"');
+  });
 });
