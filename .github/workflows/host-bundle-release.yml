@@ -9,7 +9,7 @@
 #   1. ci-gate — wait for same-SHA CI and verify all CI jobs succeeded
 #   2. build — compile gateway, shell, kernel into host bundle tarball
 #   3. publish — upload immutable R2 artifacts and register metadata in platform DB
-#   4. (optional) auto-deploy if severity is "security"
+#   4. deploy — main/dev publishes trigger exact-version VPS deployment by default
 
 name: Host Bundle Release
 
@@ -47,6 +47,11 @@ on:
         description: "Skip dev host-bundle build/publish for explicit manual maintenance runs"
         required: false
         default: false
+        type: boolean
+      deploy_after_publish:
+        description: "Deploy the published exact version to existing VPSes after registration"
+        required: false
+        default: true
         type: boolean
 
 permissions:
@@ -367,24 +372,35 @@ jobs:
 
           ./scripts/publish-release.sh "${ARGS[@]}"
 
-      - name: Auto-deploy on security severity
-        if: ${{ inputs.severity == 'security' }}
-        env:
-          PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
-          PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+  deploy:
+    name: Deploy published host bundle
+    needs: [dev-bundle-gate, build, publish]
+    if: ${{ needs.dev-bundle-gate.outputs.should_build == 'true' && ((github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name == 'main') || inputs.deploy_after_publish) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
+      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+    steps:
+      - name: Trigger exact-version VPS deploy
         run: |
           set -euo pipefail
           VERSION="${{ needs.build.outputs.version }}"
           if [ -z "${PLATFORM_SECRET:-}" ]; then
-            echo "PLATFORM_SECRET not configured — skipping auto-deploy" >&2
-            exit 0
+            echo "PLATFORM_SECRET is required to deploy published host bundles." >&2
+            exit 1
           fi
-          echo "Security severity — waiting 60s for sync agents to discover manifest..."
-          sleep 60
-          echo "Triggering deploy for $VERSION..."
-          curl --fail --silent --show-error --max-time 30 \
+          echo "Triggering VPS deploy for $VERSION..."
+          DEPLOY_RESPONSE="$(curl --fail --silent --show-error --max-time 30 \
             -X POST "${PLATFORM_PUBLIC_URL%/}/vps/deploy" \
             -H "Authorization: Bearer ${PLATFORM_SECRET}" \
             -H "Content-Type: application/json" \
-            -d "{\"version\":\"$VERSION\"}"
-          echo "Deploy triggered successfully."
+            -d "{\"version\":\"$VERSION\"}")"
+          printf '%s\n' "$DEPLOY_RESPONSE" | jq .
+          failed="$(printf '%s' "$DEPLOY_RESPONSE" | jq -r '.failed // 0')"
+          triggered="$(printf '%s' "$DEPLOY_RESPONSE" | jq -r '.triggered // 0')"
+          if [ "$failed" -gt 0 ] || [ "$triggered" -eq 0 ]; then
+            echo "Exact-version VPS deploy did not update the fleet cleanly: triggered=$triggered failed=$failed" >&2
+            exit 1
+          fi
+          echo "Deploy triggered successfully: triggered=$triggered failed=$failed"

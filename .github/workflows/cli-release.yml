@@ -1,11 +1,13 @@
 name: CLI Release
 
-# Manually dispatched from the GitHub Actions UI. Publishes only the
-# installable Matrix CLI package (`@finnaai/matrix`), standalone CLI binaries,
-# and its matching `cli-v<version>` GitHub release/Homebrew formula. This
-# intentionally avoids the broader release workflow's full-repo test and
-# optional macOS installer path so a CLI patch can ship independently.
+# Publishes only the installable Matrix CLI package (`@finnaai/matrix`),
+# standalone CLI binaries, and its matching `cli-v<version>` GitHub release/
+# Homebrew formula. Push a `cli-v<version>` tag for the default release path,
+# or dispatch manually for recovery.
 on:
+  push:
+    tags:
+      - "cli-v*"
   workflow_dispatch:
     inputs:
       version:
@@ -28,7 +30,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: cli-release-${{ inputs.version }}
+  group: cli-release-${{ github.ref_type == 'tag' && github.ref_name || format('cli-v{0}', inputs.version) }}
   cancel-in-progress: false
 
 jobs:
@@ -46,7 +48,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 20
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
 
@@ -58,6 +60,9 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#cli-v}"
+          fi
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "version '$VERSION' is not valid semver (expected X.Y.Z or X.Y.Z-prerelease)" >&2
             exit 1
@@ -78,7 +83,7 @@ jobs:
             NPM_EXISTS=true
           fi
 
-          if git ls-remote --exit-code --tags origin "refs/tags/cli-v${VERSION}" >/dev/null 2>&1; then
+          if [ "$GITHUB_REF_TYPE" != "tag" ] && git ls-remote --exit-code --tags origin "refs/tags/cli-v${VERSION}" >/dev/null 2>&1; then
             echo "tag cli-v${VERSION} already exists" >&2
             exit 1
           fi
@@ -136,7 +141,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 20
           cache: pnpm
 
       - uses: oven-sh/setup-bun@v2
@@ -185,7 +190,7 @@ jobs:
   homebrew:
     name: Update Homebrew tap
     needs: [publish, github-release]
-    if: ${{ inputs.update_homebrew }}
+    if: ${{ github.event_name == 'push' || inputs.update_homebrew }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
