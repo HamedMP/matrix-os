@@ -92,6 +92,6 @@ export function canonicalAppLaunchPath(app: GatewayAppEntryLike): string | null 
 }
 
 export function terminalContextLaunchPath(projectSlug: string | null | undefined): string {
-  if (!projectSlug || !SAFE_APP_SLUG.test(projectSlug)) return "__terminal__";
-  return `__terminal__?project=${encodeURIComponent(projectSlug)}`;
+  void projectSlug;
+  return "__terminal__";
 }
