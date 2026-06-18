@@ -24,7 +24,7 @@ Steps:
 3. If no Matrix computer exists yet, keep the login running while I finish signup, checkout, and provisioning in the browser.
 4. Verify with matrix doctor and matrix whoami, then wait until the Matrix computer is ready.
 5. Use one persistent setup session: matrix shell connect -c setup.
-6. Authenticate GitHub separately inside Matrix with matrix run -it --session setup -- gh auth login. Use browser login only.
+6. Authenticate GitHub separately inside Matrix with matrix run -it --session setup -- gh auth login --hostname github.com --web.
 7. For SSH repository access, use a Matrix-managed SSH key created inside the Matrix runtime. Register or show only the public key for GitHub. Do not use GitHub CLI's optional SSH-key generator as the secure path.
 8. Clone the repository under ~/projects after I confirm the repo URL.
 9. Start my preferred coding agent inside Matrix with matrix run -it --session setup -- claude or matrix run -it --session setup -- codex. I will complete that tool's own login inside the remote terminal.
@@ -96,7 +96,7 @@ Do not scan my local machine for credentials. Do not upload local private keys o
 matrix login --profile cloud
 matrix doctor
 matrix shell connect -c setup
-matrix run -it --session setup -- gh auth login
+matrix run -it --session setup -- gh auth login --hostname github.com --web
 matrix run -it --session setup -- codex
 ```
 
