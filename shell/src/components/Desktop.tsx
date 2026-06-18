@@ -52,9 +52,9 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
-import { OnboardingScreen } from "./OnboardingScreen";
 import { ManualSetupStickers } from "./onboarding/ManualSetupStickers";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
+import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
@@ -558,7 +558,7 @@ interface DesktopProps {
   chat?: import("@/hooks/useChatState").ChatState;
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the 9 useState values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, showOnboarding, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopProps) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
@@ -588,7 +588,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
   const [firstRunStatus, setFirstRunStatus] = useState<"checking" | "ready">("checking");
-  const [showOnboarding, setShowOnboarding] = useState(true);
   const launchPathConsumedRef = useRef<string | null>(null);
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
@@ -626,14 +625,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       cache: "no-store",
       signal: controller.signal,
     })
-      .then(async (res) => {
+      .then((res) => {
         if (!res.ok) throw new Error("onboarding status unavailable");
-        return await res.json() as { complete?: unknown };
-      })
-      .then((status) => {
-        if (!cancelled) {
-          setShowOnboarding(status.complete !== true);
-        }
       })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
@@ -653,9 +646,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     };
   }, []);
 
-  const onboardingActive = firstRunStatus === "ready" && showOnboarding;
   const completeOnboarding = () => {
-    setShowOnboarding(false);
     void markOnboardingComplete().catch((err: unknown) => {
       console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
     });
@@ -1190,28 +1181,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const visibleModes = useDesktopMode((s) => s.visibleModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const hydrated = useDesktopMode((s) => s._hydrated);
-  const modeConfig = getModeConfig(hydrated ? desktopMode : "canvas");
+  const modeConfig = getModeConfig(hydrated ? desktopMode : "dev");
+  const visibleWindowCount = windows.filter((w) => !w.minimized).length;
+  const developerDashboardVisible = firstRunStatus === "ready"
+    && desktopMode === "dev"
+    && visibleWindowCount === 0;
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
-
-  const openManualSetup = () => {
-    setShowOnboarding(false);
-    setManualSetupVisible(true);
-    setDesktopMode("canvas");
-    setTaskBoardOpen(false);
-    setSettingsOpen(false);
-    setChatOpen(false);
-    void markOnboardingComplete().catch((err: unknown) => {
-      console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
-    });
-    void saveDesktopConfigPatch({
-      background: { type: "wallpaper", name: "moraine-lake.jpg" },
-      dock,
-      pinnedApps: pinnedApps.length > 0 ? pinnedApps : [...DEFAULT_PINNED_APPS],
-      dockOrder,
-    }).catch((err: unknown) => {
-      console.warn("[desktop] initial desktop config persist failed:", err instanceof Error ? err.message : String(err));
-    });
-  };
 
   // Cascade windows back to the viewport when leaving canvas. Canvas
   // positions use a wide grid that extends off-screen in other modes.
@@ -1494,25 +1469,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   return (
     <TooltipProvider delayDuration={300}>
       <RuntimeIdentityBanner />
-      {onboardingActive ? (
-        <OnboardingScreen
-          onComplete={completeOnboarding}
-          onOpenManualSetup={openManualSetup}
-        />
-      ) : null}
-      {onboardingActive ? null : (
-        <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
-          {desktopMode === "canvas" ? (
-            <CanvasToolbar
-              guideVisible={manualSetupVisible}
-              onOpenGuide={() => setManualSetupVisible(true)}
-            />
-          ) : null}
-        </MenuBar>
-      )}
+      <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
+        {desktopMode === "canvas" ? (
+          <CanvasToolbar
+            guideVisible={manualSetupVisible}
+            onOpenGuide={() => setManualSetupVisible(true)}
+          />
+        ) : null}
+      </MenuBar>
       <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">
-        {/* Desktop dock -- hidden in ambient/conversational modes and during onboarding. */}
-        {modeConfig.showDock && !onboardingActive && <div
+        {/* Desktop dock -- hidden in ambient/conversational modes. */}
+        {modeConfig.showDock && <div
           className={[
             "hidden md:block fixed z-[55]",
             dock.position === "left" && "left-0 top-0 h-full",
@@ -1804,7 +1771,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         </div>}
 
         {/* Mobile dock (bottom tab bar) */}
-        {modeConfig.showDock && !onboardingActive && (
+        {modeConfig.showDock && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
             <button
               type="button"
@@ -1917,7 +1884,24 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             </div>
           )}
 
-          {!onboardingActive && modeConfig.showWindows && desktopMode === "canvas" && (
+          {developerDashboardVisible && (
+            <DeveloperModeDashboard
+              onOpenTerminal={() => {
+                completeOnboarding();
+                focusOrOpen("Terminal", "__terminal__");
+              }}
+              onOpenSymphony={() => {
+                completeOnboarding();
+                focusOrOpen("Symphony", "apps/symphony/index.html");
+              }}
+              onSwitchCanvas={() => {
+                setDesktopMode("canvas");
+                setManualSetupVisible(true);
+              }}
+            />
+          )}
+
+          {modeConfig.showWindows && desktopMode === "canvas" && (
             <CanvasRenderer>
               {manualSetupVisible && (
                 <ManualSetupStickers
@@ -1933,7 +1917,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             </CanvasRenderer>
           )}
 
-          {!onboardingActive && vocalMounted && (
+          {vocalMounted && (
             <VocalPanel
               active={vocalActive}
               chat={chat}

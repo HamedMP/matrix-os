@@ -4,11 +4,11 @@ import { useDesktopMode, type DesktopMode } from "../../shell/src/stores/desktop
 
 describe("Desktop Mode Store", () => {
   beforeEach(() => {
-    useDesktopMode.setState({ mode: "canvas", previousMode: null });
+    useDesktopMode.setState({ mode: "dev", previousMode: null });
   });
 
-  it("defaults to 'canvas' mode", () => {
-    expect(useDesktopMode.getState().mode).toBe("canvas");
+  it("defaults to developer mode for the developer MVP", () => {
+    expect(useDesktopMode.getState().mode).toBe("dev");
   });
 
   it("setMode changes the active mode", () => {
@@ -44,12 +44,13 @@ describe("Desktop Mode Store", () => {
 
   it("getModeConfig returns correct config for dev mode", () => {
     const config = useDesktopMode.getState().getModeConfig("dev");
-    expect(config.label).toBe("Dev");
+    expect(config.label).toBe("Developer");
     expect(config.showDock).toBe(true);
     expect(config.showWindows).toBe(true);
     expect(config.showBottomPanel).toBe(true);
     expect(config.chatPosition).toBe("sidebar");
     expect(config.terminalProminent).toBe(true);
+    expect(config.hidden).toBeUndefined();
   });
 
   it("getModeConfig returns correct config for canvas mode", () => {
@@ -67,15 +68,15 @@ describe("Desktop Mode Store", () => {
     expect(modes.map((m) => m.id)).toEqual(["canvas", "desktop", "ambient", "dev"]);
   });
 
-  it("visibleModes only returns canvas", () => {
+  it("visibleModes exposes Developer beside Canvas", () => {
     const modes = useDesktopMode.getState().visibleModes();
-    expect(modes.map((m) => m.id)).toEqual(["canvas"]);
+    expect(modes.map((m) => m.id)).toEqual(["dev", "canvas"]);
   });
 
   it("setMode tracks previousMode", () => {
     expect(useDesktopMode.getState().previousMode).toBeNull();
     useDesktopMode.getState().setMode("desktop");
-    expect(useDesktopMode.getState().previousMode).toBe("canvas");
+    expect(useDesktopMode.getState().previousMode).toBe("dev");
     expect(useDesktopMode.getState().mode).toBe("desktop");
     useDesktopMode.getState().setMode("ambient");
     expect(useDesktopMode.getState().previousMode).toBe("desktop");
