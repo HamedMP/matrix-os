@@ -150,6 +150,50 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("does not immediately save after hydrating a saved terminal layout", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] } as Response);
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            activeTabId: "tab-saved",
+            sidebarOpen: true,
+            tabs: [{
+              id: "tab-saved",
+              label: "Saved",
+              paneTree: { type: "pane", id: "pane-saved", cwd: "projects/app" },
+            }],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+
+    const layoutPutCalls = fetchMock.mock.calls.filter((call) => (
+      String(call[0]).includes("/api/terminal/layout") && call[1]?.method === "PUT"
+    ));
+    expect(layoutPutCalls).toHaveLength(0);
+  });
+
   it("does not render workspace transport ids as managed shell sessions", async () => {
     render(<TerminalApp initialSessionId="matrix-sess_run_db0dded67faaca6b" />);
 
@@ -1123,7 +1167,7 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Make matrix-main active" })).toBeTruthy();
   });
 
-  it("focuses active shell rows without creating duplicate attached tabs", async () => {
+  it("focuses active shell rows without creating duplicate attached tabs or layout save noise", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -1147,10 +1191,7 @@ describe("TerminalApp", () => {
     const layoutSaveCalls = fetchMock.mock.calls.filter(([input, init]) => (
       String(input).includes("/api/terminal/layout") && init?.method === "PUT"
     ));
-    expect(layoutSaveCalls.length).toBeGreaterThan(0);
-    const latestBody = layoutSaveCalls.at(-1)?.[1]?.body;
-    expect(typeof latestBody).toBe("string");
-    expect(JSON.parse(latestBody as string).tabs).toHaveLength(1);
+    expect(layoutSaveCalls).toHaveLength(0);
   });
 
   it("renders a mobile sessions surface with compact foreground and background toggles", async () => {
@@ -1556,8 +1597,7 @@ describe("TerminalApp", () => {
     const layoutSave = vi.mocked(global.fetch).mock.calls.find(([input, init]) => (
       String(input).includes("/api/terminal/layout") && init?.method === "PUT"
     ));
-    expect(layoutSave).toBeTruthy();
-    expect(JSON.parse(String(layoutSave?.[1]?.body))).not.toHaveProperty("sidebarOpen");
+    expect(layoutSave).toBeUndefined();
   });
 
   it("starts normal terminal tabs on the canonical main shell session", async () => {

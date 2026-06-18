@@ -924,6 +924,30 @@ function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {
   addVaryHeader(headers, ['Cookie', 'Accept-Encoding']);
 }
 
+function applyAppDomainRuntimeAssetCacheHeaders(headers: Headers, path: string, rawUrl: string): void {
+  const maxAge = getAppDomainRuntimeAssetBrowserMaxAge(path, rawUrl);
+  if (maxAge === null) return;
+  const immutable = maxAge === 31_536_000 ? ', immutable' : '';
+  headers.set('cache-control', `private, max-age=${maxAge}${immutable}`);
+  headers.set('cdn-cache-control', 'no-store');
+  headers.set('cloudflare-cdn-cache-control', 'no-store');
+  addVaryHeader(headers, ['Cookie', 'Accept-Encoding']);
+}
+
+function getAppDomainRuntimeAssetBrowserMaxAge(path: string, rawUrl: string): number | null {
+  if (path.startsWith('/_next/static/') || isViteAppAssetPath(path)) return 31_536_000;
+  if (path.startsWith('/icons/')) {
+    try {
+      return new URL(rawUrl, 'https://app.matrix-os.com').searchParams.has('v') ? 31_536_000 : 86_400;
+    } catch (err: unknown) {
+      console.warn('[platform] Failed to parse runtime asset cache URL:', err instanceof Error ? err.message : String(err));
+      return 86_400;
+    }
+  }
+  if (path.startsWith('/fonts/') || path.startsWith('/wallpapers/')) return 86_400;
+  return null;
+}
+
 function addVaryHeader(headers: Headers, values: string[]): void {
   const vary = headers.get('vary');
   const varyParts = new Set(
@@ -964,6 +988,8 @@ function isAppDomainStaticAssetPath(path: string): boolean {
     path === '/og.png' ||
     path.startsWith('/_next/static/') ||
     path.startsWith('/_next/image') ||
+    path.startsWith('/fonts/') ||
+    path.startsWith('/wallpapers/') ||
     isViteAppAssetPath(path)
   );
 }
@@ -3130,6 +3156,7 @@ export function createApp(deps: {
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
+        applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
         return await buildAppDomainProxyResponse({
           upstream,
@@ -3290,6 +3317,7 @@ export function createApp(deps: {
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
+        applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, path, c.req.url);
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(runningMachine.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);
@@ -3469,6 +3497,7 @@ export function createApp(deps: {
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
+        applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, path, c.req.url);
         if (identity.source === 'mobile-session') {
           const routeCookie = buildAppRouteCookie(record.handle, path);
           if (routeCookie) responseHeaders.append('set-cookie', routeCookie);

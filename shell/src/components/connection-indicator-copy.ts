@@ -16,6 +16,15 @@ export interface ConnectionCopy {
 }
 
 export function resolveConnectionCopy(state: ConnectionState, status: RuntimeStatus): ConnectionCopy {
+  if (state === "initializing") {
+    return {
+      tone: "warn",
+      title: "Checking connection",
+      detail: "Matrix is opening the live shell session.",
+      action: "Retry now",
+    };
+  }
+
   if (state === "disconnected") {
     return {
       tone: "danger",

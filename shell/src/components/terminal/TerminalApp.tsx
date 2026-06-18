@@ -676,6 +676,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const closingPaneIdsRef = useRef<Set<string> | null>(null);
   if (closingPaneIdsRef.current === null) closingPaneIdsRef.current = new Set();
   const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const terminalLayoutHydratedRef = useRef(false);
+  const terminalLayoutDirtyRef = useRef(false);
+  const markTerminalLayoutDirty = () => {
+    terminalLayoutDirtyRef.current = true;
+  };
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `log` is consumed in the dependency array of the tabs-changed useEffect below; removing the memo would re-create it every render and re-run that effect.
   const log = useCallback((event: string, details: Record<string, unknown> = {}) => {
     terminalAppDebug(event, {
@@ -930,6 +935,12 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       return;
     }
 
+    if (!terminalLayoutHydratedRef.current) {
+      terminalLayoutHydratedRef.current = true;
+      if (!terminalLayoutDirtyRef.current) return;
+    }
+    terminalLayoutDirtyRef.current = true;
+
     if (layoutSaveTimerRef.current) {
       clearTimeout(layoutSaveTimerRef.current);
     }
@@ -937,6 +948,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     layoutSaveTimerRef.current = setTimeout(() => {
       layoutSaveTimerRef.current = null;
       flushLayout();
+      terminalLayoutDirtyRef.current = false;
     }, 500);
 
     return () => {
@@ -952,6 +964,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       if (!initialized) {
         return;
       }
+      if (!terminalLayoutDirtyRef.current) {
+        return;
+      }
 
       if (layoutSaveTimerRef.current) {
         clearTimeout(layoutSaveTimerRef.current);
@@ -959,6 +974,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }
 
       flushLayout();
+      terminalLayoutDirtyRef.current = false;
     };
 
     window.addEventListener("pagehide", flushOnPageHide);
@@ -1116,13 +1132,13 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
     switch (e.key.toUpperCase()) {
-      case "T": e.preventDefault(); void createShellSessionTab("Shell", getCwd()); break;
-      case "W": e.preventDefault(); if (focusedPaneId) closePane(focusedPaneId); break;
-      case "D": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "horizontal"); break;
-      case "E": e.preventDefault(); if (focusedPaneId) splitPane(focusedPaneId, "vertical"); break;
-      case "B": e.preventDefault(); setSidebarOpen(o => !o); break;
-      case "C": e.preventDefault(); addTab(getCwd(), "Claude Code", true); break;
-      case "Z": e.preventDefault(); void createShellSessionTab("Shell", getCwd()); break;
+      case "T": e.preventDefault(); markTerminalLayoutDirty(); void createShellSessionTab("Shell", getCwd()); break;
+      case "W": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); closePane(focusedPaneId); } break;
+      case "D": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); splitPane(focusedPaneId, "horizontal"); } break;
+      case "E": e.preventDefault(); if (focusedPaneId) { markTerminalLayoutDirty(); splitPane(focusedPaneId, "vertical"); } break;
+      case "B": e.preventDefault(); markTerminalLayoutDirty(); setSidebarOpen(o => !o); break;
+      case "C": e.preventDefault(); markTerminalLayoutDirty(); addTab(getCwd(), "Claude Code", true); break;
+      case "Z": e.preventDefault(); markTerminalLayoutDirty(); void createShellSessionTab("Shell", getCwd()); break;
     }
   };
 
@@ -1131,9 +1147,59 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile, themeName: theme.name, windowControls,
-    addTab, addSessionTab, createShellSessionTab, backgroundShellSession, closeTab, setActiveTab: setActiveTabId, renameTab, renameShellSession, reorderTabs,
-    splitPane, closePane, setFocusedPane: setFocusedPaneId,
-    setSidebarOpen, setSidebarSelectedPath,
+    addTab: (...args: Parameters<typeof addTab>) => {
+      markTerminalLayoutDirty();
+      return addTab(...args);
+    },
+    addSessionTab: (...args: Parameters<typeof addSessionTab>) => {
+      markTerminalLayoutDirty();
+      return addSessionTab(...args);
+    },
+    createShellSessionTab: (...args: Parameters<typeof createShellSessionTab>) => {
+      markTerminalLayoutDirty();
+      return createShellSessionTab(...args);
+    },
+    backgroundShellSession: (...args: Parameters<typeof backgroundShellSession>) => {
+      markTerminalLayoutDirty();
+      return backgroundShellSession(...args);
+    },
+    closeTab: (...args: Parameters<typeof closeTab>) => {
+      markTerminalLayoutDirty();
+      return closeTab(...args);
+    },
+    setActiveTab: (tabId: string) => {
+      markTerminalLayoutDirty();
+      setActiveTabId(tabId);
+    },
+    renameTab: (...args: Parameters<typeof renameTab>) => {
+      markTerminalLayoutDirty();
+      return renameTab(...args);
+    },
+    renameShellSession: (...args: Parameters<typeof renameShellSession>) => {
+      markTerminalLayoutDirty();
+      return renameShellSession(...args);
+    },
+    reorderTabs: (...args: Parameters<typeof reorderTabs>) => {
+      markTerminalLayoutDirty();
+      return reorderTabs(...args);
+    },
+    splitPane: (...args: Parameters<typeof splitPane>) => {
+      markTerminalLayoutDirty();
+      return splitPane(...args);
+    },
+    closePane: (...args: Parameters<typeof closePane>) => {
+      markTerminalLayoutDirty();
+      return closePane(...args);
+    },
+    setFocusedPane: (paneId: string | null) => {
+      markTerminalLayoutDirty();
+      setFocusedPaneId(paneId);
+    },
+    setSidebarOpen: (value: React.SetStateAction<boolean>) => {
+      markTerminalLayoutDirty();
+      setSidebarOpen(value);
+    },
+    setSidebarSelectedPath,
   };
 
   return (

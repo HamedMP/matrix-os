@@ -866,7 +866,7 @@ describe("platform proxy routing", () => {
     expect(assetHeaders.get("cookie")).toBeNull();
     expect(res.headers.get("access-control-allow-origin")).toBe("null");
     expect(res.headers.get("access-control-allow-credentials")).toBe("true");
-    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
     expect(res.headers.get("vary")).toContain("Origin");
     expect(res.headers.get("vary")).toContain("Cookie");
     expect(res.headers.get("vary")).toContain("Accept-Encoding");
@@ -3294,7 +3294,7 @@ describe("platform proxy routing", () => {
     expect(url).toBe("https://203.0.113.33:443/_next/static/chunks/app.js");
     const headers = init?.headers as Headers;
     expect(headers.get("x-platform-user-id")).toBe("user_alice");
-    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
     expect(res.headers.get("set-cookie")).toContain("matrix_shell_route=alice-staging");
   });
 
@@ -4381,6 +4381,99 @@ describe("platform proxy routing", () => {
     }
   });
 
+  it("routes app-domain icons directly to the runtime gateway", async () => {
+    const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("icon", {
+        status: 200,
+        headers: { "content-type": "image/png", etag: '"icon-etag"', "cache-control": "no-store" },
+      }),
+    );
+    const app = createApp({
+      db,
+      docker: stubDocker(),
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/icons/workspace.png?v=icon-etag", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session-jwt",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("icon");
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://172.18.0.14:4000/icons/workspace.png?v=icon-etag");
+  });
+
+  it("uses private browser caching and disables shared CDN cache for app-domain static assets", async () => {
+    const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("chunk", {
+        status: 200,
+        headers: {
+          "content-type": "application/javascript",
+          "cache-control": "no-store",
+          "cdn-cache-control": "public, max-age=31536000",
+        },
+      }),
+    );
+    const app = createApp({
+      db,
+      docker: stubDocker(),
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/_next/static/chunks/app-shell-abc123.js", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session-jwt",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("vary")).toContain("Cookie");
+    expect(res.headers.get("vary")).toContain("Accept-Encoding");
+  });
+
+  it("uses short private browser caching for unversioned release-owned app-domain assets", async () => {
+    const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("font", {
+        status: 200,
+        headers: { "content-type": "font/woff2", "cache-control": "no-store" },
+      }),
+    );
+    const app = createApp({
+      db,
+      docker: stubDocker(),
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/fonts/inter.woff2", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session-jwt",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, max-age=86400");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+  });
+
   it("routes app-domain shell static assets with the short-lived shell route cookie", async () => {
     await insertUserMachine(db, {
       machineId: "machine-alice",
@@ -4429,7 +4522,7 @@ describe("platform proxy routing", () => {
     expect(headers.get("x-platform-verified")).toBeNull();
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("content-length")).toBeNull();
-    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
     expect(res.headers.get("cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     expect(res.headers.get("vary")).toContain("Cookie");

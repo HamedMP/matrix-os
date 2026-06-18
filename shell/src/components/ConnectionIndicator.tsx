@@ -8,7 +8,8 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { resolveConnectionCopy, type RuntimeStatus } from "./connection-indicator-copy";
 
 const STATUS_REFRESH_MS = 5_000;
-const STATUS_TIMEOUT_MS = 4_000;
+const STATUS_TIMEOUT_MS = 1_500;
+const INITIAL_CONNECTION_GRACE_MS = 2_500;
 
 function classifyRuntimeStatusError(error: unknown): string {
   if (error instanceof DOMException) {
@@ -60,10 +61,20 @@ async function loadRuntimeStatus(): Promise<RuntimeStatus> {
 export function ConnectionIndicator() {
   const state = useConnectionHealth((s) => s.state);
   const [status, setStatus] = useState<RuntimeStatus>({ reachability: "checking" });
+  const [initialGraceElapsed, setInitialGraceElapsed] = useState(false);
+
+  useEffect(() => {
+    if (state !== "initializing") {
+      return;
+    }
+    const timer = setTimeout(() => setInitialGraceElapsed(true), INITIAL_CONNECTION_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [initialGraceElapsed, state]);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- polling loop: every setStatus call fires either synchronously to reset the gauge on disconnect or from async fetch/timer callbacks (never a synchronous cascade); a reducer would not change the self-rescheduling sequencing and the cancelled flag guards post-unmount writes.
   useEffect(() => {
     if (state === "connected") return;
+    if (state === "initializing" && !initialGraceElapsed) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -89,7 +100,7 @@ export function ConnectionIndicator() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [state]);
+  }, [initialGraceElapsed, state]);
 
   const copy = resolveConnectionCopy(state, status);
   const toneClass = copy.tone === "danger" ? "text-red-500" : "text-amber-500";
@@ -98,7 +109,7 @@ export function ConnectionIndicator() {
     ? "border-red-500/25 bg-card/95 shadow-[0_18px_60px_-24px_rgba(239,68,68,0.58),0_24px_60px_-30px_rgba(0,0,0,0.38)]"
     : "border-amber-500/20 bg-card/95 shadow-[0_18px_60px_-24px_rgba(245,158,11,0.45),0_24px_60px_-30px_rgba(0,0,0,0.34)]";
 
-  if (state === "connected") return null;
+  if (state === "connected" || (state === "initializing" && !initialGraceElapsed)) return null;
 
   return (
     <aside

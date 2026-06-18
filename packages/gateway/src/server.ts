@@ -106,6 +106,7 @@ import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
 import { registerIconRoutes } from "./icon-routes.js";
+import { buildShellBootstrap } from "./shell-bootstrap.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import { getSystemInfo } from "./system-info.js";
 import { collectSystemActivity } from "./system-activity/collector.js";
@@ -3795,6 +3796,10 @@ export async function createGateway(config: GatewayConfig) {
 
   app.get("/api/apps", async (c) => {
     return c.json(await listApps(homePath));
+  });
+
+  app.get("/api/shell/bootstrap", async (c) => {
+    return c.json(await buildShellBootstrap(homePath));
   });
 
   registerIconRoutes(app, homePath);
