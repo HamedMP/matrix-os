@@ -10,6 +10,7 @@ export interface ModeConfig {
   showDock: boolean;
   showWindows: boolean;
   showBottomPanel: boolean;
+  showLauncher: boolean;
   chatPosition: "sidebar" | "center";
   terminalProminent?: boolean;
   // Hidden modes still work if set programmatically, but are filtered out of
@@ -25,6 +26,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     showDock: true,
     showWindows: true,
     showBottomPanel: false,
+    showLauncher: true,
     chatPosition: "sidebar",
   },
   desktop: {
@@ -34,6 +36,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     showDock: true,
     showWindows: true,
     showBottomPanel: false,
+    showLauncher: true,
     chatPosition: "sidebar",
     hidden: true,
   },
@@ -44,6 +47,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     showDock: false,
     showWindows: false,
     showBottomPanel: false,
+    showLauncher: false,
     chatPosition: "center",
     hidden: true,
   },
@@ -54,6 +58,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     showDock: true,
     showWindows: true,
     showBottomPanel: true,
+    showLauncher: false,
     chatPosition: "sidebar",
     terminalProminent: true,
   },
