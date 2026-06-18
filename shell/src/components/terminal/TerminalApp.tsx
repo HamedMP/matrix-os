@@ -252,7 +252,6 @@ const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
   flexShrink: 0,
   fontSize: 12,
   fontWeight: 800,
-  gap: 5,
   height: 24,
   overflow: "visible",
   pointerEvents: "auto",
@@ -4600,7 +4599,7 @@ function ShellSessionGroup({
 
 function ShellPendingCard() {
   return (
-    <div
+    <output
       aria-label="Creating shell session"
       data-testid="terminal-session-pending-row"
       style={{
@@ -4656,7 +4655,7 @@ function ShellPendingCard() {
       >
         NEW
       </span>
-    </div>
+    </output>
   );
 }
 
