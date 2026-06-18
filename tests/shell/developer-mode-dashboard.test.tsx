@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DeveloperModeDashboard } from "../../shell/src/components/developer/DeveloperModeDashboard.js";
 
 describe("DeveloperModeDashboard", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("presents Terminal first, Symphony second, setup status, and Canvas as an explicit switch", () => {
     const onOpenTerminal = vi.fn();
     const onOpenSymphony = vi.fn();
@@ -35,5 +39,29 @@ describe("DeveloperModeDashboard", () => {
     expect(onOpenTerminal).toHaveBeenCalledTimes(1);
     expect(onOpenSymphony).toHaveBeenCalledTimes(1);
     expect(onSwitchCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs clipboard failures instead of silently swallowing them", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockRejectedValue(new Error("permission denied")),
+      },
+    });
+
+    render(
+      <DeveloperModeDashboard
+        setupPrompt="matrix login"
+        onOpenTerminal={vi.fn()}
+        onOpenSymphony={vi.fn()}
+        onSwitchCanvas={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /copy/i }));
+
+    await waitFor(() => {
+      expect(warn).toHaveBeenCalledWith("[DeveloperModeDashboard] clipboard write failed:", "permission denied");
+    });
   });
 });
