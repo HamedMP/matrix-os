@@ -178,7 +178,7 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
-  app.patch("/sessions/:name", sessionRenameBodyLimit, async (c) => {
+  const renameSessionHandler = async (c: Context) => {
     try {
       if (!deps.registry.rename) return unavailable(c, "session_rename_unavailable");
       const body = SessionRenameBodySchema.parse(await c.req.json());
@@ -190,7 +190,10 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     } catch (err) {
       return safeError(c, err);
     }
-  });
+  };
+
+  app.put("/sessions/:name/rename", sessionRenameBodyLimit, renameSessionHandler);
+  app.patch("/sessions/:name", sessionRenameBodyLimit, renameSessionHandler);
 
   app.patch("/sessions/:name/ui-state", uiStateBodyLimit, async (c) => {
     try {

@@ -514,6 +514,7 @@ export async function createGateway(config: GatewayConfig) {
     adapter: zellijAdapter,
     maxSessions: 10,
     scrollbackStore: shellScrollbackStore,
+    preferencesStore: shellPreferencesStore,
   });
   const symphonyRunner = createSymphonyRunner({ homePath });
   const initialSymphonyPort = await resolveInitialSymphonyPort(symphonyRunner);

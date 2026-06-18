@@ -202,6 +202,8 @@ describe("shell registry", () => {
   });
 
   it("persists active/background placement and derives unread visual status from scrollback", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-18T12:00:00.000Z"));
     const root = await tempRoot();
     const adapter = {
       listSessions: vi.fn(async () => ["main", "deploy-logs", "review-done"]),
@@ -222,7 +224,9 @@ describe("shell registry", () => {
     });
 
     await registry.updateUiState("main", { placement: "background", lastSeenSeq: 4 });
+    vi.setSystemTime(new Date("2026-06-18T12:00:01.000Z"));
     await registry.updateUiState("review-done", { lastSeenSeq: 3, visualStatus: "finished" });
+    vi.setSystemTime(new Date("2026-06-18T12:00:02.000Z"));
 
     await expect(registry.list()).resolves.toMatchObject([
       {
@@ -382,11 +386,15 @@ describe("shell registry", () => {
       cleanup: vi.fn(async () => undefined),
       rename: vi.fn(async () => undefined),
     };
+    const preferencesStore = {
+      rename: vi.fn(async () => undefined),
+    };
     const registry = new ShellRegistry({
       homePath: root,
       adapter,
       maxSessions: 4,
       scrollbackStore: scrollbackStore as never,
+      preferencesStore: preferencesStore as never,
     });
 
     await registry.updateUiState("main", {
@@ -407,10 +415,58 @@ describe("shell registry", () => {
 
     expect(adapter.renameSession).toHaveBeenCalledWith("main", "review-main");
     expect(scrollbackStore.rename).toHaveBeenCalledWith("main", "review-main");
+    expect(preferencesStore.rename).toHaveBeenCalledWith("main", "review-main");
     const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
     const sessions = JSON.parse(raw).sessions;
     expect(sessions.main).toBeUndefined();
     expect(sessions["review-main"].placement).toBe("background");
+  });
+
+  it("rolls back zellij, scrollback, and preferences when renamed metadata cannot persist", async () => {
+    const root = await tempRoot();
+    const systemDir = join(root, "system");
+    const live = new Set(["main"]);
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      renameSession: vi.fn(async (name: string, nextName: string) => {
+        live.delete(name);
+        live.add(nextName);
+      }),
+    };
+    const scrollbackStore = {
+      latestSeq: vi.fn(async () => null),
+      cleanup: vi.fn(async () => undefined),
+      rename: vi.fn(async () => undefined),
+    };
+    const preferencesStore = {
+      rename: vi.fn(async () => {
+        if (preferencesStore.rename.mock.calls.length === 1) {
+          await rm(systemDir, { recursive: true, force: true });
+          await writeFile(systemDir, "not a directory", { flag: "wx" });
+        }
+      }),
+    };
+    const registry = new ShellRegistry({
+      homePath: root,
+      adapter,
+      maxSessions: 4,
+      scrollbackStore: scrollbackStore as never,
+      preferencesStore: preferencesStore as never,
+    });
+
+    await registry.updateUiState("main", { placement: "background" });
+
+    await expect(registry.rename("main", "review-main")).rejects.toBeInstanceOf(Error);
+
+    expect(adapter.renameSession).toHaveBeenNthCalledWith(1, "main", "review-main");
+    expect(adapter.renameSession).toHaveBeenNthCalledWith(2, "review-main", "main");
+    expect(scrollbackStore.rename).toHaveBeenNthCalledWith(1, "main", "review-main");
+    expect(scrollbackStore.rename).toHaveBeenNthCalledWith(2, "review-main", "main");
+    expect(preferencesStore.rename).toHaveBeenNthCalledWith(1, "main", "review-main");
+    expect(preferencesStore.rename).toHaveBeenNthCalledWith(2, "review-main", "main");
+    expect(Array.from(live)).toEqual(["main"]);
   });
 
   it("connects by adopting an orphan active zellij session", async () => {

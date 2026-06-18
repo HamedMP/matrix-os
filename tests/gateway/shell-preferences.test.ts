@@ -55,6 +55,27 @@ describe("shell preferences", () => {
     });
   });
 
+  it("renames per-session preferences without overwriting another preference file", async () => {
+    const root = await tempRoot();
+    const store = new ShellPreferencesStore({ homePath: root });
+
+    await store.save("main", { shellThemeId: "matrix", fontFamily: "MesloLGS NF" });
+    await store.rename("main", "review-main");
+
+    await expect(store.load("main")).resolves.toMatchObject({ shellThemeId: "dark" });
+    await expect(store.load("review-main")).resolves.toMatchObject({
+      shellThemeId: "matrix",
+      fontFamily: "MesloLGS NF",
+    });
+
+    await store.rename("missing", "new-name");
+    await store.save("occupied", { shellThemeId: "light" });
+    await expect(store.rename("review-main", "occupied")).rejects.toMatchObject({
+      code: "session_exists",
+      status: 409,
+    });
+  });
+
   it("serves GET and PUT preferences routes with validation", async () => {
     const root = await tempRoot();
     const preferences = new ShellPreferencesStore({ homePath: root });

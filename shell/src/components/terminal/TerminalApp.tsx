@@ -776,7 +776,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   const createShellSessionTab = async (label: string, cwd = DEFAULT_CWD) => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const name = `zellij-${genId()}`;
+      const name = `matrix-${genId()}`;
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
         const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
@@ -1039,16 +1039,20 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   };
 
   const renameShellSession = (fromSessionId: string, toSessionId: string) => {
-    setTabs(prev => prev.map((tab) => {
-      const nextTree = renameSessionInTree(tab.paneTree, fromSessionId, toSessionId);
-      const nextLabel =
-        tab.label === fromSessionId || tab.label === formatShellDisplayName(fromSessionId)
-          ? formatShellDisplayName(toSessionId)
-          : tab.label;
-      return nextTree === tab.paneTree && nextLabel === tab.label
-        ? tab
-        : { ...tab, label: nextLabel, paneTree: nextTree };
-    }));
+    setTabs(prev => {
+      const nextTabs = prev.map((tab) => {
+        const nextTree = renameSessionInTree(tab.paneTree, fromSessionId, toSessionId);
+        const nextLabel =
+          tab.label === fromSessionId || tab.label === formatShellDisplayName(fromSessionId)
+            ? formatShellDisplayName(toSessionId)
+            : tab.label;
+        return nextTree === tab.paneTree && nextLabel === tab.label
+          ? tab
+          : { ...tab, label: nextLabel, paneTree: nextTree };
+      });
+      tabsRef.current = nextTabs;
+      return nextTabs;
+    });
   };
 
   const reorderTabs = (from: number, to: number) => {
@@ -2215,7 +2219,7 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
   const newTabButton = (
     <ToolbarBtn
-      onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
+      onClick={() => { void ctx.createShellSessionTab("Shell", getCwd()); }}
       title="New tab (Ctrl+Shift+T)"
       ariaLabel="New tab"
     >
@@ -2362,11 +2366,11 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               Claude
             </ToolbarBtn>
             <ToolbarBtn
-              onClick={() => { void ctx.createShellSessionTab("Zellij", getCwd()); }}
-              title="Launch Zellij (Ctrl+Shift+Z)"
+              onClick={() => { void ctx.createShellSessionTab("Shell", getCwd()); }}
+              title="Launch Shell (Ctrl+Shift+Z)"
               variant="primary"
             >
-              Zellij
+              Shell
             </ToolbarBtn>
             <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
             <ToolbarBtn
@@ -3111,8 +3115,8 @@ function LocalTerminalSidebar() {
     }
     setShellsError(null);
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(shell.name)}`, {
-        method: "PATCH",
+      const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(shell.name)}/rename`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: nextName }),
         signal: AbortSignal.timeout(10_000),
@@ -5096,7 +5100,7 @@ interface ProjectCardProps {
 function ProjectCard({ project, onOpenShell, onOpenClaude, onOpenZellij, onSelect, isSelected }: ProjectCardProps) {
   const [hover, setHover] = useState(false);
   return (
-    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- cannot be a native <button>: this selectable card contains nested interactive <button> children (Shell/Claude/Zellij actions), and nesting a button inside a button is invalid HTML; role="button" + tabIndex + keyboard handler is the correct accessible pattern here.
+    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- cannot be a native <button>: this selectable card contains nested interactive <button> children (shell and agent actions), and nesting a button inside a button is invalid HTML; role="button" + tabIndex + keyboard handler is the correct accessible pattern here.
     <div
       role="button"
       tabIndex={0}
@@ -5169,7 +5173,7 @@ function ProjectCard({ project, onOpenShell, onOpenClaude, onOpenZellij, onSelec
       >
         <ProjectActionBtn label="Shell" onClick={(e) => { e.stopPropagation(); onOpenShell(); }} />
         <ProjectActionBtn label="Claude" onClick={(e) => { e.stopPropagation(); onOpenClaude(); }} accent="var(--success)" />
-        <ProjectActionBtn label="Zellij" onClick={(e) => { e.stopPropagation(); onOpenZellij(); }} accent="var(--primary)" />
+        <ProjectActionBtn label="Session" onClick={(e) => { e.stopPropagation(); onOpenZellij(); }} accent="var(--primary)" />
       </div>
     </div>
   );
