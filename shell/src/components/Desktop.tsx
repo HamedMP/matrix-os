@@ -14,6 +14,7 @@ import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
 import {
   parseDesktopFirstRunStatus,
   shouldApplyInitialDesktopDefaults,
+  shouldShowDeveloperDashboard,
   type DesktopFirstRunStatus,
 } from "@/lib/desktop-first-run";
 import { AppViewer } from "./AppViewer";
@@ -1198,9 +1199,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const hydrated = useDesktopMode((s) => s._hydrated);
   const modeConfig = getModeConfig(hydrated ? desktopMode : "dev");
   const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
-  const developerDashboardVisible = firstRunStatus === "ready"
-    && desktopMode === "dev"
-    && visibleWindowCount === 0;
+  const developerDashboardVisible = shouldShowDeveloperDashboard(firstRunStatus, desktopMode, visibleWindowCount);
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
 
   // Cascade windows back to the viewport when leaving canvas. Canvas
