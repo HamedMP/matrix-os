@@ -276,4 +276,26 @@ describe("useSocket heartbeat and resilience", () => {
       expect.objectContaining({ attempt: 0, visibility: "visible" }),
     );
   });
+
+  it("shows reconnecting feedback when manual retry is clicked during initialization", async () => {
+    vi.resetModules();
+    const capturePostHogEvent = vi.fn();
+    vi.doMock("@/lib/posthog-client", () => ({
+      capturePostHogEvent,
+      capturePostHogException: vi.fn(),
+    }));
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("document", { addEventListener: vi.fn(), visibilityState: "visible" });
+
+    const { getConnectionState, manualReconnect } = await import("../../shell/src/hooks/useSocket.js");
+
+    expect(getConnectionState()).toBe("initializing");
+    manualReconnect();
+
+    expect(getConnectionState()).toBe("reconnecting");
+    expect(capturePostHogEvent).toHaveBeenCalledWith(
+      MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED,
+      expect.objectContaining({ attempt: 0, visibility: "visible" }),
+    );
+  });
 });

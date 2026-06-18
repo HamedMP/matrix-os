@@ -180,6 +180,17 @@ export function sendMessage(msg: ClientMessage) {
 
 export function manualReconnect() {
   reconnectAttempt = 0;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (connectionState === "initializing") {
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED, {
+      attempt: reconnectAttempt,
+      visibility: typeof document !== "undefined" ? document.visibilityState : "unknown",
+    });
+    setConnectionState("reconnecting");
+  }
   connect();
 }
 

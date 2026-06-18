@@ -69,7 +69,7 @@ export function ConnectionIndicator() {
     }
     const timer = setTimeout(() => setInitialGraceElapsed(true), INITIAL_CONNECTION_GRACE_MS);
     return () => clearTimeout(timer);
-  }, [initialGraceElapsed, state]);
+  }, [state]);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- polling loop: every setStatus call fires either synchronously to reset the gauge on disconnect or from async fetch/timer callbacks (never a synchronous cascade); a reducer would not change the self-rescheduling sequencing and the cancelled flag guards post-unmount writes.
   useEffect(() => {
