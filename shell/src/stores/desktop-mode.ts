@@ -49,18 +49,17 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
   },
   dev: {
     id: "dev",
-    label: "Dev",
-    description: "Developer mode with prominent terminal and sidebar chat",
+    label: "Developer",
+    description: "Terminal-first setup with Symphony and Canvas one click away",
     showDock: true,
     showWindows: true,
     showBottomPanel: true,
     chatPosition: "sidebar",
     terminalProminent: true,
-    hidden: true,
   },
 };
 
-const DEFAULT_MODE: DesktopMode = "canvas";
+const DEFAULT_MODE: DesktopMode = "dev";
 
 interface DesktopModeStore {
   mode: DesktopMode;
@@ -81,12 +80,12 @@ export const useDesktopMode = create<DesktopModeStore>()(
       setMode: (mode: DesktopMode) => set({ previousMode: get().mode, mode }),
       getModeConfig: (mode: DesktopMode) => MODE_CONFIGS[mode],
       allModes: () => Object.values(MODE_CONFIGS),
-      visibleModes: () => Object.values(MODE_CONFIGS).filter((m) => !m.hidden),
+      visibleModes: () => [MODE_CONFIGS.dev, MODE_CONFIGS.canvas],
     }),
     {
       name: "matrix-os-desktop-mode",
       onRehydrateStorage: () => (state) => {
-        // Coerce any persisted hidden mode (desktop/ambient/dev) or the
+        // Coerce any persisted hidden mode (desktop/ambient) or the
         // now-removed "vocal" mode into canvas. Aoede is an overlay now
         // (see `stores/vocal.ts`), not a mode.
         const config = state ? MODE_CONFIGS[state.mode] : undefined;
