@@ -11,6 +11,7 @@ matrix-os.com / app.matrix-os.com
   |-- www/                 public docs, marketing, signup entry points
   |-- shell/               web shell renderer for owner runtime
   |-- desktop/             desktop shell packaging/runtime
+  |-- apps/                companion app surfaces, including mobile and menu bar
   |
   +-- packages/platform/   control plane: auth, billing, VPS provisioning, routing
       |
@@ -36,6 +37,7 @@ Production customer runtime is VPS-native. Do not model new user-facing runtime 
 | `packages/ui/` | Shared UI primitives used by shells/apps | Domain business rules |
 | `shell/` | Browser shell renderer, Canvas/Desktop windows, frontend stores | Canonical backend source of truth |
 | `desktop/` | Desktop package/runtime integration | Web-only shell product logic |
+| `apps/` | Companion shell surfaces such as mobile and menu bar apps | Canonical backend source of truth or platform control-plane ownership |
 | `www/` | Public website and docs | Runtime-only shell behavior |
 | `home/` | Owner-visible OS files, default apps, icons, templates | Hidden platform state |
 | `specs/` | Product/architecture specs and quality gates | Implementation-only scratch plans |
