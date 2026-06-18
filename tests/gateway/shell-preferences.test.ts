@@ -76,6 +76,29 @@ describe("shell preferences", () => {
     });
   });
 
+  it("keeps the destination preferences when source cleanup already happened", async () => {
+    const root = await tempRoot();
+    const rmMock = vi.fn(async (path: string) => {
+      if (path.endsWith("main.json")) {
+        throw Object.assign(new Error("missing source"), { code: "ENOENT" });
+      }
+    });
+    const store = new ShellPreferencesStore({
+      homePath: root,
+      renameFileOps: {
+        mkdir: vi.fn(async () => undefined) as never,
+        link: vi.fn(async () => undefined),
+        rm: rmMock as never,
+      },
+    });
+
+    await expect(store.rename("main", "review-main")).resolves.toBeUndefined();
+
+    expect(rmMock).toHaveBeenCalledTimes(1);
+    expect(rmMock.mock.calls[0]?.[0]).toContain("main.json");
+    expect(rmMock.mock.calls.some(([path]) => String(path).endsWith("review-main.json"))).toBe(false);
+  });
+
   it("serves GET and PUT preferences routes with validation", async () => {
     const root = await tempRoot();
     const preferences = new ShellPreferencesStore({ homePath: root });

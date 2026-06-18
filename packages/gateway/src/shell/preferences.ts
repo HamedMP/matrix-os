@@ -61,13 +61,20 @@ export type ShellThemeId = z.infer<typeof ShellThemeIdSchema>;
 export interface ShellPreferencesStoreOptions {
   homePath: string;
   preferencesDir?: string;
+  renameFileOps?: {
+    mkdir: typeof mkdir;
+    link: typeof link;
+    rm: typeof rm;
+  };
 }
 
 export class ShellPreferencesStore {
   private readonly preferencesDir: string;
+  private readonly renameFileOps: NonNullable<ShellPreferencesStoreOptions["renameFileOps"]>;
 
   constructor(options: ShellPreferencesStoreOptions) {
     this.preferencesDir = options.preferencesDir ?? join(options.homePath, "system", "shell-preferences");
+    this.renameFileOps = options.renameFileOps ?? { mkdir, link, rm };
   }
 
   async load(name: string): Promise<ShellPreferences> {
@@ -99,9 +106,9 @@ export class ShellPreferencesStore {
     const safeToName = validateSessionName(toName);
     const fromPath = this.pathFor(safeFromName);
     const toPath = this.pathFor(safeToName);
-    await mkdir(dirname(toPath), { recursive: true, mode: 0o700 });
+    await this.renameFileOps.mkdir(dirname(toPath), { recursive: true, mode: 0o700 });
     try {
-      await link(fromPath, toPath);
+      await this.renameFileOps.link(fromPath, toPath);
     } catch (err: unknown) {
       if (
         err instanceof Error &&
@@ -121,9 +128,16 @@ export class ShellPreferencesStore {
     }
 
     try {
-      await rm(fromPath);
+      await this.renameFileOps.rm(fromPath);
     } catch (err: unknown) {
-      await rm(toPath, { force: true }).catch((cleanupErr: unknown) => {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return;
+      }
+      await this.renameFileOps.rm(toPath, { force: true }).catch((cleanupErr: unknown) => {
         console.warn(
           "[shell] failed to clean copied preferences during rename rollback:",
           cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
