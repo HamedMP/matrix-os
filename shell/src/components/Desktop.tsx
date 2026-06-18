@@ -1688,26 +1688,28 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     />
                   );
                 })}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-tasks"
-                      onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
-                      className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                        taskBoardOpen
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card border-border/60"
-                      }`}
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                    >
-                      <KanbanSquareIcon className="size-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side={tooltipSide} sideOffset={8}>
-                    Launcher
-                  </TooltipContent>
-                </Tooltip>
+                {modeConfig.showLauncher && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        data-testid="dock-tasks"
+                        onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                        className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                          taskBoardOpen
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-card border-border/60"
+                        }`}
+                        style={{ width: dock.iconSize, height: dock.iconSize }}
+                      >
+                        <KanbanSquareIcon className="size-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side={tooltipSide} sideOffset={8}>
+                      Launcher
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1806,17 +1808,19 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 />
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
-              className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
-                taskBoardOpen
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card border-border/60"
-              }`}
-            >
-              <KanbanSquareIcon className="size-4" />
-            </button>
+            {modeConfig.showLauncher && (
+              <button
+                type="button"
+                onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
+                  taskBoardOpen
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card border-border/60"
+                }`}
+              >
+                <KanbanSquareIcon className="size-4" />
+              </button>
+            )}
             <ModeSwitcher iconSize={36} tooltipSide="top" />
             <button
               type="button"

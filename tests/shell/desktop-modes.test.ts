@@ -50,6 +50,7 @@ describe("Desktop Mode Store", () => {
     expect(config.showBottomPanel).toBe(true);
     expect(config.chatPosition).toBe("sidebar");
     expect(config.terminalProminent).toBe(true);
+    expect(config.showLauncher).toBe(false);
     expect(config.hidden).toBeUndefined();
   });
 
@@ -60,6 +61,7 @@ describe("Desktop Mode Store", () => {
     expect(config.showWindows).toBe(true);
     expect(config.showBottomPanel).toBe(false);
     expect(config.chatPosition).toBe("sidebar");
+    expect(config.showLauncher).toBe(true);
   });
 
   it("allModes returns all 4 modes with canvas first", () => {
