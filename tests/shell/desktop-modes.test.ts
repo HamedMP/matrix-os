@@ -30,6 +30,7 @@ describe("Desktop Mode Store", () => {
     expect(config.showDock).toBe(true);
     expect(config.showWindows).toBe(true);
     expect(config.showBottomPanel).toBe(false);
+    expect(config.showLauncher).toBe(true);
     expect(config.chatPosition).toBe("sidebar");
   });
 
@@ -39,6 +40,7 @@ describe("Desktop Mode Store", () => {
     expect(config.showDock).toBe(false);
     expect(config.showWindows).toBe(false);
     expect(config.showBottomPanel).toBe(false);
+    expect(config.showLauncher).toBe(false);
     expect(config.chatPosition).toBe("center");
   });
 
