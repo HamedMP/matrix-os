@@ -7,12 +7,12 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-This quickstart gets a developer from zero to a running Matrix workspace.
+This quickstart gets a developer from zero to a running Matrix developer computer.
 
 ## Fastest path: paste the setup prompt
 
-<Callout type="info" title="Let your coding agent install Matrix">
-  Give the prompt below to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another terminal agent so it can install the CLI, guide `matrix login --profile cloud`, and start work on your cloud computer through in-VPS browser/device login.
+<Callout type="info" title="Let your coding agent drive setup">
+  Give the prompt below to Claude Code, Codex, Pi, OpenCode, Cursor, Gemini CLI, or another terminal agent. It keeps human approvals in the browser, uses one persistent Matrix terminal session, and keeps local secrets off the cloud computer.
 </Callout>
 
 ```text
@@ -21,11 +21,15 @@ Help me set up Matrix OS, my own cloud dev computer.
 Steps:
 1. Install the CLI: npm install -g @finnaai/matrix or brew install finnaai/tap/matrix.
 2. Run matrix login --profile cloud. It opens a browser/device login that I will approve.
-3. If no Matrix instance exists, tell me to sign up at https://app.matrix-os.com, then re-run login.
-4. Verify with matrix doctor and matrix whoami.
-5. Start my preferred coding agent inside Matrix with matrix run -it --session setup -- claude or matrix run -it --session setup -- codex. I will complete that tool's own login inside the remote terminal.
+3. If no Matrix computer exists yet, keep the login running while I finish signup, checkout, and provisioning in the browser.
+4. Verify with matrix doctor and matrix whoami, then wait until the Matrix computer is ready.
+5. Use one persistent setup session: matrix shell connect -c setup.
+6. Authenticate GitHub separately inside Matrix with matrix run -it --session setup -- gh auth login. Use browser login only.
+7. For SSH repository access, use a Matrix-managed SSH key created inside the Matrix runtime. Register or show only the public key for GitHub. Do not use GitHub CLI's optional SSH-key generator as the secure path.
+8. Clone the repository under ~/projects after I confirm the repo URL.
+9. Start my preferred coding agent inside Matrix with matrix run -it --session setup -- claude or matrix run -it --session setup -- codex. I will complete that tool's own login inside the remote terminal.
 
-Do not scan my local machine for credentials or upload secret files. Everything authenticates through its own browser/device flow.
+Do not scan my local machine for credentials. Do not upload local private keys or secret files. Everything authenticates through its own browser/device flow or a Matrix-managed SSH key inside the runtime.
 ```
 
 <Cards>
@@ -43,7 +47,7 @@ Do not scan my local machine for credentials or upload secret files. Everything 
   <Step>
     ### Sign up
 
-    Go to `https://app.matrix-os.com`, create your account, and choose your Matrix handle. The handle becomes your Matrix identity and workspace address.
+    Go to `https://app.matrix-os.com`, create your account, and choose your Matrix handle. The handle becomes your Matrix identity and runtime address.
   </Step>
   <Step>
     ### Choose power and region
@@ -58,18 +62,18 @@ Do not scan my local machine for credentials or upload secret files. Everything 
   <Step>
     ### Land in the shell
 
-    When provisioning finishes, Matrix opens the web shell. Use it to chat with Matrix, open Terminal, browse files, start apps, and connect services.
+    When provisioning finishes, Matrix opens the web shell. Start with Terminal; Canvas, files, preview, and Symphony are support surfaces after the developer basics are ready.
   </Step>
   <Step>
     ### Authenticate GitHub
 
-    Open Terminal and run:
+    Authenticate the GitHub account first. Open Terminal and run:
 
     ```bash
     gh auth login
     ```
 
-    GitHub authenticates inside your Matrix workspace so terminal panes, coding agents, and future IDE surfaces share the same remote identity.
+    Then use Matrix's secure SSH setup when it is offered. Matrix creates a Matrix-managed SSH key inside your runtime, sends only the public key to GitHub, and never needs your laptop's private key.
   </Step>
   <Step>
     ### Clone a repo
