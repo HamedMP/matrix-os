@@ -284,6 +284,15 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
     expect(saveThemeSpy).not.toHaveBeenCalled();
+
+    fetchMock.mockClear();
+    await act(async () => {
+      fireEvent.click(button);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("dialog", { name: "Shell theme" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("saves terminal shell theme preferences to the session-scoped API", async () => {

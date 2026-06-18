@@ -1425,6 +1425,10 @@ function ThemePickerButton() {
   }, [shellThemeOpen]);
 
   const openShellThemeChooser = () => {
+    if (shellThemeOpen) {
+      setShellThemeOpen(false);
+      return;
+    }
     loadShellThemePreference(sessionName, setTerminalThemeId);
     setShellThemeOpen(true);
   };
