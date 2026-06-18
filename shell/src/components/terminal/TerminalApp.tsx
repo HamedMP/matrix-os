@@ -4,7 +4,6 @@ import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, use
 import {
   BotIcon,
   CheckIcon,
-  ChevronRightIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
   ClipboardPasteIcon,
@@ -13,7 +12,6 @@ import {
   GripVerticalIcon,
   KeyboardIcon,
   LinkIcon,
-  MonitorIcon,
   PanelLeftOpenIcon,
   PencilIcon,
   PlusIcon,
@@ -26,9 +24,8 @@ import {
 } from "lucide-react";
 import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
-import { saveTheme, useTheme } from "@/hooks/useTheme";
+import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
-import { MATRIX_OS_APP_THEME_OPTIONS, MATRIX_OS_DARK_THEME, MATRIX_OS_LIGHT_THEME } from "@/lib/theme-presets";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import { useTerminalSettings, type ShellThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
@@ -62,24 +59,6 @@ const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
   height: 34,
   justifyContent: "center",
   padding: "0 12px",
-};
-
-const PAPER_THEME_MENU_STYLE: CSSProperties = {
-  background: "#20241C",
-  border: "1px solid #2D3127",
-  borderRadius: 14,
-  boxShadow: "0 18px 44px rgba(0, 0, 0, 0.42)",
-  color: "#F0EFE5",
-  display: "flex",
-  flexDirection: "column",
-  gap: 2,
-  marginTop: 8,
-  padding: 6,
-  position: "absolute",
-  right: 0,
-  top: 34,
-  width: 280,
-  zIndex: 50,
 };
 
 const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
@@ -1207,7 +1186,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   // Construct store-compatible interface for child components
   const storeApi = {
-    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile, themeName: theme.name, windowControls,
+    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
     addTab, addSessionTab, createShellSessionTab, backgroundShellSession, closeTab, setActiveTab: setActiveTabId, renameTab, renameShellSession, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
@@ -1304,7 +1283,6 @@ interface TerminalAppContextType {
   sidebarSelectedPath: string | null;
   focusedPaneId: string | null;
   mobile: boolean;
-  themeName: string;
   windowControls?: TerminalWindowControls;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
@@ -1421,13 +1399,9 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
 
 function ThemePickerButton() {
   const ctx = useTerminalAppContext();
-  const [open, setOpen] = useState(false);
   const [shellThemeOpen, setShellThemeOpen] = useState(false);
-  const [selectedAppThemeOverride, setSelectedAppThemeOverride] = useState<string | null>(null);
-  const [matchSystem, setMatchSystem] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const setTerminalThemeId = useTerminalSettings((s) => s.setThemeId);
-  const selectedAppThemeName = selectedAppThemeOverride ?? ctx.themeName;
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
   const focusedPaneId = ctx.focusedPaneId ?? (activeTab ? getFirstPaneId(activeTab.paneTree) : null);
   const sessionName = activeTab && focusedPaneId
@@ -1435,12 +1409,12 @@ function ThemePickerButton() {
     : null;
 
   useEffect(() => {
-    if (!open) return;
+    if (!shellThemeOpen) return;
     const onClick = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!wrapRef.current?.contains(e.target as Node)) setShellThemeOpen(false);
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") setShellThemeOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     document.addEventListener("keydown", onKeyDown);
@@ -1448,35 +1422,12 @@ function ThemePickerButton() {
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [shellThemeOpen]);
 
-  const persistTheme = (theme: (typeof MATRIX_OS_APP_THEME_OPTIONS)[number]["theme"], nextMatchSystem = false) => {
-    setSelectedAppThemeOverride(theme.name);
-    setMatchSystem(nextMatchSystem);
-    void saveTheme(theme).catch((err: unknown) => {
-      console.warn("Failed to save terminal app theme:", err instanceof Error ? err.message : err);
-    });
+  const openShellThemeChooser = () => {
+    loadShellThemePreference(sessionName, setTerminalThemeId);
+    setShellThemeOpen(true);
   };
-
-  const applySystemTheme = () => {
-    const prefersDark = typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-    persistTheme(prefersDark ? MATRIX_OS_DARK_THEME : MATRIX_OS_LIGHT_THEME, true);
-  };
-
-  const panel = (
-    <ThemePickerPanel
-      matchSystem={matchSystem}
-      mobile={ctx.mobile}
-      selectedAppThemeName={selectedAppThemeName}
-      onSelectTheme={(theme) => persistTheme(theme, false)}
-      onShellThemeOpen={() => {
-        loadShellThemePreference(sessionName, setTerminalThemeId);
-        setOpen(false);
-        setShellThemeOpen(true);
-      }}
-      onSystemTheme={applySystemTheme}
-    />
-  );
 
   return (
     <div
@@ -1490,7 +1441,7 @@ function ThemePickerButton() {
         aria-label="Theme"
         title="Theme"
         style={PAPER_THEME_BUTTON_STYLE}
-        onClick={() => setOpen((o) => !o)}
+        onClick={openShellThemeChooser}
       >
         <span style={{ color: "#CF7835", fontSize: 17, fontWeight: 600, lineHeight: "22px" }}>☼</span>
         <span>Theme</span>
@@ -1501,207 +1452,6 @@ function ThemePickerButton() {
           sessionName={sessionName}
           onClose={() => setShellThemeOpen(false)}
         />
-      ) : null}
-      {open && (ctx.mobile ? (
-        <div
-          aria-label="Theme picker overlay"
-          role="presentation"
-          style={{
-            alignItems: "flex-end",
-            background: "rgba(2, 5, 2, 0.58)",
-            display: "flex",
-            inset: 0,
-            justifyContent: "center",
-            paddingTop: 64,
-            position: "fixed",
-            zIndex: 80,
-          }}
-        >
-          {panel}
-        </div>
-      ) : (
-        panel
-      ))}
-    </div>
-  );
-}
-
-function ThemePickerPanel({
-  matchSystem,
-  mobile,
-  selectedAppThemeName,
-  onSelectTheme,
-  onShellThemeOpen,
-  onSystemTheme,
-}: {
-  matchSystem: boolean;
-  mobile: boolean;
-  selectedAppThemeName: string;
-  onSelectTheme: (theme: (typeof MATRIX_OS_APP_THEME_OPTIONS)[number]["theme"]) => void;
-  onShellThemeOpen: () => void;
-  onSystemTheme: () => void;
-}) {
-  const panelStyle: CSSProperties = mobile
-    ? {
-        background: "#FBFAF2",
-        borderRadius: "24px 24px 0 0",
-        boxShadow: "0 -18px 44px rgba(0, 0, 0, 0.28)",
-        color: "#2F332C",
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-        maxWidth: 390,
-        padding: "10px 20px 14px",
-        width: "100%",
-      }
-    : PAPER_THEME_MENU_STYLE;
-  const rowHeight = mobile ? 64 : 51;
-  const previewSize = mobile ? { width: 48, height: 38 } : { width: 40, height: 32 };
-
-  return (
-    <div
-      role={mobile ? "dialog" : "menu"}
-      aria-label="Theme"
-      style={panelStyle}
-      onPointerDown={(event) => event.stopPropagation()}
-      onMouseDown={(event) => event.stopPropagation()}
-    >
-      {mobile ? (
-        <>
-          <div style={{ alignSelf: "center", background: "#D4D4C4", borderRadius: 999, height: 5, width: 42 }} />
-          <div style={{ color: "#20241C", fontSize: 20, fontWeight: 750, lineHeight: "24px" }}>Theme</div>
-        </>
-      ) : (
-        <div style={{ padding: "8px 10px 4px" }}>
-          <div style={{ color: "#6F7167", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", lineHeight: "14px", textTransform: "uppercase" }}>
-            Theme
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: "flex", flexDirection: "column", gap: mobile ? 0 : 2 }}>
-        {MATRIX_OS_APP_THEME_OPTIONS.map((option) => {
-          const selected = selectedAppThemeName === option.theme.name;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={selected}
-              aria-label={`${option.label} ${option.description}`}
-              onClick={() => onSelectTheme(option.theme)}
-              style={{
-                alignItems: "center",
-                background: selected ? (mobile ? "#F2F1E6" : "#2A2E22") : "transparent",
-                border: mobile ? "1px solid transparent" : 0,
-                borderColor: selected && mobile ? "#DEDCCF" : "transparent",
-                borderRadius: mobile ? 10 : 10,
-                color: mobile ? "#2F332C" : "#F0EFE5",
-                cursor: "pointer",
-                display: "flex",
-                gap: mobile ? 14 : 12,
-                minHeight: rowHeight,
-                padding: mobile ? "12px 14px" : "8px 10px",
-                textAlign: "left",
-                width: "100%",
-              }}
-            >
-              <ThemePreviewSwatch colors={option.preview} height={previewSize.height} width={previewSize.width} />
-              <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
-                <span style={{ color: mobile ? "#20241C" : "#F0EFE5", fontSize: mobile ? 16 : 14, fontWeight: 650, lineHeight: mobile ? "20px" : "18px" }}>
-                  {option.label}
-                </span>
-                <span style={{ color: mobile ? "#77786C" : "#858578", fontSize: mobile ? 13 : 12, lineHeight: mobile ? "16px" : "16px" }}>
-                  {option.description}
-                </span>
-              </span>
-              {selected ? <CheckIcon size={mobile ? 20 : 18} strokeWidth={2.4} style={{ color: mobile ? "#4F8A55" : "#9CB77A", flexShrink: 0 }} /> : null}
-            </button>
-          );
-        })}
-      </div>
-
-      <ThemeDivider mobile={mobile} />
-      <button
-        type="button"
-        aria-label="Match system"
-        onClick={onSystemTheme}
-        style={{
-          alignItems: "center",
-          background: "transparent",
-          border: 0,
-          borderRadius: 10,
-          color: mobile ? "#2F332C" : "#C9C7B7",
-          cursor: "pointer",
-          display: "flex",
-          gap: 12,
-          minHeight: mobile ? 32 : 48,
-          padding: mobile ? "2px 12px" : "8px 10px",
-          textAlign: "left",
-          width: "100%",
-        }}
-      >
-        <span style={themeUtilityIconStyle(mobile)}>
-          <MonitorIcon size={mobile ? 20 : 17} strokeWidth={2} />
-        </span>
-        <span style={{ flex: 1, fontSize: mobile ? 16 : 14, fontWeight: 650, lineHeight: mobile ? "20px" : "18px" }}>
-          Match system
-        </span>
-        <ThemeSwitch checked={matchSystem} mobile={mobile} />
-      </button>
-
-      <ThemeDivider mobile={mobile} />
-      <button
-        type="button"
-        aria-label="Change shell theme Advanced terminal colors"
-        onClick={onShellThemeOpen}
-        style={{
-          alignItems: "center",
-          background: mobile ? "#F2F1E6" : "#1E241B",
-          border: `1px solid ${mobile ? "#DEDCCF" : "#303729"}`,
-          borderRadius: 10,
-          color: mobile ? "#2F332C" : "#EDEBDD",
-          cursor: "pointer",
-          display: "flex",
-          gap: 12,
-          minHeight: mobile ? 64 : 48,
-          padding: mobile ? "12px 14px" : "8px 10px",
-          textAlign: "left",
-          width: "100%",
-        }}
-      >
-        <span
-          style={{
-            ...themeUtilityIconStyle(mobile),
-            background: mobile ? "#FFFFFF" : "#12170F",
-            borderColor: mobile ? "#DEDDD1" : "#3A4233",
-            color: mobile ? "#77786C" : "#D7D4C2",
-          }}
-        >
-          <SquareTerminalIcon size={mobile ? 18 : 16} strokeWidth={2.1} />
-        </span>
-        <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
-          <span style={{ color: mobile ? "#2F332C" : "#EDEBDD", fontSize: mobile ? 14 : 13, fontWeight: 700, lineHeight: mobile ? "18px" : "16px" }}>
-            Change shell theme
-          </span>
-          <span style={{ color: mobile ? "#77786C" : "#AFAE9F", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
-            Advanced · terminal colors
-          </span>
-        </span>
-        <ChevronRightIcon
-          size={mobile ? 18 : 16}
-          strokeWidth={2}
-          style={{
-            color: mobile ? "#77786C" : "#C9C7B7",
-            flexShrink: 0,
-          }}
-        />
-      </button>
-
-      {mobile ? (
-        <div style={{ alignItems: "center", display: "flex", height: 22, justifyContent: "center" }}>
-          <div style={{ background: "#000000", borderRadius: 999, height: 5, width: 140 }} />
-        </div>
       ) : null}
     </div>
   );
@@ -1991,99 +1741,6 @@ function ShellThemePreviewIcon({
       </span>
     </span>
   );
-}
-
-function ThemePreviewSwatch({
-  colors,
-  height,
-  width,
-}: {
-  colors: (typeof MATRIX_OS_APP_THEME_OPTIONS)[number]["preview"];
-  height: number;
-  width: number;
-}) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        background: colors.background,
-        border: `1px solid ${colors.border}`,
-        borderRadius: 8,
-        display: "flex",
-        flexDirection: "column",
-        flexShrink: 0,
-        gap: 4,
-        height,
-        justifyContent: "center",
-        padding: 7,
-        width,
-      }}
-    >
-      <span style={{ background: colors.stripe, borderRadius: 2, display: "block", height: 3, width: Math.max(18, width - 22) }} />
-      <span style={{ display: "flex", gap: 3 }}>
-        <span style={{ background: colors.dotA, borderRadius: 999, display: "block", height: width > 40 ? 7 : 6, width: width > 40 ? 7 : 6 }} />
-        <span style={{ background: colors.dotB, borderRadius: 999, display: "block", height: width > 40 ? 7 : 6, width: width > 40 ? 7 : 6 }} />
-      </span>
-    </span>
-  );
-}
-
-function ThemeDivider({ mobile }: { mobile: boolean }) {
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        background: mobile ? "#DEDDD1" : "#2A2E22",
-        height: 1,
-        margin: mobile ? "6px 0" : "4px 8px",
-      }}
-    />
-  );
-}
-
-function ThemeSwitch({ checked, mobile }: { checked: boolean; mobile: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        alignItems: "center",
-        background: checked ? "#CFE0B6" : mobile ? "#E2E1D4" : "#2A2E22",
-        border: `1px solid ${checked ? "#A8C77F" : mobile ? "#D4D3C7" : "#3A3E30"}`,
-        borderRadius: 999,
-        display: "flex",
-        flexShrink: 0,
-        height: mobile ? 28 : 23,
-        justifyContent: checked ? "flex-end" : "flex-start",
-        padding: 3,
-        width: mobile ? 46 : 40,
-      }}
-    >
-      <span
-        style={{
-          background: checked ? "#4F8A55" : mobile ? "#FBFAF2" : "#5A5D50",
-          borderRadius: 999,
-          display: "block",
-          height: mobile ? 22 : 17,
-          width: mobile ? 22 : 17,
-        }}
-      />
-    </span>
-  );
-}
-
-function themeUtilityIconStyle(mobile: boolean): CSSProperties {
-  return {
-    alignItems: "center",
-    background: mobile ? "#FFFFFF" : "#171A13",
-    border: `1px solid ${mobile ? "#DEDDD1" : "#2D3127"}`,
-    borderRadius: 8,
-    color: mobile ? "#77786C" : "#858578",
-    display: "flex",
-    flexShrink: 0,
-    height: mobile ? 38 : 32,
-    justifyContent: "center",
-    width: mobile ? 38 : 40,
-  };
 }
 
 function isTerminalChromeControl(target: EventTarget | null): boolean {

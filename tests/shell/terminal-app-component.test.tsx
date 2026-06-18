@@ -245,7 +245,8 @@ describe("TerminalApp", () => {
     expect(screen.queryByText("Zellij")).toBeNull();
   });
 
-  it("renders the Paper theme button and saves Paper app themes", async () => {
+  it("opens terminal-only theme preferences without global Matrix OS theme controls", async () => {
+    const fetchMock = vi.mocked(fetch);
     render(<TerminalApp />);
 
     await act(async () => {
@@ -253,6 +254,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    fetchMock.mockClear();
 
     const button = screen.getByRole("button", { name: "Theme" });
     expect(button.textContent?.replace(/\s+/g, "")).toBe("☼Theme");
@@ -266,30 +268,25 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
-    expect(screen.getByText("Warm paper")).toBeTruthy();
-    expect(screen.getByText("Warm dark")).toBeTruthy();
-    expect(screen.getByText("Phosphor green")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Match system" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Change shell theme/ })).toBeTruthy();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix Phosphor green" }));
-      await Promise.resolve();
-    });
-
-    expect(saveThemeSpy).toHaveBeenCalledWith(expect.objectContaining({
-      name: "matrix",
-      mode: "dark",
-      colors: expect.objectContaining({
-        background: "#020A02",
-        primary: "#39FF6A",
-        ring: "#39FF6A",
-      }),
-    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(screen.getByRole("dialog", { name: "Shell theme" })).toBeTruthy();
+    expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
+    expect(screen.getByText("gruvbox-light")).toBeTruthy();
+    expect(screen.getByText("custom · green on black")).toBeTruthy();
+    expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
+    expect(screen.queryByText("Warm paper")).toBeNull();
+    expect(screen.queryByText("Warm dark")).toBeNull();
+    expect(screen.queryByText("Phosphor green")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Match system" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
+    expect(saveThemeSpy).not.toHaveBeenCalled();
   });
 
-  it("opens the Paper shell-theme chooser from the Theme menu", async () => {
+  it("saves terminal shell theme preferences to the session-scoped API", async () => {
     const fetchMock = vi.mocked(fetch);
     render(<TerminalApp />);
 
@@ -304,10 +301,6 @@ describe("TerminalApp", () => {
       fireEvent.click(screen.getByRole("button", { name: "Theme" }));
       await Promise.resolve();
     });
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Change shell theme/ }));
-      await Promise.resolve();
-    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/api/terminal/sessions/main/preferences"),
@@ -319,6 +312,7 @@ describe("TerminalApp", () => {
     expect(screen.getByText("custom · green on black")).toBeTruthy();
     expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
+    expect(saveThemeSpy).not.toHaveBeenCalled();
 
     fetchMock.mockClear();
     await act(async () => {
