@@ -49,6 +49,17 @@ const CANVAS_WINDOW_MOTION_CSS = `
   }
 }
 `;
+const CANVAS_WINDOW_MOTION_STYLE_ID = "matrix-canvas-window-motion-styles";
+
+function ensureCanvasWindowMotionStyles() {
+  if (typeof document === "undefined" || document.getElementById(CANVAS_WINDOW_MOTION_STYLE_ID)) {
+    return;
+  }
+  const style = document.createElement("style");
+  style.id = CANVAS_WINDOW_MOTION_STYLE_ID;
+  style.textContent = CANVAS_WINDOW_MOTION_CSS;
+  document.head.appendChild(style);
+}
 
 const win98Bevel = {
   borderTop: "1.5px solid var(--neu-shadow-light)",
@@ -66,7 +77,7 @@ interface CanvasWindowProps {
   deferAppContent?: boolean;
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-window renderer: the bulk is two theme-specific title-bar JSX trees (mac vs win98) plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- cohesive single-window renderer: the bulk is two theme-specific title-bar JSX trees (mac vs win98) plus drag/resize/fullscreen pointer handlers that all share the same window state and refs. Splitting would require threading every handler and ref through props with no readability or reuse gain.
 export function CanvasWindow({ win, hidden = false, deferAppContent = false }: CanvasWindowProps) {
   const chatState = useChatContext();
   const zoom = useCanvasTransform((s) => s.zoom);
@@ -101,6 +112,13 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
   const minimizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [restoreMotion, setRestoreMotion] = useState({ animate: false, previousHidden: hidden });
+  if (restoreMotion.previousHidden !== hidden) {
+    setRestoreMotion({
+      animate: restoreMotion.previousHidden && !hidden,
+      previousHidden: hidden,
+    });
+  }
 
   const clearWindowMotionTimers = () => {
     if (minimizeTimerRef.current) {
@@ -109,7 +127,21 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
     }
   };
 
+  useEffect(() => {
+    ensureCanvasWindowMotionStyles();
+  }, []);
+
   useEffect(() => () => clearWindowMotionTimers(), []);
+
+  useEffect(() => {
+    if (!restoreMotion.animate) return;
+    const restoreAnimationTimer = setTimeout(() => {
+      setRestoreMotion((current) => current.animate
+        ? { ...current, animate: false }
+        : current);
+    }, CANVAS_WINDOW_MOTION_MS);
+    return () => clearTimeout(restoreAnimationTimer);
+  }, [restoreMotion.animate]);
 
   useEffect(() => {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- `contentFocused` is event-captured (set true on the overlay pointerdown), not derivable from props; this effect resets it to false when the canvas starts scrolling or the window loses focus so the click-to-interact overlay reappears. Computing it in render would discard the user's click.
@@ -506,7 +538,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         pointerEvents: isPreview ? "auto" : undefined,
         display: hidden ? "none" : undefined,
       };
-  const shouldAnimateRestore = !hidden && minimizePhase !== "minimizing";
+  const shouldAnimateRestore = !hidden && minimizePhase !== "minimizing" && restoreMotion.animate;
   const dockDeltaX = -win.x - Math.max(0, win.width - 56);
   const dockDeltaY = 96 - win.y;
   const windowMotionStyle: React.CSSProperties = !isFullscreen
@@ -604,9 +636,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       className="absolute"
       data-canvas-window={!isPreview && !isFullscreen || undefined}
       style={{ ...wrapperStyle, ...windowMotionStyle }}
-      onMouseDown={isFullscreen ? undefined : () => focusWindow(win.id)}
+      onMouseDown={isFullscreen || terminalOwnsChrome ? undefined : () => focusWindow(win.id)}
     >
-      <style>{CANVAS_WINDOW_MOTION_CSS}</style>
       {!isFullscreen && !terminalOwnsChrome && titleBar}
       <div
         className={isFullscreen
