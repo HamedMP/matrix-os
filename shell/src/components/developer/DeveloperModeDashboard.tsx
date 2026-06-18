@@ -34,9 +34,13 @@ export function DeveloperModeDashboard({
   const [copied, setCopied] = useState(false);
 
   const copyPrompt = async () => {
-    await navigator.clipboard.writeText(setupPrompt);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
+    try {
+      await navigator.clipboard.writeText(setupPrompt);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch (err: unknown) {
+      console.warn("[DeveloperModeDashboard] clipboard write failed:", err instanceof Error ? err.message : String(err));
+    }
   };
 
   return (

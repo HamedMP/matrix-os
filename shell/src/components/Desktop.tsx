@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
@@ -625,8 +625,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       cache: "no-store",
       signal: controller.signal,
     })
-      .then((res) => {
+      .then(async (res) => {
         if (!res.ok) throw new Error("onboarding status unavailable");
+        const status = await res.json() as { complete?: unknown };
+        if (typeof status.complete !== "boolean") throw new Error("invalid onboarding status");
       })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
@@ -1182,7 +1184,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const hydrated = useDesktopMode((s) => s._hydrated);
   const modeConfig = getModeConfig(hydrated ? desktopMode : "dev");
-  const visibleWindowCount = windows.filter((w) => !w.minimized).length;
+  const visibleWindowCount = useMemo(() => windows.filter((w) => !w.minimized).length, [windows]);
   const developerDashboardVisible = firstRunStatus === "ready"
     && desktopMode === "dev"
     && visibleWindowCount === 0;
