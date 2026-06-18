@@ -11,6 +11,11 @@ import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { saveDesktopConfigPatch } from "@/hooks/useDesktopConfig";
 import { useWorkspaceCanvasStore } from "@/stores/workspace-canvas-store";
+import {
+  parseDesktopFirstRunStatus,
+  shouldApplyInitialDesktopDefaults,
+  type DesktopFirstRunStatus,
+} from "@/lib/desktop-first-run";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
 import { WorkspaceApp } from "./workspace/WorkspaceApp";
@@ -587,7 +592,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   // busy because the popup auto-opens then resists close.
   const [chatOpen, setChatOpen] = useState(false);
   const [minimizingIds, setMinimizingIds] = useState<Set<string>>(new Set());
-  const [firstRunStatus, setFirstRunStatus] = useState<"checking" | "ready">("checking");
+  const [firstRunStatus, setFirstRunStatus] = useState<DesktopFirstRunStatus>("checking");
+  const firstRunStatusRef = useRef<DesktopFirstRunStatus>("checking");
   const launchPathConsumedRef = useRef<string | null>(null);
   const [manualSetupVisible, setManualSetupVisible] = useState(false);
 
@@ -627,19 +633,23 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
     })
       .then(async (res) => {
         if (!res.ok) throw new Error("onboarding status unavailable");
-        const status = await res.json() as { complete?: unknown };
-        if (typeof status.complete !== "boolean") throw new Error("invalid onboarding status");
+        const nextStatus = parseDesktopFirstRunStatus(await res.json());
+        if (!cancelled) {
+          firstRunStatusRef.current = nextStatus;
+          setFirstRunStatus(nextStatus);
+        }
       })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
           console.warn("[desktop] first-run status check failed:", err);
         }
+        if (!cancelled) {
+          firstRunStatusRef.current = "ready";
+          setFirstRunStatus("ready");
+        }
       })
       .finally(() => {
         window.clearTimeout(timeout);
-        if (!cancelled) {
-          setFirstRunStatus("ready");
-        }
       });
     return () => {
       cancelled = true;
@@ -649,6 +659,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   }, []);
 
   const completeOnboarding = () => {
+    if (!shouldApplyInitialDesktopDefaults(firstRunStatusRef.current)) return;
+    firstRunStatusRef.current = "ready";
+    setFirstRunStatus("ready");
     void markOnboardingComplete().catch((err: unknown) => {
       console.warn("[desktop] onboarding completion persist failed:", err instanceof Error ? err.message : String(err));
     });
