@@ -34,6 +34,11 @@ Production customer runtime is VPS-native. Do not model new user-facing runtime 
 | `packages/platform/` | Clerk auth, customer VPS lifecycle, billing/provisioning gates, host-bundle release metadata, platform-owned integrations | Owner app data, per-owner runtime internals |
 | `packages/proxy/` | Shared API proxy, usage and quota accounting | Product-domain state or shell behavior |
 | `packages/sync-client/` | CLI, sync daemon, local profile/session commands | Gateway route ownership or platform provisioning |
+| `packages/observability/` | Shared telemetry, PostHog wiring, and error tracking helpers | Product-domain behavior or user-owned data |
+| `packages/edge-router/` | Edge routing helpers and Cloudflare-facing routing code | Owner runtime state or shell UI policy |
+| `packages/neo-worker/` | Cloudflare Worker surface for PostHog/edge support paths | Owner runtime APIs or platform database ownership |
+| `packages/mcp-browser/` | Browser automation MCP helpers and browser security utilities | Shell renderer state or app data persistence |
+| `packages/clerk-sync/` | Clerk user/profile synchronization helpers | General platform provisioning or owner app data |
 | `packages/ui/` | Shared UI primitives used by shells/apps | Domain business rules |
 | `shell/` | Browser shell renderer, Canvas/Desktop windows, frontend stores | Canonical backend source of truth |
 | `desktop/` | Desktop package/runtime integration | Web-only shell product logic |
