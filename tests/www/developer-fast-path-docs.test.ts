@@ -13,7 +13,9 @@ describe("developer fast path docs", () => {
     expect(promptIndex).toBeGreaterThanOrEqual(0);
     expect(manualIndex).toBeGreaterThan(promptIndex);
     expect(quickstart).toContain("matrix login --profile cloud");
+    expect(quickstart).toContain("matrix shell connect -c setup");
     expect(quickstart).toContain("matrix run -it --session setup -- gh auth login");
+    expect(quickstart).toContain("gh auth login --hostname github.com --web");
     expect(quickstart).toContain("Matrix-managed SSH key");
     expect(quickstart).toContain("Do not scan my local machine for credentials");
     expect(quickstart).toContain("Do not upload local private keys");

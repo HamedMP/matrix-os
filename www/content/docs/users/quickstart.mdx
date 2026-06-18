@@ -70,7 +70,7 @@ Do not scan my local machine for credentials. Do not upload local private keys o
     Authenticate the GitHub account first. Open Terminal and run:
 
     ```bash
-    gh auth login
+    gh auth login --hostname github.com --web
     ```
 
     Then use Matrix's secure SSH setup when it is offered. Matrix creates a Matrix-managed SSH key inside your runtime, sends only the public key to GitHub, and never needs your laptop's private key.
