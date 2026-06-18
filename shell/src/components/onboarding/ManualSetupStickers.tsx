@@ -269,13 +269,13 @@ export function ManualSetupStickers({ onOpenTerminal, onAskHermes, onClose }: Ma
           {...dragProps}
         >
           <p>
-            Use this if Matrix should work inside repositories. Pick GitHub.com, SSH, then browser login when the
-            terminal asks. SSH keeps coding sessions clean on your VPS.
+            Sign in to GitHub in the Matrix terminal first. Repository SSH should use a Matrix-managed SSH key
+            created inside the runtime. Do not upload local private keys.
           </p>
           <div className="mt-5">
             <StickerButton onClick={() => onOpenTerminal(createTerminalLaunchPath("github-ssh-login"))}>
               <GithubIcon className="size-4" aria-hidden="true" />
-              Run gh auth login
+              Run GitHub browser login
             </StickerButton>
           </div>
         </SetupSticker>

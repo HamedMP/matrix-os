@@ -26,7 +26,11 @@ describe("terminal launch paths", () => {
       label: "Codex login",
       command: "codex",
     });
-    expect(parseTerminalLaunchPath(createTerminalLaunchPath("github-ssh-login"))?.command).toContain("gh auth login --hostname github.com --git-protocol ssh --web");
+    const githubLogin = parseTerminalLaunchPath(createTerminalLaunchPath("github-ssh-login"));
+    expect(githubLogin?.label).toBe("GitHub browser login");
+    expect(githubLogin?.command).toContain("gh auth login --hostname github.com --web");
+    expect(githubLogin?.command).toContain("Matrix-managed key");
+    expect(githubLogin?.command).not.toContain("--git-protocol ssh");
   });
 
   it("ignores ordinary terminal paths", () => {
