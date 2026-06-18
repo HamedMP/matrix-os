@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
@@ -12,7 +12,17 @@ const terminalRender = vi.hoisted(() => vi.fn());
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: (props: unknown) => {
     terminalRender(props);
-    return <button type="button">Terminal tab one</button>;
+    return (
+      <button
+        type="button"
+        onPointerDown={() => {
+          const recorder = (globalThis as { __recordTerminalPointerFocus?: () => void }).__recordTerminalPointerFocus;
+          recorder?.();
+        }}
+      >
+        Terminal tab one
+      </button>
+    );
   },
 }));
 
@@ -78,6 +88,11 @@ describe("CanvasWindow terminal interactivity", () => {
     });
   });
 
+  afterEach(() => {
+    delete (globalThis as { __recordTerminalPointerFocus?: () => void }).__recordTerminalPointerFocus;
+    vi.useRealTimers();
+  });
+
   it("does not render the iframe click shield over built-in terminal controls", () => {
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 
@@ -85,10 +100,49 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeNull();
   });
 
+  it("focuses terminal Canvas windows during capture before terminal child handling", () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: null,
+      fullscreenWindowId: null,
+    });
+    const childFocusStates: Array<string | null> = [];
+    (globalThis as { __recordTerminalPointerFocus?: () => void }).__recordTerminalPointerFocus = () => {
+      childFocusStates.push(useWindowManager.getState().focusedWindowId);
+    };
+
+    render(<CanvasWindow win={terminalWindow} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Terminal tab one" }), { button: 0 });
+
+    expect(childFocusStates).toEqual(["win-terminal"]);
+    expect(useWindowManager.getState().focusedWindowId).toBe("win-terminal");
+  });
+
+  it("does not draw the generic Canvas focus ring around terminal content", () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: "win-terminal",
+      fullscreenWindowId: null,
+    });
+
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+
+    expect(container.innerHTML).not.toContain("ring-primary/30");
+  });
+
   it("lets Terminal own Canvas chrome and passes window controls into it", () => {
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 
-    expect(container.textContent).toBe("Terminal tab one");
+    expect(container.textContent).toContain("Terminal tab one");
     expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
       launchTargetId: "win-terminal",
       windowControls: expect.objectContaining({
@@ -128,24 +182,60 @@ describe("CanvasWindow terminal interactivity", () => {
       };
     };
     const target = { setPointerCapture: vi.fn() };
-    props.windowControls.dragHandleProps.onPointerDown({
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-      clientX: 100,
-      clientY: 120,
-      pointerId: 1,
-      target,
+    act(() => {
+      props.windowControls.dragHandleProps.onPointerDown({
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        clientX: 100,
+        clientY: 120,
+        pointerId: 1,
+        target,
+      });
+      props.windowControls.dragHandleProps.onPointerMove({
+        clientX: 132,
+        clientY: 148,
+      });
+      props.windowControls.dragHandleProps.onPointerUp();
     });
-    props.windowControls.dragHandleProps.onPointerMove({
-      clientX: 132,
-      clientY: 148,
-    });
-    props.windowControls.dragHandleProps.onPointerUp();
 
     expect(useWindowManager.getState().getWindow("win-terminal")).toMatchObject({
       x: 52,
       y: 58,
     });
+  });
+
+  it("animates Canvas terminal minimize before marking the window minimized", () => {
+    vi.useFakeTimers();
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: "win-terminal",
+      fullscreenWindowId: null,
+    });
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+    const props = terminalRender.mock.lastCall?.[0] as {
+      windowControls: {
+        minimize: () => void;
+      };
+    };
+
+    act(() => {
+      props.windowControls.minimize();
+    });
+
+    const wrapper = container.querySelector("[data-canvas-window]") as HTMLElement;
+    expect(useWindowManager.getState().getWindow("win-terminal")?.minimized).toBe(false);
+    expect(wrapper.style.transition).toContain("transform");
+    expect(wrapper.style.opacity).toBe("0");
+
+    act(() => {
+      vi.advanceTimersByTime(280);
+    });
+
+    expect(useWindowManager.getState().getWindow("win-terminal")?.minimized).toBe(true);
   });
 
   it("keeps the click shield for iframe app windows", () => {

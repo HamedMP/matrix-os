@@ -34,6 +34,21 @@ function useThemeStyle() {
 
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
+const CANVAS_WINDOW_MOTION_MS = 280;
+const CANVAS_WINDOW_MOTION_CSS = `
+@keyframes canvas-window-restore-from-dock {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translate(var(--canvas-window-dock-dx), var(--canvas-window-dock-dy)) scale(0.04);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate(0, 0) scale(1);
+  }
+}
+`;
 
 const win98Bevel = {
   borderTop: "1.5px solid var(--neu-shadow-light)",
@@ -75,6 +90,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const isNeumorphic = themeStyle === "neumorphic";
 
   const [interacting, setInteracting] = useState(false);
+  const [minimizePhase, setMinimizePhase] = useState<"idle" | "minimizing">("idle");
   const isInteractive = zoom >= INTERACTION_THRESHOLD;
   const inverseScale = 1 / zoom;
 
@@ -84,6 +100,16 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
+  const minimizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearWindowMotionTimers = () => {
+    if (minimizeTimerRef.current) {
+      clearTimeout(minimizeTimerRef.current);
+      minimizeTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => () => clearWindowMotionTimers(), []);
 
   useEffect(() => {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- `contentFocused` is event-captured (set true on the overlay pointerdown), not derivable from props; this effect resets it to false when the canvas starts scrolling or the window loses focus so the click-to-interact overlay reappears. Computing it in render would discard the user's click.
@@ -229,6 +255,21 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
     };
   };
 
+  const animateMinimize = () => {
+    if (minimizePhase === "minimizing") return;
+    if (isFullscreen) {
+      minimizeWindow(win.id);
+      return;
+    }
+    clearWindowMotionTimers();
+    setMinimizePhase("minimizing");
+    minimizeTimerRef.current = setTimeout(() => {
+      minimizeTimerRef.current = null;
+      minimizeWindow(win.id);
+      setMinimizePhase("idle");
+    }, CANVAS_WINDOW_MOTION_MS);
+  };
+
   // Double-clicking the title bar zooms the canvas so this app fills the
   // viewport (and centers it) — a quick "zoom into this app" gesture.
   const onTitleDoubleClick = () => {
@@ -309,7 +350,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         <TrafficLights
           className="mr-2 shrink-0 relative z-10"
           onClose={() => closeWindow(win.id)}
-          onMinimize={() => minimizeWindow(win.id)}
+          onMinimize={animateMinimize}
           onFullscreen={() => useWindowManager.getState().toggleFullscreen(win.id)}
         />
         {/* Centered title with icon */}
@@ -386,7 +427,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
               fontSize: "12px",
               lineHeight: 1,
             }}
-            onClick={(e) => { e.stopPropagation(); minimizeWindow(win.id); }}
+            onClick={(e) => { e.stopPropagation(); animateMinimize(); }}
             aria-label="Minimize"
           >
             <Minus className="size-2.5" />
@@ -465,6 +506,28 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         pointerEvents: isPreview ? "auto" : undefined,
         display: hidden ? "none" : undefined,
       };
+  const shouldAnimateRestore = !hidden && minimizePhase !== "minimizing";
+  const dockDeltaX = -win.x - Math.max(0, win.width - 56);
+  const dockDeltaY = 96 - win.y;
+  const windowMotionStyle: React.CSSProperties = !isFullscreen
+    ? {
+        "--canvas-window-dock-dx": `${dockDeltaX}px`,
+        "--canvas-window-dock-dy": `${dockDeltaY}px`,
+        animation: shouldAnimateRestore
+          ? `canvas-window-restore-from-dock ${CANVAS_WINDOW_MOTION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`
+          : undefined,
+        filter: minimizePhase === "minimizing" ? "blur(2px)" : undefined,
+        opacity: minimizePhase === "minimizing" ? 0 : undefined,
+        pointerEvents: minimizePhase === "minimizing" ? "none" : wrapperStyle.pointerEvents,
+        transform: minimizePhase === "minimizing"
+          ? "translate(var(--canvas-window-dock-dx), var(--canvas-window-dock-dy)) scale(0.04)"
+          : wrapperStyle.transform,
+        transformOrigin: minimizePhase === "minimizing" ? "left center" : wrapperStyle.transformOrigin,
+        transition: minimizePhase === "minimizing"
+          ? `transform ${CANVAS_WINDOW_MOTION_MS}ms cubic-bezier(0.5, 0, 0.7, 0.4), opacity ${CANVAS_WINDOW_MOTION_MS}ms cubic-bezier(0.4, 0, 1, 1), filter ${CANVAS_WINDOW_MOTION_MS}ms ease-out`
+          : undefined,
+      } as React.CSSProperties
+    : {};
 
   const contentStyle: React.CSSProperties = isFullscreen
     ? { width: vw, height: vh }
@@ -478,7 +541,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
           launchTargetId={win.id}
           windowControls={{
             close: () => closeWindow(win.id),
-            minimize: () => minimizeWindow(win.id),
+            minimize: animateMinimize,
             toggleFullscreen: () => useWindowManager.getState().toggleFullscreen(win.id),
             dragHandleProps: {
               onPointerDown: onDragStart,
@@ -540,9 +603,10 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       ref={wrapperRef}
       className="absolute"
       data-canvas-window={!isPreview && !isFullscreen || undefined}
-      style={wrapperStyle}
+      style={{ ...wrapperStyle, ...windowMotionStyle }}
       onMouseDown={isFullscreen ? undefined : () => focusWindow(win.id)}
     >
+      <style>{CANVAS_WINDOW_MOTION_CSS}</style>
       {!isFullscreen && !terminalOwnsChrome && titleBar}
       <div
         className={isFullscreen
@@ -551,11 +615,17 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
             ? `rounded-lg bg-card overflow-hidden flex items-center justify-center transition-shadow duration-150 ${
                 isFocused ? "shadow-lg ring-1 ring-primary/30" : "shadow-md opacity-80"
               }`
+            : terminalOwnsChrome
+              ? "rounded-lg bg-card overflow-hidden transition-shadow duration-150 shadow-md"
             : `rounded-lg bg-card overflow-hidden transition-shadow duration-150 ${
                 isFocused ? "shadow-xl ring-1 ring-primary/30" : "shadow-md"
               }`
         }
         style={contentStyle}
+        onPointerDownCapture={(event) => {
+          if (!terminalOwnsChrome || event.button !== 0) return;
+          focusWindow(win.id);
+        }}
       >
         {isPreview ? (
           <>
