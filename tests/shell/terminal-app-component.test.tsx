@@ -377,6 +377,11 @@ describe("TerminalApp", () => {
     expect(row).toBeTruthy();
     fireEvent.mouseEnter(row!);
     const actions = screen.getByTestId("terminal-session-actions-main");
+    const copyButton = screen.getByTestId("terminal-session-copy-button-main");
+    expect(row!.style.display).toBe("grid");
+    expect(row!.style.gridTemplateColumns).toBe("minmax(0, 1fr) 46px");
+    expect(actions.style.width).toBe("58px");
+    expect(copyButton.style.width).toBe("24px");
     expect(screen.queryByText("matrix shell connect")).toBeNull();
     expect(actions.style.maxHeight).toBe("");
     expect(within(actions).getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
@@ -388,7 +393,9 @@ describe("TerminalApp", () => {
     });
 
     expect(writeText).toHaveBeenCalledWith("matrix shell connect main");
+    expect(copyButton.style.width).toBe("24px");
     expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Copied");
+    expect(screen.getByTestId("terminal-session-copy-toast-main").style.position).toBe("absolute");
     expect(within(actions).queryByText("matrix shell connect")).toBeNull();
   });
 
@@ -702,7 +709,8 @@ describe("TerminalApp", () => {
     const row = screen.getByRole("button", { name: "Open matrix-main" }).closest(".group");
     expect(row).toBeTruthy();
     fireEvent.mouseEnter(row!);
-    expect(screen.getByRole("button", { name: "Open matrix-main" }).style.flex).toBe("0 1 auto");
+    expect(row!.style.display).toBe("grid");
+    expect(screen.getByRole("button", { name: "Open matrix-main" }).style.minWidth).toBe("0px");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Rename matrix-main" }));
       await Promise.resolve();
@@ -1251,6 +1259,80 @@ describe("TerminalApp", () => {
     });
   });
 
+  it("shows a pending shell row and disables creation controls while a new session is starting", async () => {
+    let resolveCreate: (response: Response) => void = () => {};
+    let created = false;
+    let createdName = "matrix-pending";
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] } as Response);
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method === "POST") {
+        if (typeof init.body === "string") {
+          createdName = (JSON.parse(init.body) as { name?: string }).name ?? createdName;
+        }
+        if (createdName === "main") {
+          return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+        }
+        return new Promise<Response>((resolve) => {
+          resolveCreate = (response) => {
+            created = true;
+            resolve(response);
+          };
+        });
+      }
+      if (url.endsWith("/api/terminal/sessions")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", tabs: [] },
+              ...(created ? [{ name: createdName, status: "active", placement: "active", tabs: [] }] : []),
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await openNewSessionMenu();
+    const newSessionButton = screen.getByRole("button", { name: "New session" });
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+
+    await act(async () => {
+      fireEvent.click(within(menu).getByRole("menuitem", { name: /Shell.*⌘T/i }));
+      await Promise.resolve();
+    });
+
+    expect(newSessionButton).toHaveProperty("disabled", true);
+    expect(screen.getByTestId("terminal-session-pending-row").textContent).toContain("Creating session");
+
+    await act(async () => {
+      resolveCreate({ ok: true, json: async () => ({ name: "matrix-pending" }) } as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("terminal-session-pending-row")).toBeNull();
+    expect(screen.getByTestId(`terminal-session-card-${createdName}`)).toBeTruthy();
+  });
+
   it("opens the left terminal panel on Shells first", async () => {
     render(<TerminalApp />);
 
@@ -1361,9 +1443,13 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.getByTestId("terminal-drawer-collapse-icon").querySelector('path[d="m11 17-5-5 5-5"]')).toBeTruthy();
+    expect(screen.getByTestId("terminal-sidebar-shell").style.transition).toContain("transform");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
+    const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    expect(sidebarShell.style.transition).toContain("transform");
+    expect(sidebarShell.style.opacity).toBe("1");
     const rail = screen.getByTestId("terminal-collapsed-rail");
     expect(rail.style.width).toBe("76px");
     expect(rail.className).not.toContain("absolute");

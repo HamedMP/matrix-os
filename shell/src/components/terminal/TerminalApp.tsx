@@ -227,16 +227,82 @@ const SIDEBAR_RAIL_BUTTON_BASE_STYLE: CSSProperties = {
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
+const SESSION_ACTIONS_STYLE: CSSProperties = {
+  gap: 6,
+  transition: "opacity 120ms ease",
+  width: 58,
+};
+const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
+  background: "#F0EFE5",
+  border: "1px solid #E4E2D2",
+  borderRadius: 6,
+  color: "#8A8B7C",
+  flexShrink: 0,
+  height: 22,
+  pointerEvents: "auto",
+  transition: "opacity 120ms ease",
+  width: 22,
+};
+const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
+  background: "#F0EFE5",
+  border: "1px solid #E4E2D2",
+  borderRadius: 6,
+  cursor: "pointer",
+  flexShrink: 0,
+  fontSize: 12,
+  fontWeight: 800,
+  gap: 5,
+  height: 24,
+  overflow: "visible",
+  pointerEvents: "auto",
+  position: "relative",
+  transition: "background-color 120ms ease, border-color 120ms ease, color 120ms ease",
+  width: 24,
+};
+const SESSION_COPY_TOAST_STYLE: CSSProperties = {
+  background: "#465243",
+  borderRadius: 6,
+  color: "#F8F7EF",
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 12,
+  fontWeight: 800,
+  left: -13,
+  lineHeight: "18px",
+  pointerEvents: "none",
+  position: "absolute",
+  textAlign: "center",
+  top: 28,
+  width: 50,
+};
+const SESSION_CLOSE_BUTTON_STYLE: CSSProperties = {
+  background: "#F0EFE5",
+  border: "1px solid #E4E2D2",
+  borderRadius: 6,
+  color: "#77786E",
+  fontSize: 15,
+  height: 24,
+  lineHeight: "20px",
+  pointerEvents: "auto",
+  width: 24,
+};
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
   50% { box-shadow: 0 0 0 6px rgba(95, 184, 95, 0.10); }
 }
+@keyframes terminal-refresh-spin {
+  to { transform: rotate(360deg); }
+}
 .terminal-session-status-dot--running {
   animation: terminal-session-status-pulse 1.35s ease-in-out infinite;
 }
+.terminal-refresh-icon--loading {
+  animation: terminal-refresh-spin 0.9s linear infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .terminal-session-status-dot--running {
+  .terminal-session-status-dot--running,
+  .terminal-refresh-icon--loading {
     animation: none;
   }
 }
@@ -1116,6 +1182,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       })),
     });
   }, [log, tabs]);
+
+  useEffect(() => {
+    if (!initialized) return undefined;
+    const resizeTimer = window.setTimeout(() => {
+      window.dispatchEvent(new Event("resize"));
+    }, 220);
+    return () => window.clearTimeout(resizeTimer);
+  }, [activeTabId, initialized, sidebarOpen]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
@@ -3445,19 +3519,33 @@ function LocalTerminalSidebar() {
   if (!ctx.sidebarOpen && !ctx.mobile) {
     return (
       <>
-        <CollapsedSessionsRail
-          shells={unfilteredRenderedShells}
-          selectedShellName={activeShellName}
-          onExpand={() => ctx.setSidebarOpen(true)}
-          creatingShell={creatingShell}
-          newSessionMenuOpen={newSessionMenuAnchor === "rail"}
-          onNew={() => openNewSessionMenu("rail")}
-          onNewMenuClose={() => setNewSessionMenuAnchor(null)}
-          onCreateShell={() => void createManagedShell()}
-          onCreateClaude={createClaudeCodeSession}
-          onCreateCodex={createCodexSession}
-          onOpen={makeShellActive}
-        />
+        <div
+          data-testid="terminal-sidebar-shell"
+          className="shrink-0"
+          style={{
+            display: "flex",
+            minHeight: 0,
+            opacity: 1,
+            overflow: "hidden",
+            transform: "translateX(0)",
+            transition: TERMINAL_SIDEBAR_TRANSITION,
+            width: 76,
+          }}
+        >
+          <CollapsedSessionsRail
+            shells={unfilteredRenderedShells}
+            selectedShellName={activeShellName}
+            onExpand={() => ctx.setSidebarOpen(true)}
+            creatingShell={creatingShell}
+            newSessionMenuOpen={newSessionMenuAnchor === "rail"}
+            onNew={() => openNewSessionMenu("rail")}
+            onNewMenuClose={() => setNewSessionMenuAnchor(null)}
+            onCreateShell={() => void createManagedShell()}
+            onCreateClaude={createClaudeCodeSession}
+            onCreateCodex={createCodexSession}
+            onOpen={makeShellActive}
+          />
+        </div>
         {closeConfirmationOverlay}
       </>
     );
@@ -3470,6 +3558,7 @@ function LocalTerminalSidebar() {
   return (
     <>
       <div
+        data-testid="terminal-sidebar-shell"
         className="shrink-0 overflow-hidden"
         style={{
           background: "#E9E9D8",
@@ -3480,6 +3569,9 @@ function LocalTerminalSidebar() {
           flexDirection: "column",
           maxHeight: ctx.mobile ? "52%" : undefined,
           minHeight: ctx.mobile ? 360 : undefined,
+          opacity: 1,
+          transform: "translateX(0)",
+          transition: ctx.mobile ? undefined : TERMINAL_SIDEBAR_TRANSITION,
           width: drawerWidth,
         }}
       >
@@ -3562,18 +3654,25 @@ function LocalTerminalSidebar() {
                   type="button"
                   aria-label="Refresh sessions"
                   onClick={() => void fetchShells()}
+                  disabled={shellsLoading}
                   className="flex items-center justify-center"
                   style={{
                     background: "#FFFDF7",
                     border: "1px solid #D6D5C4",
                     borderRadius: 10,
                     color: "#6F7167",
-                    cursor: "pointer",
+                    cursor: shellsLoading ? "not-allowed" : "pointer",
                     height: 40,
+                    opacity: shellsLoading ? 0.72 : 1,
                     width: 40,
                   }}
                 >
-                  <RefreshCwIcon size={17} strokeWidth={1.9} />
+                  <RefreshCwIcon
+                    className={shellsLoading ? "terminal-refresh-icon--loading" : undefined}
+                    data-testid="terminal-refresh-icon"
+                    size={17}
+                    strokeWidth={1.9}
+                  />
                 </button>
                 <button
                   type="button"
@@ -3632,16 +3731,17 @@ function LocalTerminalSidebar() {
         {!shellsLoading && shellsError && (
           <div style={{ color: "#8F6712", fontSize: 12, padding: "24px 0", textAlign: "center" }}>{shellsError}</div>
         )}
-        {!shellsLoading && !shellsError && renderedShells.length === 0 && (
+        {!shellsLoading && !shellsError && !creatingShell && renderedShells.length === 0 && (
           <div style={{ color: "#858578", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
             {filter ? "No sessions match" : "No sessions yet"}
           </div>
         )}
-        {!shellsLoading && activeShells.length > 0 && (
+        {!shellsLoading && (activeShells.length > 0 || creatingShell) && (
           <ShellSessionGroup
             label="Active"
             meta={`${activeShells.length} attached`}
             shells={activeShells}
+            pending={creatingShell}
             deletingShellNames={deletingShellNames}
             foreground
             selectedShellName={activeShellName}
@@ -4420,6 +4520,7 @@ function ShellSessionGroup({
   label,
   meta,
   shells,
+  pending = false,
   deletingShellNames,
   foreground,
   selectedShellName,
@@ -4437,6 +4538,7 @@ function ShellSessionGroup({
   label: "Active" | "Background";
   meta: string;
   shells: ShellSessionSummary[];
+  pending?: boolean;
   deletingShellNames: string[];
   foreground: boolean;
   selectedShellName: string | null;
@@ -4468,7 +4570,8 @@ function ShellSessionGroup({
           {meta}
         </span>
       </div>
-      {shells.length === 0 ? (
+      {pending ? <ShellPendingCard /> : null}
+      {shells.length === 0 && !pending ? (
         <div style={{ color: "#A09F92", fontSize: 12, padding: "8px 0 6px" }}>
           {foreground ? "No active sessions" : "Nothing running in background"}
         </div>
@@ -4492,6 +4595,68 @@ function ShellSessionGroup({
         />
       ))}
     </section>
+  );
+}
+
+function ShellPendingCard() {
+  return (
+    <div
+      aria-label="Creating shell session"
+      data-testid="terminal-session-pending-row"
+      style={{
+        alignItems: "center",
+        background: "#FFFDF7",
+        border: "1px solid #D6D5C4",
+        borderRadius: 10,
+        boxShadow: "0 9px 22px rgba(39,40,34,0.10)",
+        color: "#858578",
+        display: "grid",
+        gap: 10,
+        gridTemplateColumns: "12px 8px minmax(0, 1fr) 58px 46px",
+        height: 52,
+        opacity: 0.82,
+        padding: "0 12px",
+      }}
+    >
+      <span style={{ width: 12 }} />
+      <span
+        aria-hidden="true"
+        className="terminal-refresh-icon--loading"
+        style={{
+          border: "2px solid #D6D5C4",
+          borderTopColor: "#465243",
+          borderRadius: "50%",
+          height: 8,
+          width: 8,
+        }}
+      />
+      <span
+        style={{
+          fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          fontSize: 14,
+          fontWeight: 700,
+          lineHeight: "18px",
+          minWidth: 0,
+        }}
+      >
+        Creating session
+      </span>
+      <span />
+      <span
+        style={{
+          background: "#F0EFE5",
+          border: "1px solid #E4E2D2",
+          borderRadius: 999,
+          color: "#858578",
+          fontSize: 12,
+          fontWeight: 800,
+          lineHeight: "18px",
+          textAlign: "center",
+        }}
+      >
+        NEW
+      </span>
+    </div>
   );
 }
 
@@ -4676,9 +4841,10 @@ function ShellCard({
             ? "0 0 0 5px rgba(156,183,122,0.28), 0 14px 30px rgba(39,40,34,0.18)"
             : foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
-        display: "flex",
         alignItems: "center",
+        display: "grid",
         gap: 10,
+        gridTemplateColumns: "minmax(0, 1fr) 46px",
         height: 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
@@ -4738,7 +4904,18 @@ function ShellCard({
           }}
         />
       )}
-      <div className="flex min-w-0 flex-1 items-center" style={{ gap: 10, pointerEvents: "none", position: "relative", zIndex: 1 }}>
+      <div
+        className="min-w-0"
+        style={{
+          alignItems: "center",
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: "12px 8px minmax(0, 1fr)",
+          pointerEvents: "none",
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
         <button
           type="button"
           aria-label={`Drag ${displayName} session`}
@@ -4784,7 +4961,15 @@ function ShellCard({
             ...statusDotStyle,
           }}
           />
-        <div className="flex min-w-0 items-center" style={{ flex: "1 1 auto", gap: 6 }}>
+        <div
+          className="min-w-0"
+          style={{
+            alignItems: "center",
+            display: "grid",
+            gap: 6,
+            gridTemplateColumns: renaming ? "minmax(0, 1fr)" : foreground ? "minmax(0, 1fr) 22px 58px" : "minmax(0, 1fr) 58px",
+          }}
+        >
           {renaming ? (
             <input
               ref={renameInputRef}
@@ -4839,7 +5024,6 @@ function ShellCard({
                 border: 0,
                 color: foreground ? "#31362D" : "#5F6258",
                 cursor: "pointer",
-                flex: "0 1 auto",
                 fontFamily: "var(--font-mono, ui-monospace, monospace)",
                 fontSize: 14,
                 fontWeight: 700,
@@ -4868,17 +5052,9 @@ function ShellCard({
               onMouseDown={(event) => event.stopPropagation()}
               className="flex items-center justify-center"
               style={{
-                background: "#F0EFE5",
-                border: "1px solid #E4E2D2",
-                borderRadius: 6,
-                color: "#8A8B7C",
+                ...SESSION_RENAME_BUTTON_STYLE,
                 cursor: renameSaving ? "not-allowed" : "pointer",
-                flexShrink: 0,
-                height: 22,
                 opacity: showRenameControl ? 1 : 0,
-                pointerEvents: "auto",
-                transition: "opacity 120ms ease",
-                width: 22,
               }}
             >
               <PencilIcon size={12} strokeWidth={2} />
@@ -4890,15 +5066,14 @@ function ShellCard({
               aria-hidden={showActions ? undefined : "true"}
               className="flex shrink-0 items-center justify-end"
               style={{
-                gap: 6,
+                ...SESSION_ACTIONS_STYLE,
                 opacity: showActions ? 1 : 0,
                 pointerEvents: showActions ? "auto" : "none",
-                transition: "opacity 120ms ease",
-                width: 90,
               }}
             >
               <button
                 type="button"
+                data-testid={`terminal-session-copy-button-${shell.name}`}
                 aria-label={`Copy connect command for ${displayName}`}
                 title={copyFeedback === "copied" ? "Copied" : shellConnectCommand(shell.name)}
                 tabIndex={showActions ? 0 : -1}
@@ -4910,18 +5085,8 @@ function ShellCard({
                 onMouseDown={(event) => event.stopPropagation()}
                 className="flex items-center justify-center"
                 style={{
-                  background: "#F0EFE5",
-                  border: "1px solid #E4E2D2",
-                  borderRadius: 6,
+                  ...SESSION_COPY_BUTTON_STYLE,
                   color: copyFeedback === "copied" ? "#465243" : "#8A8B7C",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  fontSize: 12,
-                  fontWeight: 800,
-                  gap: 5,
-                  height: 24,
-                  pointerEvents: "auto",
-                  width: copyFeedback === "copied" ? 58 : 24,
                 }}
               >
                 {copyFeedback === "copied" ? (
@@ -4930,6 +5095,7 @@ function ShellCard({
                     <output
                       data-testid={`terminal-session-copy-toast-${shell.name}`}
                       aria-live="polite"
+                      style={SESSION_COPY_TOAST_STYLE}
                     >
                       Copied
                     </output>
@@ -4951,17 +5117,9 @@ function ShellCard({
                 disabled={deleting}
                 className="flex shrink-0 items-center justify-center"
                 style={{
-                  background: "#F0EFE5",
-                  border: "1px solid #E4E2D2",
-                  borderRadius: 6,
-                  color: "#77786E",
+                  ...SESSION_CLOSE_BUTTON_STYLE,
                   cursor: deleting ? "not-allowed" : "pointer",
-                  fontSize: 15,
-                  height: 24,
-                  lineHeight: "20px",
                   opacity: deleting ? 0.65 : 1,
-                  pointerEvents: "auto",
-                  width: 24,
                 }}
               >
                 ×
