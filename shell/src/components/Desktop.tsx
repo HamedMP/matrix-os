@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
@@ -1184,7 +1184,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const hydrated = useDesktopMode((s) => s._hydrated);
   const modeConfig = getModeConfig(hydrated ? desktopMode : "dev");
-  const visibleWindowCount = useMemo(() => windows.filter((w) => !w.minimized).length, [windows]);
+  const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
   const developerDashboardVisible = firstRunStatus === "ready"
     && desktopMode === "dev"
     && visibleWindowCount === 0;
