@@ -539,8 +539,12 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         display: hidden ? "none" : undefined,
       };
   const shouldAnimateRestore = !hidden && minimizePhase !== "minimizing" && restoreMotion.animate;
-  const dockDeltaX = -win.x - Math.max(0, win.width - 56);
-  const dockDeltaY = 96 - win.y;
+  const dockTargetScreenX = -Math.max(0, win.width - 56);
+  const dockTargetScreenY = 96;
+  const dockTargetCanvasX = (dockTargetScreenX - contLeft) / zoom - panX;
+  const dockTargetCanvasY = (dockTargetScreenY - contTop) / zoom - panY;
+  const dockDeltaX = dockTargetCanvasX - win.x;
+  const dockDeltaY = dockTargetCanvasY - win.y;
   const windowMotionStyle: React.CSSProperties = !isFullscreen
     ? {
         "--canvas-window-dock-dx": `${dockDeltaX}px`,

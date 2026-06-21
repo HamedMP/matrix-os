@@ -254,6 +254,33 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(useWindowManager.getState().getWindow("win-terminal")?.minimized).toBe(true);
   });
 
+  it("uses a zoom-aware dock target for Canvas terminal minimize animation", () => {
+    useCanvasTransform.setState({ zoom: 2, panX: 10, panY: -4, isAnimating: false, isScrolling: false });
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: "win-terminal",
+      fullscreenWindowId: null,
+    });
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+    const props = terminalRender.mock.lastCall?.[0] as {
+      windowControls: {
+        minimize: () => void;
+      };
+    };
+
+    act(() => {
+      props.windowControls.minimize();
+    });
+
+    const wrapper = container.querySelector("[data-canvas-window]") as HTMLElement;
+    expect(wrapper.style.getPropertyValue("--canvas-window-dock-dx")).toBe("-322px");
+    expect(wrapper.style.getPropertyValue("--canvas-window-dock-dy")).toBe("22px");
+  });
+
   it("does not run the restore animation on initial visible mount", () => {
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 

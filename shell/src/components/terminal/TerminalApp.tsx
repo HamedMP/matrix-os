@@ -238,21 +238,6 @@ const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
   transition: "background-color 120ms ease, border-color 120ms ease, color 120ms ease",
   width: 24,
 };
-const SESSION_COPY_TOAST_STYLE: CSSProperties = {
-  background: "#465243",
-  borderRadius: 6,
-  color: "#F8F7EF",
-  fontFamily: "Inter, system-ui, sans-serif",
-  fontSize: 12,
-  fontWeight: 800,
-  left: -13,
-  lineHeight: "18px",
-  pointerEvents: "none",
-  position: "absolute",
-  textAlign: "center",
-  top: 28,
-  width: 50,
-};
 const SESSION_CLOSE_BUTTON_STYLE: CSSProperties = {
   background: "#F0EFE5",
   border: "1px solid #E4E2D2",
@@ -4752,11 +4737,7 @@ function ShellCard({
                 {copyFeedback === "copied" ? (
                   <>
                     <CheckIcon size={12} strokeWidth={2.2} />
-                    <output
-                      data-testid={`terminal-session-copy-toast-${shell.name}`}
-                      aria-live="polite"
-                      style={SESSION_COPY_TOAST_STYLE}
-                    >
+                    <output data-testid={`terminal-session-copy-toast-${shell.name}`} aria-live="polite" className="sr-only">
                       Copied
                     </output>
                   </>

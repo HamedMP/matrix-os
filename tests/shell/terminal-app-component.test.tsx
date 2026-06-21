@@ -398,7 +398,7 @@ describe("TerminalApp", () => {
     expect(writeText).toHaveBeenCalledWith("matrix shell connect main");
     expect(copyButton.style.width).toBe("24px");
     expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Copied");
-    expect(screen.getByTestId("terminal-session-copy-toast-main").style.position).toBe("absolute");
+    expect(screen.getByTestId("terminal-session-copy-toast-main").className).toContain("sr-only");
     expect(within(actions).queryByText("matrix shell connect")).toBeNull();
   });
 
