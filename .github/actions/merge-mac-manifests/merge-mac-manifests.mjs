@@ -24,12 +24,18 @@ if (!directory) {
 }
 
 const names = await readdir(directory);
-const manifestNames = names
+let manifestNames = names
   .filter((name) => {
     if (channel) return name.endsWith(`-${channel}-mac.yml`);
     return /^(arm64|x64)-mac\.yml$/.test(name);
   })
   .sort((a, b) => a.localeCompare(b));
+
+if (channel && manifestNames.length === 0) {
+  manifestNames = names.filter((name) => /^(arm64|x64)-mac\.yml$/.test(name)).sort((a, b) => a.localeCompare(b));
+  console.log(`no ${channel} mac manifests found; falling back to architecture mac manifests`);
+}
+
 if (manifestNames.length < 2) {
   throw new Error(`expected at least 2 mac manifests in ${directory}, found ${manifestNames.length}`);
 }
