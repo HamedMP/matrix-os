@@ -1,18 +1,29 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 
 const appViewerRender = vi.hoisted(() => vi.fn());
 const terminalRender = vi.hoisted(() => vi.fn());
+const terminalChildPointerFocusRecorder = vi.hoisted(() => vi.fn());
+const originalFocusWindow = useWindowManager.getState().focusWindow;
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: (props: unknown) => {
     terminalRender(props);
-    return <button type="button">Terminal tab one</button>;
+    return (
+      <button
+        type="button"
+        onPointerDown={() => {
+          terminalChildPointerFocusRecorder();
+        }}
+      >
+        Terminal tab one
+      </button>
+    );
   },
 }));
 
@@ -66,6 +77,8 @@ describe("CanvasWindow terminal interactivity", () => {
   beforeEach(() => {
     appViewerRender.mockClear();
     terminalRender.mockClear();
+    terminalChildPointerFocusRecorder.mockReset();
+    document.getElementById("matrix-canvas-window-motion-styles")?.remove();
     useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false });
     useWindowManager.setState({
       windows: [],
@@ -75,7 +88,13 @@ describe("CanvasWindow terminal interactivity", () => {
       apps: [],
       focusedWindowId: null,
       fullscreenWindowId: null,
+      focusWindow: originalFocusWindow,
     });
+  });
+
+  afterEach(() => {
+    useWindowManager.setState({ focusWindow: originalFocusWindow });
+    vi.useRealTimers();
   });
 
   it("does not render the iframe click shield over built-in terminal controls", () => {
@@ -85,10 +104,61 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeNull();
   });
 
+  it("focuses terminal Canvas windows during capture before terminal child handling", async () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: null,
+      fullscreenWindowId: null,
+    });
+    const childFocusStates: Array<string | null> = [];
+    let focusedDuringPointer: string | null = null;
+    terminalChildPointerFocusRecorder.mockImplementation(() => {
+      childFocusStates.push(focusedDuringPointer);
+    });
+    const focusWindowSpy = vi.fn((id: string) => {
+      focusedDuringPointer = id;
+    });
+    useWindowManager.setState({ focusWindow: focusWindowSpy });
+
+    await act(async () => {
+      render(<CanvasWindow win={terminalWindow} />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Terminal tab one" }), { button: 0 });
+      await Promise.resolve();
+    });
+
+    expect(childFocusStates).toEqual(["win-terminal"]);
+    expect(focusWindowSpy).toHaveBeenCalledWith("win-terminal");
+    expect(focusWindowSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not draw the generic Canvas focus ring around terminal content", () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: "win-terminal",
+      fullscreenWindowId: null,
+    });
+
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+
+    expect(container.innerHTML).not.toContain("ring-primary/30");
+  });
+
   it("lets Terminal own Canvas chrome and passes window controls into it", () => {
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 
-    expect(container.textContent).toBe("Terminal tab one");
+    expect(container.textContent).toContain("Terminal tab one");
     expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
       launchTargetId: "win-terminal",
       windowControls: expect.objectContaining({
@@ -128,24 +198,114 @@ describe("CanvasWindow terminal interactivity", () => {
       };
     };
     const target = { setPointerCapture: vi.fn() };
-    props.windowControls.dragHandleProps.onPointerDown({
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-      clientX: 100,
-      clientY: 120,
-      pointerId: 1,
-      target,
+    act(() => {
+      props.windowControls.dragHandleProps.onPointerDown({
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        clientX: 100,
+        clientY: 120,
+        pointerId: 1,
+        target,
+      });
+      props.windowControls.dragHandleProps.onPointerMove({
+        clientX: 132,
+        clientY: 148,
+      });
+      props.windowControls.dragHandleProps.onPointerUp();
     });
-    props.windowControls.dragHandleProps.onPointerMove({
-      clientX: 132,
-      clientY: 148,
-    });
-    props.windowControls.dragHandleProps.onPointerUp();
 
     expect(useWindowManager.getState().getWindow("win-terminal")).toMatchObject({
       x: 52,
       y: 58,
     });
+  });
+
+  it("animates Canvas terminal minimize before marking the window minimized", () => {
+    vi.useFakeTimers();
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: "win-terminal",
+      fullscreenWindowId: null,
+    });
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+    const props = terminalRender.mock.lastCall?.[0] as {
+      windowControls: {
+        minimize: () => void;
+      };
+    };
+
+    act(() => {
+      props.windowControls.minimize();
+    });
+
+    const wrapper = container.querySelector("[data-canvas-window]") as HTMLElement;
+    expect(useWindowManager.getState().getWindow("win-terminal")?.minimized).toBe(false);
+    expect(wrapper.style.transition).toContain("transform");
+    expect(wrapper.style.opacity).toBe("0");
+
+    act(() => {
+      vi.advanceTimersByTime(280);
+    });
+
+    expect(useWindowManager.getState().getWindow("win-terminal")?.minimized).toBe(true);
+  });
+
+  it("uses a zoom-aware dock target for Canvas terminal minimize animation", () => {
+    useCanvasTransform.setState({ zoom: 2, panX: 10, panY: -4, isAnimating: false, isScrolling: false });
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: "win-terminal",
+      fullscreenWindowId: null,
+    });
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+    const props = terminalRender.mock.lastCall?.[0] as {
+      windowControls: {
+        minimize: () => void;
+      };
+    };
+
+    act(() => {
+      props.windowControls.minimize();
+    });
+
+    const wrapper = container.querySelector("[data-canvas-window]") as HTMLElement;
+    expect(wrapper.style.getPropertyValue("--canvas-window-dock-dx")).toBe("-322px");
+    expect(wrapper.style.getPropertyValue("--canvas-window-dock-dy")).toBe("22px");
+  });
+
+  it("does not run the restore animation on initial visible mount", () => {
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+
+    const wrapper = container.querySelector("[data-canvas-window]") as HTMLElement;
+    expect(wrapper.style.animation).toBe("");
+  });
+
+  it("runs the restore animation only after a mounted window becomes visible again", () => {
+    const { container, rerender } = render(<CanvasWindow win={terminalWindow} hidden />);
+
+    rerender(<CanvasWindow win={terminalWindow} />);
+
+    const wrapper = container.querySelector("[data-canvas-window]") as HTMLElement;
+    expect(wrapper.style.animation).toContain("canvas-window-restore-from-dock");
+  });
+
+  it("injects Canvas window motion keyframes only once for multiple windows", () => {
+    render(
+      <>
+        <CanvasWindow win={terminalWindow} />
+        <CanvasWindow win={{ ...terminalWindow, id: "win-terminal-two", x: 120, y: 130 }} />
+      </>,
+    );
+
+    expect(document.querySelectorAll("#matrix-canvas-window-motion-styles")).toHaveLength(1);
   });
 
   it("keeps the click shield for iframe app windows", () => {

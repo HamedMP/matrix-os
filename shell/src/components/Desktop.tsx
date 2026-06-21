@@ -616,6 +616,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       !w.minimized && (best === undefined || w.zIndex > best.zIndex) ? w : best,
     undefined,
   );
+  const fullscreenWindow = fullscreenWindowId
+    ? windows.find((w) => w.id === fullscreenWindowId)
+    : undefined;
+  const fullscreenTerminalOwnsChrome = fullscreenWindow?.path.startsWith("__terminal__") ?? false;
 
   useEffect(() => {
     const timers = minimizeTimers.current!;
@@ -2133,7 +2137,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
           isn't unmounted when the viewport flips. */}
       <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
 
-      {fullscreenWindowId && (
+      {fullscreenWindowId && !fullscreenTerminalOwnsChrome && (
         <FullscreenExitPill onExit={wmExitFullscreen} />
       )}
     </TooltipProvider>
