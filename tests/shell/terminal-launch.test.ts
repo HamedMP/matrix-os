@@ -6,6 +6,7 @@ import {
   drainTerminalLaunchQueue,
   enqueueTerminalLaunch,
   parseTerminalLaunchPath,
+  TERMINAL_SETUP_WINDOW_PATH,
 } from "../../shell/src/lib/terminal-launch.js";
 
 describe("terminal launch paths", () => {
@@ -36,6 +37,10 @@ describe("terminal launch paths", () => {
   it("ignores ordinary terminal paths", () => {
     expect(parseTerminalLaunchPath("__terminal__")).toBeNull();
     expect(parseTerminalLaunchPath("__terminal__:random")).toBeNull();
+  });
+
+  it("targets setup actions at the canonical terminal surface", () => {
+    expect(TERMINAL_SETUP_WINDOW_PATH).toBe("__terminal__");
   });
 
   it("queues setup actions so an existing terminal can open them as tabs", () => {

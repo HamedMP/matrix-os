@@ -55,9 +55,9 @@ describe("app launch helpers", () => {
     expect(isGameApp("apps/mydir/apps/games/tool/index.html")).toBe(false);
   });
 
-  it("keeps project context for valid project slugs that are not icon slugs", () => {
-    expect(terminalContextLaunchPath("matrix_os")).toBe("__terminal__?project=matrix_os");
-    expect(terminalContextLaunchPath("org/matrix_os")).toBe("__terminal__?project=org%2Fmatrix_os");
+  it("routes project-context launches through the canonical terminal surface", () => {
+    expect(terminalContextLaunchPath("matrix_os")).toBe("__terminal__");
+    expect(terminalContextLaunchPath("org/matrix_os")).toBe("__terminal__");
     expect(terminalContextLaunchPath("../matrix")).toBe("__terminal__");
   });
 });

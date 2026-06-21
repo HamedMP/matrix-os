@@ -5,7 +5,7 @@ import { useIconWithFallback } from "@/hooks/useIconWithFallback";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager, type LayoutWindow } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
-import { useDesktopMode } from "@/stores/desktop-mode";
+import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
@@ -404,13 +404,14 @@ function DockIcon({
 function ModeSwitcher({
   iconSize,
   tooltipSide,
+  onSelectMode,
 }: {
   iconSize: number;
   tooltipSide: "left" | "right" | "top";
+  onSelectMode: (mode: DesktopMode) => void;
 }) {
   const [open, setOpen] = useState(false);
   const mode = useDesktopMode((s) => s.mode);
-  const setMode = useDesktopMode((s) => s.setMode);
   const visibleModes = useDesktopMode((s) => s.visibleModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const modeConfig = getModeConfig(mode);
@@ -473,7 +474,7 @@ function ModeSwitcher({
               type="button"
               key={m.id}
               onClick={() => {
-                setMode(m.id);
+                onSelectMode(m.id);
                 setOpen(false);
               }}
               className={`flex items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-muted ${
@@ -1205,6 +1206,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
   const developerDashboardVisible = shouldShowDeveloperDashboard(firstRunStatus, desktopMode, visibleWindowCount);
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
+  const selectDesktopMode = (mode: DesktopMode) => {
+    setDesktopMode(mode);
+    if (!getModeConfig(mode).showLauncher) setTaskBoardOpen(false);
+  };
 
   // Cascade windows back to the viewport when leaving canvas. Canvas
   // positions use a wide grid that extends off-screen in other modes.
@@ -1269,7 +1274,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       label: `Mode: ${m.label}`,
       group: "Actions" as const,
       keywords: ["mode", "layout", m.id, m.description],
-      execute: () => setDesktopMode(m.id),
+      execute: () => {
+        setDesktopMode(m.id);
+        if (!m.showLauncher) setTaskBoardOpen(false);
+      },
     }));
 
     register([
@@ -1692,26 +1700,28 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     />
                   );
                 })}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-tasks"
-                      onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
-                      className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                        taskBoardOpen
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card border-border/60"
-                      }`}
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                    >
-                      <KanbanSquareIcon className="size-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side={tooltipSide} sideOffset={8}>
-                    Launcher
-                  </TooltipContent>
-                </Tooltip>
+                {modeConfig.showLauncher && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        data-testid="dock-tasks"
+                        onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                        className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                          taskBoardOpen
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-card border-border/60"
+                        }`}
+                        style={{ width: dock.iconSize, height: dock.iconSize }}
+                      >
+                        <KanbanSquareIcon className="size-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side={tooltipSide} sideOffset={8}>
+                      Launcher
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1737,7 +1747,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
                 </Tooltip>
-                <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} />
+                <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} onSelectMode={selectDesktopMode} />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1810,18 +1820,20 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 />
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
-              className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
-                taskBoardOpen
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card border-border/60"
-              }`}
-            >
-              <KanbanSquareIcon className="size-4" />
-            </button>
-            <ModeSwitcher iconSize={36} tooltipSide="top" />
+            {modeConfig.showLauncher && (
+              <button
+                type="button"
+                onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); setChatOpen(false); }}
+                className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
+                  taskBoardOpen
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card border-border/60"
+                }`}
+              >
+                <KanbanSquareIcon className="size-4" />
+              </button>
+            )}
+            <ModeSwitcher iconSize={36} tooltipSide="top" onSelectMode={selectDesktopMode} />
             <button
               type="button"
               onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
