@@ -166,4 +166,28 @@ describe("desktop release workflows", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("falls back to architecture mac manifests when a prerelease channel manifest is missing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "matrix-desktop-release-"));
+    try {
+      writeFileSync(
+        join(dir, "x64-mac.yml"),
+        "version: 1.2.3-dev.1\nfiles:\n  - url: dev-x64.zip\n    sha512: dev-x64\n    size: 2\npath: dev-x64.zip\nsha512: dev-x64\n",
+      );
+      writeFileSync(
+        join(dir, "arm64-mac.yml"),
+        "version: 1.2.3-dev.1\nfiles:\n  - url: dev-arm64.zip\n    sha512: dev-arm64\n    size: 1\npath: dev-arm64.zip\nsha512: dev-arm64\n",
+      );
+
+      execFileSync(process.execPath, [join(root, ".github/actions/merge-mac-manifests/merge-mac-manifests.mjs")], {
+        env: { ...process.env, INPUT_DIRECTORY: dir, INPUT_OUTPUT: "dev-mac.yml", INPUT_CHANNEL: "dev" },
+      });
+
+      const dev = readFileSync(join(dir, "dev-mac.yml"), "utf8");
+      expect(dev).toContain("url: dev-arm64.zip");
+      expect(dev).toContain("url: dev-x64.zip");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
