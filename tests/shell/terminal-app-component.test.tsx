@@ -1383,6 +1383,8 @@ describe("TerminalApp", () => {
     expect(sidebarShell.style.width).toBe("392px");
 
     const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(resizeHandle, "setPointerCapture", { configurable: true, value: setPointerCapture });
     await act(async () => {
       fireEvent.pointerDown(resizeHandle, { clientX: 392, pointerId: 1 });
       fireEvent.pointerMove(window, { clientX: 456 });
@@ -1390,6 +1392,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    expect(setPointerCapture).toHaveBeenCalledWith(1);
     expect(sidebarShell.style.width).toBe("456px");
 
     await act(async () => {

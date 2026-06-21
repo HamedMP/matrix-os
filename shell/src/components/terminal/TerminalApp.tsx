@@ -3064,12 +3064,18 @@ function LocalTerminalSidebar() {
     if (ctx.mobile) return;
     event.preventDefault();
     event.stopPropagation();
+    const resizeHandle = event.currentTarget;
+    const pointerId = event.pointerId;
+    resizeHandle.setPointerCapture?.(pointerId);
     const startX = event.clientX;
     const startWidth = clampTerminalSidebarWidth(ctx.sidebarWidth);
     const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
       ctx.setSidebarWidth(clampTerminalSidebarWidth(startWidth + moveEvent.clientX - startX));
     };
     const finishResize = () => {
+      if (resizeHandle.hasPointerCapture?.(pointerId)) {
+        resizeHandle.releasePointerCapture?.(pointerId);
+      }
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", finishResize);
       window.removeEventListener("pointercancel", finishResize);
