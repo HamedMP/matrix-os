@@ -239,8 +239,8 @@ describe("gateway shell routes", () => {
     };
     const app = appWithRegistry(registry);
 
-    const res = await app.request("/api/terminal/sessions/main", {
-      method: "PATCH",
+    const res = await app.request("/api/terminal/sessions/main/rename", {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "review-main" }),
     });
@@ -265,18 +265,18 @@ describe("gateway shell routes", () => {
     };
     const app = appWithRegistry(registry);
 
-    const invalidParam = await app.request("/api/terminal/sessions/Main", {
-      method: "PATCH",
+    const invalidParam = await app.request("/api/terminal/sessions/Main/rename", {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "review-main" }),
     });
-    const invalidBody = await app.request("/api/terminal/sessions/main", {
-      method: "PATCH",
+    const invalidBody = await app.request("/api/terminal/sessions/main/rename", {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "Review Main" }),
     });
-    const tooLarge = await app.request("/api/terminal/sessions/main", {
-      method: "PATCH",
+    const tooLarge = await app.request("/api/terminal/sessions/main/rename", {
+      method: "PUT",
       headers: {
         "Content-Type": "application/json",
         "Content-Length": "2048",

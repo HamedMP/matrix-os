@@ -673,7 +673,7 @@ describe("TerminalApp", () => {
           }),
         } as Response);
       }
-      if (url.endsWith("/api/terminal/sessions/main") && init?.method === "PATCH") {
+      if (url.endsWith("/api/terminal/sessions/main/rename") && init?.method === "PUT") {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -731,9 +731,9 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Open review-main" })).toBeTruthy();
     expect(calls).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        url: expect.stringContaining("/api/terminal/sessions/main"),
+        url: expect.stringContaining("/api/terminal/sessions/main/rename"),
         init: expect.objectContaining({
-          method: "PATCH",
+          method: "PUT",
           body: JSON.stringify({ name: "review-main" }),
         }),
       }),
@@ -1222,7 +1222,7 @@ describe("TerminalApp", () => {
     ))).toBe(false);
   });
 
-  it("opens zellij-backed shell sessions from the new-session menu", async () => {
+  it("opens Matrix-named shell sessions from the new-session menu", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -1243,10 +1243,10 @@ describe("TerminalApp", () => {
       ))
       .map(([, init]: [RequestInfo | URL, RequestInit]) => JSON.parse(String(init.body)) as { name: string });
 
-    expect(createCalls.some((body) => /^zellij-/.test(body.name))).toBe(true);
+    expect(createCalls.some((body) => /^matrix-/.test(body.name))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^zellij-/),
+        sessionId: expect.stringMatching(/^matrix-/),
       },
     });
   });
@@ -1469,7 +1469,7 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
   });
 
-  it("opens zellij-backed shell sessions from Ctrl+Shift+T", async () => {
+  it("opens Matrix-named shell sessions from Ctrl+Shift+T", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -1490,7 +1490,7 @@ describe("TerminalApp", () => {
 
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^zellij-/),
+        sessionId: expect.stringMatching(/^matrix-/),
       },
     });
   });
@@ -1871,7 +1871,7 @@ describe("TerminalApp", () => {
     });
   });
 
-  it("creates toolbar zellij launches as canonical shell sessions", async () => {
+  it("creates toolbar shell launches as Matrix-named canonical shell sessions", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -1891,12 +1891,12 @@ describe("TerminalApp", () => {
       String(input).includes("/api/terminal/sessions") &&
       init?.method === "POST" &&
       typeof init.body === "string" &&
-      JSON.parse(init.body).name.startsWith("zellij-")
+      JSON.parse(init.body).name.startsWith("matrix-")
     ));
     expect(createCall).toBeTruthy();
     const body = JSON.parse(createCall?.[1]?.body as string) as { name: string; cwd: string };
     expect(body).toMatchObject({ cwd: "projects" });
-    expect(body.name).toMatch(/^zellij-[a-z0-9]+$/);
+    expect(body.name).toMatch(/^matrix-[a-z0-9]+$/);
 
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string; startupCommand?: string };
@@ -1905,7 +1905,7 @@ describe("TerminalApp", () => {
     expect(props.paneTree.startupCommand).toBeUndefined();
   });
 
-  it("cleans up a just-created zellij shell when unmounted before the tab is attached", async () => {
+  it("cleans up a just-created Matrix shell when unmounted before the tab is attached", async () => {
     let resolveCreate: ((value: { ok: boolean; status: number; json: () => Promise<{ name: string }> }) => void) | null = null;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1967,7 +1967,7 @@ describe("TerminalApp", () => {
     );
   });
 
-  it("manages canonical zellij shells from a dedicated sidebar surface", async () => {
+  it("manages canonical Matrix shells from a dedicated sidebar surface", async () => {
     let mainDeleted = false;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -1985,7 +1985,7 @@ describe("TerminalApp", () => {
         return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
       }
       if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
-        return Promise.resolve({ ok: true, json: async () => ({ name: "zellij-new", created: true }) });
+        return Promise.resolve({ ok: true, json: async () => ({ name: "matrix-new", created: true }) });
       }
       if (url.includes("/api/terminal/sessions")) {
         return Promise.resolve({

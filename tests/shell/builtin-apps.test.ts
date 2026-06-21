@@ -29,7 +29,7 @@ describe("built-in app helpers", () => {
     expect(normalizeBuiltInAppPath("__terminal__:1712345678-a3bc")).toBe("__terminal__");
     expect(normalizeBuiltInLayoutWindow({
       path: "__terminal__:1712345678-a3bc",
-      title: "zellij-x6mb8y2",
+      title: "matrix-x6mb8y2",
       x: 10,
       y: 20,
       width: 800,
