@@ -15,6 +15,8 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.dmg" -print -quit');
     expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.zip" -print -quit');
     expect(workflow).toContain('find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml"');
+    expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.AppImage" -print -quit');
+    expect(workflow).toContain("[ ! -f desktop/dist/latest-linux.yml ]");
     expect(workflow).not.toContain("test -f desktop/dist/*.dmg");
     expect(workflow).not.toContain("test -f desktop/dist/*.zip");
     expect(workflow).not.toContain("test -f desktop/dist/*.AppImage");
