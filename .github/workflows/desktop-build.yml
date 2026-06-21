@@ -118,10 +118,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f desktop/dist/latest-mac.yml
-          test -f desktop/dist/*.dmg
-          test -f desktop/dist/*.zip
-          test -f desktop/dist/mac*/Matrix\ OS.app/Contents/Resources/app-update.yml
+          if [ ! -f desktop/dist/latest-mac.yml ]; then
+            echo "Missing macOS update manifest: desktop/dist/latest-mac.yml" >&2
+            exit 1
+          fi
+          if ! find desktop/dist -maxdepth 1 -type f -name "*.dmg" -print -quit | grep -q .; then
+            echo "Missing macOS DMG artifact in desktop/dist" >&2
+            exit 1
+          fi
+          if ! find desktop/dist -maxdepth 1 -type f -name "*.zip" -print -quit | grep -q .; then
+            echo "Missing macOS ZIP artifact in desktop/dist" >&2
+            exit 1
+          fi
+          if ! find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml" -type f -print -quit | grep -q .; then
+            echo "Missing packaged macOS app-update.yml" >&2
+            exit 1
+          fi
 
       - name: Rename mac update manifest for arch
         shell: bash
@@ -190,8 +202,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f desktop/dist/*.AppImage
-          test -f desktop/dist/latest-linux.yml
+          if ! find desktop/dist -maxdepth 1 -type f -name "*.AppImage" -print -quit | grep -q .; then
+            echo "Missing Linux AppImage artifact in desktop/dist" >&2
+            exit 1
+          fi
+          if [ ! -f desktop/dist/latest-linux.yml ]; then
+            echo "Missing Linux update manifest: desktop/dist/latest-linux.yml" >&2
+            exit 1
+          fi
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v6
