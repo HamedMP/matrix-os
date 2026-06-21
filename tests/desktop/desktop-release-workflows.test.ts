@@ -11,10 +11,23 @@ describe("desktop release workflows", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
     expect(workflow).toContain("Rename mac update manifest for arch");
+    expect(workflow).toContain("Resolve mac artifact metadata");
+    expect(workflow).toContain('package_version="$(node -p "require(\'./desktop/package.json\').version")"');
+    expect(workflow).toContain('echo "artifact_base=Matrix-OS-${package_version}-mac-${{ matrix.arch }}"');
+    expect(workflow).toContain("ARTIFACT_BASE: ${{ steps.mac_artifact.outputs.artifact_base }}");
     expect(workflow).toContain("[ ! -f desktop/dist/latest-mac.yml ]");
-    expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.dmg" -print -quit');
-    expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.zip" -print -quit');
+    expect(workflow).toContain('[ ! -f "desktop/dist/${ARTIFACT_BASE}.dmg" ]');
+    expect(workflow).toContain('[ ! -f "desktop/dist/${ARTIFACT_BASE}.zip" ]');
+    expect(workflow).toContain('[ ! -f "desktop/dist/${ARTIFACT_BASE}.dmg.blockmap" ]');
+    expect(workflow).toContain('[ ! -f "desktop/dist/${ARTIFACT_BASE}.zip.blockmap" ]');
+    expect(workflow).toContain('unexpected_artifact="$(');
+    expect(workflow).toContain('-name "Matrix-OS-*-mac-*.dmg"');
+    expect(workflow).toContain('! -name "${ARTIFACT_BASE}.zip.blockmap"');
+    expect(workflow).not.toContain('other_arch="x64"');
     expect(workflow).toContain('find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml"');
+    expect(workflow).toContain("Smoke test macOS DMG mount");
+    expect(workflow).toContain('hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly');
+    expect(workflow).toContain('ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"');
     expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.AppImage" -print -quit');
     expect(workflow).toContain("[ ! -f desktop/dist/latest-linux.yml ]");
     expect(workflow).not.toContain("test -f desktop/dist/*.dmg");
@@ -27,6 +40,14 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('! -name "${{ matrix.arch }}-${CHANNEL}-mac.yml"');
     expect(workflow).toContain("desktop/dist/*-mac.yml");
     expect(workflow).toContain("desktop/dist/*.blockmap");
+  });
+
+  it("lets the mac matrix arch control electron-builder outputs", () => {
+    const config = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
+
+    expect(config).toContain("- dmg");
+    expect(config).toContain("- zip");
+    expect(config).not.toContain("arch: [arm64, x64]");
   });
 
   it("falls back from an empty desktop update channel at build time", () => {

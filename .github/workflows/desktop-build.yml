@@ -114,24 +114,79 @@ jobs:
         working-directory: desktop
         run: pnpm exec electron-builder --config electron-builder.yml --mac --${{ matrix.arch }} --publish never
 
+      - name: Resolve mac artifact metadata
+        id: mac_artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./desktop/package.json').version")"
+          {
+            echo "package_version=$package_version"
+            echo "artifact_base=Matrix-OS-${package_version}-mac-${{ matrix.arch }}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Verify packaged update resources
         shell: bash
+        env:
+          ARTIFACT_BASE: ${{ steps.mac_artifact.outputs.artifact_base }}
         run: |
           set -euo pipefail
           if [ ! -f desktop/dist/latest-mac.yml ]; then
             echo "Missing macOS update manifest: desktop/dist/latest-mac.yml" >&2
             exit 1
           fi
-          if ! find desktop/dist -maxdepth 1 -type f -name "*.dmg" -print -quit | grep -q .; then
-            echo "Missing macOS DMG artifact in desktop/dist" >&2
+          if [ ! -f "desktop/dist/${ARTIFACT_BASE}.dmg" ]; then
+            echo "Missing macOS DMG artifact: desktop/dist/${ARTIFACT_BASE}.dmg" >&2
             exit 1
           fi
-          if ! find desktop/dist -maxdepth 1 -type f -name "*.zip" -print -quit | grep -q .; then
-            echo "Missing macOS ZIP artifact in desktop/dist" >&2
+          if [ ! -f "desktop/dist/${ARTIFACT_BASE}.zip" ]; then
+            echo "Missing macOS ZIP artifact: desktop/dist/${ARTIFACT_BASE}.zip" >&2
+            exit 1
+          fi
+          if [ ! -f "desktop/dist/${ARTIFACT_BASE}.dmg.blockmap" ]; then
+            echo "Missing macOS DMG blockmap: desktop/dist/${ARTIFACT_BASE}.dmg.blockmap" >&2
+            exit 1
+          fi
+          if [ ! -f "desktop/dist/${ARTIFACT_BASE}.zip.blockmap" ]; then
+            echo "Missing macOS ZIP blockmap: desktop/dist/${ARTIFACT_BASE}.zip.blockmap" >&2
+            exit 1
+          fi
+          unexpected_artifact="$(
+            find desktop/dist -maxdepth 1 -type f \
+              \( -name "Matrix-OS-*-mac-*.dmg" -o -name "Matrix-OS-*-mac-*.zip" -o -name "Matrix-OS-*-mac-*.blockmap" \) \
+              ! -name "${ARTIFACT_BASE}.dmg" \
+              ! -name "${ARTIFACT_BASE}.zip" \
+              ! -name "${ARTIFACT_BASE}.dmg.blockmap" \
+              ! -name "${ARTIFACT_BASE}.zip.blockmap" \
+              -print -quit
+          )"
+          if [ -n "$unexpected_artifact" ]; then
+            echo "macOS ${{ matrix.arch }} build produced unexpected artifact: $unexpected_artifact" >&2
             exit 1
           fi
           if ! find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml" -type f -print -quit | grep -q .; then
             echo "Missing packaged macOS app-update.yml" >&2
+            exit 1
+          fi
+
+      - name: Smoke test macOS DMG mount
+        shell: bash
+        env:
+          ARTIFACT_BASE: ${{ steps.mac_artifact.outputs.artifact_base }}
+        run: |
+          set -euo pipefail
+          dmg_path="desktop/dist/${ARTIFACT_BASE}.dmg"
+          mount_dir="$(mktemp -d)"
+          copy_dir="$(mktemp -d)"
+          cleanup() {
+            hdiutil detach "$mount_dir" -quiet || true
+            rm -rf "$mount_dir" "$copy_dir"
+          }
+          trap cleanup EXIT
+          hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly
+          ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"
+          if [ ! -x "$copy_dir/Matrix OS.app/Contents/MacOS/Matrix OS" ]; then
+            echo "Copied macOS app is missing executable entrypoint" >&2
             exit 1
           fi
 
