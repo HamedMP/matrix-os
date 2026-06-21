@@ -4,7 +4,6 @@ import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, use
 import {
   BotIcon,
   CheckIcon,
-  ChevronRightIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
   ClipboardPasteIcon,
@@ -13,7 +12,6 @@ import {
   GripVerticalIcon,
   KeyboardIcon,
   LinkIcon,
-  MonitorIcon,
   PanelLeftOpenIcon,
   PencilIcon,
   PlusIcon,
@@ -26,9 +24,8 @@ import {
 } from "lucide-react";
 import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
 import { PaneGrid } from "./PaneGrid";
-import { saveTheme, useTheme } from "@/hooks/useTheme";
+import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
-import { MATRIX_OS_APP_THEME_OPTIONS, MATRIX_OS_DARK_THEME, MATRIX_OS_LIGHT_THEME } from "@/lib/theme-presets";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import { useTerminalSettings, type ShellThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
@@ -62,24 +59,6 @@ const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
   height: 34,
   justifyContent: "center",
   padding: "0 12px",
-};
-
-const PAPER_THEME_MENU_STYLE: CSSProperties = {
-  background: "#20241C",
-  border: "1px solid #2D3127",
-  borderRadius: 14,
-  boxShadow: "0 18px 44px rgba(0, 0, 0, 0.42)",
-  color: "#F0EFE5",
-  display: "flex",
-  flexDirection: "column",
-  gap: 2,
-  marginTop: 8,
-  padding: 6,
-  position: "absolute",
-  right: 0,
-  top: 34,
-  width: 280,
-  zIndex: 50,
 };
 
 const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
@@ -227,16 +206,81 @@ const SIDEBAR_RAIL_BUTTON_BASE_STYLE: CSSProperties = {
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
+const SESSION_ACTIONS_STYLE: CSSProperties = {
+  gap: 6,
+  transition: "opacity 120ms ease",
+  width: 58,
+};
+const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
+  background: "#F0EFE5",
+  border: "1px solid #E4E2D2",
+  borderRadius: 6,
+  color: "#8A8B7C",
+  flexShrink: 0,
+  height: 22,
+  pointerEvents: "auto",
+  transition: "opacity 120ms ease",
+  width: 22,
+};
+const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
+  background: "#F0EFE5",
+  border: "1px solid #E4E2D2",
+  borderRadius: 6,
+  cursor: "pointer",
+  flexShrink: 0,
+  fontSize: 12,
+  fontWeight: 800,
+  height: 24,
+  overflow: "visible",
+  pointerEvents: "auto",
+  position: "relative",
+  transition: "background-color 120ms ease, border-color 120ms ease, color 120ms ease",
+  width: 24,
+};
+const SESSION_COPY_TOAST_STYLE: CSSProperties = {
+  background: "#465243",
+  borderRadius: 6,
+  color: "#F8F7EF",
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 12,
+  fontWeight: 800,
+  left: -13,
+  lineHeight: "18px",
+  pointerEvents: "none",
+  position: "absolute",
+  textAlign: "center",
+  top: 28,
+  width: 50,
+};
+const SESSION_CLOSE_BUTTON_STYLE: CSSProperties = {
+  background: "#F0EFE5",
+  border: "1px solid #E4E2D2",
+  borderRadius: 6,
+  color: "#77786E",
+  fontSize: 15,
+  height: 24,
+  lineHeight: "20px",
+  pointerEvents: "auto",
+  width: 24,
+};
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
   50% { box-shadow: 0 0 0 6px rgba(95, 184, 95, 0.10); }
 }
+@keyframes terminal-refresh-spin {
+  to { transform: rotate(360deg); }
+}
 .terminal-session-status-dot--running {
   animation: terminal-session-status-pulse 1.35s ease-in-out infinite;
 }
+.terminal-refresh-icon--loading {
+  animation: terminal-refresh-spin 0.9s linear infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .terminal-session-status-dot--running {
+  .terminal-session-status-dot--running,
+  .terminal-refresh-icon--loading {
     animation: none;
   }
 }
@@ -1117,6 +1161,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     });
   }, [log, tabs]);
 
+  useEffect(() => {
+    if (!initialized) return undefined;
+    const resizeTimer = window.setTimeout(() => {
+      window.dispatchEvent(new Event("resize"));
+    }, 220);
+    return () => window.clearTimeout(resizeTimer);
+  }, [activeTabId, initialized, sidebarOpen]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!e.ctrlKey || !e.shiftKey) return;
     switch (e.key.toUpperCase()) {
@@ -1134,7 +1186,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   // Construct store-compatible interface for child components
   const storeApi = {
-    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile, themeName: theme.name, windowControls,
+    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
     addTab, addSessionTab, createShellSessionTab, backgroundShellSession, closeTab, setActiveTab: setActiveTabId, renameTab, renameShellSession, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
     setSidebarOpen, setSidebarSelectedPath,
@@ -1231,7 +1283,6 @@ interface TerminalAppContextType {
   sidebarSelectedPath: string | null;
   focusedPaneId: string | null;
   mobile: boolean;
-  themeName: string;
   windowControls?: TerminalWindowControls;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
@@ -1348,13 +1399,9 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
 
 function ThemePickerButton() {
   const ctx = useTerminalAppContext();
-  const [open, setOpen] = useState(false);
   const [shellThemeOpen, setShellThemeOpen] = useState(false);
-  const [selectedAppThemeOverride, setSelectedAppThemeOverride] = useState<string | null>(null);
-  const [matchSystem, setMatchSystem] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const setTerminalThemeId = useTerminalSettings((s) => s.setThemeId);
-  const selectedAppThemeName = selectedAppThemeOverride ?? ctx.themeName;
   const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
   const focusedPaneId = ctx.focusedPaneId ?? (activeTab ? getFirstPaneId(activeTab.paneTree) : null);
   const sessionName = activeTab && focusedPaneId
@@ -1362,12 +1409,12 @@ function ThemePickerButton() {
     : null;
 
   useEffect(() => {
-    if (!open) return;
+    if (!shellThemeOpen) return;
     const onClick = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!wrapRef.current?.contains(e.target as Node)) setShellThemeOpen(false);
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") setShellThemeOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     document.addEventListener("keydown", onKeyDown);
@@ -1375,35 +1422,16 @@ function ThemePickerButton() {
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [shellThemeOpen]);
 
-  const persistTheme = (theme: (typeof MATRIX_OS_APP_THEME_OPTIONS)[number]["theme"], nextMatchSystem = false) => {
-    setSelectedAppThemeOverride(theme.name);
-    setMatchSystem(nextMatchSystem);
-    void saveTheme(theme).catch((err: unknown) => {
-      console.warn("Failed to save terminal app theme:", err instanceof Error ? err.message : err);
-    });
+  const openShellThemeChooser = () => {
+    if (shellThemeOpen) {
+      setShellThemeOpen(false);
+      return;
+    }
+    loadShellThemePreference(sessionName, setTerminalThemeId);
+    setShellThemeOpen(true);
   };
-
-  const applySystemTheme = () => {
-    const prefersDark = typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-    persistTheme(prefersDark ? MATRIX_OS_DARK_THEME : MATRIX_OS_LIGHT_THEME, true);
-  };
-
-  const panel = (
-    <ThemePickerPanel
-      matchSystem={matchSystem}
-      mobile={ctx.mobile}
-      selectedAppThemeName={selectedAppThemeName}
-      onSelectTheme={(theme) => persistTheme(theme, false)}
-      onShellThemeOpen={() => {
-        loadShellThemePreference(sessionName, setTerminalThemeId);
-        setOpen(false);
-        setShellThemeOpen(true);
-      }}
-      onSystemTheme={applySystemTheme}
-    />
-  );
 
   return (
     <div
@@ -1417,7 +1445,7 @@ function ThemePickerButton() {
         aria-label="Theme"
         title="Theme"
         style={PAPER_THEME_BUTTON_STYLE}
-        onClick={() => setOpen((o) => !o)}
+        onClick={openShellThemeChooser}
       >
         <span style={{ color: "#CF7835", fontSize: 17, fontWeight: 600, lineHeight: "22px" }}>☼</span>
         <span>Theme</span>
@@ -1428,207 +1456,6 @@ function ThemePickerButton() {
           sessionName={sessionName}
           onClose={() => setShellThemeOpen(false)}
         />
-      ) : null}
-      {open && (ctx.mobile ? (
-        <div
-          aria-label="Theme picker overlay"
-          role="presentation"
-          style={{
-            alignItems: "flex-end",
-            background: "rgba(2, 5, 2, 0.58)",
-            display: "flex",
-            inset: 0,
-            justifyContent: "center",
-            paddingTop: 64,
-            position: "fixed",
-            zIndex: 80,
-          }}
-        >
-          {panel}
-        </div>
-      ) : (
-        panel
-      ))}
-    </div>
-  );
-}
-
-function ThemePickerPanel({
-  matchSystem,
-  mobile,
-  selectedAppThemeName,
-  onSelectTheme,
-  onShellThemeOpen,
-  onSystemTheme,
-}: {
-  matchSystem: boolean;
-  mobile: boolean;
-  selectedAppThemeName: string;
-  onSelectTheme: (theme: (typeof MATRIX_OS_APP_THEME_OPTIONS)[number]["theme"]) => void;
-  onShellThemeOpen: () => void;
-  onSystemTheme: () => void;
-}) {
-  const panelStyle: CSSProperties = mobile
-    ? {
-        background: "#FBFAF2",
-        borderRadius: "24px 24px 0 0",
-        boxShadow: "0 -18px 44px rgba(0, 0, 0, 0.28)",
-        color: "#2F332C",
-        display: "flex",
-        flexDirection: "column",
-        gap: 14,
-        maxWidth: 390,
-        padding: "10px 20px 14px",
-        width: "100%",
-      }
-    : PAPER_THEME_MENU_STYLE;
-  const rowHeight = mobile ? 64 : 51;
-  const previewSize = mobile ? { width: 48, height: 38 } : { width: 40, height: 32 };
-
-  return (
-    <div
-      role={mobile ? "dialog" : "menu"}
-      aria-label="Theme"
-      style={panelStyle}
-      onPointerDown={(event) => event.stopPropagation()}
-      onMouseDown={(event) => event.stopPropagation()}
-    >
-      {mobile ? (
-        <>
-          <div style={{ alignSelf: "center", background: "#D4D4C4", borderRadius: 999, height: 5, width: 42 }} />
-          <div style={{ color: "#20241C", fontSize: 20, fontWeight: 750, lineHeight: "24px" }}>Theme</div>
-        </>
-      ) : (
-        <div style={{ padding: "8px 10px 4px" }}>
-          <div style={{ color: "#6F7167", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", lineHeight: "14px", textTransform: "uppercase" }}>
-            Theme
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: "flex", flexDirection: "column", gap: mobile ? 0 : 2 }}>
-        {MATRIX_OS_APP_THEME_OPTIONS.map((option) => {
-          const selected = selectedAppThemeName === option.theme.name;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={selected}
-              aria-label={`${option.label} ${option.description}`}
-              onClick={() => onSelectTheme(option.theme)}
-              style={{
-                alignItems: "center",
-                background: selected ? (mobile ? "#F2F1E6" : "#2A2E22") : "transparent",
-                border: mobile ? "1px solid transparent" : 0,
-                borderColor: selected && mobile ? "#DEDCCF" : "transparent",
-                borderRadius: mobile ? 10 : 10,
-                color: mobile ? "#2F332C" : "#F0EFE5",
-                cursor: "pointer",
-                display: "flex",
-                gap: mobile ? 14 : 12,
-                minHeight: rowHeight,
-                padding: mobile ? "12px 14px" : "8px 10px",
-                textAlign: "left",
-                width: "100%",
-              }}
-            >
-              <ThemePreviewSwatch colors={option.preview} height={previewSize.height} width={previewSize.width} />
-              <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
-                <span style={{ color: mobile ? "#20241C" : "#F0EFE5", fontSize: mobile ? 16 : 14, fontWeight: 650, lineHeight: mobile ? "20px" : "18px" }}>
-                  {option.label}
-                </span>
-                <span style={{ color: mobile ? "#77786C" : "#858578", fontSize: mobile ? 13 : 12, lineHeight: mobile ? "16px" : "16px" }}>
-                  {option.description}
-                </span>
-              </span>
-              {selected ? <CheckIcon size={mobile ? 20 : 18} strokeWidth={2.4} style={{ color: mobile ? "#4F8A55" : "#9CB77A", flexShrink: 0 }} /> : null}
-            </button>
-          );
-        })}
-      </div>
-
-      <ThemeDivider mobile={mobile} />
-      <button
-        type="button"
-        aria-label="Match system"
-        onClick={onSystemTheme}
-        style={{
-          alignItems: "center",
-          background: "transparent",
-          border: 0,
-          borderRadius: 10,
-          color: mobile ? "#2F332C" : "#C9C7B7",
-          cursor: "pointer",
-          display: "flex",
-          gap: 12,
-          minHeight: mobile ? 32 : 48,
-          padding: mobile ? "2px 12px" : "8px 10px",
-          textAlign: "left",
-          width: "100%",
-        }}
-      >
-        <span style={themeUtilityIconStyle(mobile)}>
-          <MonitorIcon size={mobile ? 20 : 17} strokeWidth={2} />
-        </span>
-        <span style={{ flex: 1, fontSize: mobile ? 16 : 14, fontWeight: 650, lineHeight: mobile ? "20px" : "18px" }}>
-          Match system
-        </span>
-        <ThemeSwitch checked={matchSystem} mobile={mobile} />
-      </button>
-
-      <ThemeDivider mobile={mobile} />
-      <button
-        type="button"
-        aria-label="Change shell theme Advanced terminal colors"
-        onClick={onShellThemeOpen}
-        style={{
-          alignItems: "center",
-          background: mobile ? "#F2F1E6" : "#1E241B",
-          border: `1px solid ${mobile ? "#DEDCCF" : "#303729"}`,
-          borderRadius: 10,
-          color: mobile ? "#2F332C" : "#EDEBDD",
-          cursor: "pointer",
-          display: "flex",
-          gap: 12,
-          minHeight: mobile ? 64 : 48,
-          padding: mobile ? "12px 14px" : "8px 10px",
-          textAlign: "left",
-          width: "100%",
-        }}
-      >
-        <span
-          style={{
-            ...themeUtilityIconStyle(mobile),
-            background: mobile ? "#FFFFFF" : "#12170F",
-            borderColor: mobile ? "#DEDDD1" : "#3A4233",
-            color: mobile ? "#77786C" : "#D7D4C2",
-          }}
-        >
-          <SquareTerminalIcon size={mobile ? 18 : 16} strokeWidth={2.1} />
-        </span>
-        <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
-          <span style={{ color: mobile ? "#2F332C" : "#EDEBDD", fontSize: mobile ? 14 : 13, fontWeight: 700, lineHeight: mobile ? "18px" : "16px" }}>
-            Change shell theme
-          </span>
-          <span style={{ color: mobile ? "#77786C" : "#AFAE9F", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
-            Advanced · terminal colors
-          </span>
-        </span>
-        <ChevronRightIcon
-          size={mobile ? 18 : 16}
-          strokeWidth={2}
-          style={{
-            color: mobile ? "#77786C" : "#C9C7B7",
-            flexShrink: 0,
-          }}
-        />
-      </button>
-
-      {mobile ? (
-        <div style={{ alignItems: "center", display: "flex", height: 22, justifyContent: "center" }}>
-          <div style={{ background: "#000000", borderRadius: 999, height: 5, width: 140 }} />
-        </div>
       ) : null}
     </div>
   );
@@ -1918,99 +1745,6 @@ function ShellThemePreviewIcon({
       </span>
     </span>
   );
-}
-
-function ThemePreviewSwatch({
-  colors,
-  height,
-  width,
-}: {
-  colors: (typeof MATRIX_OS_APP_THEME_OPTIONS)[number]["preview"];
-  height: number;
-  width: number;
-}) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        background: colors.background,
-        border: `1px solid ${colors.border}`,
-        borderRadius: 8,
-        display: "flex",
-        flexDirection: "column",
-        flexShrink: 0,
-        gap: 4,
-        height,
-        justifyContent: "center",
-        padding: 7,
-        width,
-      }}
-    >
-      <span style={{ background: colors.stripe, borderRadius: 2, display: "block", height: 3, width: Math.max(18, width - 22) }} />
-      <span style={{ display: "flex", gap: 3 }}>
-        <span style={{ background: colors.dotA, borderRadius: 999, display: "block", height: width > 40 ? 7 : 6, width: width > 40 ? 7 : 6 }} />
-        <span style={{ background: colors.dotB, borderRadius: 999, display: "block", height: width > 40 ? 7 : 6, width: width > 40 ? 7 : 6 }} />
-      </span>
-    </span>
-  );
-}
-
-function ThemeDivider({ mobile }: { mobile: boolean }) {
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        background: mobile ? "#DEDDD1" : "#2A2E22",
-        height: 1,
-        margin: mobile ? "6px 0" : "4px 8px",
-      }}
-    />
-  );
-}
-
-function ThemeSwitch({ checked, mobile }: { checked: boolean; mobile: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        alignItems: "center",
-        background: checked ? "#CFE0B6" : mobile ? "#E2E1D4" : "#2A2E22",
-        border: `1px solid ${checked ? "#A8C77F" : mobile ? "#D4D3C7" : "#3A3E30"}`,
-        borderRadius: 999,
-        display: "flex",
-        flexShrink: 0,
-        height: mobile ? 28 : 23,
-        justifyContent: checked ? "flex-end" : "flex-start",
-        padding: 3,
-        width: mobile ? 46 : 40,
-      }}
-    >
-      <span
-        style={{
-          background: checked ? "#4F8A55" : mobile ? "#FBFAF2" : "#5A5D50",
-          borderRadius: 999,
-          display: "block",
-          height: mobile ? 22 : 17,
-          width: mobile ? 22 : 17,
-        }}
-      />
-    </span>
-  );
-}
-
-function themeUtilityIconStyle(mobile: boolean): CSSProperties {
-  return {
-    alignItems: "center",
-    background: mobile ? "#FFFFFF" : "#171A13",
-    border: `1px solid ${mobile ? "#DEDDD1" : "#2D3127"}`,
-    borderRadius: 8,
-    color: mobile ? "#77786C" : "#858578",
-    display: "flex",
-    flexShrink: 0,
-    height: mobile ? 38 : 32,
-    justifyContent: "center",
-    width: mobile ? 38 : 40,
-  };
 }
 
 function isTerminalChromeControl(target: EventTarget | null): boolean {
@@ -3445,19 +3179,33 @@ function LocalTerminalSidebar() {
   if (!ctx.sidebarOpen && !ctx.mobile) {
     return (
       <>
-        <CollapsedSessionsRail
-          shells={unfilteredRenderedShells}
-          selectedShellName={activeShellName}
-          onExpand={() => ctx.setSidebarOpen(true)}
-          creatingShell={creatingShell}
-          newSessionMenuOpen={newSessionMenuAnchor === "rail"}
-          onNew={() => openNewSessionMenu("rail")}
-          onNewMenuClose={() => setNewSessionMenuAnchor(null)}
-          onCreateShell={() => void createManagedShell()}
-          onCreateClaude={createClaudeCodeSession}
-          onCreateCodex={createCodexSession}
-          onOpen={makeShellActive}
-        />
+        <div
+          data-testid="terminal-sidebar-shell"
+          className="shrink-0"
+          style={{
+            display: "flex",
+            minHeight: 0,
+            opacity: 1,
+            overflow: "hidden",
+            transform: "translateX(0)",
+            transition: TERMINAL_SIDEBAR_TRANSITION,
+            width: 76,
+          }}
+        >
+          <CollapsedSessionsRail
+            shells={unfilteredRenderedShells}
+            selectedShellName={activeShellName}
+            onExpand={() => ctx.setSidebarOpen(true)}
+            creatingShell={creatingShell}
+            newSessionMenuOpen={newSessionMenuAnchor === "rail"}
+            onNew={() => openNewSessionMenu("rail")}
+            onNewMenuClose={() => setNewSessionMenuAnchor(null)}
+            onCreateShell={() => void createManagedShell()}
+            onCreateClaude={createClaudeCodeSession}
+            onCreateCodex={createCodexSession}
+            onOpen={makeShellActive}
+          />
+        </div>
         {closeConfirmationOverlay}
       </>
     );
@@ -3470,6 +3218,7 @@ function LocalTerminalSidebar() {
   return (
     <>
       <div
+        data-testid="terminal-sidebar-shell"
         className="shrink-0 overflow-hidden"
         style={{
           background: "#E9E9D8",
@@ -3480,6 +3229,9 @@ function LocalTerminalSidebar() {
           flexDirection: "column",
           maxHeight: ctx.mobile ? "52%" : undefined,
           minHeight: ctx.mobile ? 360 : undefined,
+          opacity: 1,
+          transform: "translateX(0)",
+          transition: ctx.mobile ? undefined : TERMINAL_SIDEBAR_TRANSITION,
           width: drawerWidth,
         }}
       >
@@ -3562,18 +3314,25 @@ function LocalTerminalSidebar() {
                   type="button"
                   aria-label="Refresh sessions"
                   onClick={() => void fetchShells()}
+                  disabled={shellsLoading}
                   className="flex items-center justify-center"
                   style={{
                     background: "#FFFDF7",
                     border: "1px solid #D6D5C4",
                     borderRadius: 10,
                     color: "#6F7167",
-                    cursor: "pointer",
+                    cursor: shellsLoading ? "not-allowed" : "pointer",
                     height: 40,
+                    opacity: shellsLoading ? 0.72 : 1,
                     width: 40,
                   }}
                 >
-                  <RefreshCwIcon size={17} strokeWidth={1.9} />
+                  <RefreshCwIcon
+                    className={shellsLoading ? "terminal-refresh-icon--loading" : undefined}
+                    data-testid="terminal-refresh-icon"
+                    size={17}
+                    strokeWidth={1.9}
+                  />
                 </button>
                 <button
                   type="button"
@@ -3632,16 +3391,17 @@ function LocalTerminalSidebar() {
         {!shellsLoading && shellsError && (
           <div style={{ color: "#8F6712", fontSize: 12, padding: "24px 0", textAlign: "center" }}>{shellsError}</div>
         )}
-        {!shellsLoading && !shellsError && renderedShells.length === 0 && (
+        {!shellsLoading && !shellsError && !creatingShell && renderedShells.length === 0 && (
           <div style={{ color: "#858578", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
             {filter ? "No sessions match" : "No sessions yet"}
           </div>
         )}
-        {!shellsLoading && activeShells.length > 0 && (
+        {!shellsLoading && (activeShells.length > 0 || creatingShell) && (
           <ShellSessionGroup
             label="Active"
             meta={`${activeShells.length} attached`}
             shells={activeShells}
+            pending={creatingShell}
             deletingShellNames={deletingShellNames}
             foreground
             selectedShellName={activeShellName}
@@ -4420,6 +4180,7 @@ function ShellSessionGroup({
   label,
   meta,
   shells,
+  pending = false,
   deletingShellNames,
   foreground,
   selectedShellName,
@@ -4437,6 +4198,7 @@ function ShellSessionGroup({
   label: "Active" | "Background";
   meta: string;
   shells: ShellSessionSummary[];
+  pending?: boolean;
   deletingShellNames: string[];
   foreground: boolean;
   selectedShellName: string | null;
@@ -4468,7 +4230,8 @@ function ShellSessionGroup({
           {meta}
         </span>
       </div>
-      {shells.length === 0 ? (
+      {pending ? <ShellPendingCard /> : null}
+      {shells.length === 0 && !pending ? (
         <div style={{ color: "#A09F92", fontSize: 12, padding: "8px 0 6px" }}>
           {foreground ? "No active sessions" : "Nothing running in background"}
         </div>
@@ -4492,6 +4255,68 @@ function ShellSessionGroup({
         />
       ))}
     </section>
+  );
+}
+
+function ShellPendingCard() {
+  return (
+    <output
+      aria-label="Creating shell session"
+      data-testid="terminal-session-pending-row"
+      style={{
+        alignItems: "center",
+        background: "#FFFDF7",
+        border: "1px solid #D6D5C4",
+        borderRadius: 10,
+        boxShadow: "0 9px 22px rgba(39,40,34,0.10)",
+        color: "#858578",
+        display: "grid",
+        gap: 10,
+        gridTemplateColumns: "12px 8px minmax(0, 1fr) 58px 46px",
+        height: 52,
+        opacity: 0.82,
+        padding: "0 12px",
+      }}
+    >
+      <span style={{ width: 12 }} />
+      <span
+        aria-hidden="true"
+        className="terminal-refresh-icon--loading"
+        style={{
+          border: "2px solid #D6D5C4",
+          borderTopColor: "#465243",
+          borderRadius: "50%",
+          height: 8,
+          width: 8,
+        }}
+      />
+      <span
+        style={{
+          fontFamily: "var(--font-mono, ui-monospace, monospace)",
+          fontSize: 14,
+          fontWeight: 700,
+          lineHeight: "18px",
+          minWidth: 0,
+        }}
+      >
+        Creating session
+      </span>
+      <span />
+      <span
+        style={{
+          background: "#F0EFE5",
+          border: "1px solid #E4E2D2",
+          borderRadius: 999,
+          color: "#858578",
+          fontSize: 12,
+          fontWeight: 800,
+          lineHeight: "18px",
+          textAlign: "center",
+        }}
+      >
+        NEW
+      </span>
+    </output>
   );
 }
 
@@ -4676,9 +4501,10 @@ function ShellCard({
             ? "0 0 0 5px rgba(156,183,122,0.28), 0 14px 30px rgba(39,40,34,0.18)"
             : foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
-        display: "flex",
         alignItems: "center",
+        display: "grid",
         gap: 10,
+        gridTemplateColumns: "minmax(0, 1fr) 46px",
         height: 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
@@ -4738,7 +4564,18 @@ function ShellCard({
           }}
         />
       )}
-      <div className="flex min-w-0 flex-1 items-center" style={{ gap: 10, pointerEvents: "none", position: "relative", zIndex: 1 }}>
+      <div
+        className="min-w-0"
+        style={{
+          alignItems: "center",
+          display: "grid",
+          gap: 10,
+          gridTemplateColumns: "12px 8px minmax(0, 1fr)",
+          pointerEvents: "none",
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
         <button
           type="button"
           aria-label={`Drag ${displayName} session`}
@@ -4784,7 +4621,15 @@ function ShellCard({
             ...statusDotStyle,
           }}
           />
-        <div className="flex min-w-0 items-center" style={{ flex: "1 1 auto", gap: 6 }}>
+        <div
+          className="min-w-0"
+          style={{
+            alignItems: "center",
+            display: "grid",
+            gap: 6,
+            gridTemplateColumns: renaming ? "minmax(0, 1fr)" : foreground ? "minmax(0, 1fr) 22px 58px" : "minmax(0, 1fr) 58px",
+          }}
+        >
           {renaming ? (
             <input
               ref={renameInputRef}
@@ -4839,7 +4684,6 @@ function ShellCard({
                 border: 0,
                 color: foreground ? "#31362D" : "#5F6258",
                 cursor: "pointer",
-                flex: "0 1 auto",
                 fontFamily: "var(--font-mono, ui-monospace, monospace)",
                 fontSize: 14,
                 fontWeight: 700,
@@ -4868,17 +4712,9 @@ function ShellCard({
               onMouseDown={(event) => event.stopPropagation()}
               className="flex items-center justify-center"
               style={{
-                background: "#F0EFE5",
-                border: "1px solid #E4E2D2",
-                borderRadius: 6,
-                color: "#8A8B7C",
+                ...SESSION_RENAME_BUTTON_STYLE,
                 cursor: renameSaving ? "not-allowed" : "pointer",
-                flexShrink: 0,
-                height: 22,
                 opacity: showRenameControl ? 1 : 0,
-                pointerEvents: "auto",
-                transition: "opacity 120ms ease",
-                width: 22,
               }}
             >
               <PencilIcon size={12} strokeWidth={2} />
@@ -4890,15 +4726,14 @@ function ShellCard({
               aria-hidden={showActions ? undefined : "true"}
               className="flex shrink-0 items-center justify-end"
               style={{
-                gap: 6,
+                ...SESSION_ACTIONS_STYLE,
                 opacity: showActions ? 1 : 0,
                 pointerEvents: showActions ? "auto" : "none",
-                transition: "opacity 120ms ease",
-                width: 90,
               }}
             >
               <button
                 type="button"
+                data-testid={`terminal-session-copy-button-${shell.name}`}
                 aria-label={`Copy connect command for ${displayName}`}
                 title={copyFeedback === "copied" ? "Copied" : shellConnectCommand(shell.name)}
                 tabIndex={showActions ? 0 : -1}
@@ -4910,18 +4745,8 @@ function ShellCard({
                 onMouseDown={(event) => event.stopPropagation()}
                 className="flex items-center justify-center"
                 style={{
-                  background: "#F0EFE5",
-                  border: "1px solid #E4E2D2",
-                  borderRadius: 6,
+                  ...SESSION_COPY_BUTTON_STYLE,
                   color: copyFeedback === "copied" ? "#465243" : "#8A8B7C",
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  fontSize: 12,
-                  fontWeight: 800,
-                  gap: 5,
-                  height: 24,
-                  pointerEvents: "auto",
-                  width: copyFeedback === "copied" ? 58 : 24,
                 }}
               >
                 {copyFeedback === "copied" ? (
@@ -4930,6 +4755,7 @@ function ShellCard({
                     <output
                       data-testid={`terminal-session-copy-toast-${shell.name}`}
                       aria-live="polite"
+                      style={SESSION_COPY_TOAST_STYLE}
                     >
                       Copied
                     </output>
@@ -4951,17 +4777,9 @@ function ShellCard({
                 disabled={deleting}
                 className="flex shrink-0 items-center justify-center"
                 style={{
-                  background: "#F0EFE5",
-                  border: "1px solid #E4E2D2",
-                  borderRadius: 6,
-                  color: "#77786E",
+                  ...SESSION_CLOSE_BUTTON_STYLE,
                   cursor: deleting ? "not-allowed" : "pointer",
-                  fontSize: 15,
-                  height: 24,
-                  lineHeight: "20px",
                   opacity: deleting ? 0.65 : 1,
-                  pointerEvents: "auto",
-                  width: 24,
                 }}
               >
                 ×
