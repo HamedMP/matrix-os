@@ -13,6 +13,7 @@ matrix_prepend_path_once() {
 matrix_export_owner_env() {
   export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
   export HOME="$MATRIX_HOME"
+  export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
   export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
   export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
   export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
@@ -22,18 +23,32 @@ matrix_export_owner_env() {
   matrix_prepend_path_once "$HOME/.local/bin"
 }
 
+matrix_install_dir() {
+  local path="$1"
+  local mode="$2"
+  local owner="${3:-matrix}"
+  local group="${4:-$owner}"
+
+  if [ "$(id -u)" = "0" ]; then
+    install -d -o "$owner" -g "$group" -m "$mode" "$path"
+    return
+  fi
+
+  mkdir -p "$path"
+  chmod "$mode" "$path" 2>/dev/null || true
+}
+
 matrix_install_owner_dirs() {
   local owner="${1:-matrix}"
   local group="${2:-$owner}"
-  install -d -o "$owner" -g "$group" -m 0755 \
-    "$MATRIX_HOME" \
-    "$MATRIX_HOME/.local" \
-    "$MATRIX_HOME/.local/bin" \
-    "$MATRIX_HOME/.local/share" \
-    "$MATRIX_HOME/.cache" \
-    "$MATRIX_HOME/.config" \
-    "$MATRIX_HOME/.config/systemd" \
-    "$MATRIX_HOME/.config/systemd/user"
+  matrix_install_dir "$MATRIX_HOME" 0755 "$owner" "$group"
+  matrix_install_dir "$MATRIX_HOME/.local" 0755 "$owner" "$group"
+  matrix_install_dir "$MATRIX_HOME/.local/bin" 0755 "$owner" "$group"
+  matrix_install_dir "$MATRIX_HOME/.local/share" 0755 "$owner" "$group"
+  matrix_install_dir "$MATRIX_HOME/.cache" 0755 "$owner" "$group"
+  matrix_install_dir "$MATRIX_HOME/.config" 0755 "$owner" "$group"
+  matrix_install_dir "$MATRIX_HOME/.config/systemd" 0755 "$owner" "$group"
+  matrix_install_dir "$MATRIX_HOME/.config/systemd/user" 0755 "$owner" "$group"
 }
 
 matrix_migrate_legacy_dotdir() {
@@ -41,10 +56,10 @@ matrix_migrate_legacy_dotdir() {
   local mode="${2:-0755}"
   local owner="${MATRIX_RUNTIME_USER:-matrix}"
   local group="${MATRIX_RUNTIME_GROUP:-$owner}"
-  local legacy="/home/matrix/$name"
+  local legacy="${MATRIX_LEGACY_HOME:-/home/matrix}/$name"
   local target="$MATRIX_HOME/$name"
 
-  install -d -o "$owner" -g "$group" -m "$mode" "$target"
+  matrix_install_dir "$target" "$mode" "$owner" "$group"
   if [ -d "$legacy" ] && [ ! -L "$legacy" ]; then
     if ! cp -an "$legacy/." "$target/"; then
       printf 'matrix-owner-env: failed to copy %s to %s; leaving legacy directory in place\n' "$legacy" "$target" >&2
@@ -54,6 +69,19 @@ matrix_migrate_legacy_dotdir() {
   fi
   if [ ! -e "$legacy" ] || [ -L "$legacy" ]; then
     ln -sfn "$target" "$legacy"
-    chown -h "$owner:$group" "$legacy"
+    if [ "$(id -u)" = "0" ]; then
+      chown -h "$owner:$group" "$legacy"
+    fi
   fi
+}
+
+matrix_reconcile_owner_home() {
+  local owner="${1:-matrix}"
+  local group="${2:-$owner}"
+
+  matrix_install_owner_dirs "$owner" "$group"
+  matrix_migrate_legacy_dotdir ".local" 0755
+  matrix_migrate_legacy_dotdir ".cache" 0755
+  matrix_migrate_legacy_dotdir ".config" 0755
+  matrix_migrate_legacy_dotdir ".hermes" 0700
 }

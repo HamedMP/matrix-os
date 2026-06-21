@@ -16,6 +16,7 @@ WORKFLOW_FILE="${SYMPHONY_WORKFLOW_FILE:-$APP_DIR/packages/symphony-elixir/WORKF
 export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
 if declare -F matrix_export_owner_env >/dev/null 2>&1; then
   matrix_export_owner_env
+  matrix_reconcile_owner_home "${MATRIX_RUNTIME_USER:-matrix}" "${MATRIX_RUNTIME_GROUP:-${MATRIX_RUNTIME_USER:-matrix}}"
 else
   export HOME="$MATRIX_HOME"
 fi

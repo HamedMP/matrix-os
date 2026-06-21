@@ -20,6 +20,7 @@ write_files:
       if [ "$(id -un 2>/dev/null || true)" = "matrix" ]; then
         export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
         export HOME="$MATRIX_HOME"
+        export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
         export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
         export XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
         export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
