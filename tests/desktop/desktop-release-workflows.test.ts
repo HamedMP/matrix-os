@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("desktop release workflows", () => {
-  it("renames mac update manifests before artifact upload", () => {
+  it("verifies packaged artifacts before renaming mac update manifests", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
     expect(workflow).toContain("Rename mac update manifest for arch");
@@ -17,6 +17,7 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml"');
     expect(workflow).not.toContain("test -f desktop/dist/*.dmg");
     expect(workflow).not.toContain("test -f desktop/dist/*.zip");
+    expect(workflow).not.toContain("test -f desktop/dist/*.AppImage");
     expect(workflow).not.toContain("test -f desktop/dist/*-mac.yml");
     expect(workflow).toContain('mv desktop/dist/latest-mac.yml "desktop/dist/${{ matrix.arch }}-mac.yml"');
     expect(workflow).toContain('mv "desktop/dist/${CHANNEL}-mac.yml" "desktop/dist/${{ matrix.arch }}-${CHANNEL}-mac.yml"');
