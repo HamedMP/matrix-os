@@ -41,8 +41,6 @@ jobs:
         arch: [arm64, x64]
     env:
       MATRIX_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
-      CSC_LINK: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE_PASSWORD || secrets.CSC_KEY_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD || secrets.APPLE_APP_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -60,6 +58,28 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare mac signing environment
+        shell: bash
+        env:
+          MAC_CERTIFICATE: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE_PASSWORD || secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${MAC_CERTIFICATE:-}" ]; then
+            cert_delimiter="MATRIX_DESKTOP_CERT_$(uuidgen | tr '[:lower:]' '[:upper:]' | tr -d '-')"
+            password_delimiter="MATRIX_DESKTOP_CERT_PASSWORD_$(uuidgen | tr '[:lower:]' '[:upper:]' | tr -d '-')"
+            {
+              echo "CSC_LINK<<$cert_delimiter"
+              printf '%s\n' "$MAC_CERTIFICATE"
+              echo "$cert_delimiter"
+              echo "CSC_KEY_PASSWORD<<$password_delimiter"
+              printf '%s\n' "${MAC_CERTIFICATE_PASSWORD:-}"
+              echo "$password_delimiter"
+            } >> "$GITHUB_ENV"
+          else
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+          fi
 
       - name: Validate Apple notarization secrets
         shell: bash
