@@ -11,7 +11,12 @@ describe("desktop release workflows", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
     expect(workflow).toContain("Rename mac update manifest for arch");
-    expect(workflow).toContain("test -f desktop/dist/latest-mac.yml");
+    expect(workflow).toContain("[ ! -f desktop/dist/latest-mac.yml ]");
+    expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.dmg" -print -quit');
+    expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.zip" -print -quit');
+    expect(workflow).toContain('find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml"');
+    expect(workflow).not.toContain("test -f desktop/dist/*.dmg");
+    expect(workflow).not.toContain("test -f desktop/dist/*.zip");
     expect(workflow).not.toContain("test -f desktop/dist/*-mac.yml");
     expect(workflow).toContain('mv desktop/dist/latest-mac.yml "desktop/dist/${{ matrix.arch }}-mac.yml"');
     expect(workflow).toContain('mv "desktop/dist/${CHANNEL}-mac.yml" "desktop/dist/${{ matrix.arch }}-${CHANNEL}-mac.yml"');
