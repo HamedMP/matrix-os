@@ -3056,7 +3056,7 @@ function LocalTerminalSidebar() {
     ? activePaneSessionId
     : null;
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
-  const startSidebarResize = (event: PointerEvent<HTMLDivElement>) => {
+  const startSidebarResize = (event: PointerEvent<HTMLElement>) => {
     if (ctx.mobile) return;
     event.preventDefault();
     event.stopPropagation();
@@ -3072,7 +3072,7 @@ function LocalTerminalSidebar() {
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp, { once: true });
   };
-  const resizeSidebarWithKeyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+  const resizeSidebarWithKeyboard = (event: KeyboardEvent<HTMLElement>) => {
     if (ctx.mobile) return;
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
