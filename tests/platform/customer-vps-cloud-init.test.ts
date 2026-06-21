@@ -360,6 +360,7 @@ exit 99
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"');
     expect(cloudInit).toContain('export HOME="$MATRIX_HOME"');
+    expect(cloudInit).toContain('export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"');
     expect(cloudInit).toContain('export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"');
     expect(cloudInit).toContain('export PATH="$HOME/.local/bin:/opt/matrix/bin:/opt/matrix/runtime/node/bin:$PATH"');
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0755 /home/matrix /home/matrix/home /home/matrix/home/.local /home/matrix/home/.local/bin /home/matrix/home/.local/share /home/matrix/home/.cache /home/matrix/home/.config');

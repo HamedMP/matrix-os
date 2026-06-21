@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -77,6 +77,10 @@ describe('customer VPS host bundle', () => {
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-tool-pack'), 'utf8');
     const hermesInstaller = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-hermes'), 'utf8');
     const ownerEnv = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-owner-env'), 'utf8');
+    const gateway = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
+    const shell = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-shell'), 'utf8');
+    const code = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-code'), 'utf8');
+    const symphony = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-symphony'), 'utf8');
 
     expect(script).toContain('matrix-install-tool-pack');
     expect(script).toContain('matrix-owner-env');
@@ -106,16 +110,67 @@ describe('customer VPS host bundle', () => {
     expect(installer).not.toMatch(/wait "\$pid_coding_agents" "\$pid_code_server"/);
     expect(ownerEnv).toContain('matrix_export_owner_env()');
     expect(ownerEnv).toContain('export HOME="$MATRIX_HOME"');
+    expect(ownerEnv).toContain('export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"');
     expect(ownerEnv).toContain('export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"');
     expect(ownerEnv).toContain('matrix_prepend_path_once()');
     expect(ownerEnv).toContain('matrix_prepend_path_once "$HOME/.local/bin"');
     expect(ownerEnv).toContain('matrix_prepend_path_once "/opt/matrix/bin"');
+    expect(ownerEnv).toContain('matrix_reconcile_owner_home()');
     expect(ownerEnv).toContain('failed to copy %s to %s; leaving legacy directory in place');
+    expect(ownerEnv).toContain('failed to remove legacy %s after copy; leaving in place');
+    expect(ownerEnv).toContain('matrix_migrate_legacy_dotdir ".local" 0755 "$owner" "$group"');
+    expect(ownerEnv).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700 "$owner" "$group"');
     expect(hermesInstaller).toContain('source /opt/matrix/bin/matrix-owner-env');
     expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"');
     expect(hermesInstaller).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700');
     expect(hermesInstaller).toContain('HOME="$MATRIX_RUNTIME_HOME"');
+    expect(hermesInstaller).toContain('HERMES_HOME="$HERMES_HOME"');
     expect(hermesInstaller).toContain('XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config"');
+    for (const launcher of [gateway, shell, code, symphony]) {
+      expect(launcher).toContain('if declare -F matrix_reconcile_owner_home >/dev/null 2>&1; then');
+      expect(launcher).toContain('matrix_reconcile_owner_home "${MATRIX_RUNTIME_USER:-matrix}" "${MATRIX_RUNTIME_GROUP:-${MATRIX_RUNTIME_USER:-matrix}}"');
+    }
+  });
+
+  it('owner env canonicalizes Hermes home and migrates legacy Hermes data', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-owner-env-'));
+    const matrixHome = join(tempDir, 'home');
+    const legacyHome = join(tempDir, 'legacy');
+    const legacyJobDir = join(legacyHome, '.hermes', 'jobs');
+
+    try {
+      mkdirSync(legacyJobDir, { recursive: true });
+      writeFileSync(join(legacyJobDir, 'watcher.json'), '{"status":"paused"}\n');
+
+      const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+source "$OWNER_ENV"
+matrix_export_owner_env
+matrix_reconcile_owner_home "$(id -un)" "$(id -gn)"
+printf 'HOME=%s\\nHERMES_HOME=%s\\n' "$HOME" "$HERMES_HOME"
+test -f "$MATRIX_HOME/.hermes/jobs/watcher.json"
+test -L "$MATRIX_LEGACY_HOME/.hermes"
+test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
+`], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          OWNER_ENV: join(root, 'distro/customer-vps/host-bin/matrix-owner-env'),
+          MATRIX_HOME: matrixHome,
+          MATRIX_LEGACY_HOME: legacyHome,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.stdout).toContain(`HOME=${matrixHome}`);
+      expect(result.stdout).toContain(`HERMES_HOME=${matrixHome}/.hermes`);
+      expect(existsSync(join(matrixHome, '.hermes', 'jobs', 'watcher.json'))).toBe(true);
+      expect(lstatSync(join(legacyHome, '.hermes')).isSymbolicLink()).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('host bundle manifest keeps the sync-agent compatibility fields', () => {
