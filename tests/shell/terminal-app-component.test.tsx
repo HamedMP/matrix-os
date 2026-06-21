@@ -1400,6 +1400,43 @@ describe("TerminalApp", () => {
     expect(sidebarShell.style.width).toBe("440px");
   });
 
+  it("stops terminal drawer resizing when the drag is canceled", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
+    await act(async () => {
+      fireEvent.pointerDown(resizeHandle, { clientX: 392, pointerId: 1 });
+      fireEvent.pointerMove(window, { clientX: 456 });
+      fireEvent.pointerCancel(window);
+      fireEvent.pointerMove(window, { clientX: 520 });
+      await Promise.resolve();
+    });
+
+    expect(sidebarShell.style.width).toBe("456px");
+  });
+
+  it("does not treat terminal chrome control double-clicks as title-bar zooms", async () => {
+    const handleTitleDoubleClick = vi.fn();
+    render(<TerminalApp windowControls={{ dragHandleProps: { onDoubleClick: handleTitleDoubleClick } }} />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Toggle Terminal fullscreen" }));
+
+    expect(handleTitleDoubleClick).not.toHaveBeenCalled();
+  });
+
   it("highlights the shell attached to the active restored pane on first render", async () => {
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

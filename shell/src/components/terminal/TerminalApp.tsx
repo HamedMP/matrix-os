@@ -1784,6 +1784,10 @@ function TerminalWorkspaceChrome() {
     if (ctx.mobile || isTerminalChromeControl(event.target)) return;
     dragHandleProps?.onMouseDown?.(event);
   };
+  const handleDragDoubleClick: MouseEventHandler<HTMLElement> = (event) => {
+    if (ctx.mobile || isTerminalChromeControl(event.target)) return;
+    dragHandleProps?.onDoubleClick?.(event);
+  };
 
   return (
     <div
@@ -1793,7 +1797,7 @@ function TerminalWorkspaceChrome() {
       onPointerUp={dragHandleProps?.onPointerUp}
       onPointerCancel={dragHandleProps?.onPointerCancel}
       onMouseDownCapture={handleDragMouseDownCapture}
-      onDoubleClick={dragHandleProps?.onDoubleClick}
+      onDoubleClick={handleDragDoubleClick}
       style={{
         alignItems: "center",
         background: "#15180F",
@@ -3065,12 +3069,14 @@ function LocalTerminalSidebar() {
     const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
       ctx.setSidebarWidth(clampTerminalSidebarWidth(startWidth + moveEvent.clientX - startX));
     };
-    const handlePointerUp = () => {
+    const finishResize = () => {
       window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
     };
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp, { once: true });
+    window.addEventListener("pointerup", finishResize, { once: true });
+    window.addEventListener("pointercancel", finishResize, { once: true });
   };
   const resizeSidebarWithKeyboard = (event: KeyboardEvent<HTMLElement>) => {
     if (ctx.mobile) return;
