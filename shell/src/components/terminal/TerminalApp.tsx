@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent, type PointerEventHandler } from "react";
+import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
 import {
   BotIcon,
   CheckIcon,
@@ -3056,7 +3056,7 @@ function LocalTerminalSidebar() {
     ? activePaneSessionId
     : null;
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
-  const startSidebarResize = (event: PointerEvent<HTMLElement>) => {
+  const startSidebarResize = (event: ReactPointerEvent<HTMLElement>) => {
     if (ctx.mobile) return;
     event.preventDefault();
     event.stopPropagation();
