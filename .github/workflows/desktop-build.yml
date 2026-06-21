@@ -67,13 +67,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${MAC_CERTIFICATE:-}" ]; then
+            cert_delimiter="MATRIX_DESKTOP_CERT_$(uuidgen | tr '[:lower:]' '[:upper:]' | tr -d '-')"
+            password_delimiter="MATRIX_DESKTOP_CERT_PASSWORD_$(uuidgen | tr '[:lower:]' '[:upper:]' | tr -d '-')"
             {
-              echo "CSC_LINK<<__MATRIX_DESKTOP_CERT__"
+              echo "CSC_LINK<<$cert_delimiter"
               printf '%s\n' "$MAC_CERTIFICATE"
-              echo "__MATRIX_DESKTOP_CERT__"
-              echo "CSC_KEY_PASSWORD<<__MATRIX_DESKTOP_CERT_PASSWORD__"
+              echo "$cert_delimiter"
+              echo "CSC_KEY_PASSWORD<<$password_delimiter"
               printf '%s\n' "${MAC_CERTIFICATE_PASSWORD:-}"
-              echo "__MATRIX_DESKTOP_CERT_PASSWORD__"
+              echo "$password_delimiter"
             } >> "$GITHUB_ENV"
           else
             echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"

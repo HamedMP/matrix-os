@@ -50,6 +50,8 @@ describe("desktop release workflows", () => {
     expect(build).toContain("Validate Apple notarization secrets");
     expect(build).toContain("Prepare mac signing environment");
     expect(build).toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
+    expect(build).toContain("cert_delimiter=\"MATRIX_DESKTOP_CERT_$(uuidgen");
+    expect(build).toContain("password_delimiter=\"MATRIX_DESKTOP_CERT_PASSWORD_$(uuidgen");
     expect(build).toContain("MAC_CERTIFICATE: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
     expect(build).not.toContain("CSC_LINK: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
     expect(build).toContain("APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set together");
