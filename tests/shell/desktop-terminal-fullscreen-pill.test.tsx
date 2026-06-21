@@ -1,17 +1,21 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Desktop } from "../../shell/src/components/Desktop.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
+
+const { terminalRender } = vi.hoisted(() => ({
+  terminalRender: vi.fn(() => <div>Terminal content</div>),
+}));
 
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: () => undefined,
 }));
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
-  TerminalApp: () => <div>Terminal content</div>,
+  TerminalApp: terminalRender,
 }));
 
 vi.mock("../../shell/src/components/AppViewer.js", () => ({
@@ -124,7 +128,7 @@ function jsonResponse(body: unknown) {
   }));
 }
 
-function resetStores(win: AppWindow) {
+function resetStores(win: AppWindow, fullscreenWindowId: string | null = win.id) {
   useDesktopMode.setState({
     mode: "dev",
     previousMode: null,
@@ -137,12 +141,13 @@ function resetStores(win: AppWindow) {
     closedLayouts: new Map(),
     apps: [],
     focusedWindowId: win.id,
-    fullscreenWindowId: win.id,
+    fullscreenWindowId,
   });
 }
 
 describe("Desktop terminal fullscreen chrome", () => {
   beforeEach(() => {
+    terminalRender.mockClear();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
@@ -175,5 +180,28 @@ describe("Desktop terminal fullscreen chrome", () => {
 
     await screen.findByText("App content");
     expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeTruthy();
+  });
+
+  it("lets the terminal-owned title bar double-click toggle window zoom", async () => {
+    resetStores(terminalWindow, null);
+
+    render(<Desktop />);
+
+    await screen.findByText("Terminal content");
+    const props = terminalRender.mock.lastCall?.[0] as {
+      windowControls?: {
+        dragHandleProps?: {
+          onDoubleClick?: () => void;
+        };
+      };
+    };
+
+    expect(props.windowControls?.dragHandleProps?.onDoubleClick).toEqual(expect.any(Function));
+
+    act(() => {
+      props.windowControls!.dragHandleProps!.onDoubleClick!();
+    });
+
+    expect(useWindowManager.getState().fullscreenWindowId).toBe("win-terminal");
   });
 });
