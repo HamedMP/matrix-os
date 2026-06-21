@@ -117,6 +117,9 @@ describe('customer VPS host bundle', () => {
     expect(ownerEnv).toContain('matrix_prepend_path_once "/opt/matrix/bin"');
     expect(ownerEnv).toContain('matrix_reconcile_owner_home()');
     expect(ownerEnv).toContain('failed to copy %s to %s; leaving legacy directory in place');
+    expect(ownerEnv).toContain('failed to remove legacy %s after copy; leaving in place');
+    expect(ownerEnv).toContain('matrix_migrate_legacy_dotdir ".local" 0755 "$owner" "$group"');
+    expect(ownerEnv).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700 "$owner" "$group"');
     expect(hermesInstaller).toContain('source /opt/matrix/bin/matrix-owner-env');
     expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"');
     expect(hermesInstaller).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700');
@@ -124,6 +127,7 @@ describe('customer VPS host bundle', () => {
     expect(hermesInstaller).toContain('HERMES_HOME="$HERMES_HOME"');
     expect(hermesInstaller).toContain('XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config"');
     for (const launcher of [gateway, shell, code, symphony]) {
+      expect(launcher).toContain('if declare -F matrix_reconcile_owner_home >/dev/null 2>&1; then');
       expect(launcher).toContain('matrix_reconcile_owner_home "${MATRIX_RUNTIME_USER:-matrix}" "${MATRIX_RUNTIME_GROUP:-${MATRIX_RUNTIME_USER:-matrix}}"');
     }
   });

@@ -14,7 +14,9 @@ export NODE_ENV="${NODE_ENV:-production}"
 export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"
 if declare -F matrix_export_owner_env >/dev/null 2>&1; then
   matrix_export_owner_env
-  matrix_reconcile_owner_home "${MATRIX_RUNTIME_USER:-matrix}" "${MATRIX_RUNTIME_GROUP:-${MATRIX_RUNTIME_USER:-matrix}}"
+  if declare -F matrix_reconcile_owner_home >/dev/null 2>&1; then
+    matrix_reconcile_owner_home "${MATRIX_RUNTIME_USER:-matrix}" "${MATRIX_RUNTIME_GROUP:-${MATRIX_RUNTIME_USER:-matrix}}"
+  fi
 else
   export HOME="$MATRIX_HOME"
 fi

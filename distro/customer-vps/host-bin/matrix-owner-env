@@ -54,8 +54,8 @@ matrix_install_owner_dirs() {
 matrix_migrate_legacy_dotdir() {
   local name="$1"
   local mode="${2:-0755}"
-  local owner="${MATRIX_RUNTIME_USER:-matrix}"
-  local group="${MATRIX_RUNTIME_GROUP:-$owner}"
+  local owner="${3:-${MATRIX_RUNTIME_USER:-matrix}}"
+  local group="${4:-${MATRIX_RUNTIME_GROUP:-$owner}}"
   local legacy="${MATRIX_LEGACY_HOME:-/home/matrix}/$name"
   local target="$MATRIX_HOME/$name"
 
@@ -65,7 +65,10 @@ matrix_migrate_legacy_dotdir() {
       printf 'matrix-owner-env: failed to copy %s to %s; leaving legacy directory in place\n' "$legacy" "$target" >&2
       return 0
     fi
-    rm -rf "$legacy"
+    if ! rm -rf "$legacy"; then
+      printf 'matrix-owner-env: failed to remove legacy %s after copy; leaving in place\n' "$legacy" >&2
+      return 0
+    fi
   fi
   if [ ! -e "$legacy" ] || [ -L "$legacy" ]; then
     ln -sfn "$target" "$legacy"
@@ -80,8 +83,8 @@ matrix_reconcile_owner_home() {
   local group="${2:-$owner}"
 
   matrix_install_owner_dirs "$owner" "$group"
-  matrix_migrate_legacy_dotdir ".local" 0755
-  matrix_migrate_legacy_dotdir ".cache" 0755
-  matrix_migrate_legacy_dotdir ".config" 0755
-  matrix_migrate_legacy_dotdir ".hermes" 0700
+  matrix_migrate_legacy_dotdir ".local" 0755 "$owner" "$group"
+  matrix_migrate_legacy_dotdir ".cache" 0755 "$owner" "$group"
+  matrix_migrate_legacy_dotdir ".config" 0755 "$owner" "$group"
+  matrix_migrate_legacy_dotdir ".hermes" 0700 "$owner" "$group"
 }
