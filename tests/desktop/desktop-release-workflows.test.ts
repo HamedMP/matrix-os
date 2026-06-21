@@ -48,6 +48,10 @@ describe("desktop release workflows", () => {
     const canary = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
 
     expect(build).toContain("Validate Apple notarization secrets");
+    expect(build).toContain("Prepare mac signing environment");
+    expect(build).toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
+    expect(build).toContain("MAC_CERTIFICATE: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
+    expect(build).not.toContain("CSC_LINK: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
     expect(build).toContain("APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set together");
     expect(build).toContain("Apply desktop release version");
     expect(build).toContain("RELEASE_VERSION: ${{ inputs.version }}");
@@ -58,6 +62,14 @@ describe("desktop release workflows", () => {
     expect(release).toContain("output: ${{ needs.prepare.outputs.channel }}-mac.yml");
     expect(canary).toContain("Merge canary macOS update manifests");
     expect(canary).toContain("output: canary-mac.yml");
+  });
+
+  it("supports a dev desktop update channel for test releases", () => {
+    const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
+
+    expect(release).toContain("- dev");
+    expect(release).toContain("stable|beta|canary|dev");
+    expect(release).toContain("Non-stable desktop channels require a prerelease semver version.");
   });
 
   it("rejects prerelease desktop tags on the push release path", () => {

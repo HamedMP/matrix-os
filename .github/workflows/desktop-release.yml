@@ -19,6 +19,7 @@ on:
           - stable
           - beta
           - canary
+          - dev
       mode:
         description: Dry-run uploads artifacts only; publish creates/updates the GitHub release.
         required: true
@@ -77,7 +78,7 @@ jobs:
             echo "Prerelease desktop versions must be released with workflow_dispatch so the channel is explicit." >&2
             exit 1
           fi
-          case "$CHANNEL" in stable|beta|canary) ;; *) echo "invalid channel: $CHANNEL" >&2; exit 1 ;; esac
+          case "$CHANNEL" in stable|beta|canary|dev) ;; *) echo "invalid channel: $CHANNEL" >&2; exit 1 ;; esac
           if [ "$CHANNEL" != "stable" ] && [[ "$VERSION" != *-* ]]; then
             echo "Non-stable desktop channels require a prerelease semver version." >&2
             exit 1

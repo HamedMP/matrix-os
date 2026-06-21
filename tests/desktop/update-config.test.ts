@@ -32,6 +32,15 @@ describe("resolveUpdateFeedConfig", () => {
     });
   });
 
+  it("allows dev builds to use the dev update channel", () => {
+    expect(resolveUpdateFeedConfig({ MATRIX_DESKTOP_UPDATE_CHANNEL: "dev" }, true)).toMatchObject({
+      enabled: true,
+      provider: "github",
+      channel: "dev",
+      allowPrerelease: true,
+    });
+  });
+
   it("uses the bundled release channel when runtime env is absent", () => {
     expect(resolveUpdateFeedConfig({}, true, "canary")).toMatchObject({
       enabled: true,
