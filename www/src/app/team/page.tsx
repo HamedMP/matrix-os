@@ -82,11 +82,17 @@ export default function TeamPage() {
               <div className="mt-9 space-y-7">
                 {founders.map((founder) => (
                   <article key={founder.name} className="border-t pt-6" style={{ borderColor: c.border }}>
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
                       <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
                         {founder.name}
                       </h2>
-                      <div className="flex shrink-0 items-center gap-2">
+                      <span aria-hidden="true" className="hidden text-[1.25rem] leading-none sm:inline" style={{ color: c.subtle }}>
+                        |
+                      </span>
+                      <p className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.forestDeep }}>
+                        {founder.role}
+                      </p>
+                      <div className="flex shrink-0 items-center gap-2 pl-1">
                         <a
                           href={founder.linkedin}
                           target="_blank"
@@ -94,7 +100,7 @@ export default function TeamPage() {
                           aria-label={`${founder.name} on LinkedIn`}
                           className="inline-flex h-6 w-6 items-center justify-center transition hover:-translate-y-0.5 hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-offset-2"
                           style={{
-                            color: c.deep,
+                            color: c.subtle,
                             ["--tw-ring-color" as string]: c.forest,
                             ["--tw-ring-offset-color" as string]: c.pageBg,
                           }}
@@ -108,7 +114,7 @@ export default function TeamPage() {
                           aria-label={`${founder.name} on X`}
                           className="inline-flex h-6 w-6 items-center justify-center transition hover:-translate-y-0.5 hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-offset-2"
                           style={{
-                            color: c.deep,
+                            color: c.subtle,
                             ["--tw-ring-color" as string]: c.forest,
                             ["--tw-ring-offset-color" as string]: c.pageBg,
                           }}
@@ -117,7 +123,10 @@ export default function TeamPage() {
                         </a>
                       </div>
                     </div>
-                    <div className="float-right ml-5 mt-1 flex w-32 flex-col items-end gap-3">
+                    <p className="mt-3 text-[1rem] leading-[1.7]" style={{ color: c.mutedFg }}>
+                      {founder.bio}
+                    </p>
+                    <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-3">
                       {founder.logos.map((logo) => (
                         <Image
                           key={logo.src}
@@ -125,17 +134,10 @@ export default function TeamPage() {
                           alt={logo.alt}
                           width={logo.width}
                           height={logo.height}
-                          className="h-auto max-h-11 w-auto max-w-32 object-contain"
+                          className="h-auto max-h-10 w-auto max-w-36 object-contain"
                         />
                       ))}
                     </div>
-                    <p className="mt-2 text-[0.9375rem] font-medium" style={{ color: c.forest }}>
-                      {founder.role}
-                    </p>
-                    <p className="mt-3 text-[1rem] leading-[1.7]" style={{ color: c.mutedFg }}>
-                      {founder.bio}
-                    </p>
-                    <div className="clear-both" />
                   </article>
                 ))}
               </div>
