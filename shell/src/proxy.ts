@@ -125,9 +125,6 @@ export function proxy(
   // built app with production semantics. Use the explicit bypass flag alone so
   // screenshot runs can skip auth without depending on NODE_ENV.
   if (process.env.E2E_TEST_BYPASS === "1") {
-    if (isGatewayProxy(request)) {
-      return rewriteGatewayRequest(request);
-    }
     return NextResponse.next();
   }
   // Platform already verified the Clerk session. Handle this before invoking
