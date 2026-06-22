@@ -18,6 +18,9 @@ describe("www landing team page", () => {
 
   it("ships the founders section on the shared marketing shell", async () => {
     const page = await readRepoFile("www/src/app/team/page.tsx");
+    const founderHeadingIndex = page.indexOf("{founder.name}\n                      </h2>");
+    const linkedinIndex = page.indexOf("founder.linkedin");
+    const xIndex = page.indexOf("founder.x");
 
     expect(page).toContain('title: "Team | Matrix OS"');
     expect(page).toContain("<SiteHeader />");
@@ -37,5 +40,8 @@ describe("www landing team page", () => {
     expect(page).toContain("Olympiad gold-medal problem solving");
     expect(page).toContain("reliable systems");
     expect(page).toContain("<SiteFooter />");
+    expect(founderHeadingIndex).toBeGreaterThan(-1);
+    expect(linkedinIndex).toBeGreaterThan(founderHeadingIndex);
+    expect(xIndex).toBeGreaterThan(linkedinIndex);
   });
 });

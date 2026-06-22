@@ -63,6 +63,9 @@ export default function TeamPage() {
                 {founders.map((founder) => (
                   <article key={founder.name} className="border-t pt-6" style={{ borderColor: c.border }}>
                     <div className="flex flex-wrap items-center gap-3">
+                      <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
+                        {founder.name}
+                      </h2>
                       <div className="flex shrink-0 items-center gap-2">
                         <a
                           href={founder.linkedin}
@@ -99,9 +102,6 @@ export default function TeamPage() {
                           <XIcon aria-hidden="true" className="h-4 w-4" strokeWidth={2} />
                         </a>
                       </div>
-                      <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
-                        {founder.name}
-                      </h2>
                     </div>
                     <p className="mt-2 text-[0.9375rem] font-medium" style={{ color: c.forest }}>
                       {founder.role}
