@@ -1754,14 +1754,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
           <div
             className={
-              dock.position === "left"
+              isHorizontal
                 ? "absolute left-full top-1/2 -translate-y-1/2 ml-2 pointer-events-auto"
-                : dock.position === "right"
-                  ? "absolute right-full top-1/2 -translate-y-1/2 mr-2 pointer-events-auto"
-                  : "absolute bottom-full left-1/2 -translate-x-1/2 mb-2 pointer-events-auto"
+                : "absolute top-full left-1/2 -translate-x-1/2 mt-2 pointer-events-auto"
             }
           >
-            <ConnectionIndicator placement="dock" />
+            <ConnectionIndicator />
           </div>
         </aside>
         </div>}
