@@ -2241,7 +2241,10 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
     expect(screen.getByText("bench")).toBeTruthy();
     const mainCard = screen.getByTestId("terminal-session-card-main");
-    expect(screen.getByRole("button", { name: "Move matrix-main to background" }).parentElement).toBe(mainCard);
+    const mainPlacementToggle = screen.getByRole("button", { name: "Move matrix-main to background" });
+    expect(mainPlacementToggle.parentElement).toBe(mainCard);
+    expect(mainPlacementToggle.style.position).toBe("relative");
+    expect(mainPlacementToggle.style.zIndex).toBe("1");
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /open bench/i }));

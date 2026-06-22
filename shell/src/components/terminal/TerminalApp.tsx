@@ -77,7 +77,9 @@ const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
   overflow: "hidden",
   padding: 2,
   pointerEvents: "auto",
+  position: "relative",
   width: 46,
+  zIndex: 1,
 };
 
 const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
@@ -96,7 +98,9 @@ const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
   overflow: "hidden",
   padding: 2,
   pointerEvents: "auto",
+  position: "relative",
   width: 44,
+  zIndex: 1,
 };
 
 const SHELL_THEME_OPTIONS: Array<{
