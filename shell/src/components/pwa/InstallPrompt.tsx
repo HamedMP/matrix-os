@@ -9,6 +9,13 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 }
 
+type NavigatorWithInstallSignals = Navigator & {
+  standalone?: boolean;
+  userAgentData?: {
+    mobile?: boolean;
+  };
+};
+
 const DISMISS_KEY = "matrix-os:pwa-install-dismissed";
 const DISMISS_DAYS = 14;
 
@@ -69,16 +76,35 @@ function isDismissed(): boolean {
 
 function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
+  const nav = window.navigator as NavigatorWithInstallSignals;
   return (
     window.matchMedia?.("(display-mode: standalone)").matches ||
-    (window.navigator as { standalone?: boolean }).standalone === true
+    nav.standalone === true
   );
+}
+
+function isIPadOSDesktopUserAgent(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const nav = navigator as NavigatorWithInstallSignals;
+  return nav.platform === "MacIntel" && (nav.maxTouchPoints ?? 0) > 1;
+}
+
+function isMobileInstallSurface(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const nav = navigator as NavigatorWithInstallSignals;
+  const mobileHint = nav.userAgentData?.mobile;
+  if (mobileHint === true) return true;
+  if (mobileHint === false) return false;
+
+  const ua = nav.userAgent;
+  if (isIPadOSDesktopUserAgent()) return true;
+  return /iPad|iPhone|iPod|Android/.test(ua);
 }
 
 function isIOS(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
-  return /iPad|iPhone|iPod/.test(ua) && !(window as { MSStream?: unknown }).MSStream;
+  return (/iPad|iPhone|iPod/.test(ua) || isIPadOSDesktopUserAgent()) && !(window as { MSStream?: unknown }).MSStream;
 }
 
 export function InstallPrompt() {
@@ -89,6 +115,7 @@ export function InstallPrompt() {
   const [dismissed, setDismissed] = useState(() => {
     if (typeof window === "undefined") return true;
     if (isStandalone()) return true;
+    if (!isMobileInstallSurface()) return true;
     return isDismissed();
   });
 
@@ -96,6 +123,7 @@ export function InstallPrompt() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (dismissed) return;
+    if (!isMobileInstallSurface()) return;
 
     const handler = (e: Event) => {
       e.preventDefault();
