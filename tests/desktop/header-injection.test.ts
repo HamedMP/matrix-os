@@ -1,10 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
-import { installGatewayCors, shouldInjectAuth } from "@desktop/main/auth/header-injection";
+import {
+  buildRendererCsp,
+  installGatewayCors,
+  shouldInjectAuth,
+} from "@desktop/main/auth/header-injection";
 
 const GATEWAY = "https://app.matrix-os.com";
 
+function connectDirective(csp: string): string {
+  return csp.split(";").map((part) => part.trim()).find((part) => part.startsWith("connect-src ")) ?? "";
+}
+
+function connectSources(csp: string): string[] {
+  return connectDirective(csp).split(/\s+/).slice(1);
+}
+
 type HeadersReceivedListener = (
-  details: { url: string; method: string; responseHeaders?: Record<string, string[]> },
+  details: {
+    url: string;
+    method: string;
+    responseHeaders?: Record<string, string[]>;
+    resourceType?: string;
+  },
   callback: (response: { responseHeaders?: Record<string, string[]>; statusLine?: string }) => void,
 ) => void;
 
@@ -20,7 +37,12 @@ function corsSession() {
   };
   return {
     session,
-    fire(details: { url: string; method: string; responseHeaders?: Record<string, string[]> }) {
+    fire(details: {
+      url: string;
+      method: string;
+      responseHeaders?: Record<string, string[]>;
+      resourceType?: string;
+    }) {
       const cb = vi.fn();
       listener?.(details, cb);
       return cb.mock.calls[0]?.[0] ?? {};
@@ -80,6 +102,39 @@ describe("installGatewayCors", () => {
     installGatewayCors(session, () => GATEWAY, "http://localhost:5173");
     const res = fire({ url: "https://evil.example.com/api", method: "GET", responseHeaders: { x: ["1"] } });
     expect(res.responseHeaders).toBeUndefined();
+  });
+
+  it("injects a gateway-scoped CSP for the packaged renderer document", () => {
+    const { session, fire } = corsSession();
+    installGatewayCors(session, () => GATEWAY, "null");
+    const res = fire({
+      url: "file:///Applications/Matrix%20OS.app/Contents/Resources/app.asar/out/renderer/index.html",
+      method: "GET",
+      resourceType: "mainFrame",
+      responseHeaders: { "Content-Security-Policy": ["connect-src https:"] },
+    });
+    const csp = res.responseHeaders?.["Content-Security-Policy"]?.[0] ?? "";
+    const connect = connectDirective(csp);
+    const sources = connectSources(csp);
+
+    expect(connect).toBe("connect-src 'self' https://app.matrix-os.com wss://app.matrix-os.com");
+    expect(sources).not.toContain("https:");
+    expect(sources).not.toContain("wss:");
+    expect(sources).not.toContain("*");
+    expect(sources).not.toContain("https://evil.example.com");
+  });
+
+  it("includes the Vite renderer origin for development HMR without broad external connect", () => {
+    const csp = buildRendererCsp("http://localhost:18789", "http://localhost:5173");
+    const connect = connectDirective(csp);
+    const sources = connectSources(csp);
+
+    expect(connect).toBe(
+      "connect-src 'self' http://localhost:18789 ws://localhost:18789 http://localhost:5173 ws://localhost:5173",
+    );
+    expect(sources).not.toContain("https:");
+    expect(sources).not.toContain("wss:");
+    expect(sources).not.toContain("*");
   });
 });
 

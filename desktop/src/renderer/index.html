@@ -2,15 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!--
-      CSP: no remote scripts ever; network restricted to https/wss (gateway origin is
-      enforced more tightly at the session layer in main). Monaco needs blob: workers
-      and inline styles. http/ws localhost allowed for dev gateways.
-    -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*; worker-src 'self' blob:; font-src 'self' data:; img-src 'self' data: https:"
-    />
+    <!-- CSP is injected by the Electron main process with the active gateway origin. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Matrix OS</title>
   </head>

@@ -17,6 +17,7 @@ $COMPOSE down -v --timeout 5 2>/dev/null || true
 
 # Start fresh
 echo -e "${YELLOW}[SETUP]${NC} Starting dev container..."
+pull_compose_images
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"

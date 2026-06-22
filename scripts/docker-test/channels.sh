@@ -14,6 +14,7 @@ begin_test "Channel Adapter Lifecycle"
 # Clean slate and start
 echo -e "${YELLOW}[SETUP]${NC} Starting fresh container..."
 $COMPOSE down -v --timeout 5 2>/dev/null || true
+pull_compose_images
 $COMPOSE up $COMPOSE_UP_FLAGS -d dev
 
 wait_for_healthy "dev" "${DOCKER_HEALTH_TIMEOUT:-180}"
