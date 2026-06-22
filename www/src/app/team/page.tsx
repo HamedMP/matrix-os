@@ -26,7 +26,7 @@ const founders = [
     logos: [
       { src: "/images/team/posthog-logo.png", alt: "PostHog", width: 120, height: 23, className: "h-7 w-auto max-w-40" },
       { src: "/images/team/newly-logo.jpg", alt: "Newly", width: 56, height: 56, className: "h-12 w-auto rounded-[4px] max-w-14" },
-      { src: "/images/team/kth-logo.svg", alt: "KTH", width: 82, height: 92, className: "h-16 w-auto max-w-24" },
+      { src: "/images/team/kth-logo.svg", alt: "KTH", width: 57, height: 64, className: "h-11 w-auto max-w-16" },
     ],
     linkedin: "https://www.linkedin.com/in/hamedmohammadpour/",
     x: "https://x.com/thehamedmp",
@@ -60,7 +60,7 @@ export default function TeamPage() {
         <SectionShell className="pt-10 pb-16 md:pt-20 md:pb-24">
           <section aria-labelledby="team-heading" className="mx-auto max-w-[50rem] text-center">
             <p
-              className="mb-5 text-[1.625rem] leading-[1.12] md:text-[1.875rem]"
+              className="mb-5 text-[1.125rem] leading-[1.12] md:text-[1.3125rem]"
               style={{ fontFamily: fonts.display, color: c.mutedFg }}
             >
               Mission
@@ -82,7 +82,7 @@ export default function TeamPage() {
           <div className="mt-12 grid items-start gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:gap-14">
             <section aria-label="Founders" className="max-w-[34rem]">
               <h2
-                className="text-[1.75rem] leading-[1.15] md:text-[2rem]"
+                className="text-[1.225rem] leading-[1.15] md:text-[1.4rem]"
                 style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
               >
                 Meet our founders
