@@ -3,6 +3,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { TERMINAL_MIN_WINDOW_HEIGHT, TERMINAL_MIN_WINDOW_WIDTH } from "@/lib/builtin-apps";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
+import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";
 
 export interface AppWindow {
   id: string;
@@ -175,6 +176,32 @@ function createWindowRecord(
   };
 }
 
+function normalizeWindowZOrder(
+  windows: AppWindow[],
+  nextZ: number,
+): { windows: AppWindow[]; nextZ: number } {
+  if (nextZ <= SHELL_WINDOW_Z_INDEX_MAX) {
+    return { windows, nextZ };
+  }
+
+  const ordered = [...windows].sort((left, right) => left.zIndex - right.zIndex);
+  const zById = new Map<string, number>();
+  ordered.forEach((windowRecord, index) => {
+    zById.set(
+      windowRecord.id,
+      Math.min(SHELL_WINDOW_Z_INDEX_START + index, SHELL_WINDOW_Z_INDEX_MAX),
+    );
+  });
+
+  return {
+    windows: windows.map((windowRecord) => ({
+      ...windowRecord,
+      zIndex: zById.get(windowRecord.id) ?? SHELL_WINDOW_Z_INDEX_START,
+    })),
+    nextZ: Math.min(SHELL_WINDOW_Z_INDEX_START + ordered.length, SHELL_WINDOW_Z_INDEX_MAX),
+  };
+}
+
 export const useWindowManager = create<WindowManagerState & WindowManagerActions>()(
   subscribeWithSelector((set, get) => ({
     windows: [],
@@ -189,16 +216,17 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     openWindow: (name, path, dockXOffset) => {
       markUserLayoutMutation();
       set((state) => {
+        const zState = normalizeWindowZOrder(state.windows, state.nextZ);
         const launchTimes = { ...state.appLaunchTimes, [path]: Date.now() };
-        const existing = state.windows.find((w) => w.path === path);
+        const existing = zState.windows.find((w) => w.path === path);
         if (existing) {
           return {
-            windows: state.windows.map((w) =>
+            windows: zState.windows.map((w) =>
               w.path === path
-                ? { ...w, minimized: false, zIndex: state.nextZ }
+                ? { ...w, minimized: false, zIndex: zState.nextZ }
                 : w,
             ),
-            nextZ: state.nextZ + 1,
+            nextZ: zState.nextZ + 1,
             focusedWindowId: existing.id,
             appLaunchTimes: launchTimes,
           };
@@ -207,7 +235,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         // Compute fallback position to the right of the rightmost visible window
         let fallbackX = dockXOffset + 20;
         let fallbackY = 20;
-        const visible = state.windows.filter((w) => !w.minimized);
+        const visible = zState.windows.filter((w) => !w.minimized);
         if (visible.length > 0) {
           const rightmost = visible.reduce((best, w) =>
             (w.x + w.width) > (best.x + best.width) ? w : best,
@@ -216,10 +244,16 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           fallbackY = rightmost.y;
         }
 
-        const nextWindow = createWindowRecord(state, name, path, fallbackX, fallbackY);
+        const nextWindow = createWindowRecord(
+          { ...state, windows: zState.windows, nextZ: zState.nextZ },
+          name,
+          path,
+          fallbackX,
+          fallbackY,
+        );
         return {
-          windows: [...state.windows, nextWindow],
-          nextZ: state.nextZ + 1,
+          windows: [...zState.windows, nextWindow],
+          nextZ: zState.nextZ + 1,
           focusedWindowId: nextWindow.id,
           appLaunchTimes: launchTimes,
         };
@@ -229,10 +263,11 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     openWindowExclusive: (name, path, dockXOffset, basePath) => {
       markUserLayoutMutation();
       set((state) => {
+        const zState = normalizeWindowZOrder(state.windows, state.nextZ);
         const keepPath = basePath ?? path;
         const isSameApp = (w: AppWindow) =>
           w.path === keepPath || w.path.startsWith(keepPath + ":");
-        const withMinimized = state.windows.map((w) =>
+        const withMinimized = zState.windows.map((w) =>
           !isSameApp(w) && !w.minimized ? { ...w, minimized: true } : w,
         );
 
@@ -241,18 +276,24 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           return {
             windows: withMinimized.map((w) =>
               w.path === path
-                ? { ...w, minimized: false, zIndex: state.nextZ }
+                ? { ...w, minimized: false, zIndex: zState.nextZ }
                 : w,
             ),
-            nextZ: state.nextZ + 1,
+            nextZ: zState.nextZ + 1,
             focusedWindowId: existing.id,
           };
         }
 
-        const nextWindow = createWindowRecord(state, name, path, dockXOffset + 20, 48);
+        const nextWindow = createWindowRecord(
+          { ...state, windows: zState.windows, nextZ: zState.nextZ },
+          name,
+          path,
+          dockXOffset + 20,
+          48,
+        );
         return {
           windows: [...withMinimized, nextWindow],
-          nextZ: state.nextZ + 1,
+          nextZ: zState.nextZ + 1,
           focusedWindowId: nextWindow.id,
         };
       });
@@ -305,13 +346,16 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
     restoreAndFocusWindow: (id) => {
       markUserLayoutMutation();
-      set((state) => ({
-        windows: state.windows.map((w) =>
-          w.id === id ? { ...w, minimized: false, zIndex: state.nextZ } : w,
-        ),
-        nextZ: state.nextZ + 1,
-        focusedWindowId: id,
-      }));
+      set((state) => {
+        const zState = normalizeWindowZOrder(state.windows, state.nextZ);
+        return {
+          windows: zState.windows.map((w) =>
+            w.id === id ? { ...w, minimized: false, zIndex: zState.nextZ } : w,
+          ),
+          nextZ: zState.nextZ + 1,
+          focusedWindowId: id,
+        };
+      });
     },
 
     moveWindow: (id, x, y) => {
@@ -340,13 +384,16 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
 
     focusWindow: (id) => {
       markUserLayoutMutation();
-      set((state) => ({
-        windows: state.windows.map((w) =>
-          w.id === id ? { ...w, zIndex: state.nextZ } : w,
-        ),
-        nextZ: state.nextZ + 1,
-        focusedWindowId: id,
-      }));
+      set((state) => {
+        const zState = normalizeWindowZOrder(state.windows, state.nextZ);
+        return {
+          windows: zState.windows.map((w) =>
+            w.id === id ? { ...w, zIndex: zState.nextZ } : w,
+          ),
+          nextZ: zState.nextZ + 1,
+          focusedWindowId: id,
+        };
+      });
     },
 
     clearFocus: () => {

@@ -6,6 +6,10 @@ import {
   type AppWindow,
   type LayoutWindow,
 } from "../../shell/src/hooks/useWindowManager.js";
+import {
+  SHELL_WINDOW_Z_INDEX_MAX,
+  SHELL_Z_INDEX,
+} from "../../shell/src/lib/shell-layering.js";
 
 const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
 vi.stubGlobal("fetch", fetchSpy);
@@ -19,6 +23,7 @@ function resetStore() {
     closedLayouts: new Map(),
     apps: [],
     focusedWindowId: null,
+    fullscreenWindowId: null,
   });
 }
 
@@ -147,6 +152,43 @@ describe("Window Manager Store", () => {
       const [w1, w2] = useWindowManager.getState().windows;
       expect(w1.zIndex).toBeGreaterThan(w2.zIndex);
       expect(useWindowManager.getState().getFocusedWindow()?.id).toBe(w1Id);
+    });
+
+    it("compacts focused window z-indexes below the settings layer", () => {
+      const terminal: AppWindow = {
+        id: "win-terminal",
+        title: "Terminal",
+        path: "__terminal__",
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 600,
+        minimized: false,
+        zIndex: SHELL_WINDOW_Z_INDEX_MAX,
+      };
+      const notes: AppWindow = {
+        id: "win-notes",
+        title: "Notes",
+        path: "apps/notes.html",
+        x: 40,
+        y: 40,
+        width: 640,
+        height: 480,
+        minimized: false,
+        zIndex: SHELL_WINDOW_Z_INDEX_MAX - 1,
+      };
+      useWindowManager.setState({
+        windows: [terminal, notes],
+        nextZ: SHELL_WINDOW_Z_INDEX_MAX + 1,
+      });
+
+      useWindowManager.getState().focusWindow("win-terminal");
+
+      const { windows } = useWindowManager.getState();
+      const focused = windows.find((w) => w.id === "win-terminal");
+      const highestWindowZ = Math.max(...windows.map((w) => w.zIndex));
+      expect(focused?.zIndex).toBe(highestWindowZ);
+      expect(highestWindowZ).toBeLessThan(SHELL_Z_INDEX.settings);
     });
 
     it("clears focused window when clicking the canvas background", () => {

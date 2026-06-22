@@ -5,6 +5,7 @@ import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTran
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { useCanvasSettings } from "@/stores/canvas-settings";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
@@ -527,7 +528,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
     ? {
         left: -contLeft / zoom - panX,
         top: -contTop / zoom - panY,
-        zIndex: 9999,
+        zIndex: SHELL_Z_INDEX.fullscreenWindow,
         transform: `scale(${1 / zoom})`,
         transformOrigin: "0 0",
       }

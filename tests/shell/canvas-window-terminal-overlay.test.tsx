@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasWindow } from "../../shell/src/components/canvas/CanvasWindow.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 
 const appViewerRender = vi.hoisted(() => vi.fn());
 const terminalRender = vi.hoisted(() => vi.fn());
@@ -102,6 +103,19 @@ describe("CanvasWindow terminal interactivity", () => {
 
     expect(screen.getByRole("button", { name: "Terminal tab one" })).toBeTruthy();
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeNull();
+  });
+
+  it("keeps fullscreen Canvas windows below the settings layer", () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      fullscreenWindowId: terminalWindow.id,
+    });
+
+    const { container } = render(<CanvasWindow win={terminalWindow} />);
+    const wrapper = container.firstElementChild as HTMLElement;
+
+    expect(wrapper.style.zIndex).toBe(String(SHELL_Z_INDEX.fullscreenWindow));
+    expect(SHELL_Z_INDEX.fullscreenWindow).toBeLessThan(SHELL_Z_INDEX.settings);
   });
 
   it("focuses terminal Canvas windows during capture before terminal child handling", async () => {
