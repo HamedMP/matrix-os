@@ -372,7 +372,12 @@ exit 99
     expect(cloudInit).toContain('install -d -o matrix -g matrix -m 0700 /home/matrix/home/.ssh');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home/.ssh /home/matrix/.ssh');
     expect(cloudInit).toContain('ln -sfn /home/matrix/home /home/matrixos/home');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common');
+    expect(cloudInit).toContain('add-apt-repository -y universe');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip');
+    expect(cloudInit.indexOf('add-apt-repository -y universe')).toBeLessThan(
+      cloudInit.indexOf('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates cmatrix'),
+    );
     expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server uv uvx; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
@@ -401,7 +406,9 @@ exit 99
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
     expect(cloudInit).toContain('sudo');
-    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common');
+    expect(cloudInit).toContain('add-apt-repository -y universe');
+    expect(cloudInit).toContain('DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip');
     expect(cloudInit).toContain('install -d -o root -g root -m 0750 /etc/sudoers.d');
     expect(cloudInit).toContain("printf 'matrix ALL=(ALL) NOPASSWD:ALL\\n' >/etc/sudoers.d/matrix");
     expect(cloudInit).toContain('chmod 0440 /etc/sudoers.d/matrix');
