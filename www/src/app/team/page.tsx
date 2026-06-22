@@ -83,19 +83,6 @@ export default function TeamPage() {
                         {founder.name}
                       </h2>
                       <div className="flex shrink-0 items-center gap-2">
-                        {founder.logos.map((logo) => (
-                          <span key={logo.src} className="flex h-8 items-center justify-center">
-                            <Image
-                              src={logo.src}
-                              alt={logo.alt}
-                              width={logo.width}
-                              height={logo.height}
-                              className="max-h-6 w-auto object-contain"
-                            />
-                          </span>
-                        ))}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
                         <a
                           href={founder.linkedin}
                           target="_blank"
@@ -132,12 +119,25 @@ export default function TeamPage() {
                         </a>
                       </div>
                     </div>
+                    <div className="float-right ml-5 mt-1 flex w-32 flex-col items-end gap-3">
+                      {founder.logos.map((logo) => (
+                        <Image
+                          key={logo.src}
+                          src={logo.src}
+                          alt={logo.alt}
+                          width={logo.width}
+                          height={logo.height}
+                          className="h-auto max-h-11 w-auto max-w-32 object-contain"
+                        />
+                      ))}
+                    </div>
                     <p className="mt-2 text-[0.9375rem] font-medium" style={{ color: c.forest }}>
                       {founder.role}
                     </p>
                     <p className="mt-3 text-[1rem] leading-[1.7]" style={{ color: c.mutedFg }}>
                       {founder.bio}
                     </p>
+                    <div className="clear-both" />
                   </article>
                 ))}
               </div>

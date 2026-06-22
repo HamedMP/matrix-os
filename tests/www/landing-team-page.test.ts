@@ -18,7 +18,7 @@ describe("www landing team page", () => {
 
   it("ships the founders section on the shared marketing shell", async () => {
     const page = await readRepoFile("www/src/app/team/page.tsx");
-    const founderHeadingIndex = page.indexOf("{founder.name}\n                      </h2>");
+    const founderHeadingIndex = page.indexOf('<h2 className="text-[1.25rem]');
     const firstLogoIndex = page.indexOf("founder.logos.map");
     const linkedinIndex = page.indexOf("founder.linkedin");
     const xIndex = page.indexOf("founder.x");
@@ -49,8 +49,8 @@ describe("www landing team page", () => {
     expect(page).toContain("<SiteFooter />");
     expect(firstLogoIndex).toBeGreaterThan(-1);
     expect(founderHeadingIndex).toBeGreaterThan(-1);
-    expect(firstLogoIndex).toBeGreaterThan(founderHeadingIndex);
-    expect(linkedinIndex).toBeGreaterThan(firstLogoIndex);
+    expect(linkedinIndex).toBeGreaterThan(founderHeadingIndex);
     expect(xIndex).toBeGreaterThan(linkedinIndex);
+    expect(firstLogoIndex).toBeGreaterThan(xIndex);
   });
 });
