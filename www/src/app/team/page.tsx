@@ -88,34 +88,28 @@ export default function TeamPage() {
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label={`${founder.name} on LinkedIn`}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                          className="inline-flex h-6 w-6 items-center justify-center transition hover:-translate-y-0.5 hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-offset-2"
                           style={{
-                            backgroundColor: c.card,
-                            borderColor: c.border,
-                            color: c.forestDeep,
-                            boxShadow: "0 0.5rem 1.25rem rgba(50, 53, 46, 0.06)",
+                            color: c.deep,
                             ["--tw-ring-color" as string]: c.forest,
                             ["--tw-ring-offset-color" as string]: c.pageBg,
                           }}
                         >
-                          <LinkedinIcon aria-hidden="true" className="h-4 w-4" strokeWidth={2} />
+                          <LinkedinIcon aria-hidden="true" className="h-4.5 w-4.5" strokeWidth={2} />
                         </a>
                         <a
                           href={founder.x}
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label={`${founder.name} on X`}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                          className="inline-flex h-6 w-6 items-center justify-center transition hover:-translate-y-0.5 hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-offset-2"
                           style={{
-                            backgroundColor: c.card,
-                            borderColor: c.border,
-                            color: c.forestDeep,
-                            boxShadow: "0 0.5rem 1.25rem rgba(50, 53, 46, 0.06)",
+                            color: c.deep,
                             ["--tw-ring-color" as string]: c.forest,
                             ["--tw-ring-offset-color" as string]: c.pageBg,
                           }}
                         >
-                          <XLogoIcon className="h-3.5 w-3.5" />
+                          <XLogoIcon className="h-4 w-4" />
                         </a>
                       </div>
                     </div>
