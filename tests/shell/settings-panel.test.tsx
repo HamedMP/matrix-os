@@ -109,4 +109,15 @@ describe("Settings panel", () => {
     expect(accountRegion.className).toContain("sticky");
     expect(accountRegion.className).toContain("sm:static");
   });
+
+  it("renders above fullscreen app windows while staying below shell notifications", async () => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+
+    render(<Settings open onOpenChange={() => {}} />);
+
+    const settingsLayer = screen.getByLabelText("Close settings").parentElement;
+    expect(settingsLayer).toBeTruthy();
+    expect(settingsLayer?.className).toContain("z-[9999]");
+    expect(settingsLayer?.className).not.toContain("z-[10000]");
+  });
 });
