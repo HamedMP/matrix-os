@@ -135,7 +135,9 @@ describe("ConnectionIndicator", () => {
       expect(screen.getByText(/keeping your workspace open/i)).toBeTruthy();
       expect(screen.queryByText("Matrix computer is restarting")).toBeNull();
       expect(screen.queryByText(/bundle upgrades or gateway restarts/i)).toBeNull();
-      expect(screen.getByRole("status", { name: /matrix connection status/i }).getAttribute("data-variant")).toBe("dock");
+      const indicator = screen.getByRole("status", { name: /matrix connection status/i });
+      expect(indicator.getAttribute("data-variant")).toBe("toast");
+      expect(indicator.className).not.toContain("bottom-");
     });
   });
 

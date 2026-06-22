@@ -60,6 +60,7 @@ import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
 import { ManualSetupStickers } from "./onboarding/ManualSetupStickers";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
+import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { nameToSlug } from "@/lib/utils";
@@ -1452,7 +1453,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   if (firstRunStatus === "checking") {
     return (
       <TooltipProvider delayDuration={300}>
-        <RuntimeIdentityBanner />
+        <ShellNotificationStack>
+          <RuntimeIdentityBanner />
+        </ShellNotificationStack>
         <MatrixFirstRunLoading />
       </TooltipProvider>
     );
@@ -1460,7 +1463,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
   return (
     <TooltipProvider delayDuration={300}>
-      <RuntimeIdentityBanner />
+      <ShellNotificationStack>
+        <RuntimeIdentityBanner />
+        <ConnectionIndicator />
+      </ShellNotificationStack>
       <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
         {desktopMode === "canvas" ? (
           <CanvasToolbar
@@ -1752,15 +1758,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
           />
           <AoedeDockButton size={dock.iconSize} variant="desktop" tooltipSide={tooltipSide} />
 
-          <div
-            className={
-              isHorizontal
-                ? "absolute left-full top-1/2 -translate-y-1/2 ml-2 pointer-events-auto"
-                : "absolute top-full left-1/2 -translate-x-1/2 mt-2 pointer-events-auto"
-            }
-          >
-            <ConnectionIndicator />
-          </div>
         </aside>
         </div>}
 

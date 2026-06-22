@@ -5,6 +5,8 @@ import { useVocalSession, type VocalIntent, type BuildProgressSnapshot } from "@
 import type { ChatState } from "@/hooks/useChatState";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AgentStatusCard } from "./AgentStatusCard";
+import { ShellNotificationCard } from "./ShellNotificationCard";
+import { ShellNotificationPortal } from "./ShellNotificationPortal";
 
 const GLOW_OPACITY: Record<string, number> = {
   idle: 0.68,
@@ -562,9 +564,14 @@ export function VocalPanel({ active, chat, onOpenApp, onDismissChat }: VocalPane
       />
 
       {error && (
-        <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs">
-          {error}
-        </div>
+        <ShellNotificationPortal>
+          <ShellNotificationCard
+            className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive shadow-[0_18px_60px_-24px_rgba(239,68,68,0.58),0_24px_60px_-30px_rgba(0,0,0,0.38)] backdrop-blur-md"
+            role="alert"
+          >
+            {error}
+          </ShellNotificationCard>
+        </ShellNotificationPortal>
       )}
 
       {/* react-doctor-disable-next-line react-doctor/no-unknown-property -- valid styled-jsx attribute */}

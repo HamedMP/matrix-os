@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangleIcon, CpuIcon, HardDriveIcon, RefreshCcwIcon, ServerIcon, XIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
+import { ShellNotificationCard } from "./ShellNotificationCard";
 
 const ATTENTION_RELEASE_CHANNELS = new Set(["dev", "canary", "beta"]);
 
@@ -131,9 +132,9 @@ export function RuntimeIdentityBanner() {
   };
 
   return (
-    <aside
+    <ShellNotificationCard
       className={[
-        "fixed right-3 top-9 z-[95] max-w-[calc(100vw-1.5rem)] rounded-md border px-3 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.18)] backdrop-blur-md",
+        "rounded-md border px-3 py-2 shadow-[0_18px_60px_rgba(0,0,0,0.18)] backdrop-blur-md",
         summary.isStaging
           ? "border-[#8a3a11]/35 bg-[#fff1df]/92 text-[#3f210d]"
           : "border-[#8a3a11]/30 bg-[#fff8e8]/92 text-[#3f210d]",
@@ -187,6 +188,6 @@ export function RuntimeIdentityBanner() {
           <XIcon className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </div>
-    </aside>
+    </ShellNotificationCard>
   );
 }
