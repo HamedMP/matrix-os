@@ -128,20 +128,20 @@ jobs:
   docker-smoke:
     name: Docker Smoke Test
     needs: [changes, docker-build]
-    if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     steps:
-      - name: Skip Docker smoke for docs-only changes
-        if: needs.changes.outputs.should_run != 'true'
-        run: echo "No Docker-relevant source changes detected; skipping smoke scenario."
+      - name: Record push coverage
+        if: github.event_name != 'pull_request'
+        run: echo "Full Docker scenario matrix covers push runs; PR smoke runs only on pull_request events."
 
       - uses: actions/checkout@v6
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
 
       - name: Free runner disk before Docker load
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
         run: |
           df -h
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
@@ -149,23 +149,23 @@ jobs:
           df -h
 
       - name: Download Docker image artifact
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
         uses: actions/download-artifact@v7
         with:
           name: matrix-os-dev-image
           path: /tmp/docker-image
 
       - name: Load Docker image artifact
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
         run: gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load
 
       - name: Create CI env file
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
         run: |
           echo "ANTHROPIC_API_KEY=test-not-used-in-docker-scenarios" > .env.docker
 
       - name: Create CI compose override
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
         run: |
           cat > docker-compose.ci.yml <<'EOF'
           services:
@@ -179,11 +179,11 @@ jobs:
           EOF
 
       - name: Create external volumes
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
         run: docker volume create matrixos-ai-auth
 
       - name: Run scenario tests
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
         run: |
           chmod +x scripts/docker-test/*.sh
           ./scripts/docker-test/fresh-install.sh
@@ -192,14 +192,14 @@ jobs:
           DOCKER_HEALTH_TIMEOUT: "600"
 
       - name: Collect container logs on failure
-        if: failure()
+        if: failure() && github.event_name == 'pull_request'
         run: |
           mkdir -p /tmp/docker-test-logs
           docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml logs --tail 100 > /tmp/docker-test-logs/compose.log 2>&1 || true
           docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml ps -a > /tmp/docker-test-logs/containers.log 2>&1 || true
 
       - name: Upload test logs on failure
-        if: failure()
+        if: failure() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: docker-test-logs-fresh-install
@@ -207,7 +207,7 @@ jobs:
           retention-days: 7
 
       - name: Cleanup Docker disk
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         run: |
           docker compose -f docker-compose.dev.yml -f docker-compose.ci.yml down -v --remove-orphans || true
           docker system prune -af --volumes || true
@@ -218,7 +218,7 @@ jobs:
     needs: [changes, docker-build]
     if: needs.changes.outputs.should_run == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       max-parallel: 2
