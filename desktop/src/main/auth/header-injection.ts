@@ -13,7 +13,12 @@ interface WebRequestLike {
   ): void;
   onHeadersReceived(
     listener: (
-      details: { url: string; method: string; responseHeaders?: Record<string, string[]> },
+      details: {
+        url: string;
+        method: string;
+        responseHeaders?: Record<string, string[]>;
+        resourceType?: string;
+      },
       callback: (response: { responseHeaders?: Record<string, string[]>; statusLine?: string }) => void,
     ) => void,
   ): void;
@@ -46,6 +51,55 @@ export function shouldInjectAuth(requestUrl: string, gatewayOrigin: string | nul
   );
 }
 
+function websocketOrigin(origin: string): string | null {
+  try {
+    const url = new URL(origin);
+    if (url.protocol === "https:") url.protocol = "wss:";
+    else if (url.protocol === "http:") url.protocol = "ws:";
+    else return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function normalizedHttpOrigin(origin: string | null): string | null {
+  if (!origin) return null;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function uniq(values: Array<string | null>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
+
+export function buildRendererCsp(gatewayOrigin: string | null, rendererOrigin: string): string {
+  const gatewayHttpOrigin = normalizedHttpOrigin(gatewayOrigin);
+  const rendererHttpOrigin = rendererOrigin === "null" ? null : normalizedHttpOrigin(rendererOrigin);
+  const connectSources = uniq([
+    "'self'",
+    gatewayHttpOrigin,
+    gatewayHttpOrigin ? websocketOrigin(gatewayHttpOrigin) : null,
+    rendererHttpOrigin,
+    rendererHttpOrigin ? websocketOrigin(rendererHttpOrigin) : null,
+  ]).join(" ");
+
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    `connect-src ${connectSources}`,
+    "worker-src 'self' blob:",
+    "font-src 'self' data:",
+    "img-src 'self' data: https:",
+  ].join("; ");
+}
+
 export function installHeaderInjection(
   rendererSession: SessionLike,
   getToken: () => string | null,
@@ -72,7 +126,17 @@ export function installGatewayCors(
   rendererOrigin: string,
 ): void {
   rendererSession.webRequest.onHeadersReceived((details, callback) => {
-    if (!shouldInjectAuth(details.url, getGatewayOrigin())) {
+    const gatewayOrigin = getGatewayOrigin();
+    const isGatewayResponse = shouldInjectAuth(details.url, gatewayOrigin);
+    const isRendererMainFrame = details.resourceType === "mainFrame" && (() => {
+      try {
+        return new URL(details.url).origin === rendererOrigin;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (!isGatewayResponse && !isRendererMainFrame) {
       callback({});
       return;
     }
@@ -83,16 +147,22 @@ export function installGatewayCors(
         lower !== "access-control-allow-origin" &&
         lower !== "access-control-allow-methods" &&
         lower !== "access-control-allow-headers" &&
-        lower !== "access-control-allow-credentials"
+        lower !== "access-control-allow-credentials" &&
+        lower !== "content-security-policy"
       ) {
         responseHeaders[key] = value;
       }
     }
-    responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
-    responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
-    responseHeaders["Access-Control-Allow-Headers"] = ["Authorization, Content-Type, x-runtime-slot"];
-    responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
-    if (details.method === "OPTIONS") {
+    if (isRendererMainFrame) {
+      responseHeaders["Content-Security-Policy"] = [buildRendererCsp(gatewayOrigin, rendererOrigin)];
+    }
+    if (isGatewayResponse) {
+      responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
+      responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
+      responseHeaders["Access-Control-Allow-Headers"] = ["Authorization, Content-Type, x-runtime-slot"];
+      responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
+    }
+    if (isGatewayResponse && details.method === "OPTIONS") {
       callback({ responseHeaders, statusLine: "HTTP/1.1 200 OK" });
       return;
     }
