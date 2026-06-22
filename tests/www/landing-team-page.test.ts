@@ -10,10 +10,10 @@ async function readRepoFile(path: string) {
 }
 
 describe("www landing team page", () => {
-  it("links Team from the shared landing header", async () => {
+  it("links About us from the shared landing header", async () => {
     const header = await readRepoFile("www/src/components/landing/SiteHeader.tsx");
 
-    expect(header).toContain('{ label: "Team", href: "/team" }');
+    expect(header).toContain('{ label: "About us", href: "/team" }');
   });
 
   it("ships the founders section on the shared marketing shell", async () => {
@@ -23,9 +23,11 @@ describe("www landing team page", () => {
     const linkedinIndex = page.indexOf("founder.linkedin");
     const xIndex = page.indexOf("founder.x");
 
-    expect(page).toContain('title: "Team | Matrix OS"');
+    expect(page).toContain('title: "About us | Matrix OS"');
     expect(page).toContain("<SiteHeader />");
     expect(page).toContain('src="/images/team-founders.jpg"');
+    expect(page).toContain("Mission");
+    expect(page).toContain("Meet our founders");
     expect(page).toContain("personal computer in the cloud");
     expect(page).toContain("security depth");
     expect(page).toContain("Hamed Mohammadpour");

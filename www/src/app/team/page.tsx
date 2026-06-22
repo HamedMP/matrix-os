@@ -7,11 +7,11 @@ import { SectionShell } from "@/components/landing/primitives";
 import { palette as c, fonts, cardShadowSmall } from "@/components/landing/theme";
 
 export const metadata: Metadata = {
-  title: "Team | Matrix OS",
-  description: "Meet the founders building Matrix OS.",
+  title: "About us | Matrix OS",
+  description: "Meet the founders and mission behind Matrix OS.",
   openGraph: {
-    title: "Team | Matrix OS",
-    description: "Meet the founders building Matrix OS.",
+    title: "About us | Matrix OS",
+    description: "Meet the founders and mission behind Matrix OS.",
     url: "https://matrix-os.com/team",
     siteName: "Matrix OS",
     type: "website",
@@ -62,7 +62,7 @@ export default function TeamPage() {
               className="mb-5 text-[1.625rem] leading-[1.12] md:text-[1.875rem]"
               style={{ fontFamily: fonts.display, color: c.mutedFg }}
             >
-              Team
+              Mission
             </p>
             <h1
               id="team-heading"
@@ -80,6 +80,12 @@ export default function TeamPage() {
 
           <div className="mt-12 grid items-start gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:gap-14">
             <section aria-label="Founders" className="max-w-[34rem]">
+              <h2
+                className="text-[1.75rem] leading-[1.15] md:text-[2rem]"
+                style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
+              >
+                Meet our founders
+              </h2>
               <div className="space-y-7">
                 {founders.map((founder) => (
                   <article key={founder.name} className="border-t pt-6" style={{ borderColor: c.border }}>
