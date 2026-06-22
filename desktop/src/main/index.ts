@@ -21,6 +21,28 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 
+function isMatrixOsDeepLink(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "matrixos:" || url.protocol === "matrix-os:";
+  } catch {
+    return false;
+  }
+}
+
+function focusMainWindow(): void {
+  const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function handleDeepLink(url: string): void {
+  if (!isMatrixOsDeepLink(url)) return;
+  focusMainWindow();
+}
+
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
   const parsed = EVENT_CHANNELS[channel].safeParse(payload);
   if (!parsed.success) {
@@ -92,12 +114,18 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
+  app.on("second-instance", (_event, argv) => {
+    const deepLink = argv.find(isMatrixOsDeepLink);
+    if (deepLink) {
+      handleDeepLink(deepLink);
+      return;
     }
+    focusMainWindow();
+  });
+
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
   });
 
   void app

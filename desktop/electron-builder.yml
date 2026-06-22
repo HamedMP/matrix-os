@@ -12,6 +12,7 @@ asarUnpack: []
 protocols:
   - name: Matrix OS
     schemes:
+      - matrixos
       - matrix-os
 mac:
   category: public.app-category.productivity

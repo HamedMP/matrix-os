@@ -132,6 +132,10 @@ function verifiedNativeRedirectUri(
   return timingSafeTokenEquals(expected, signatureValue) ? redirectUri : null;
 }
 
+function isTrustedNativeDesktopClient(clientId: unknown): boolean {
+  return clientId === 'matrix-os-macos' || clientId === 'matrix-os-desktop';
+}
+
 function escapeHtmlAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -645,8 +649,9 @@ function normalizeNativeRedirectUri(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 512) return null;
   try {
     const url = new URL(value);
-    if (url.protocol !== 'matrixos:' || url.hostname !== 'auth') return null;
-    return url.toString();
+    if (url.protocol === 'matrixos:' && url.hostname === 'auth') return url.toString();
+    if (url.protocol === 'matrix-os:') return url.toString();
+    return null;
   } catch (err: unknown) {
     if (!(err instanceof TypeError)) {
       console.error(
@@ -778,7 +783,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         const issued = await flow.createDeviceCode();
         const nativeRedirectUri = normalizeNativeRedirectUri(body.redirectUri);
         const verificationUrl = new URL(issued.verificationUri);
-        if (nativeRedirectUri && body.clientId === 'matrix-os-macos') {
+        if (nativeRedirectUri && isTrustedNativeDesktopClient(body.clientId)) {
           verificationUrl.searchParams.set('redirect_uri', nativeRedirectUri);
           verificationUrl.searchParams.set(
             'redirect_sig',

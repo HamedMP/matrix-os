@@ -4,7 +4,7 @@
 import { AppError, classifyHttpStatus, classifyTransportError } from "../../shared/app-error";
 
 export const DEVICE_CLIENT_ID = "matrix-os-desktop";
-export const DEVICE_REDIRECT_URI = "matrix-os://device-auth";
+export const DEVICE_REDIRECT_URI = "matrixos://auth?status=approved";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
