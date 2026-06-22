@@ -26,8 +26,8 @@ describe("www landing team page", () => {
     expect(page).toContain('title: "Team | Matrix OS"');
     expect(page).toContain("<SiteHeader />");
     expect(page).toContain('src="/images/team-founders.jpg"');
-    expect(page).toContain("AI-native computer");
-    expect(page).toContain("high-craft consumer software");
+    expect(page).toContain("AI agents need a real computer");
+    expect(page).toContain("automate work around the clock");
     expect(page).toContain("Hamed Mohammadpour");
     expect(page).toContain("CEO & Co-Founder");
     expect(page).toContain("/images/team/posthog-logo.png");

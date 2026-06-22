@@ -73,9 +73,9 @@ export default function TeamPage() {
                 Building Matrix OS
               </h1>
               <p className="mt-5 text-[1.0625rem] leading-[1.7]" style={{ color: c.mutedFg }}>
-                We are building Matrix OS as an AI-native computer where apps, files, messages, and agents work
-                together in one workspace. Our founding team combines machine learning, product engineering, and
-                high-craft consumer software experience.
+                AI agents need a real computer: somewhere secure, always on, and connected to the tools they use.
+                Matrix OS gives them one in the cloud, so teams can automate work around the clock without managing
+                servers, hardware, or uptime themselves.
               </p>
 
               <div className="mt-9 space-y-7">
