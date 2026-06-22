@@ -6,9 +6,30 @@ import { Desktop } from "../../shell/src/components/Desktop.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 
-const { terminalRender } = vi.hoisted(() => ({
-  terminalRender: vi.fn(() => <div>Terminal content</div>),
-}));
+const { connectionIndicatorRender, terminalRender } = vi.hoisted(() => {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      get length() {
+        return store.size;
+      },
+      clear: vi.fn(() => store.clear()),
+      getItem: vi.fn((key: string) => store.get(key) ?? null),
+      key: vi.fn((index: number) => Array.from(store.keys())[index] ?? null),
+      removeItem: vi.fn((key: string) => {
+        store.delete(key);
+      }),
+      setItem: vi.fn((key: string, value: string) => {
+        store.set(key, value);
+      }),
+    },
+  });
+  return {
+    connectionIndicatorRender: vi.fn(() => null),
+    terminalRender: vi.fn(() => <div>Terminal content</div>),
+  };
+});
 
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: () => undefined,
@@ -71,7 +92,7 @@ vi.mock("../../shell/src/components/UserButton.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
-  ConnectionIndicator: () => null,
+  ConnectionIndicator: connectionIndicatorRender,
 }));
 
 vi.mock("../../shell/src/components/AmbientClock.js", () => ({
@@ -147,7 +168,9 @@ function resetStores(win: AppWindow, fullscreenWindowId: string | null = win.id)
 
 describe("Desktop terminal fullscreen chrome", () => {
   beforeEach(() => {
+    connectionIndicatorRender.mockClear();
     terminalRender.mockClear();
+    localStorage.clear();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
@@ -203,5 +226,17 @@ describe("Desktop terminal fullscreen chrome", () => {
     });
 
     expect(useWindowManager.getState().fullscreenWindowId).toBe("win-terminal");
+  });
+
+  it("mounts the connection indicator in dock placement", async () => {
+    resetStores(terminalWindow);
+
+    render(<Desktop />);
+
+    await screen.findByText("Terminal content");
+    expect(connectionIndicatorRender).toHaveBeenCalledWith(
+      expect.objectContaining({ placement: "dock" }),
+      undefined,
+    );
   });
 });

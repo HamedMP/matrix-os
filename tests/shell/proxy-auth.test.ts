@@ -97,6 +97,13 @@ describe("proxy auth: route classification", () => {
 });
 
 describe("proxy auth: screenshot bypass", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.doUnmock("@clerk/nextjs/server");
+    vi.doUnmock("next/server");
+  });
+
   it("bypasses auth when the explicit E2E flag is set", () => {
     expect(shouldBypassAuth({ E2E_TEST_BYPASS: "1", NODE_ENV: "production" })).toBe(true);
     expect(shouldBypassAuth({ E2E_TEST_BYPASS: "1", NODE_ENV: "test" })).toBe(true);
@@ -105,6 +112,41 @@ describe("proxy auth: screenshot bypass", () => {
   it("does not bypass auth without the explicit E2E flag", () => {
     expect(shouldBypassAuth({ NODE_ENV: "test" })).toBe(false);
     expect(shouldBypassAuth({ E2E_TEST_BYPASS: "0", NODE_ENV: "production" })).toBe(false);
+  });
+
+  it("still routes gateway paths through the gateway while bypassing page auth", async () => {
+    vi.resetModules();
+    vi.stubEnv("E2E_TEST_BYPASS", "1");
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "local-dev-token-1234567890");
+
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn(),
+    }));
+
+    class MockNextResponse extends Response {
+      static next = vi.fn(() => ({ kind: "next" }));
+      static rewrite = vi.fn((url: URL, init?: { request?: { headers?: Headers } }) => ({ kind: "rewrite", url, init }));
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    const response = proxy({
+      headers: new Headers(),
+      nextUrl: {
+        host: "localhost:3000",
+        pathname: "/api/terminal/sessions",
+        protocol: "http:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(response).toMatchObject({ kind: "rewrite" });
+    expect(MockNextResponse.rewrite).toHaveBeenCalledTimes(1);
+    const [url, init] = MockNextResponse.rewrite.mock.calls[0]!;
+    expect(String(url)).toBe("http://localhost:4000/api/terminal/sessions");
+    expect(init?.request?.headers?.get("authorization")).toBe("Bearer local-dev-token-1234567890");
   });
 });
 

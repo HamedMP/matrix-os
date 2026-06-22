@@ -11,6 +11,12 @@ const STATUS_REFRESH_MS = 5_000;
 const STATUS_TIMEOUT_MS = 1_500;
 const INITIAL_CONNECTION_GRACE_MS = 2_500;
 
+type ConnectionIndicatorPlacement = "fixed" | "dock";
+
+interface ConnectionIndicatorProps {
+  placement?: ConnectionIndicatorPlacement;
+}
+
 function classifyRuntimeStatusError(error: unknown): string {
   if (error instanceof DOMException) {
     if (error.name === "AbortError" || error.name === "TimeoutError") return "timeout";
@@ -58,7 +64,7 @@ async function loadRuntimeStatus(): Promise<RuntimeStatus> {
   }
 }
 
-export function ConnectionIndicator() {
+export function ConnectionIndicator({ placement = "fixed" }: ConnectionIndicatorProps) {
   const state = useConnectionHealth((s) => s.state);
   const [status, setStatus] = useState<RuntimeStatus>({ reachability: "checking" });
   const [initialGraceElapsed, setInitialGraceElapsed] = useState(false);
@@ -108,17 +114,24 @@ export function ConnectionIndicator() {
   const panelClass = copy.tone === "danger"
     ? "border-red-500/25 bg-card/95 shadow-[0_18px_60px_-24px_rgba(239,68,68,0.58),0_24px_60px_-30px_rgba(0,0,0,0.38)]"
     : "border-amber-500/20 bg-card/95 shadow-[0_18px_60px_-24px_rgba(245,158,11,0.45),0_24px_60px_-30px_rgba(0,0,0,0.34)]";
+  const shellClass = placement === "dock"
+    ? "pointer-events-none z-[90] flex w-[min(92vw,360px)] max-w-[calc(100vw-1.5rem)] justify-center"
+    : "pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-[90] flex justify-center px-3 sm:px-4";
+  const contentClass = placement === "dock"
+    ? "pointer-events-auto flex w-full flex-col gap-3 rounded-2xl border px-3.5 py-3 text-card-foreground backdrop-blur-md backdrop-saturate-150"
+    : "pointer-events-auto flex w-full max-w-[min(92vw,560px)] flex-col gap-3 rounded-2xl border px-3.5 py-3 text-card-foreground backdrop-blur-md backdrop-saturate-150 sm:flex-row sm:items-center sm:gap-4";
 
   if (state === "connected" || (state === "initializing" && !initialGraceElapsed)) return null;
 
   return (
     <aside
-      className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-[90] flex justify-center px-3 sm:px-4"
+      className={shellClass}
       aria-label="Matrix connection status"
+      data-placement={placement}
       data-variant="dock"
       role="status"
     >
-      <div className={`pointer-events-auto flex w-full max-w-[min(92vw,560px)] flex-col gap-3 rounded-2xl border px-3.5 py-3 text-card-foreground backdrop-blur-md backdrop-saturate-150 sm:flex-row sm:items-center sm:gap-4 ${panelClass}`}>
+      <div className={`${contentClass} ${panelClass}`}>
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span
             className={`mt-2 size-2.5 shrink-0 rounded-full ${dotClass} ${state === "reconnecting" ? "animate-pulse" : ""}`}

@@ -4921,24 +4921,24 @@ function ShellCard({
             </div>
           )}
         </div>
-        <button
-          type="button"
-          aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggle();
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.stopPropagation()}
-          style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
-        >
-          {foreground && <span style={{ background: "#4F8A55", borderRadius: 999, height: 12, width: 12 }} />}
-          <span style={{ flex: "1 1 auto", fontSize: 10, fontWeight: 800, lineHeight: "10px", textAlign: "center" }}>
-            {foreground ? "ON" : "BG"}
-          </span>
-          {!foreground && <span style={{ background: "#F7F6EC", border: "1px solid #D6D5C4", borderRadius: 999, height: 12, width: 12 }} />}
-        </button>
       </div>
+      <button
+        type="button"
+        aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
+      >
+        {foreground && <span style={{ background: "#4F8A55", borderRadius: 999, height: 12, width: 12 }} />}
+        <span style={{ flex: "1 1 auto", fontSize: 10, fontWeight: 800, lineHeight: "10px", textAlign: "center" }}>
+          {foreground ? "ON" : "BG"}
+        </span>
+        {!foreground && <span style={{ background: "#F7F6EC", border: "1px solid #D6D5C4", borderRadius: 999, height: 12, width: 12 }} />}
+      </button>
     </div>
   );
 }

@@ -102,6 +102,45 @@ describe("ConnectionIndicator", () => {
     });
   });
 
+  it("uses fixed viewport placement by default", async () => {
+    act(() => {
+      useConnectionHealth.setState({ state: "reconnecting" });
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/health")) return Promise.resolve(jsonResponse({ status: "ok" }));
+      if (url.endsWith("/api/system/info")) return Promise.resolve(jsonResponse({ version: "v2026.06.22-test" }));
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    }));
+
+    render(<ConnectionIndicator />);
+
+    const status = await screen.findByRole("status", { name: /matrix connection status/i });
+    expect(status.className).toContain("fixed");
+    expect(status.className).toContain("inset-x-0");
+    expect(status.className).toContain("bottom-[calc(env(safe-area-inset-bottom)+0.75rem)]");
+  });
+
+  it("uses dock placement without fixed viewport positioning", async () => {
+    act(() => {
+      useConnectionHealth.setState({ state: "reconnecting" });
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/health")) return Promise.resolve(jsonResponse({ status: "ok" }));
+      if (url.endsWith("/api/system/info")) return Promise.resolve(jsonResponse({ version: "v2026.06.22-test" }));
+      return Promise.reject(new Error(`unexpected fetch ${url}`));
+    }));
+
+    render(<ConnectionIndicator placement="dock" />);
+
+    const status = await screen.findByRole("status", { name: /matrix connection status/i });
+    expect(status.className).not.toContain("fixed");
+    expect(status.className).not.toContain("inset-x-0");
+    expect(status.className).not.toContain("bottom-[calc(env(safe-area-inset-bottom)+0.75rem)]");
+    expect(status.getAttribute("data-variant")).toBe("dock");
+  });
+
   it("shows the runtime version even when the gateway omits a release channel", async () => {
     act(() => {
       useConnectionHealth.setState({ state: "reconnecting" });

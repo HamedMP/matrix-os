@@ -1489,7 +1489,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         <aside
           data-dock
           className={[
-            "pointer-events-auto flex items-center gap-1.5 bg-card/50 backdrop-blur-md transition-all duration-200 rounded-2xl border border-border/30 shadow-lg",
+            "pointer-events-auto relative flex items-center gap-1.5 bg-card/50 backdrop-blur-md transition-all duration-200 rounded-2xl border border-border/30 shadow-lg",
             isHorizontal ? "flex-row px-2" : "flex-col py-2",
             dock.position === "left" && "fixed left-2 top-1/2 -translate-y-1/2",
             dock.position === "right" && "fixed right-2 top-1/2 -translate-y-1/2",
@@ -1754,12 +1754,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
           <div
             className={
-              isHorizontal
+              dock.position === "left"
                 ? "absolute left-full top-1/2 -translate-y-1/2 ml-2 pointer-events-auto"
-                : "absolute top-full left-1/2 -translate-x-1/2 mt-2 pointer-events-auto"
+                : dock.position === "right"
+                  ? "absolute right-full top-1/2 -translate-y-1/2 mr-2 pointer-events-auto"
+                  : "absolute bottom-full left-1/2 -translate-x-1/2 mb-2 pointer-events-auto"
             }
           >
-            <ConnectionIndicator />
+            <ConnectionIndicator placement="dock" />
           </div>
         </aside>
         </div>}

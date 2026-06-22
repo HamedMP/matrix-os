@@ -2240,6 +2240,8 @@ describe("TerminalApp", () => {
     expect(screen.getByLabelText("Search sessions")).toHaveProperty("value", "");
     expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
     expect(screen.getByText("bench")).toBeTruthy();
+    const mainCard = screen.getByTestId("terminal-session-card-main");
+    expect(screen.getByRole("button", { name: "Move matrix-main to background" }).parentElement).toBe(mainCard);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /open bench/i }));
