@@ -25,7 +25,7 @@ const founders = [
     bio: "Hamed brings product and machine-learning instincts from PostHog and Newly, with a Machine Learning Engineering background from KTH. He focuses on making Matrix OS useful in real workflows: clear, fast, and grounded in how people actually build.",
     logos: [
       { src: "/images/team/posthog-logo.png", alt: "PostHog", width: 48, height: 48 },
-      { src: "/images/team/kth-logo.png", alt: "KTH", width: 48, height: 48 },
+      { src: "/images/team/kth-logo.svg", alt: "KTH", width: 54, height: 60 },
     ],
     linkedin: "https://www.linkedin.com/in/hamedmohammadpour/",
     x: "https://x.com/thehamedmp",
