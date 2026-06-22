@@ -33,6 +33,7 @@ describe("www landing team page", () => {
     expect(page).toContain("Hamed Mohammadpour");
     expect(page).toContain("CEO & Co-Founder");
     expect(page).toContain("/images/team/posthog-logo.png");
+    expect(page).toContain("/images/team/newly-logo.jpg");
     expect(page).toContain("/images/team/kth-logo.svg");
     expect(page).toContain("https://www.linkedin.com/in/hamedmohammadpour/");
     expect(page).toContain("https://x.com/thehamedmp");
