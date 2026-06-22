@@ -73,9 +73,10 @@ export default function TeamPage() {
                 Building Matrix OS
               </h1>
               <p className="mt-5 text-[1.0625rem] leading-[1.7]" style={{ color: c.mutedFg }}>
-                AI agents need a real computer: somewhere secure, always on, and connected to the tools they use.
-                Matrix OS gives them one in the cloud, so teams can automate work around the clock without managing
-                servers, hardware, or uptime themselves.
+                Our vision is that everyone will have a personal computer in the cloud where their AI agents live,
+                keep the right context from their work and life, and run 24/7. Hamed brings the product instinct for
+                making that feel useful, while Nima brings the engineering and security depth to make it reliable:
+                always-on agents working for you without buying hardware or babysitting infrastructure.
               </p>
 
               <div className="mt-9 space-y-7">
