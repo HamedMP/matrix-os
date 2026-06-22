@@ -8,6 +8,8 @@ import { ApiKeyInput } from "./onboarding/ApiKeyInput";
 import { MicPermissionDialog } from "./MicPermissionDialog";
 import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
+import { ShellNotificationCard } from "./ShellNotificationCard";
+import { ShellNotificationStack } from "./ShellNotificationStack";
 
 const SHIMMER_GRADIENT =
   "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
@@ -461,9 +463,14 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
 
       {/* Error */}
       {ob.error && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs">
-          {ob.error}
-        </div>
+        <ShellNotificationStack>
+          <ShellNotificationCard
+            className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive shadow-[0_18px_60px_-24px_rgba(239,68,68,0.58),0_24px_60px_-30px_rgba(0,0,0,0.38)] backdrop-blur-md"
+            role="alert"
+          >
+            {ob.error}
+          </ShellNotificationCard>
+        </ShellNotificationStack>
       )}
     </div>
     </>

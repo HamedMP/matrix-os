@@ -6,6 +6,7 @@ import { useConnectionHealth } from "@/hooks/useConnectionHealth";
 import { manualReconnect } from "@/hooks/useSocket";
 import { getGatewayUrl } from "@/lib/gateway";
 import { resolveConnectionCopy, type RuntimeStatus } from "./connection-indicator-copy";
+import { ShellNotificationCard } from "./ShellNotificationCard";
 
 const STATUS_REFRESH_MS = 5_000;
 const STATUS_TIMEOUT_MS = 1_500;
@@ -112,42 +113,40 @@ export function ConnectionIndicator() {
   if (state === "connected" || (state === "initializing" && !initialGraceElapsed)) return null;
 
   return (
-    <aside
-      className="pointer-events-none fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+0.75rem)] z-[90] flex justify-center px-3 sm:px-4"
+    <ShellNotificationCard
+      className={`flex flex-col gap-3 rounded-2xl border px-3.5 py-3 text-card-foreground backdrop-blur-md backdrop-saturate-150 sm:flex-row sm:items-center sm:gap-4 ${panelClass}`}
       aria-label="Matrix connection status"
-      data-variant="dock"
+      data-variant="toast"
       role="status"
     >
-      <div className={`pointer-events-auto flex w-full max-w-[min(92vw,560px)] flex-col gap-3 rounded-2xl border px-3.5 py-3 text-card-foreground backdrop-blur-md backdrop-saturate-150 sm:flex-row sm:items-center sm:gap-4 ${panelClass}`}>
-        <div className="flex min-w-0 flex-1 items-start gap-3">
-          <span
-            className={`mt-2 size-2.5 shrink-0 rounded-full ${dotClass} ${state === "reconnecting" ? "animate-pulse" : ""}`}
-            aria-hidden="true"
-          />
-          <div className="min-w-0 flex-1">
-            <div className={`text-sm font-semibold leading-5 ${toneClass}`}>{copy.title}</div>
-            <p className="mt-0.5 text-sm leading-5 text-muted-foreground">{copy.detail}</p>
-            {(status.releaseChannel || status.releaseVersion) && (
-              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/80">
-                {status.releaseChannel && (
-                  <span className="rounded-full border border-border/50 bg-background/50 px-2 py-0.5 font-mono">
-                    {status.releaseChannel}
-                  </span>
-                )}
-                {status.releaseVersion && <span className="truncate font-mono">{status.releaseVersion}</span>}
-              </div>
-            )}
-          </div>
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <span
+          className={`mt-2 size-2.5 shrink-0 rounded-full ${dotClass} ${state === "reconnecting" ? "animate-pulse" : ""}`}
+          aria-hidden="true"
+        />
+        <div className="min-w-0 flex-1">
+          <div className={`text-sm font-semibold leading-5 ${toneClass}`}>{copy.title}</div>
+          <p className="mt-0.5 text-sm leading-5 text-muted-foreground">{copy.detail}</p>
+          {(status.releaseChannel || status.releaseVersion) && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/80">
+              {status.releaseChannel && (
+                <span className="rounded-full border border-border/50 bg-background/50 px-2 py-0.5 font-mono">
+                  {status.releaseChannel}
+                </span>
+              )}
+              {status.releaseVersion && <span className="truncate font-mono">{status.releaseVersion}</span>}
+            </div>
+          )}
         </div>
-        <button
-          className="inline-flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-border/70 bg-background/80 px-3 text-sm font-medium text-foreground transition hover:border-border hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={manualReconnect}
-          type="button"
-        >
-          <RefreshCwIcon className="size-3.5" aria-hidden="true" />
-          {copy.action}
-        </button>
       </div>
-    </aside>
+      <button
+        className="inline-flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-border/70 bg-background/80 px-3 text-sm font-medium text-foreground transition hover:border-border hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={manualReconnect}
+        type="button"
+      >
+        <RefreshCwIcon className="size-3.5" aria-hidden="true" />
+        {copy.action}
+      </button>
+    </ShellNotificationCard>
   );
 }
