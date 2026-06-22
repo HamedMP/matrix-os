@@ -19,6 +19,7 @@ describe("www landing team page", () => {
   it("ships the founders section on the shared marketing shell", async () => {
     const page = await readRepoFile("www/src/app/team/page.tsx");
     const founderHeadingIndex = page.indexOf("{founder.name}\n                      </h2>");
+    const firstLogoIndex = page.indexOf("founder.logos.map");
     const linkedinIndex = page.indexOf("founder.linkedin");
     const xIndex = page.indexOf("founder.x");
 
@@ -29,12 +30,16 @@ describe("www landing team page", () => {
     expect(page).toContain("high-craft consumer software");
     expect(page).toContain("Hamed Mohammadpour");
     expect(page).toContain("CEO & Co-Founder");
+    expect(page).toContain("/images/team/posthog-logo.png");
+    expect(page).toContain("/images/team/kth-logo.png");
     expect(page).toContain("https://www.linkedin.com/in/hamedmohammadpour/");
     expect(page).toContain("https://x.com/thehamedmp");
     expect(page).toContain("PostHog and Newly");
     expect(page).toContain("real workflows");
     expect(page).toContain("Nima Naderi");
     expect(page).toContain("CTO & Co-Founder");
+    expect(page).toContain("/images/team/bending-spoons-logo.png");
+    expect(page).toContain("/images/team/ioi-logo.png");
     expect(page).toContain("https://www.linkedin.com/in/nima-naderi04/");
     expect(page).toContain("https://x.com/NimaNaderi2004");
     expect(page).toContain("function XLogoIcon");
@@ -42,7 +47,9 @@ describe("www landing team page", () => {
     expect(page).toContain("Olympiad gold-medal problem solving");
     expect(page).toContain("reliable systems");
     expect(page).toContain("<SiteFooter />");
+    expect(firstLogoIndex).toBeGreaterThan(-1);
     expect(founderHeadingIndex).toBeGreaterThan(-1);
+    expect(firstLogoIndex).toBeLessThan(founderHeadingIndex);
     expect(linkedinIndex).toBeGreaterThan(founderHeadingIndex);
     expect(xIndex).toBeGreaterThan(linkedinIndex);
   });

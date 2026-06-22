@@ -23,6 +23,10 @@ const founders = [
     name: "Hamed Mohammadpour",
     role: "CEO & Co-Founder",
     bio: "Hamed brings product and machine-learning instincts from PostHog and Newly, with a Machine Learning Engineering background from KTH. He focuses on making Matrix OS useful in real workflows: clear, fast, and grounded in how people actually build.",
+    logos: [
+      { src: "/images/team/posthog-logo.png", alt: "PostHog", width: 48, height: 48 },
+      { src: "/images/team/kth-logo.png", alt: "KTH", width: 48, height: 48 },
+    ],
     linkedin: "https://www.linkedin.com/in/hamedmohammadpour/",
     x: "https://x.com/thehamedmp",
   },
@@ -30,6 +34,10 @@ const founders = [
     name: "Nima Naderi",
     role: "CTO & Co-Founder",
     bio: "Nima brings product engineering experience from Bending Spoons, a Computer Engineering background from Polito, and Olympiad gold-medal problem solving. He focuses on the technical foundation of Matrix OS: reliable systems, polished interfaces, and the details that make AI feel native.",
+    logos: [
+      { src: "/images/team/bending-spoons-logo.png", alt: "Bending Spoons", width: 120, height: 32 },
+      { src: "/images/team/ioi-logo.png", alt: "International Olympiad in Informatics", width: 48, height: 48 },
+    ],
     linkedin: "https://www.linkedin.com/in/nima-naderi04/",
     x: "https://x.com/NimaNaderi2004",
   },
@@ -70,7 +78,28 @@ export default function TeamPage() {
               <div className="mt-9 space-y-7">
                 {founders.map((founder) => (
                   <article key={founder.name} className="border-t pt-6" style={{ borderColor: c.border }}>
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {founder.logos.map((logo) => (
+                          <span
+                            key={logo.src}
+                            className="flex h-8 items-center justify-center rounded-lg border px-1.5"
+                            style={{
+                              backgroundColor: c.card,
+                              borderColor: c.border,
+                              boxShadow: "0 0.5rem 1.25rem rgba(50, 53, 46, 0.04)",
+                            }}
+                          >
+                            <Image
+                              src={logo.src}
+                              alt={logo.alt}
+                              width={logo.width}
+                              height={logo.height}
+                              className="max-h-5 w-auto object-contain"
+                            />
+                          </span>
+                        ))}
+                      </div>
                       <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
                         {founder.name}
                       </h2>
