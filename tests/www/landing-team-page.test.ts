@@ -49,8 +49,8 @@ describe("www landing team page", () => {
     expect(page).toContain("<SiteFooter />");
     expect(firstLogoIndex).toBeGreaterThan(-1);
     expect(founderHeadingIndex).toBeGreaterThan(-1);
-    expect(firstLogoIndex).toBeLessThan(founderHeadingIndex);
-    expect(linkedinIndex).toBeGreaterThan(founderHeadingIndex);
+    expect(firstLogoIndex).toBeGreaterThan(founderHeadingIndex);
+    expect(linkedinIndex).toBeGreaterThan(firstLogoIndex);
     expect(xIndex).toBeGreaterThan(linkedinIndex);
   });
 });

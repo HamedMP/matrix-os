@@ -78,31 +78,23 @@ export default function TeamPage() {
               <div className="mt-9 space-y-7">
                 {founders.map((founder) => (
                   <article key={founder.name} className="border-t pt-6" style={{ borderColor: c.border }}>
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
+                        {founder.name}
+                      </h2>
+                      <div className="flex shrink-0 items-center gap-2">
                         {founder.logos.map((logo) => (
-                          <span
-                            key={logo.src}
-                            className="flex h-8 items-center justify-center rounded-lg border px-1.5"
-                            style={{
-                              backgroundColor: c.card,
-                              borderColor: c.border,
-                              boxShadow: "0 0.5rem 1.25rem rgba(50, 53, 46, 0.04)",
-                            }}
-                          >
+                          <span key={logo.src} className="flex h-8 items-center justify-center">
                             <Image
                               src={logo.src}
                               alt={logo.alt}
                               width={logo.width}
                               height={logo.height}
-                              className="max-h-5 w-auto object-contain"
+                              className="max-h-6 w-auto object-contain"
                             />
                           </span>
                         ))}
                       </div>
-                      <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
-                        {founder.name}
-                      </h2>
                       <div className="flex shrink-0 items-center gap-2">
                         <a
                           href={founder.linkedin}
