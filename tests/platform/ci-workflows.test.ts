@@ -75,10 +75,11 @@ describe('CI workflows', () => {
   it('gives Docker scenario jobs enough timeout for slow artifact transfer before tests start', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/docker-test.yml'), 'utf8');
+    const scenariosHeader = workflow.match(/docker-scenarios:[\s\S]*?strategy:/)?.[0] ?? '';
 
     expect(workflow).toContain('docker-scenarios:');
-    expect(workflow).toContain('timeout-minutes: 45');
-    expect(workflow).not.toContain('docker-scenarios:\n    name: Docker Scenario Tests (${{ matrix.scenario }})\n    needs: [changes, docker-build]\n    if: needs.changes.outputs.should_run == \'true\' && github.event_name != \'pull_request\'\n    runs-on: ubuntu-latest\n    timeout-minutes: 20');
+    expect(scenariosHeader).toContain('timeout-minutes: 45');
+    expect(scenariosHeader).not.toContain('timeout-minutes: 20');
   });
 
   it('runs sync-client CI only on the supported Node 20 runtime', () => {

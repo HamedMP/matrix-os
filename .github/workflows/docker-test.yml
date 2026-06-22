@@ -137,10 +137,6 @@ jobs:
         if: github.event_name != 'pull_request'
         run: echo "Full Docker scenario matrix covers push runs; PR smoke runs only on pull_request events."
 
-      - name: Skip Docker smoke for docs-only changes
-        if: needs.changes.outputs.should_run != 'true' && github.event_name == 'pull_request'
-        run: echo "No Docker-relevant source changes detected; skipping smoke scenario."
-
       - uses: actions/checkout@v6
         if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
 
