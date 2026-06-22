@@ -57,29 +57,30 @@ export default function TeamPage() {
       <SiteHeader />
       <main>
         <SectionShell className="pt-10 pb-16 md:pt-20 md:pb-24">
-          <div className="grid items-center gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:gap-14">
-            <section aria-labelledby="team-heading" className="max-w-[34rem]">
-              <p
-                className="mb-5 text-[1.625rem] leading-[1.12] md:text-[1.875rem]"
-                style={{ fontFamily: fonts.display, color: c.mutedFg }}
-              >
-                Team
-              </p>
-              <h1
-                id="team-heading"
-                className="text-[2.5rem] leading-[1.08] tracking-[-0.01em] md:text-[3.5rem]"
-                style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
-              >
-                Building Matrix OS
-              </h1>
-              <p className="mt-5 text-[1.0625rem] leading-[1.7]" style={{ color: c.mutedFg }}>
-                Our vision is that everyone will have a personal computer in the cloud where their AI agents live,
-                keep the right context from their work and life, and run 24/7. Hamed brings the product instinct for
-                making that feel useful, while Nima brings the engineering and security depth to make it reliable:
-                always-on agents working for you without buying hardware or babysitting infrastructure.
-              </p>
+          <section aria-labelledby="team-heading" className="mx-auto max-w-[50rem] text-center">
+            <p
+              className="mb-5 text-[1.625rem] leading-[1.12] md:text-[1.875rem]"
+              style={{ fontFamily: fonts.display, color: c.mutedFg }}
+            >
+              Team
+            </p>
+            <h1
+              id="team-heading"
+              className="text-[2.5rem] leading-[1.08] tracking-[-0.01em] md:text-[3.5rem]"
+              style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
+            >
+              Building Matrix OS
+            </h1>
+            <p className="mt-6 text-[1.0625rem] leading-[1.75]" style={{ color: c.mutedFg }}>
+              Our mission is to give everyone a personal computer in the cloud where their AI agents live, keep
+              context, and work 24/7. We combine Hamed&apos;s product instinct with Nima&apos;s engineering and
+              security depth to make always-on agents useful without buying hardware or babysitting infrastructure.
+            </p>
+          </section>
 
-              <div className="mt-9 space-y-7">
+          <div className="mt-12 grid items-start gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:gap-14">
+            <section aria-label="Founders" className="max-w-[34rem]">
+              <div className="space-y-7">
                 {founders.map((founder) => (
                   <article key={founder.name} className="border-t pt-6" style={{ borderColor: c.border }}>
                     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
