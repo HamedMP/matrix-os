@@ -3,7 +3,19 @@ import matrixLogoUrl from "../assets/matrix-logo.svg";
 
 // The real Matrix OS brand glyph, recolored to the current theme via CSS mask
 // (works in light + dark since it picks up the brand color, not a baked fill).
-export function BrandLogo({ size = 22, color = "var(--accent)" }: { size?: number; color?: string }) {
+export function BrandLogo({
+  size = 22,
+  color = "var(--accent)",
+  className,
+  testId,
+  style: styleOverride,
+}: {
+  size?: number;
+  color?: string;
+  className?: string;
+  testId?: string;
+  style?: CSSProperties;
+}) {
   const style: CSSProperties = {
     width: Math.round((size * 510) / 660),
     height: size,
@@ -17,7 +29,7 @@ export function BrandLogo({ size = 22, color = "var(--accent)" }: { size?: numbe
     WebkitMaskPosition: "center",
     maskPosition: "center",
   };
-  return <span aria-hidden style={style} />;
+  return <span aria-hidden className={className} data-testid={testId} style={{ ...style, ...styleOverride }} />;
 }
 
 // The dark forest brand panel used on the sign-in split screen. The dotted
@@ -58,14 +70,25 @@ function MeshBackdrop() {
       </defs>
       <rect width="400" height="600" fill="url(#op-mesh-a)" />
       <rect width="400" height="600" fill="url(#op-mesh-b)" />
-      <g fill="#fafaf5" opacity="0.05">
+      <g fill="#fafaf5" opacity="0.035">
         {Array.from({ length: 60 }).map((_, i) => {
           const x = (i * 71) % 400;
           const y = (i * 113) % 600;
-          return <circle key={i} cx={x} cy={y} r={(i % 4) + 1.5} />;
+          return <circle key={i} cx={x} cy={y} r={(i % 3) + 1.2} />;
         })}
       </g>
     </svg>
+  );
+}
+
+function AmbientLogoMark() {
+  return (
+    <BrandLogo
+      size={1240}
+      color="rgba(250, 250, 245, 0.72)"
+      testId="matrix-brand-ambient-mark"
+      className="pointer-events-none absolute -right-28 top-10 opacity-[0.105] blur-[0.2px] drop-shadow-[0_46px_90px_rgba(0,0,0,0.32)]"
+    />
   );
 }
 
@@ -82,29 +105,41 @@ export function BrandPanel({
     <div
       className="relative flex flex-col justify-between overflow-hidden p-10"
       style={{
-        background: `linear-gradient(160deg, var(--forest) 0%, var(--forest-deep) 100%)`,
+        background:
+          "radial-gradient(circle at 80% 10%, rgba(250,250,245,0.12), transparent 28%), radial-gradient(circle at 12% 88%, rgba(208,111,37,0.13), transparent 32%), linear-gradient(160deg, var(--forest) 0%, var(--forest-deep) 100%)",
         color: "var(--forest-foreground)",
       }}
     >
       <MeshBackdrop />
-      <div className="relative flex items-center gap-2.5">
-        <MatrixMark size={34} />
-        <span className="text-lg font-semibold tracking-tight">Matrix OS</span>
+      <AmbientLogoMark />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black/18 to-transparent" aria-hidden />
+
+      <div className="relative flex items-center gap-3">
+        <span className="flex size-11 items-center justify-center rounded-2xl bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_18px_38px_rgba(0,0,0,0.18)] ring-1 ring-white/12 backdrop-blur">
+          <BrandLogo size={25} color="var(--forest-foreground)" testId="matrix-brand-visible-mark" />
+        </span>
+        <span className="text-lg font-semibold tracking-tight drop-shadow-[0_1px_12px_rgba(0,0,0,0.22)]">Matrix OS</span>
       </div>
 
-      <div className="relative flex flex-col gap-4">
-        <h1 className="text-2xl leading-tight font-semibold tracking-tight" style={{ fontSize: "var(--text-2xl)" }}>
+      <div className="relative flex max-w-[420px] flex-col gap-5">
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/8 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-white/70 shadow-[0_12px_28px_rgba(0,0,0,0.14)] backdrop-blur">
+          <span className="size-1.5 rounded-full bg-[#d06f25] shadow-[0_0_18px_rgba(208,111,37,0.7)]" />
+          Private cloud workspace
+        </div>
+        <h1 className="text-2xl leading-tight font-semibold tracking-tight drop-shadow-[0_18px_42px_rgba(0,0,0,0.22)]" style={{ fontSize: "var(--text-2xl)" }}>
           {title}
         </h1>
-        <p className="max-w-[300px] text-md leading-relaxed" style={{ color: "var(--forest-muted)" }}>
+        <p className="max-w-[330px] text-md leading-relaxed" style={{ color: "var(--forest-muted)" }}>
           {subtitle}
         </p>
       </div>
 
-      <ul className="relative flex flex-col gap-3">
+      <ul className="relative flex w-fit flex-col gap-3 rounded-2xl border border-white/10 bg-black/10 p-4 shadow-[0_22px_60px_rgba(0,0,0,0.16)] backdrop-blur">
         {bullets.map((b) => (
           <li key={b.label} className="flex items-center gap-2.5 text-sm">
-            <span style={{ color: "var(--forest-foreground)", opacity: 0.85 }}>{b.icon}</span>
+            <span className="flex size-7 items-center justify-center rounded-lg bg-white/8 ring-1 ring-white/10" style={{ color: "var(--forest-foreground)", opacity: 0.92 }}>
+              {b.icon}
+            </span>
             <span style={{ color: "var(--forest-muted)" }}>{b.label}</span>
           </li>
         ))}
