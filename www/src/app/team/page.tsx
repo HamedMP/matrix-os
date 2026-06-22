@@ -36,7 +36,7 @@ const founders = [
     bio: "Nima brings product engineering experience from Bending Spoons, a Computer Engineering background from Polito, and Olympiad gold-medal problem solving. He focuses on the technical foundation of Matrix OS: reliable systems, polished interfaces, and the details that make AI feel native.",
     logos: [
       { src: "/images/team/ioi-logo.png", alt: "International Olympiad in Informatics", width: 78, height: 78, className: "h-16 w-auto max-w-20" },
-      { src: "/images/team/bending-spoons-logo.png", alt: "Bending Spoons", width: 210, height: 56, className: "h-11 w-auto max-w-56" },
+      { src: "/images/team/bending-spoons-logo.svg", alt: "Bending Spoons", width: 198, height: 80, className: "h-12 w-auto max-w-56" },
     ],
     linkedin: "https://www.linkedin.com/in/nima-naderi04/",
     x: "https://x.com/NimaNaderi2004",

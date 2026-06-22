@@ -40,7 +40,7 @@ describe("www landing team page", () => {
     expect(page).toContain("real workflows");
     expect(page).toContain("Nima Naderi");
     expect(page).toContain("CTO & Co-Founder");
-    expect(page).toContain("/images/team/bending-spoons-logo.png");
+    expect(page).toContain("/images/team/bending-spoons-logo.svg");
     expect(page).toContain("/images/team/ioi-logo.png");
     expect(page).toContain("https://www.linkedin.com/in/nima-naderi04/");
     expect(page).toContain("https://x.com/NimaNaderi2004");
