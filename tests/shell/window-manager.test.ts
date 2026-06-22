@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   useWindowManager,
+  resetWindowManagerLayoutPersistenceForTests,
   type AppWindow,
   type LayoutWindow,
 } from "../../shell/src/hooks/useWindowManager.js";
@@ -10,6 +11,7 @@ const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
 vi.stubGlobal("fetch", fetchSpy);
 
 function resetStore() {
+  resetWindowManagerLayoutPersistenceForTests();
   useWindowManager.setState({
     windows: [],
     nextZ: 1,
@@ -246,6 +248,22 @@ describe("Window Manager Store", () => {
       expect(windows.find((w) => w.path === "apps/notes.html")?.minimized).toBe(false);
       expect(windows.find((w) => w.path === "apps/todo.html")?.minimized).toBe(true);
       expect(closedPaths.has("apps/closed.html")).toBe(true);
+    });
+
+    it("does not save immediately while hydrating server layout", () => {
+      const saved: LayoutWindow[] = [
+        {
+          path: "apps/notes.html",
+          title: "Notes",
+          x: 100, y: 100, width: 800, height: 600,
+          state: "open",
+        },
+      ];
+
+      useWindowManager.getState().loadLayout(saved);
+      vi.advanceTimersByTime(500);
+
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 });

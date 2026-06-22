@@ -220,6 +220,19 @@ interface ModuleMeta {
   version?: string;
 }
 
+interface ShellBootstrapIcon {
+  url: string;
+  etag: string | null;
+  versionedUrl: string;
+}
+
+interface ShellBootstrap {
+  layout?: { windows?: LayoutWindow[] };
+  modules?: ModuleRegistryEntry[];
+  apps?: { name: string; path: string; icon?: string; slug?: string }[];
+  icons?: Record<string, ShellBootstrapIcon>;
+}
+
 function registryPathToRelativePath(path: string): string | null {
   if (path.startsWith("~/")) {
     return path.slice(2);
@@ -715,10 +728,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
   const generatingRef = useRef<Set<string> | null>(null);
   if (generatingRef.current === null) generatingRef.current = new Set<string>();
-  const checkedRef = useRef<Set<string> | null>(null);
-  if (checkedRef.current === null) checkedRef.current = new Set<string>();
 
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds checkAndGenerateIcon's deps, which feeds addApp's deps, which feeds loadModules' deps -- loadModules is a useEffect dependency, so a fresh identity here would re-fire the module-load effect every render
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity feeds app-tile regenerate handlers and avoids re-registering commands that close over app actions
   const regenerateIcon = useCallback((slug: string) => {
     generatingRef.current!.add(slug);
     fetch(`${GATEWAY_URL}/api/apps/${slug}/icon`, {
@@ -745,38 +756,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       .catch((err) => console.warn(`Icon regen request failed for "${slug}":`, err))
       .finally(() => generatingRef.current!.delete(slug));
   }, [wmSetApps]);
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds addApp's deps, which feeds loadModules' deps -- loadModules is a useEffect dependency, so a fresh identity here would re-fire the module-load effect every render
-  const checkAndGenerateIcon = useCallback((slug: string) => {
-    if (checkedRef.current!.has(slug) || generatingRef.current!.has(slug)) return;
-    checkedRef.current!.add(slug);
-    const iconPath = iconUrlForSlug(slug);
-    if (!iconPath) return;
-    fetch(`${GATEWAY_URL}${iconPath}`, {
-      method: "HEAD",
-      signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-    }).then((res) => {
-      if (res.ok) {
-        const etag = res.headers.get("etag");
-        if (etag) {
-          const versionedUrl = versionedIconUrl(iconPath, etag);
-          wmSetApps((prev) =>
-            prev.map((a) =>
-              nameToSlug(a.name) === slug && a.iconUrl !== versionedUrl
-                ? { ...a, iconUrl: versionedUrl }
-                : a,
-            ),
-          );
-        }
-      } else {
-        regenerateIcon(slug);
-      }
-    }).catch((err) => {
-      if (process.env.NODE_ENV !== "production") {
-        console.debug(`[desktop] Failed to check icon for "${slug}":`, err instanceof Error ? err.message : String(err));
-      }
-    });
-  }, [wmSetApps, regenerateIcon]);
 
   const renameAppOnServer = (slug: string, newName: string) => {
     fetch(`${GATEWAY_URL}/api/apps/${slug}/rename`, {
@@ -837,8 +816,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   };
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds loadModules' deps, and loadModules is a useEffect dependency (L~1070); a fresh function each render would re-fire the module-load effect every render
-  const addApp = useCallback((name: string, path: string, iconSlug?: string) => {
-    const iconUrl = iconUrlForSlug(iconSlug);
+  const addApp = useCallback((name: string, path: string, iconSlug?: string, iconUrlOverride?: string) => {
+    const iconUrl = iconUrlOverride ?? iconUrlForSlug(iconSlug);
     wmSetApps((prev) => {
       const existing = prev.find((a) => a.path === path);
       if (existing) {
@@ -850,8 +829,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       }
       return [...prev, { name, path, iconUrl }];
     });
-    if (iconSlug) checkAndGenerateIcon(iconSlug);
-  }, [wmSetApps, checkAndGenerateIcon]);
+  }, [wmSetApps]);
 
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435) and feeds loadModules' deps (also a useEffect dependency); a fresh function each render would re-fire both effects every render
@@ -968,33 +946,20 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async () => {
     try {
-      const [layoutRes, modulesRes, appsRes] = await Promise.all([
-        isPreVpsBillingSetupRoute()
-          ? Promise.resolve(null)
-          : fetch(`${GATEWAY_URL}/api/layout`, {
-              signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-            }).catch((err) => {
-              if (process.env.NODE_ENV !== "production") {
-                console.debug("[desktop] Failed to fetch layout:", err instanceof Error ? err.message : String(err));
-              }
-              return null;
-            }),
-        fetch(`${GATEWAY_URL}/files/system/modules.json`, {
-          signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-        }).catch((err) => {
-          console.warn("[desktop] Failed to fetch module registry:", err);
-          return null;
-        }),
-        fetch(`${GATEWAY_URL}/api/apps`, {
-          signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-        }).catch((err) => {
-          console.warn("[desktop] Failed to fetch app list:", err);
-          return null;
-        }),
-      ]);
+      const bootstrapRes = await fetch(`${GATEWAY_URL}/api/shell/bootstrap`, {
+        signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+      }).catch((err) => {
+        console.warn("[desktop] Failed to fetch shell bootstrap:", err);
+        return null;
+      });
+      const bootstrap: ShellBootstrap = bootstrapRes?.ok ? await bootstrapRes.json() : {};
+      const iconForSlug = (slug: string | undefined): string | undefined => {
+        if (!slug) return undefined;
+        return bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug);
+      };
 
       const savedLayout: { windows?: LayoutWindow[] } =
-        layoutRes?.ok ? await layoutRes.json() : {};
+        !isPreVpsBillingSetupRoute() ? bootstrap.layout ?? {} : {};
       const savedWindows = (savedLayout.windows ?? []).map(normalizeBuiltInLayoutWindow);
       const layoutMap = new Map(savedWindows.map((w) => [w.path, w]));
 
@@ -1007,24 +972,25 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       };
 
       // Register built-in apps
-      addApp("Terminal", "__terminal__", "terminal");
-      addApp("Workspace", "__workspace__", "workspace");
-      addApp("Files", "__file-browser__", "files");
-      addApp("Hermes", "__chat__", "chat");
-      addApp("Activity Monitor", "__activity-monitor__", "chart");
+      addApp("Terminal", "__terminal__", "terminal", iconForSlug("terminal"));
+      addApp("Workspace", "__workspace__", "workspace", iconForSlug("workspace"));
+      addApp("Files", "__file-browser__", "files", iconForSlug("files"));
+      addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
+      addApp("Activity Monitor", "__activity-monitor__", "chart", iconForSlug("chart"));
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
       }
 
       // Load pre-installed apps from /api/apps (apps/ directory)
-      if (appsRes?.ok) {
-        const appsList: { name: string; path: string; icon?: string }[] = await appsRes.json();
+      if (Array.isArray(bootstrap.apps)) {
+        const appsList = bootstrap.apps;
         for (const app of appsList) {
           // path from API is like "/files/apps/calculator/index.html"
           // strip leading "/files/" to get relative path for AppViewer
           const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
-          addApp(app.name, relativePath, app.icon);
+          const iconSlug = app.icon ?? app.slug;
+          addApp(app.name, relativePath, iconSlug, iconForSlug(iconSlug));
 
           const saved = layoutMap.get(relativePath);
           queueSavedLayout(saved);
@@ -1033,8 +999,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       }
 
       // Load modules from modules.json (Node/Python apps with ports)
-      if (modulesRes?.ok) {
-        const registry: ModuleRegistryEntry[] = await modulesRes.json();
+      if (Array.isArray(bootstrap.modules)) {
+        const registry = bootstrap.modules;
 
         for (const mod of registry) {
           if (mod.status !== "active") continue;

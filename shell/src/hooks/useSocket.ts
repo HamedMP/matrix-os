@@ -6,6 +6,7 @@ import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import { createSocketHealth, MessageQueue, reconnectDelay } from "@/lib/socket-health";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { useConnectionHealth } from "./useConnectionHealth";
+import type { ConnectionState } from "./useConnectionHealth";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
 export type ServerMessage =
@@ -36,7 +37,8 @@ let globalSocket: WebSocket | null = null;
 let handlers = new Set<MessageHandler>();
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
-let connectionState: "connected" | "reconnecting" | "disconnected" = "disconnected";
+let connectionState: ConnectionState = "initializing";
+let hasOpenedSocket = false;
 let stateListeners = new Set<() => void>();
 
 const messageQueue = new MessageQueue({ maxSize: 50, ttlMs: 30_000 });
@@ -73,13 +75,13 @@ function connect() {
   if (globalSocket?.readyState === WebSocket.OPEN) return;
   if (globalSocket?.readyState === WebSocket.CONNECTING) return;
 
-  if (connectionState !== "reconnecting") {
+  if (connectionState !== "initializing" && connectionState !== "reconnecting") {
     capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED, {
       attempt: reconnectAttempt,
       visibility: typeof document !== "undefined" ? document.visibilityState : "unknown",
     });
+    setConnectionState("reconnecting");
   }
-  setConnectionState("reconnecting");
   void buildAuthenticatedWebSocketUrl("/ws")
     .catch((err: unknown) => {
       console.warn(
@@ -97,6 +99,7 @@ function connect() {
 
       globalSocket.onopen = () => {
         reconnectAttempt = 0;
+        hasOpenedSocket = true;
         setConnectionState("connected");
         capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_WS_CONNECTED);
         heartbeat.start();
@@ -113,8 +116,10 @@ function connect() {
           for (const handler of handlers) {
             handler(msg);
           }
-        } catch (_err: unknown) {
-          // ignore malformed messages
+        } catch (err: unknown) {
+          if (process.env.NODE_ENV !== "production") {
+            console.debug("[useSocket] ignored malformed websocket message:", err instanceof Error ? err.message : String(err));
+          }
         }
       };
 
@@ -128,7 +133,13 @@ function connect() {
           });
           return;
         }
-        setConnectionState("reconnecting");
+        if (hasOpenedSocket) {
+          capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED, {
+            attempt: reconnectAttempt,
+            visibility: typeof document !== "undefined" ? document.visibilityState : "unknown",
+          });
+          setConnectionState("reconnecting");
+        }
         const delay = reconnectDelay(reconnectAttempt);
         reconnectAttempt++;
         reconnectTimer = setTimeout(connect, delay);
@@ -169,6 +180,17 @@ export function sendMessage(msg: ClientMessage) {
 
 export function manualReconnect() {
   reconnectAttempt = 0;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (connectionState === "initializing") {
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED, {
+      attempt: reconnectAttempt,
+      visibility: typeof document !== "undefined" ? document.visibilityState : "unknown",
+    });
+    setConnectionState("reconnecting");
+  }
   connect();
 }
 

@@ -90,8 +90,20 @@ interface WindowManagerActions {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let layoutPersistenceArmed = false;
+
+function markUserLayoutMutation(): void {
+  layoutPersistenceArmed = true;
+}
+
+export function resetWindowManagerLayoutPersistenceForTests(): void {
+  layoutPersistenceArmed = false;
+  clearTimeout(saveTimer);
+  saveTimer = undefined;
+}
 
 function debouncedSave(state: WindowManagerState) {
+  if (!layoutPersistenceArmed) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     if (isPreVpsBillingSetupRoute()) return;
@@ -175,6 +187,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     fullscreenWindowId: null,
 
     openWindow: (name, path, dockXOffset) => {
+      markUserLayoutMutation();
       set((state) => {
         const launchTimes = { ...state.appLaunchTimes, [path]: Date.now() };
         const existing = state.windows.find((w) => w.path === path);
@@ -214,6 +227,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     openWindowExclusive: (name, path, dockXOffset, basePath) => {
+      markUserLayoutMutation();
       set((state) => {
         const keepPath = basePath ?? path;
         const isSameApp = (w: AppWindow) =>
@@ -245,6 +259,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     closeWindow: (id) => {
+      markUserLayoutMutation();
       set((state) => {
         const win = state.windows.find((w) => w.id === id);
         const newClosed = new Set(state.closedPaths);
@@ -270,6 +285,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     minimizeWindow: (id) => {
+      markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) =>
           w.id === id ? { ...w, minimized: true } : w,
@@ -279,6 +295,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     restoreWindow: (id) => {
+      markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) =>
           w.id === id ? { ...w, minimized: false } : w,
@@ -287,6 +304,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     restoreAndFocusWindow: (id) => {
+      markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) =>
           w.id === id ? { ...w, minimized: false, zIndex: state.nextZ } : w,
@@ -297,6 +315,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     moveWindow: (id, x, y) => {
+      markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) =>
           w.id === id ? { ...w, x, y } : w,
@@ -305,6 +324,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     resizeWindow: (id, width, height) => {
+      markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) => {
           if (w.id !== id) return w;
@@ -319,6 +339,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     focusWindow: (id) => {
+      markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w) =>
           w.id === id ? { ...w, zIndex: state.nextZ } : w,
@@ -329,6 +350,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     clearFocus: () => {
+      markUserLayoutMutation();
       set({ focusedWindowId: null });
     },
 
@@ -391,6 +413,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     setWindows: (updater) => {
+      markUserLayoutMutation();
       set((state) => {
         const windows = typeof updater === "function" ? updater(state.windows) : updater;
         const focusedWindow = state.focusedWindowId
@@ -410,6 +433,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     cascadeWindows: (startX, startY, gap) => {
+      markUserLayoutMutation();
       set((state) => ({
         windows: state.windows.map((w, i) => ({
           ...w,
@@ -420,6 +444,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     toggleFullscreen: (id) => {
+      markUserLayoutMutation();
       set((state) => ({
         fullscreenWindowId: state.fullscreenWindowId === id ? null : id,
         focusedWindowId: id,
@@ -427,6 +452,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     exitFullscreen: () => {
+      markUserLayoutMutation();
       set({ fullscreenWindowId: null });
     },
   })),

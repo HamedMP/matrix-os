@@ -247,7 +247,7 @@ describe("useSocket heartbeat and resilience", () => {
     expect(queued).toHaveLength(2);
   });
 
-  it("captures websocket reconnect and connected telemetry", async () => {
+  it("captures websocket connected and reconnect telemetry", async () => {
     vi.resetModules();
     const capturePostHogEvent = vi.fn();
     vi.doMock("@/lib/posthog-client", () => ({
@@ -261,10 +261,41 @@ describe("useSocket heartbeat and resilience", () => {
     ensureConnected();
     await vi.advanceTimersByTimeAsync(0);
 
+    expect(capturePostHogEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.SHELL_WS_CONNECTED);
+    expect(capturePostHogEvent).not.toHaveBeenCalledWith(
+      MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED,
+      expect.anything(),
+    );
+
+    const ws1 = MockWebSocket.instances[0];
+    ws1.readyState = 3;
+    ws1.onclose?.();
+
     expect(capturePostHogEvent).toHaveBeenCalledWith(
       MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED,
       expect.objectContaining({ attempt: 0, visibility: "visible" }),
     );
-    expect(capturePostHogEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.SHELL_WS_CONNECTED);
+  });
+
+  it("shows reconnecting feedback when manual retry is clicked during initialization", async () => {
+    vi.resetModules();
+    const capturePostHogEvent = vi.fn();
+    vi.doMock("@/lib/posthog-client", () => ({
+      capturePostHogEvent,
+      capturePostHogException: vi.fn(),
+    }));
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    vi.stubGlobal("document", { addEventListener: vi.fn(), visibilityState: "visible" });
+
+    const { getConnectionState, manualReconnect } = await import("../../shell/src/hooks/useSocket.js");
+
+    expect(getConnectionState()).toBe("initializing");
+    manualReconnect();
+
+    expect(getConnectionState()).toBe("reconnecting");
+    expect(capturePostHogEvent).toHaveBeenCalledWith(
+      MATRIX_TELEMETRY_EVENTS.SHELL_WS_RECONNECT_STARTED,
+      expect.objectContaining({ attempt: 0, visibility: "visible" }),
+    );
   });
 });

@@ -2,6 +2,15 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("dock icon resolution", () => {
+  it("boots Desktop from the shell bootstrap endpoint instead of separate app/layout fetches", async () => {
+    const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
+
+    expect(source).toContain("/api/shell/bootstrap");
+    expect(source).not.toContain("/api/layout`,");
+    expect(source).not.toContain("/api/apps`,");
+    expect(source).not.toContain("/files/system/modules.json");
+  });
+
   it("uses the shared icon resolver in Desktop instead of a PNG-only local helper", async () => {
     const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
 
@@ -9,16 +18,17 @@ describe("dock icon resolution", () => {
     expect(source).not.toContain("function iconUrlForSlug");
     expect(source).not.toContain("/icons/${encodeURIComponent(slug)}.png");
     expect(source).not.toContain("const iconPath = `/icons/${slug}.png`");
-    expect(source).toContain("const iconPath = iconUrlForSlug(slug)");
+    expect(source).toContain("bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug)");
+    expect(source).not.toContain("method: \"HEAD\"");
   });
 
   it("uses dedicated raster slugs for built-in launcher apps", async () => {
     const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
 
-    expect(source).toContain("addApp(\"Terminal\", \"__terminal__\", \"terminal\")");
-    expect(source).toContain("addApp(\"Workspace\", \"__workspace__\", \"workspace\")");
-    expect(source).toContain("addApp(\"Files\", \"__file-browser__\", \"files\")");
-    expect(source).toContain("addApp(\"Hermes\", \"__chat__\", \"chat\")");
+    expect(source).toContain("addApp(\"Terminal\", \"__terminal__\", \"terminal\", iconForSlug(\"terminal\"))");
+    expect(source).toContain("addApp(\"Workspace\", \"__workspace__\", \"workspace\", iconForSlug(\"workspace\"))");
+    expect(source).toContain("addApp(\"Files\", \"__file-browser__\", \"files\", iconForSlug(\"files\"))");
+    expect(source).toContain("addApp(\"Hermes\", \"__chat__\", \"chat\", iconForSlug(\"chat\"))");
   });
 
   it("preserves versioned desktop icon URLs when app registration refreshes", async () => {

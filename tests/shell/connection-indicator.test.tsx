@@ -32,12 +32,49 @@ describe("ConnectionIndicator", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     mocks.manualReconnect.mockReset();
     act(() => {
-      useConnectionHealth.setState({ state: "disconnected" });
+      useConnectionHealth.setState({ state: "initializing" });
     });
+  });
+
+  it("stays hidden and does not probe health during normal initial connection", () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    act(() => {
+      useConnectionHealth.setState({ state: "initializing" });
+    });
+
+    render(<ConnectionIndicator />);
+
+    expect(screen.queryByRole("status", { name: /matrix connection status/i })).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(2_499);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /matrix connection status/i })).toBeNull();
+  });
+
+  it("shows the warning if initial connection exceeds the grace period", async () => {
+    vi.useFakeTimers();
+    act(() => {
+      useConnectionHealth.setState({ state: "initializing" });
+    });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("gateway down"))));
+
+    render(<ConnectionIndicator />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_500);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("status", { name: /matrix connection status/i })).toBeTruthy();
+    expect(screen.getByText("Checking connection")).toBeTruthy();
   });
 
   it("describes gateway-online reconnects instead of a generic reconnecting label", async () => {
@@ -117,6 +154,14 @@ describe("ConnectionIndicator", () => {
 });
 
 describe("resolveConnectionCopy", () => {
+  it("uses quiet initial connection copy after grace", () => {
+    expect(resolveConnectionCopy("initializing", { reachability: "checking" })).toMatchObject({
+      title: "Checking connection",
+      detail: expect.stringContaining("opening"),
+      action: "Retry now",
+    });
+  });
+
   it("uses precise copy for disconnected but reachable runtimes", () => {
     expect(resolveConnectionCopy("disconnected", { reachability: "online" })).toMatchObject({
       title: "Connection lost",

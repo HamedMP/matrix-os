@@ -96,6 +96,7 @@ export function isAppDomainGatewayPath(path: string): boolean {
     path.startsWith('/api/') ||
     path.startsWith('/ws') ||
     path.startsWith('/files/') ||
+    path.startsWith('/icons/') ||
     path.startsWith('/modules/') ||
     path === '/health'
   );
