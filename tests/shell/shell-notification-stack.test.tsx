@@ -7,6 +7,10 @@ import {
   ShellNotificationStack,
 } from "../../shell/src/components/ShellNotificationStack.js";
 import { ShellNotificationCard } from "../../shell/src/components/ShellNotificationCard.js";
+import {
+  getShellNotificationHostSnapshot,
+  subscribeShellNotificationHost,
+} from "../../shell/src/components/shell-notification-host.js";
 
 describe("ShellNotificationStack", () => {
   it("anchors shell overlays in a shared top-right viewport stack", () => {
@@ -41,5 +45,33 @@ describe("ShellNotificationStack", () => {
     );
 
     expect(screen.queryByTestId("shell-notification-card")).toBeNull();
+  });
+
+  it("keeps the registered host stable across rerenders", () => {
+    const hostChanges: Array<HTMLElement | null> = [];
+    const unsubscribe = subscribeShellNotificationHost(() => {
+      hostChanges.push(getShellNotificationHostSnapshot());
+    });
+
+    const { rerender, unmount } = render(
+      <ShellNotificationStack>
+        <ShellNotificationCard>First</ShellNotificationCard>
+      </ShellNotificationStack>,
+    );
+
+    expect(hostChanges).toHaveLength(1);
+    const host = hostChanges[0];
+    expect(host).toBeInstanceOf(HTMLElement);
+
+    rerender(
+      <ShellNotificationStack>
+        <ShellNotificationCard>Second</ShellNotificationCard>
+      </ShellNotificationStack>,
+    );
+
+    expect(hostChanges).toEqual([host]);
+
+    unmount();
+    unsubscribe();
   });
 });
