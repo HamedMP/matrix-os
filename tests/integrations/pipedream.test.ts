@@ -94,6 +94,21 @@ describe("Pipedream Connect SDK Wrapper", () => {
     );
   });
 
+  it("defaults blank project environment to production", async () => {
+    await createPipedreamClient({
+      clientId: "test-client-id",
+      clientSecret: "test-client-secret",
+      projectId: "test-project-id",
+      environment: "   ",
+    });
+
+    expect(mockPipedreamConstructors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectEnvironment: "production",
+      }),
+    );
+  });
+
   it("rejects unsupported Pipedream project environments", async () => {
     await expect(
       createPipedreamClient({

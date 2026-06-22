@@ -104,7 +104,7 @@ function normalizePipedreamProjectEnvironment(
     return normalized;
   }
 
-  throw new Error("Invalid Pipedream project environment");
+  throw new Error(`Invalid Pipedream project environment: "${value}"`);
 }
 
 export async function createPipedreamClient(
