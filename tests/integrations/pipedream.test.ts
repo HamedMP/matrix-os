@@ -9,15 +9,21 @@ const {
   mockTokensCreate,
   mockAccountsDelete,
   mockProxyPost,
+  mockPipedreamConstructors,
 } = vi.hoisted(() => ({
   mockTokensCreate: vi.fn(),
   mockAccountsDelete: vi.fn(),
   mockProxyPost: vi.fn(),
+  mockPipedreamConstructors: vi.fn(),
 }));
 
 vi.mock("@pipedream/sdk", () => {
   return {
     PipedreamClient: class MockPipedreamClient {
+      constructor(options: unknown) {
+        mockPipedreamConstructors(options);
+      }
+
       tokens = { create: mockTokensCreate };
       accounts = { delete: mockAccountsDelete };
       proxy = { post: mockProxyPost };
@@ -39,6 +45,64 @@ const TEST_CONFIG: PipedreamConfig = {
 describe("Pipedream Connect SDK Wrapper", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("passes projectEnvironment to the Pipedream SDK", async () => {
+    await createPipedreamClient({
+      clientId: "test-client-id",
+      clientSecret: "test-client-secret",
+      projectId: "test-project-id",
+      environment: "production",
+    });
+
+    expect(mockPipedreamConstructors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "test-client-id",
+        clientSecret: "test-client-secret",
+        projectId: "test-project-id",
+        projectEnvironment: "production",
+      }),
+    );
+  });
+
+  it("normalizes development project environment", async () => {
+    await createPipedreamClient({
+      clientId: "test-client-id",
+      clientSecret: "test-client-secret",
+      projectId: "test-project-id",
+      environment: " DEVELOPMENT ",
+    });
+
+    expect(mockPipedreamConstructors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectEnvironment: "development",
+      }),
+    );
+  });
+
+  it("defaults missing project environment to production", async () => {
+    await createPipedreamClient({
+      clientId: "test-client-id",
+      clientSecret: "test-client-secret",
+      projectId: "test-project-id",
+    });
+
+    expect(mockPipedreamConstructors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectEnvironment: "production",
+      }),
+    );
+  });
+
+  it("rejects unsupported Pipedream project environments", async () => {
+    await expect(
+      createPipedreamClient({
+        clientId: "test-client-id",
+        clientSecret: "test-client-secret",
+        projectId: "test-project-id",
+        environment: "staging",
+      }),
+    ).rejects.toThrow("Invalid Pipedream project environment");
   });
 
   it("creates a connect token for a user", async () => {
