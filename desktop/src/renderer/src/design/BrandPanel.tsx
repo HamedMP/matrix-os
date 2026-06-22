@@ -29,7 +29,7 @@ export function BrandLogo({
     WebkitMaskPosition: "center",
     maskPosition: "center",
   };
-  return <span aria-hidden className={className} data-testid={testId} style={{ ...style, ...styleOverride }} />;
+  return <span aria-hidden className={className} data-testid={testId} style={{ ...styleOverride, ...style }} />;
 }
 
 // The dark forest brand panel used on the sign-in split screen. The dotted

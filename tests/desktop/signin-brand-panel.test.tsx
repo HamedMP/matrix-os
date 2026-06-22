@@ -2,8 +2,13 @@
 
 import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
-import { BrandPanel } from "../../desktop/src/renderer/src/design/BrandPanel";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../desktop/src/renderer/src/assets/matrix-logo.svg", () => ({
+  default: "matrix-logo.svg",
+}));
+
+import { BrandLogo, BrandPanel } from "../../desktop/src/renderer/src/design/BrandPanel";
 
 describe("desktop sign-in brand panel", () => {
   afterEach(() => {
@@ -38,5 +43,14 @@ describe("desktop sign-in brand panel", () => {
     expect(ambientMark.style.width).toBe("958px");
     expect(ambientMark.className).toContain("opacity");
     expect(screen.getByText("Matrix OS")).toBeTruthy();
+  });
+
+  it("keeps the Matrix logo mask intact when callers pass style overrides", () => {
+    render(<BrandLogo testId="matrix-brand-logo" style={{ maskImage: "none", background: "transparent" }} />);
+
+    const logo = screen.getByTestId("matrix-brand-logo");
+
+    expect(logo.style.maskImage).toContain("matrix-logo.svg");
+    expect(logo.style.background).toBe("var(--accent)");
   });
 });
