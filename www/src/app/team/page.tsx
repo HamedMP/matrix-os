@@ -24,8 +24,8 @@ const founders = [
     role: "CEO & Co-Founder",
     bio: "Hamed brings product and machine-learning instincts from PostHog and Newly, with a Machine Learning Engineering background from KTH. He focuses on making Matrix OS useful in real workflows: clear, fast, and grounded in how people actually build.",
     logos: [
-      { src: "/images/team/posthog-logo.png", alt: "PostHog", width: 120, height: 23 },
-      { src: "/images/team/kth-logo.svg", alt: "KTH", width: 54, height: 60 },
+      { src: "/images/team/posthog-logo.png", alt: "PostHog", width: 120, height: 23, className: "h-7 w-auto max-w-40" },
+      { src: "/images/team/kth-logo.svg", alt: "KTH", width: 82, height: 92, className: "h-16 w-auto max-w-24" },
     ],
     linkedin: "https://www.linkedin.com/in/hamedmohammadpour/",
     x: "https://x.com/thehamedmp",
@@ -35,8 +35,8 @@ const founders = [
     role: "CTO & Co-Founder",
     bio: "Nima brings product engineering experience from Bending Spoons, a Computer Engineering background from Polito, and Olympiad gold-medal problem solving. He focuses on the technical foundation of Matrix OS: reliable systems, polished interfaces, and the details that make AI feel native.",
     logos: [
-      { src: "/images/team/bending-spoons-logo.png", alt: "Bending Spoons", width: 120, height: 32 },
-      { src: "/images/team/ioi-logo.png", alt: "International Olympiad in Informatics", width: 48, height: 48 },
+      { src: "/images/team/ioi-logo.png", alt: "International Olympiad in Informatics", width: 78, height: 78, className: "h-16 w-auto max-w-20" },
+      { src: "/images/team/bending-spoons-logo.png", alt: "Bending Spoons", width: 210, height: 56, className: "h-11 w-auto max-w-56" },
     ],
     linkedin: "https://www.linkedin.com/in/nima-naderi04/",
     x: "https://x.com/NimaNaderi2004",
@@ -141,7 +141,7 @@ export default function TeamPage() {
                           alt={logo.alt}
                           width={logo.width}
                           height={logo.height}
-                          className="h-auto max-h-10 w-auto max-w-36 object-contain"
+                          className={`object-contain ${logo.className}`}
                         />
                       ))}
                     </div>
