@@ -47,6 +47,17 @@ describe("ShellNotificationStack", () => {
     expect(screen.queryByTestId("shell-notification-card")).toBeNull();
   });
 
+  it("only assigns the host id to registering stacks", () => {
+    render(
+      <ShellNotificationStack registerHost={false}>
+        <ShellNotificationCard>Fallback</ShellNotificationCard>
+      </ShellNotificationStack>,
+    );
+
+    const stack = screen.getByTestId("shell-notification-stack");
+    expect(stack.id).toBe("");
+  });
+
   it("keeps the registered host stable across rerenders", () => {
     const hostChanges: Array<HTMLElement | null> = [];
     const unsubscribe = subscribeShellNotificationHost(() => {
