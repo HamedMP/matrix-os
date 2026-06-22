@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { LinkedinIcon, XIcon } from "lucide-react";
 import { SiteHeader } from "@/components/landing/SiteHeader";
 import { SiteFooter } from "@/components/landing/SiteFooter";
 import { SectionShell } from "@/components/landing/primitives";
@@ -16,6 +17,23 @@ export const metadata: Metadata = {
     type: "website",
   },
 };
+
+const founders = [
+  {
+    name: "Hamed Mohammadpour",
+    role: "CEO & Co-Founder",
+    bio: "Ex-PostHog, Ex-Newly. Studied Machine Learning Engineering at KTH.",
+    linkedin: "https://www.linkedin.com/in/hamedmohammadpour/",
+    x: "https://x.com/thehamedmp",
+  },
+  {
+    name: "Nima Naderi",
+    role: "CTO & Co-Founder",
+    bio: "Ex-Bending Spoons. Studied Computer Engineering at Polito. Olympiad Gold Medalist.",
+    linkedin: "https://www.linkedin.com/in/nima-naderi04/",
+    x: "https://x.com/NimaNaderi2004",
+  },
+] as const;
 
 export default function TeamPage() {
   return (
@@ -37,29 +55,57 @@ export default function TeamPage() {
               </h1>
 
               <div className="mt-9 space-y-7">
-                <article className="border-t pt-6" style={{ borderColor: c.border }}>
-                  <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
-                    Hamed Mohammadpour
-                  </h2>
-                  <p className="mt-1 text-[0.9375rem] font-medium" style={{ color: c.forest }}>
-                    CEO & Co-Founder
-                  </p>
-                  <p className="mt-3 text-[1rem] leading-[1.7]" style={{ color: c.mutedFg }}>
-                    Ex-PostHog, Ex-Newly. Studied Machine Learning Engineering at KTH.
-                  </p>
-                </article>
-
-                <article className="border-t pt-6" style={{ borderColor: c.border }}>
-                  <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
-                    Nima Naderi
-                  </h2>
-                  <p className="mt-1 text-[0.9375rem] font-medium" style={{ color: c.forest }}>
-                    CTO & Co-Founder
-                  </p>
-                  <p className="mt-3 text-[1rem] leading-[1.7]" style={{ color: c.mutedFg }}>
-                    Ex-Bending Spoons. Studied Computer Engineering at Polito. Olympiad Gold Medalist.
-                  </p>
-                </article>
+                {founders.map((founder) => (
+                  <article key={founder.name} className="border-t pt-6" style={{ borderColor: c.border }}>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="flex shrink-0 items-center gap-2">
+                        <a
+                          href={founder.linkedin}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`${founder.name} on LinkedIn`}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                          style={{
+                            backgroundColor: c.card,
+                            borderColor: c.border,
+                            color: c.forestDeep,
+                            boxShadow: "0 0.5rem 1.25rem rgba(50, 53, 46, 0.06)",
+                            ["--tw-ring-color" as string]: c.forest,
+                            ["--tw-ring-offset-color" as string]: c.pageBg,
+                          }}
+                        >
+                          <LinkedinIcon aria-hidden="true" className="h-4 w-4" strokeWidth={2} />
+                        </a>
+                        <a
+                          href={founder.x}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`${founder.name} on X`}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                          style={{
+                            backgroundColor: c.card,
+                            borderColor: c.border,
+                            color: c.forestDeep,
+                            boxShadow: "0 0.5rem 1.25rem rgba(50, 53, 46, 0.06)",
+                            ["--tw-ring-color" as string]: c.forest,
+                            ["--tw-ring-offset-color" as string]: c.pageBg,
+                          }}
+                        >
+                          <XIcon aria-hidden="true" className="h-4 w-4" strokeWidth={2} />
+                        </a>
+                      </div>
+                      <h2 className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.deep }}>
+                        {founder.name}
+                      </h2>
+                    </div>
+                    <p className="mt-2 text-[0.9375rem] font-medium" style={{ color: c.forest }}>
+                      {founder.role}
+                    </p>
+                    <p className="mt-3 text-[1rem] leading-[1.7]" style={{ color: c.mutedFg }}>
+                      {founder.bio}
+                    </p>
+                  </article>
+                ))}
               </div>
             </section>
 

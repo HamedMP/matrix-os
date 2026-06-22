@@ -24,9 +24,13 @@ describe("www landing team page", () => {
     expect(page).toContain('src="/images/team-founders.jpg"');
     expect(page).toContain("Hamed Mohammadpour");
     expect(page).toContain("CEO & Co-Founder");
+    expect(page).toContain("https://www.linkedin.com/in/hamedmohammadpour/");
+    expect(page).toContain("https://x.com/thehamedmp");
     expect(page).toContain("Ex-PostHog");
     expect(page).toContain("Nima Naderi");
     expect(page).toContain("CTO & Co-Founder");
+    expect(page).toContain("https://www.linkedin.com/in/nima-naderi04/");
+    expect(page).toContain("https://x.com/NimaNaderi2004");
     expect(page).toContain("Olympiad Gold Medalist");
     expect(page).toContain("<SiteFooter />");
   });
