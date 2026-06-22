@@ -97,7 +97,7 @@ export default function TeamPage() {
                       <span aria-hidden="true" className="hidden text-[1.25rem] leading-none sm:inline" style={{ color: c.subtle }}>
                         |
                       </span>
-                      <p className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: c.forestDeep }}>
+                      <p className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: "#2F6B3F" }}>
                         {founder.role}
                       </p>
                       <div className="flex shrink-0 items-center gap-2 pl-1">
