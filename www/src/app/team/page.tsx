@@ -150,8 +150,8 @@ export default function TeamPage() {
               <Image
                 src="/images/team-founders.jpg"
                 alt="Matrix OS co-founders Nima Naderi and Hamed Mohammadpour"
-                width={2400}
-                height={1692}
+                width={1500}
+                height={1125}
                 priority
                 className="h-auto w-full"
                 sizes="(min-width: 1024px) 56vw, 100vw"
