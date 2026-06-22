@@ -59,7 +59,10 @@ export default function TeamPage() {
         <SectionShell className="pt-10 pb-16 md:pt-20 md:pb-24">
           <div className="grid items-center gap-10 lg:grid-cols-[0.82fr_1.18fr] lg:gap-14">
             <section aria-labelledby="team-heading" className="max-w-[34rem]">
-              <p className="mb-5 text-[0.9375rem]" style={{ fontFamily: fonts.display, color: c.subtle }}>
+              <p
+                className="mb-5 text-[1.625rem] leading-[1.12] md:text-[1.875rem]"
+                style={{ fontFamily: fonts.display, color: c.mutedFg }}
+              >
                 Team
               </p>
               <h1
