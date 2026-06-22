@@ -191,6 +191,28 @@ wait_for_url() {
   return 1
 }
 
+pull_compose_images() {
+  local attempts="${DOCKER_PULL_ATTEMPTS:-3}"
+  local delay="${DOCKER_PULL_RETRY_DELAY:-10}"
+  local attempt=1
+
+  echo -e "${YELLOW}[SETUP]${NC} Pulling Docker service images (attempts: $attempts)..."
+  while [ "$attempt" -le "$attempts" ]; do
+    if $COMPOSE pull --quiet --ignore-buildable; then
+      return 0
+    fi
+
+    if [ "$attempt" -eq "$attempts" ]; then
+      echo -e "  ${RED}FAIL${NC} Docker image pull failed after $attempts attempts"
+      return 1
+    fi
+
+    echo -e "  ${YELLOW}RETRY${NC} Docker image pull failed (attempt $attempt/$attempts); retrying in ${delay}s..."
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+}
+
 cleanup() {
   echo -e "${YELLOW}[CLEANUP]${NC} Stopping containers..."
   $COMPOSE down -v --timeout 5 2>/dev/null || true

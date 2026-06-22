@@ -82,6 +82,31 @@ describe('CI workflows', () => {
     expect(scenariosHeader).not.toContain('timeout-minutes: 20');
   });
 
+  it('retries Docker compose image pulls before scenario startup', () => {
+    const root = process.cwd();
+    const harness = readFileSync(join(root, 'scripts/docker-test/lib.sh'), 'utf8');
+    const scenarioScripts = [
+      'fresh-install.sh',
+      'upgrade.sh',
+      'customized-files.sh',
+      'channels.sh',
+      'recovery.sh',
+    ];
+
+    expect(harness).toContain('pull_compose_images()');
+    expect(harness).toContain('DOCKER_PULL_ATTEMPTS');
+    expect(harness).toContain('docker compose');
+    expect(harness).toContain('pull --quiet --ignore-buildable');
+
+    for (const scriptName of scenarioScripts) {
+      const scenario = readFileSync(join(root, 'scripts/docker-test', scriptName), 'utf8');
+      const firstStartup = scenario.indexOf('$COMPOSE up $COMPOSE_UP_FLAGS -d dev');
+
+      expect(firstStartup).toBeGreaterThan(0);
+      expect(scenario.slice(0, firstStartup)).toContain('pull_compose_images');
+    }
+  });
+
   it('runs sync-client CI only on the supported Node 20 runtime', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
