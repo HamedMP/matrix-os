@@ -9,6 +9,7 @@ import {
 } from "@/lib/billing";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
+import { SHELL_Z_CLASSES } from "@/lib/shell-layering";
 import { Settings } from "./Settings";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
@@ -158,7 +159,7 @@ function SubscriptionConfirmationPending({
   const failed = status === "failed";
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-deep/30 px-4 py-8 text-deep backdrop-blur-md">
+    <div className={`fixed inset-0 ${SHELL_Z_CLASSES.hardGate} flex items-center justify-center bg-deep/30 px-4 py-8 text-deep backdrop-blur-md`}>
       <section className="relative flex w-full max-w-md flex-col overflow-hidden rounded-3xl border border-forest/15 bg-page-bg/95 shadow-[0_40px_120px_rgba(50,53,46,0.35)]">
         <div
           className="pointer-events-none absolute -right-20 -top-20 size-60 rounded-full opacity-60 blur-3xl"

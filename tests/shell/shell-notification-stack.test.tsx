@@ -7,6 +7,7 @@ import {
   ShellNotificationStack,
 } from "../../shell/src/components/ShellNotificationStack.js";
 import { ShellNotificationCard } from "../../shell/src/components/ShellNotificationCard.js";
+import { SHELL_Z_CLASSES } from "../../shell/src/lib/shell-layering.js";
 import {
   getShellNotificationHostSnapshot,
   subscribeShellNotificationHost,
@@ -29,7 +30,7 @@ describe("ShellNotificationStack", () => {
     expect(stack.className).toContain("md:top-9");
     expect(stack.className).toContain("pointer-events-none");
     expect(stack.className).toContain("flex-col");
-    expect(stack.className).toContain("z-[10000]");
+    expect(stack.className).toContain(SHELL_Z_CLASSES.notifications);
 
     const card = screen.getByTestId("shell-notification-card");
     expect(card.className).toContain("pointer-events-auto");
