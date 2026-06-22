@@ -96,8 +96,8 @@ function isMobileInstallSurface(): boolean {
   if (mobileHint === true) return true;
   if (mobileHint === false) return false;
 
-  const ua = nav.userAgent;
   if (isIPadOSDesktopUserAgent()) return true;
+  const ua = nav.userAgent;
   return /iPad|iPhone|iPod|Android/.test(ua);
 }
 
@@ -123,7 +123,6 @@ export function InstallPrompt() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (dismissed) return;
-    if (!isMobileInstallSurface()) return;
 
     const handler = (e: Event) => {
       e.preventDefault();
