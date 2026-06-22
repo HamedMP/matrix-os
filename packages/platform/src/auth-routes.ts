@@ -650,7 +650,9 @@ function normalizeNativeRedirectUri(value: unknown): string | null {
   try {
     const url = new URL(value);
     if (url.protocol === 'matrixos:' && url.hostname === 'auth') return url.toString();
-    if (url.protocol === 'matrix-os:') return url.toString();
+    if (url.protocol === 'matrix-os:' && url.hostname === 'device-auth' && url.search === '') {
+      return url.toString();
+    }
     return null;
   } catch (err: unknown) {
     if (!(err instanceof TypeError)) {
