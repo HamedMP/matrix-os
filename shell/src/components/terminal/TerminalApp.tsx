@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEventHandler } from "react";
+import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
 import {
   BotIcon,
   CheckIcon,
@@ -63,34 +63,40 @@ const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
 
 const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
   alignItems: "center",
+  alignSelf: "center",
   background: "#DDEDD6",
   border: "1px solid #C9E1C2",
   borderRadius: 999,
+  boxSizing: "border-box",
   color: "#24452A",
   cursor: "pointer",
   display: "flex",
   flexShrink: 0,
-  height: 18,
+  height: 20,
   justifyContent: "flex-start",
+  overflow: "hidden",
   padding: 2,
   pointerEvents: "auto",
-  width: 40,
+  width: 46,
 };
 
 const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
   alignItems: "center",
+  alignSelf: "center",
   background: "#D8D7C7",
   border: "1px solid #C8C7B7",
   borderRadius: 999,
+  boxSizing: "border-box",
   color: "#77786E",
   cursor: "pointer",
   display: "flex",
   flexShrink: 0,
-  height: 18,
+  height: 20,
   justifyContent: "flex-end",
+  overflow: "hidden",
   padding: 2,
   pointerEvents: "auto",
-  width: 38,
+  width: 44,
 };
 
 const SHELL_THEME_OPTIONS: Array<{
@@ -171,17 +177,19 @@ const TAB_CLOSE_BUTTON_STYLE: CSSProperties = {
 
 const ACTIVE_TAB_PILL_STYLE: CSSProperties = {
   alignItems: "center",
+  alignSelf: "center",
   background: "color-mix(in srgb, var(--primary) 16%, transparent)",
   border: "1px solid color-mix(in srgb, var(--primary) 44%, transparent)",
   borderRadius: 999,
   color: "var(--primary)",
   display: "inline-flex",
   flex: "0 0 auto",
-  fontSize: 12,
+  fontSize: 10,
   fontWeight: 800,
-  height: 18,
-  lineHeight: "16px",
-  padding: "0 6px",
+  height: 16,
+  lineHeight: "14px",
+  overflow: "hidden",
+  padding: "0 5px",
 };
 
 const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
@@ -206,9 +214,16 @@ const SIDEBAR_RAIL_BUTTON_BASE_STYLE: CSSProperties = {
 
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const DEFAULT_TERMINAL_SIDEBAR_WIDTH = 392;
+const MIN_TERMINAL_SIDEBAR_WIDTH = 280;
+const MAX_TERMINAL_SIDEBAR_WIDTH = 560;
 const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
 const SESSION_ACTIONS_STYLE: CSSProperties = {
   gap: 6,
+  position: "absolute",
+  right: 0,
+  top: "50%",
+  transform: "translateY(-50%)",
   transition: "opacity 120ms ease",
   width: 58,
 };
@@ -248,6 +263,19 @@ const SESSION_CLOSE_BUTTON_STYLE: CSSProperties = {
   lineHeight: "20px",
   pointerEvents: "auto",
   width: 24,
+};
+const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontSize: 14,
+  fontWeight: 700,
+  lineHeight: "18px",
+  minWidth: 0,
+  padding: 0,
+  pointerEvents: "auto",
+  textAlign: "left",
 };
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
@@ -633,6 +661,10 @@ function terminalAppDebug(event: string, details: Record<string, unknown>): void
 
 const countPanes = countPanesFromStore;
 
+function clampTerminalSidebarWidth(width: number): number {
+  return Math.min(MAX_TERMINAL_SIDEBAR_WIDTH, Math.max(MIN_TERMINAL_SIDEBAR_WIDTH, Math.round(width)));
+}
+
 export interface TerminalWindowControls {
   close?: () => void;
   minimize?: () => void;
@@ -685,6 +717,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [activeTabId, setActiveTabId] = useState("");
   const [focusedPaneId, setFocusedPaneId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_TERMINAL_SIDEBAR_WIDTH);
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
@@ -1171,10 +1204,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
 
   // Construct store-compatible interface for child components
   const storeApi = {
-    tabs, activeTabId, sidebarOpen, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
+    tabs, activeTabId, sidebarOpen, sidebarWidth, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
     addTab, addSessionTab, createShellSessionTab, backgroundShellSession, closeTab, setActiveTab: setActiveTabId, renameTab, renameShellSession, reorderTabs,
     splitPane, closePane, setFocusedPane: setFocusedPaneId,
-    setSidebarOpen, setSidebarSelectedPath,
+    setSidebarOpen, setSidebarWidth, setSidebarSelectedPath,
   };
 
   return (
@@ -1265,6 +1298,7 @@ interface TerminalAppContextType {
   tabs: Tab[];
   activeTabId: string;
   sidebarOpen: boolean;
+  sidebarWidth: number;
   sidebarSelectedPath: string | null;
   focusedPaneId: string | null;
   mobile: boolean;
@@ -1282,6 +1316,7 @@ interface TerminalAppContextType {
   closePane: (paneId: string) => void;
   setFocusedPane: (paneId: string) => void;
   setSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  setSidebarWidth: (width: number | ((prev: number) => number)) => void;
   setSidebarSelectedPath: (path: string | null) => void;
 }
 
@@ -1749,6 +1784,10 @@ function TerminalWorkspaceChrome() {
     if (ctx.mobile || isTerminalChromeControl(event.target)) return;
     dragHandleProps?.onMouseDown?.(event);
   };
+  const handleDragDoubleClick: MouseEventHandler<HTMLElement> = (event) => {
+    if (ctx.mobile || isTerminalChromeControl(event.target)) return;
+    dragHandleProps?.onDoubleClick?.(event);
+  };
 
   return (
     <div
@@ -1758,7 +1797,7 @@ function TerminalWorkspaceChrome() {
       onPointerUp={dragHandleProps?.onPointerUp}
       onPointerCancel={dragHandleProps?.onPointerCancel}
       onMouseDownCapture={handleDragMouseDownCapture}
-      onDoubleClick={dragHandleProps?.onDoubleClick}
+      onDoubleClick={handleDragDoubleClick}
       style={{
         alignItems: "center",
         background: "#15180F",
@@ -1829,11 +1868,14 @@ function TerminalWorkspaceChrome() {
                 background: "#20241C",
                 border: "1px solid #24271F",
                 borderRadius: 8,
+                boxSizing: "border-box",
                 color: "#858578",
-                fontSize: 12,
+                fontSize: 11,
                 gap: 5,
-                height: 26,
-                padding: "0 9px",
+                height: 22,
+                lineHeight: "14px",
+                overflow: "hidden",
+                padding: "0 8px",
               }}
             >
               main
@@ -3017,7 +3059,38 @@ function LocalTerminalSidebar() {
   const activeShellName = activePaneSessionId && isCanonicalShellSessionId(activePaneSessionId)
     ? activePaneSessionId
     : null;
-  const drawerWidth = ctx.mobile ? "100%" : 392;
+  const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
+  const startSidebarResize = (event: ReactPointerEvent<HTMLElement>) => {
+    if (ctx.mobile) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const resizeHandle = event.currentTarget;
+    const pointerId = event.pointerId;
+    resizeHandle.setPointerCapture?.(pointerId);
+    const startX = event.clientX;
+    const startWidth = clampTerminalSidebarWidth(ctx.sidebarWidth);
+    const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
+      ctx.setSidebarWidth(clampTerminalSidebarWidth(startWidth + moveEvent.clientX - startX));
+    };
+    const finishResize = () => {
+      if (resizeHandle.hasPointerCapture?.(pointerId)) {
+        resizeHandle.releasePointerCapture?.(pointerId);
+      }
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishResize, { once: true });
+    window.addEventListener("pointercancel", finishResize, { once: true });
+  };
+  const resizeSidebarWithKeyboard = (event: KeyboardEvent<HTMLElement>) => {
+    if (ctx.mobile) return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const delta = event.key === "ArrowLeft" ? -16 : 16;
+    ctx.setSidebarWidth((width) => clampTerminalSidebarWidth(width + delta));
+  };
   const openActiveShell = (shell: ShellSessionSummary, options: { markSeen?: boolean } = {}) => {
     const markSeen = options.markSeen !== false;
     const existingTab = ctx.tabs.find((tab) => getSessionIds(tab.paneTree).includes(shell.name));
@@ -3215,6 +3288,7 @@ function LocalTerminalSidebar() {
           maxHeight: ctx.mobile ? "52%" : undefined,
           minHeight: ctx.mobile ? 360 : undefined,
           opacity: 1,
+          position: "relative",
           transform: "translateX(0)",
           transition: ctx.mobile ? undefined : TERMINAL_SIDEBAR_TRANSITION,
           width: drawerWidth,
@@ -3423,6 +3497,26 @@ function LocalTerminalSidebar() {
           />
         )}
       </div>
+      {!ctx.mobile ? (
+        <button
+          type="button"
+          aria-label="Resize sessions drawer"
+          onPointerDown={startSidebarResize}
+          onKeyDown={resizeSidebarWithKeyboard}
+          style={{
+            background: "linear-gradient(to right, transparent 0 2px, #C5C4B4 2px 4px, transparent 4px 8px)",
+            border: 0,
+            bottom: 0,
+            cursor: "col-resize",
+            margin: 0,
+            position: "absolute",
+            right: 0,
+            top: 0,
+            width: 8,
+            zIndex: 5,
+          }}
+        />
+      ) : null}
     </div>
       {closeConfirmationOverlay}
     </>
@@ -3859,7 +3953,7 @@ function ShellCloseConfirmation({
                 color: "#3E4339",
                 cursor: "pointer",
                 fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 height: 30,
                 padding: "0 14px",
@@ -4608,13 +4702,15 @@ function ShellCard({
           />
         <div
           className="min-w-0"
-          style={{
-            alignItems: "center",
-            display: "grid",
-            gap: 6,
-            gridTemplateColumns: renaming ? "minmax(0, 1fr)" : foreground ? "minmax(0, 1fr) 22px 58px" : "minmax(0, 1fr) 58px",
-          }}
-        >
+        style={{
+          alignItems: "center",
+          display: "grid",
+          gap: 6,
+          gridTemplateColumns: renaming ? "minmax(0, 1fr)" : foreground ? "minmax(0, 1fr) 22px" : "minmax(0, 1fr)",
+          paddingRight: renaming ? 0 : 64,
+          position: "relative",
+        }}
+      >
           {renaming ? (
             <input
               ref={renameInputRef}
@@ -4665,18 +4761,8 @@ function ShellCard({
                 onOpen();
               }}
               style={{
-                background: "transparent",
-                border: 0,
+                ...SESSION_NAME_BUTTON_BASE_STYLE,
                 color: foreground ? "#31362D" : "#5F6258",
-                cursor: "pointer",
-                fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                fontSize: 14,
-                fontWeight: 700,
-                lineHeight: "18px",
-                minWidth: 0,
-                padding: 0,
-                pointerEvents: "auto",
-                textAlign: "left",
               }}
             >
               {displayName}

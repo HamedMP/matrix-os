@@ -2065,6 +2065,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                           onPointerMove: onDragMove,
                           onPointerUp: onDragEnd,
                           onPointerCancel: onDragEnd,
+                          onDoubleClick: () => wmToggleFullscreen(win.id),
                         },
                       }}
                     />

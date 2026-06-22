@@ -4,7 +4,7 @@
 # running that PR's host bundle, reachable at app.matrix-os.com/vm/pr-<N>.
 #
 # Flow:
-#   deploy   — on label / push while labeled: build bundle 0.0.0-pr<N>.<sha7>,
+#   deploy   — on label / push while labeled: build bundle v<date>-pr<N>-<sha7>,
 #              publish register-only (--channel none, never promoted),
 #              provision pr-<N> if absent, deploy the exact version, comment.
 #   teardown — on PR close: delete the pr-<N> VPS.
@@ -136,7 +136,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          VERSION="0.0.0-pr${PR_NUMBER}.${HEAD_SHA:0:7}"
+          VERSION="v$(date -u +%Y.%m.%d)-pr${PR_NUMBER}-${HEAD_SHA:0:7}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Preview version: $VERSION"
 
@@ -157,6 +157,8 @@ jobs:
           path: |
             dist/host-bundle/matrix-host-bundle.tar.gz
             dist/host-bundle/matrix-host-bundle.tar.gz.sha256
+            dist/host-bundle/incremental-manifest.json
+            dist/host-bundle/objects/**
             dist/host-bundle/manifest.json
             dist/host-bundle/release.json
           if-no-files-found: error

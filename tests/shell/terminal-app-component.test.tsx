@@ -384,6 +384,10 @@ describe("TerminalApp", () => {
     expect(row!.style.display).toBe("grid");
     expect(row!.style.gridTemplateColumns).toBe("minmax(0, 1fr) 46px");
     expect(actions.style.width).toBe("58px");
+    expect(actions.style.position).toBe("absolute");
+    expect(actions.style.right).toBe("0px");
+    expect(actions.style.top).toBe("50%");
+    expect(actions.style.transform).toBe("translateY(-50%)");
     expect(copyButton.style.width).toBe("24px");
     expect(screen.queryByText("matrix shell connect")).toBeNull();
     expect(actions.style.maxHeight).toBe("");
@@ -1348,6 +1352,92 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.getByText("Active")).toBeTruthy();
     expect(screen.getByLabelText("Search sessions")).toBeTruthy();
+  });
+
+  it("keeps shell placement badges inside their row height", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const activeToggle = screen.getByRole("button", { name: "Move matrix-main to background" });
+    expect(activeToggle.style.height).toBe("20px");
+    expect(activeToggle.style.boxSizing).toBe("border-box");
+    expect(activeToggle.style.overflow).toBe("hidden");
+    expect(activeToggle.style.alignSelf).toBe("center");
+  });
+
+  it("lets desktop users resize the terminal sessions drawer", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    expect(sidebarShell.style.width).toBe("392px");
+
+    const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(resizeHandle, "setPointerCapture", { configurable: true, value: setPointerCapture });
+    await act(async () => {
+      fireEvent.pointerDown(resizeHandle, { clientX: 392, pointerId: 1 });
+      fireEvent.pointerMove(window, { clientX: 456 });
+      fireEvent.pointerUp(window);
+      await Promise.resolve();
+    });
+
+    expect(setPointerCapture).toHaveBeenCalledWith(1);
+    expect(sidebarShell.style.width).toBe("456px");
+
+    await act(async () => {
+      fireEvent.keyDown(resizeHandle, { key: "ArrowLeft" });
+      await Promise.resolve();
+    });
+
+    expect(sidebarShell.style.width).toBe("440px");
+  });
+
+  it("stops terminal drawer resizing when the drag is canceled", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
+    await act(async () => {
+      fireEvent.pointerDown(resizeHandle, { clientX: 392, pointerId: 1 });
+      fireEvent.pointerMove(window, { clientX: 456 });
+      fireEvent.pointerCancel(window);
+      fireEvent.pointerMove(window, { clientX: 520 });
+      await Promise.resolve();
+    });
+
+    expect(sidebarShell.style.width).toBe("456px");
+  });
+
+  it("does not treat terminal chrome control double-clicks as title-bar zooms", async () => {
+    const handleTitleDoubleClick = vi.fn();
+    render(<TerminalApp windowControls={{ dragHandleProps: { onDoubleClick: handleTitleDoubleClick } }} />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Toggle Terminal fullscreen" }));
+
+    expect(handleTitleDoubleClick).not.toHaveBeenCalled();
   });
 
   it("highlights the shell attached to the active restored pane on first render", async () => {
