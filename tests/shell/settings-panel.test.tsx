@@ -4,20 +4,11 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  SHELL_Z_CLASSES,
-  SHELL_Z_INDEX,
-} from "../../shell/src/lib/shell-layering.js";
+import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 
 const billingState = vi.hoisted(() => ({
   active: true as boolean | null,
 }));
-
-function zIndexFromClassName(className: string): number {
-  const match = className.match(/\bz-\[(\d+)\]/);
-  expect(match).toBeTruthy();
-  return Number(match?.[1]);
-}
 
 vi.mock("@/hooks/useMatrixBillingAccess", () => ({
   useMatrixBillingAccess: () => ({
@@ -127,9 +118,9 @@ describe("Settings panel", () => {
 
     const settingsLayer = screen.getByLabelText("Close settings").parentElement;
     expect(settingsLayer).toBeTruthy();
-    expect(settingsLayer?.className).toContain(SHELL_Z_CLASSES.settings);
 
-    const settingsZ = zIndexFromClassName(settingsLayer?.className ?? "");
+    const settingsZ = Number(settingsLayer?.style.zIndex);
+    expect(settingsZ).toBe(SHELL_Z_INDEX.settings);
     expect(settingsZ).toBeGreaterThan(SHELL_Z_INDEX.fullscreenExit);
     expect(settingsZ).toBeLessThan(SHELL_Z_INDEX.hardGate);
     expect(settingsZ).toBeLessThan(SHELL_Z_INDEX.notifications);

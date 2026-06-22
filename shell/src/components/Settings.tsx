@@ -25,7 +25,7 @@ import { SystemSection } from "./settings/sections/SystemSection";
 import { BillingSection } from "./settings/sections/BillingSection";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton as AccountButton } from "./UserButton";
-import { SHELL_Z_CLASSES } from "@/lib/shell-layering";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 
 const sections = [
@@ -185,7 +185,7 @@ export function Settings({
 
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
   return (
-    <div className={`fixed inset-0 ${SHELL_Z_CLASSES.settings}`}>
+    <div className="fixed inset-0" style={{ zIndex: SHELL_Z_INDEX.settings }}>
       <button
         type="button"
         aria-label="Close settings"

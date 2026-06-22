@@ -10,7 +10,7 @@ import { KeyboardIcon, MicIcon, SparklesIcon } from "lucide-react";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { ShellNotificationCard } from "./ShellNotificationCard";
 import { ShellNotificationStack } from "./ShellNotificationStack";
-import { SHELL_Z_CLASSES } from "@/lib/shell-layering";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 const SHIMMER_GRADIENT =
   "linear-gradient(90deg, #2F392C 0%, #2F392C 24%, #C4A265 50%, #2F392C 76%, #2F392C 100%)";
@@ -184,7 +184,10 @@ export function OnboardingScreen({ onComplete, onOpenManualSetup }: OnboardingSc
     <>
     {/* Landing screen — stays mounted as overlay during transition */}
     {phase !== "revealing" && (
-      <div className={`fixed inset-0 ${SHELL_Z_CLASSES.hardGate} flex flex-col bg-background`}>
+      <div
+        className="fixed inset-0 flex flex-col bg-background"
+        style={{ zIndex: SHELL_Z_INDEX.hardGate }}
+      >
         <MicPermissionDialog
           open={showMicDialog}
           permissionState={mic.state}

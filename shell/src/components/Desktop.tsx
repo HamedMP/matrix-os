@@ -67,7 +67,7 @@ import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
-import { SHELL_Z_CLASSES, SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import {
   DEFAULT_PINNED_APPS,
@@ -557,7 +557,10 @@ function AoedeDockButton({
 
 function FullscreenExitPill({ onExit }: { onExit: () => void }) {
   return (
-    <div className={`group/fsexit fixed top-0 left-0 ${SHELL_Z_CLASSES.fullscreenExit} w-14 h-3 hover:h-10 transition-all duration-300`}>
+    <div
+      className="group/fsexit fixed top-0 left-0 w-14 h-3 hover:h-10 transition-all duration-300"
+      style={{ zIndex: SHELL_Z_INDEX.fullscreenExit }}
+    >
       <button
         type="button"
         onClick={onExit}
