@@ -90,6 +90,23 @@ export interface PipedreamConnectClient {
 const API_TIMEOUT_SECONDS = 10;
 const ACTION_TIMEOUT_SECONDS = 30;
 
+type PipedreamProjectEnvironment = "development" | "production";
+
+function normalizePipedreamProjectEnvironment(
+  value: string | undefined,
+): PipedreamProjectEnvironment {
+  if (value === undefined || value.trim() === "") {
+    return "production";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "development" || normalized === "production") {
+    return normalized;
+  }
+
+  throw new Error(`Invalid Pipedream project environment: "${value}"`);
+}
+
 export async function createPipedreamClient(
   config: PipedreamConfig,
 ): Promise<PipedreamConnectClient> {
@@ -98,6 +115,7 @@ export async function createPipedreamClient(
     clientId: config.clientId,
     clientSecret: config.clientSecret,
     projectId: config.projectId,
+    projectEnvironment: normalizePipedreamProjectEnvironment(config.environment),
   });
 
   return {
