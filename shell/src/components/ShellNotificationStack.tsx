@@ -17,7 +17,7 @@ export function ShellNotificationStack({
       }}
       id={SHELL_NOTIFICATION_STACK_ID}
       data-testid="shell-notification-stack"
-      className="pointer-events-none fixed right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[95] flex w-[calc(100vw-1.5rem)] max-w-[min(92vw,560px)] flex-col items-end gap-2 md:top-9"
+      className="pointer-events-none fixed right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[10000] flex w-[calc(100vw-1.5rem)] max-w-[min(92vw,560px)] flex-col items-end gap-2 md:top-9"
     >
       {children}
     </div>
