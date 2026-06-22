@@ -7,11 +7,32 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("desktop release workflows", () => {
-  it("renames mac update manifests before artifact upload", () => {
+  it("verifies packaged artifacts before renaming mac update manifests", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
     expect(workflow).toContain("Rename mac update manifest for arch");
-    expect(workflow).toContain("test -f desktop/dist/latest-mac.yml");
+    expect(workflow).toContain("Resolve mac artifact metadata");
+    expect(workflow).toContain('package_version="$(node -p "require(\'./desktop/package.json\').version")"');
+    expect(workflow).toContain('echo "artifact_base=Matrix-OS-${package_version}-mac-${{ matrix.arch }}"');
+    expect(workflow).toContain("ARTIFACT_BASE: ${{ steps.mac_artifact.outputs.artifact_base }}");
+    expect(workflow).toContain("[ ! -f desktop/dist/latest-mac.yml ]");
+    expect(workflow).toContain('[ ! -f "desktop/dist/${ARTIFACT_BASE}.dmg" ]');
+    expect(workflow).toContain('[ ! -f "desktop/dist/${ARTIFACT_BASE}.zip" ]');
+    expect(workflow).toContain('[ ! -f "desktop/dist/${ARTIFACT_BASE}.dmg.blockmap" ]');
+    expect(workflow).toContain('[ ! -f "desktop/dist/${ARTIFACT_BASE}.zip.blockmap" ]');
+    expect(workflow).toContain('unexpected_artifact="$(');
+    expect(workflow).toContain('-name "Matrix-OS-*-mac-*.dmg"');
+    expect(workflow).toContain('! -name "${ARTIFACT_BASE}.zip.blockmap"');
+    expect(workflow).not.toContain('other_arch="x64"');
+    expect(workflow).toContain('find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml"');
+    expect(workflow).toContain("Smoke test macOS DMG mount");
+    expect(workflow).toContain('hdiutil attach "$dmg_path" -mountpoint "$mount_dir" -nobrowse -readonly');
+    expect(workflow).toContain('ditto "$mount_dir/Matrix OS.app" "$copy_dir/Matrix OS.app"');
+    expect(workflow).toContain('find desktop/dist -maxdepth 1 -type f -name "*.AppImage" -print -quit');
+    expect(workflow).toContain("[ ! -f desktop/dist/latest-linux.yml ]");
+    expect(workflow).not.toContain("test -f desktop/dist/*.dmg");
+    expect(workflow).not.toContain("test -f desktop/dist/*.zip");
+    expect(workflow).not.toContain("test -f desktop/dist/*.AppImage");
     expect(workflow).not.toContain("test -f desktop/dist/*-mac.yml");
     expect(workflow).toContain('mv desktop/dist/latest-mac.yml "desktop/dist/${{ matrix.arch }}-mac.yml"');
     expect(workflow).toContain('mv "desktop/dist/${CHANNEL}-mac.yml" "desktop/dist/${{ matrix.arch }}-${CHANNEL}-mac.yml"');
@@ -19,6 +40,14 @@ describe("desktop release workflows", () => {
     expect(workflow).toContain('! -name "${{ matrix.arch }}-${CHANNEL}-mac.yml"');
     expect(workflow).toContain("desktop/dist/*-mac.yml");
     expect(workflow).toContain("desktop/dist/*.blockmap");
+  });
+
+  it("lets the mac matrix arch control electron-builder outputs", () => {
+    const config = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
+
+    expect(config).toContain("- dmg");
+    expect(config).toContain("- zip");
+    expect(config).not.toContain("arch: [arm64, x64]");
   });
 
   it("falls back from an empty desktop update channel at build time", () => {
@@ -48,6 +77,12 @@ describe("desktop release workflows", () => {
     const canary = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
 
     expect(build).toContain("Validate Apple notarization secrets");
+    expect(build).toContain("Prepare mac signing environment");
+    expect(build).toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
+    expect(build).toContain("cert_delimiter=\"MATRIX_DESKTOP_CERT_$(uuidgen");
+    expect(build).toContain("password_delimiter=\"MATRIX_DESKTOP_CERT_PASSWORD_$(uuidgen");
+    expect(build).toContain("MAC_CERTIFICATE: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
+    expect(build).not.toContain("CSC_LINK: ${{ secrets.MATRIX_DESKTOP_MAC_CERTIFICATE || secrets.CSC_LINK }}");
     expect(build).toContain("APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set together");
     expect(build).toContain("Apply desktop release version");
     expect(build).toContain("RELEASE_VERSION: ${{ inputs.version }}");
@@ -58,6 +93,14 @@ describe("desktop release workflows", () => {
     expect(release).toContain("output: ${{ needs.prepare.outputs.channel }}-mac.yml");
     expect(canary).toContain("Merge canary macOS update manifests");
     expect(canary).toContain("output: canary-mac.yml");
+  });
+
+  it("supports a dev desktop update channel for test releases", () => {
+    const release = readFileSync(join(root, ".github/workflows/desktop-release.yml"), "utf8");
+
+    expect(release).toContain("- dev");
+    expect(release).toContain("stable|beta|canary|dev");
+    expect(release).toContain("Non-stable desktop channels require a prerelease semver version.");
   });
 
   it("rejects prerelease desktop tags on the push release path", () => {
@@ -140,6 +183,30 @@ describe("desktop release workflows", () => {
       expect(beta).toContain("url: beta-arm64.zip");
       expect(beta).toContain("url: beta-x64.zip");
       expect(beta).not.toContain("url: arm64.zip");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to architecture mac manifests when a prerelease channel manifest is missing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "matrix-desktop-release-"));
+    try {
+      writeFileSync(
+        join(dir, "x64-mac.yml"),
+        "version: 1.2.3-dev.1\nfiles:\n  - url: dev-x64.zip\n    sha512: dev-x64\n    size: 2\npath: dev-x64.zip\nsha512: dev-x64\n",
+      );
+      writeFileSync(
+        join(dir, "arm64-mac.yml"),
+        "version: 1.2.3-dev.1\nfiles:\n  - url: dev-arm64.zip\n    sha512: dev-arm64\n    size: 1\npath: dev-arm64.zip\nsha512: dev-arm64\n",
+      );
+
+      execFileSync(process.execPath, [join(root, ".github/actions/merge-mac-manifests/merge-mac-manifests.mjs")], {
+        env: { ...process.env, INPUT_DIRECTORY: dir, INPUT_OUTPUT: "dev-mac.yml", INPUT_CHANNEL: "dev" },
+      });
+
+      const dev = readFileSync(join(dir, "dev-mac.yml"), "utf8");
+      expect(dev).toContain("url: dev-arm64.zip");
+      expect(dev).toContain("url: dev-x64.zip");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

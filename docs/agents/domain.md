@@ -6,6 +6,8 @@ How the engineering skills should consume this repo's domain documentation when 
 
 - **`CONTEXT.md`** at the repo root, or
 - **`CONTEXT-MAP.md`** at the repo root if it exists — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
+- **`ARCHITECTURE.md`** at the repo root when touching package ownership, runtime boundaries, or cross-package dependency direction.
+- **`DOMAIN.md`** at the repo root when creating or changing a package/domain boundary, then any nearest package-level `DOMAIN.md` if it exists.
 - **`docs/adr/`** — read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
 - **`docs/dev/vps-deployment.md`** and **`specs/070-vps-per-user/changelog.md`** when touching production routing, user containers, customer VPS hosts, host bundles, Cloudflare tunnel behavior, R2 backup/restore, or first-customer migrations.
 
@@ -18,6 +20,8 @@ Single-context repo (most repos):
 ```
 /
 ├── CONTEXT.md
+├── ARCHITECTURE.md
+├── DOMAIN.md
 ├── docs/adr/
 │   ├── 0001-event-sourced-orders.md
 │   └── 0002-postgres-for-write-model.md

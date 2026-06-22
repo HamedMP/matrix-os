@@ -55,6 +55,50 @@ describe("shell preferences", () => {
     });
   });
 
+  it("renames per-session preferences without overwriting another preference file", async () => {
+    const root = await tempRoot();
+    const store = new ShellPreferencesStore({ homePath: root });
+
+    await store.save("main", { shellThemeId: "matrix", fontFamily: "MesloLGS NF" });
+    await store.rename("main", "review-main");
+
+    await expect(store.load("main")).resolves.toMatchObject({ shellThemeId: "dark" });
+    await expect(store.load("review-main")).resolves.toMatchObject({
+      shellThemeId: "matrix",
+      fontFamily: "MesloLGS NF",
+    });
+
+    await store.rename("missing", "new-name");
+    await store.save("occupied", { shellThemeId: "light" });
+    await expect(store.rename("review-main", "occupied")).rejects.toMatchObject({
+      code: "session_exists",
+      status: 409,
+    });
+  });
+
+  it("keeps the destination preferences when source cleanup already happened", async () => {
+    const root = await tempRoot();
+    const rmMock = vi.fn(async (path: string) => {
+      if (path.endsWith("main.json")) {
+        throw Object.assign(new Error("missing source"), { code: "ENOENT" });
+      }
+    });
+    const store = new ShellPreferencesStore({
+      homePath: root,
+      renameFileOps: {
+        mkdir: vi.fn(async () => undefined) as never,
+        link: vi.fn(async () => undefined),
+        rm: rmMock as never,
+      },
+    });
+
+    await expect(store.rename("main", "review-main")).resolves.toBeUndefined();
+
+    expect(rmMock).toHaveBeenCalledTimes(1);
+    expect(rmMock.mock.calls[0]?.[0]).toContain("main.json");
+    expect(rmMock.mock.calls.some(([path]) => String(path).endsWith("review-main.json"))).toBe(false);
+  });
+
   it("serves GET and PUT preferences routes with validation", async () => {
     const root = await tempRoot();
     const preferences = new ShellPreferencesStore({ homePath: root });

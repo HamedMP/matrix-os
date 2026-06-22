@@ -1,7 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { link, mkdir, readFile, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
+import { shellError } from "./errors.js";
 import { validateSessionName } from "./names.js";
 
 const LegacyThemeIdSchema = z.enum([
@@ -60,13 +61,20 @@ export type ShellThemeId = z.infer<typeof ShellThemeIdSchema>;
 export interface ShellPreferencesStoreOptions {
   homePath: string;
   preferencesDir?: string;
+  renameFileOps?: {
+    mkdir: typeof mkdir;
+    link: typeof link;
+    rm: typeof rm;
+  };
 }
 
 export class ShellPreferencesStore {
   private readonly preferencesDir: string;
+  private readonly renameFileOps: NonNullable<ShellPreferencesStoreOptions["renameFileOps"]>;
 
   constructor(options: ShellPreferencesStoreOptions) {
     this.preferencesDir = options.preferencesDir ?? join(options.homePath, "system", "shell-preferences");
+    this.renameFileOps = options.renameFileOps ?? { mkdir, link, rm };
   }
 
   async load(name: string): Promise<ShellPreferences> {
@@ -91,6 +99,52 @@ export class ShellPreferencesStore {
     const next = ShellPreferencesSchema.parse(input);
     await writeUtf8FileAtomic(this.pathFor(safeName), JSON.stringify(next, null, 2));
     return next;
+  }
+
+  async rename(fromName: string, toName: string): Promise<void> {
+    const safeFromName = validateSessionName(fromName);
+    const safeToName = validateSessionName(toName);
+    const fromPath = this.pathFor(safeFromName);
+    const toPath = this.pathFor(safeToName);
+    await this.renameFileOps.mkdir(dirname(toPath), { recursive: true, mode: 0o700 });
+    try {
+      await this.renameFileOps.link(fromPath, toPath);
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return;
+      }
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "EEXIST"
+      ) {
+        throw shellError("session_exists", "Session already exists", 409);
+      }
+      throw err;
+    }
+
+    try {
+      await this.renameFileOps.rm(fromPath);
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return;
+      }
+      await this.renameFileOps.rm(toPath, { force: true }).catch((cleanupErr: unknown) => {
+        console.warn(
+          "[shell] failed to clean copied preferences during rename rollback:",
+          cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+        );
+      });
+      throw err;
+    }
   }
 
   private pathFor(name: string): string {

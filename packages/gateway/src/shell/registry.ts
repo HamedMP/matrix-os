@@ -58,12 +58,17 @@ export interface ShellSessionUiStatePatch {
   visualStatus?: ShellVisualStatus;
 }
 
+export interface ShellNameScopedStore {
+  rename(fromName: string, toName: string): Promise<void>;
+}
+
 export interface ShellRegistryOptions {
   homePath: string;
   adapter: ShellRegistryAdapter;
   maxSessions?: number;
   persistPath?: string;
   scrollbackStore?: ScrollbackStore;
+  preferencesStore?: ShellNameScopedStore;
 }
 
 export class ShellRegistry {
@@ -275,9 +280,12 @@ export class ShellRegistry {
 
       await this.options.adapter.renameSession(safeName, safeNextName);
       let scrollbackRenamed = false;
+      let preferencesRenamed = false;
       try {
         await this.options.scrollbackStore?.rename(safeName, safeNextName);
         scrollbackRenamed = true;
+        await this.options.preferencesStore?.rename(safeName, safeNextName);
+        preferencesRenamed = true;
         if (file.order) {
           const nextLive = new Set(live);
           nextLive.delete(safeName);
@@ -296,6 +304,14 @@ export class ShellRegistry {
           await this.options.scrollbackStore?.rename(safeNextName, safeName).catch((rollbackErr: unknown) => {
             console.warn(
               "[shell] failed to rollback renamed scrollback:",
+              rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+            );
+          });
+        }
+        if (preferencesRenamed) {
+          await this.options.preferencesStore?.rename(safeNextName, safeName).catch((rollbackErr: unknown) => {
+            console.warn(
+              "[shell] failed to rollback renamed preferences:",
               rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
             );
           });

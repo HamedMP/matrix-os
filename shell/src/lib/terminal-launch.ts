@@ -27,7 +27,7 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
 };
 
 const TERMINAL_LAUNCH_QUEUE_KEY = "matrix:terminal-launch-queue";
-export const TERMINAL_SETUP_WINDOW_PATH = "__terminal__:setup";
+export const TERMINAL_SETUP_WINDOW_PATH = "__terminal__";
 export const TERMINAL_LAUNCH_EVENT = "matrix:terminal-launch";
 
 interface QueuedTerminalLaunch {

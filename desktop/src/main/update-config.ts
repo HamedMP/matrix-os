@@ -1,4 +1,4 @@
-export type DesktopUpdateChannel = "stable" | "beta" | "canary";
+export type DesktopUpdateChannel = "stable" | "beta" | "canary" | "dev";
 
 export type UpdateFeedConfig =
   | {
@@ -34,7 +34,7 @@ function buildUpdateChannel(): string | undefined {
 }
 
 function normalizeChannel(value: string | undefined): DesktopUpdateChannel {
-  if (value === "beta" || value === "canary") return value;
+  if (value === "beta" || value === "canary" || value === "dev") return value;
   return "stable";
 }
 
