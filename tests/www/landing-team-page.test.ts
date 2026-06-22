@@ -37,6 +37,8 @@ describe("www landing team page", () => {
     expect(page).toContain("CTO & Co-Founder");
     expect(page).toContain("https://www.linkedin.com/in/nima-naderi04/");
     expect(page).toContain("https://x.com/NimaNaderi2004");
+    expect(page).toContain("function XLogoIcon");
+    expect(page).not.toContain("XIcon");
     expect(page).toContain("Olympiad gold-medal problem solving");
     expect(page).toContain("reliable systems");
     expect(page).toContain("<SiteFooter />");
