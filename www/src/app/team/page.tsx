@@ -8,10 +8,10 @@ import { palette as c, fonts, cardShadowSmall } from "@/components/landing/theme
 
 export const metadata: Metadata = {
   title: "Team | Matrix OS",
-  description: "Meet the team building Matrix OS.",
+  description: "Meet the founders building Matrix OS.",
   openGraph: {
     title: "Team | Matrix OS",
-    description: "Meet the team building Matrix OS.",
+    description: "Meet the founders building Matrix OS.",
     url: "https://matrix-os.com/team",
     siteName: "Matrix OS",
     type: "website",
@@ -22,14 +22,14 @@ const founders = [
   {
     name: "Hamed Mohammadpour",
     role: "CEO & Co-Founder",
-    bio: "Ex-PostHog, Ex-Newly. Studied Machine Learning Engineering at KTH.",
+    bio: "Hamed brings product and machine-learning instincts from PostHog and Newly, with a Machine Learning Engineering background from KTH. He focuses on making Matrix OS useful in real workflows: clear, fast, and grounded in how people actually build.",
     linkedin: "https://www.linkedin.com/in/hamedmohammadpour/",
     x: "https://x.com/thehamedmp",
   },
   {
     name: "Nima Naderi",
     role: "CTO & Co-Founder",
-    bio: "Ex-Bending Spoons. Studied Computer Engineering at Polito. Olympiad Gold Medalist.",
+    bio: "Nima brings product engineering experience from Bending Spoons, a Computer Engineering background from Polito, and Olympiad gold-medal problem solving. He focuses on the technical foundation of Matrix OS: reliable systems, polished interfaces, and the details that make AI feel native.",
     linkedin: "https://www.linkedin.com/in/nima-naderi04/",
     x: "https://x.com/NimaNaderi2004",
   },
@@ -53,6 +53,11 @@ export default function TeamPage() {
               >
                 Building Matrix OS
               </h1>
+              <p className="mt-5 text-[1.0625rem] leading-[1.7]" style={{ color: c.mutedFg }}>
+                We are building Matrix OS as an AI-native computer where apps, files, messages, and agents work
+                together in one workspace. Our founding team combines machine learning, product engineering, and
+                high-craft consumer software experience.
+              </p>
 
               <div className="mt-9 space-y-7">
                 {founders.map((founder) => (
