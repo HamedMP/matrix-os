@@ -184,7 +184,7 @@ export function Settings({
 
   const transitionEase = "cubic-bezier(0.22, 1, 0.36, 1)";
   return (
-    <div className="fixed inset-0 z-[45]">
+    <div className="fixed inset-0 z-[9999]">
       <button
         type="button"
         aria-label="Close settings"
