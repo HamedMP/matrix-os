@@ -2589,6 +2589,9 @@ export async function createGateway(config: GatewayConfig) {
 
           switch (msg.type) {
             case "ping":
+              if (handle) {
+                handle.send(msg);
+              }
               ws.send(JSON.stringify({ type: "pong" }));
               break;
             case "attach": {
