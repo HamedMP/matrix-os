@@ -57,8 +57,8 @@ describe("www landing team page", () => {
     expect(page).not.toContain("XIcon");
     expect(page).toContain("security and engineering depth");
     expect(page).toContain("Olympiad gold-medal problem solving");
-    expect(page).toContain("IOI Scientific Committee");
-    expect(page).toContain("DEF CON conference and competition community");
+    expect(page).toContain("part of the IOI Scientific Committee");
+    expect(page).toContain("DEF CON finalist");
     expect(page).toContain("reliable systems");
     expect(page).toContain("<SiteFooter />");
     expect(firstLogoIndex).toBeGreaterThan(-1);
