@@ -127,6 +127,23 @@ describe("useShellSessions", () => {
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-created"]);
   });
 
+  it("keeps a created shell when an older load resolves after create refresh", async () => {
+    const staleLoad = deferred<{ sessions: Array<{ name: string }> }>();
+    const get = vi
+      .fn()
+      .mockReturnValueOnce(staleLoad.promise)
+      .mockResolvedValueOnce({ sessions: [{ name: "matrix-created", status: "active" }] });
+    const post = vi.fn().mockResolvedValue({ name: "matrix-created" });
+
+    const initialLoad = useShellSessions.getState().load(makeApi({ get }));
+    const created = await useShellSessions.getState().create(makeApi({ get, post }));
+    staleLoad.resolve({ sessions: [{ name: "matrix-stale", status: "active" }] });
+    await initialLoad;
+
+    expect(created?.name).toBe("matrix-created");
+    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-created"]);
+  });
+
   it("deletes shell sessions with force and rolls back when deletion fails", async () => {
     useShellSessions.setState({
       sessions: [

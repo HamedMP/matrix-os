@@ -233,19 +233,31 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
           placement: "active",
           attachCommand: shellConnectCommand(createdName),
         };
+        const refreshSequence = get().loadSequence + 1;
+        set({ loadSequence: refreshSequence });
         try {
           const sessions = await fetchShellSessions(api);
+          if (refreshSequence !== get().loadSequence) {
+            set({ creating: false, error: null });
+            return created;
+          }
           created = sessions.find((session) => session.name === createdName) ?? created;
           set((state) => ({
             sessions: sessions.some((session) => session.name === createdName) ? sessions : [created, ...state.sessions],
             creating: false,
+            loading: false,
             error: null,
           }));
         } catch (refreshErr: unknown) {
+          if (refreshSequence !== get().loadSequence) {
+            set({ creating: false, error: null });
+            return created;
+          }
           console.error("[shell-sessions] Failed to refresh after shell create:", refreshErr);
           set((state) => ({
             sessions: state.sessions.some((session) => session.name === created.name) ? state.sessions : [created, ...state.sessions],
             creating: false,
+            loading: false,
             error: errorCategory(refreshErr),
           }));
         }
