@@ -107,12 +107,12 @@ function jsonResponse(body: unknown) {
   }));
 }
 
-type DesktopComponent = typeof Desktop;
+type DesktopComponentType = typeof Desktop;
 type DesktopModeStore = typeof useDesktopMode;
 type DesktopConfigStore = typeof useDesktopConfigStore;
 type WindowManagerStore = typeof useWindowManager;
 
-let DesktopComponent: DesktopComponent;
+let DesktopComponent: DesktopComponentType;
 let desktopModeStore: DesktopModeStore;
 let desktopConfigStore: DesktopConfigStore;
 let windowManagerStore: WindowManagerStore;
