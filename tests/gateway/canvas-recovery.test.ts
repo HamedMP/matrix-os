@@ -45,6 +45,21 @@ describe("canvas recovery", () => {
     expect((reconciled.nodes[0] as any).displayState).toBe("recoverable");
   });
 
+  it("classifies stale terminal session refs as missing volatile PTY handles", () => {
+    const staleSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const reconciled = reconcileCanvasRecord(record(), { terminalSessionIds: new Set() });
+
+    expect(reconciled.nodes[0]).toMatchObject({
+      sourceRef: { kind: "terminal_session", id: staleSessionId },
+      displayState: "recoverable",
+      metadata: {
+        recoveryReason: "terminal_session_missing",
+        terminalSessionState: "missing",
+        terminalSessionId: staleSessionId,
+      },
+    });
+  });
+
   it("does not mark omitted live reference categories as missing", () => {
     const base = record();
     const reconciled = reconcileCanvasRecord({

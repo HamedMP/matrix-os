@@ -101,7 +101,13 @@ function nodeCounts(record: CanvasRecord) {
     const displayState = (node as { displayState?: unknown }).displayState;
     const type = (node as { type?: unknown }).type;
     if (displayState === "stale") stale += 1;
-    if (type === "terminal" || type === "review_loop" || type === "preview" || type === "app_window") live += 1;
+    const liveDisplayState = displayState === "normal" || displayState === "minimized" || displayState === "summary";
+    if (
+      liveDisplayState &&
+      (type === "terminal" || type === "review_loop" || type === "preview" || type === "app_window")
+    ) {
+      live += 1;
+    }
   }
   return { total: record.nodes.length, stale, live };
 }
@@ -359,7 +365,12 @@ export class CanvasService {
       if (sourceRef.kind === "terminal_session") {
         const session = sourceRef.id === "unattached" ? null : this.terminalRegistry?.getSession(sourceRef.id);
         if (session) terminalSessions.push(session);
-        else missingRefs.push({ kind: sourceRef.kind, id: sourceRef.id });
+        else missingRefs.push({
+          kind: sourceRef.kind,
+          id: sourceRef.id,
+          state: sourceRef.id === "unattached" ? "unattached" : "missing",
+          recoverable: sourceRef.id !== "unattached",
+        });
       }
       if (sourceRef.kind === "pull_request") pullRequests.push(sourceRef);
       if (sourceRef.kind === "review_loop") reviewLoops.push(sourceRef);
