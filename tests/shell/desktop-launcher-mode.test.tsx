@@ -1,0 +1,198 @@
+// @vitest-environment jsdom
+import React from "react";
+import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { Desktop } from "../../shell/src/components/Desktop.js";
+import type { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
+import type { useDesktopConfigStore } from "../../shell/src/stores/desktop-config.js";
+import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
+
+vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
+  useFileWatcher: () => undefined,
+}));
+
+vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
+  TerminalApp: () => null,
+}));
+
+vi.mock("../../shell/src/components/AppViewer.js", () => ({
+  AppViewer: () => null,
+}));
+
+vi.mock("../../shell/src/components/workspace/WorkspaceApp.js", () => ({
+  WorkspaceApp: () => null,
+}));
+
+vi.mock("../../shell/src/components/file-browser/FileBrowser.js", () => ({
+  FileBrowser: () => null,
+}));
+
+vi.mock("../../shell/src/components/preview-window/PreviewWindow.js", () => ({
+  PreviewWindow: () => null,
+}));
+
+vi.mock("../../shell/src/components/system-activity/ActivityMonitorApp.js", () => ({
+  ActivityMonitorApp: () => null,
+}));
+
+vi.mock("../../shell/src/components/AIButton.js", () => ({
+  AIButton: () => null,
+}));
+
+vi.mock("../../shell/src/components/MissionControl.js", () => ({
+  MissionControl: () => null,
+}));
+
+vi.mock("../../shell/src/components/DotGrid.js", () => ({
+  DotGrid: () => null,
+}));
+
+vi.mock("../../shell/src/components/Settings.js", () => ({
+  Settings: () => null,
+}));
+
+vi.mock("../../shell/src/components/canvas/CanvasRenderer.js", () => ({
+  CanvasRenderer: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock("../../shell/src/components/canvas/CanvasToolbar.js", () => ({
+  CanvasToolbar: () => null,
+}));
+
+vi.mock("../../shell/src/components/VocalPanel.js", () => ({
+  VocalPanel: () => null,
+}));
+
+vi.mock("../../shell/src/components/UserButton.js", () => ({
+  UserButton: () => null,
+}));
+
+vi.mock("../../shell/src/components/ConnectionIndicator.js", () => ({
+  ConnectionIndicator: () => null,
+}));
+
+vi.mock("../../shell/src/components/AmbientClock.js", () => ({
+  AmbientClock: () => null,
+}));
+
+vi.mock("../../shell/src/components/MenuBar.js", () => ({
+  MenuBar: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock("../../shell/src/components/ChatApp.js", () => ({
+  ChatApp: () => null,
+}));
+
+vi.mock("../../shell/src/components/ChatPopover.js", () => ({
+  ChatPopover: () => null,
+}));
+
+vi.mock("../../shell/src/components/onboarding/ManualSetupStickers.js", () => ({
+  ManualSetupStickers: () => null,
+}));
+
+vi.mock("../../shell/src/components/RuntimeIdentityBanner.js", () => ({
+  RuntimeIdentityBanner: () => null,
+}));
+
+vi.mock("../../shell/src/components/developer/DeveloperModeDashboard.js", () => ({
+  DeveloperModeDashboard: () => null,
+}));
+
+function jsonResponse(body: unknown) {
+  return Promise.resolve(new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  }));
+}
+
+type DesktopComponentType = typeof Desktop;
+type DesktopModeStore = typeof useDesktopMode;
+type DesktopConfigStore = typeof useDesktopConfigStore;
+type WindowManagerStore = typeof useWindowManager;
+
+let DesktopComponent: DesktopComponentType;
+let desktopModeStore: DesktopModeStore;
+let desktopConfigStore: DesktopConfigStore;
+let windowManagerStore: WindowManagerStore;
+
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
+}
+
+function resetShellMode(mode: "canvas" | "dev", hydrated: boolean) {
+  desktopModeStore.setState({
+    mode,
+    previousMode: null,
+    _hydrated: hydrated,
+  });
+  desktopConfigStore.setState({
+    dock: { position: "left", size: 56, iconSize: 40, autoHide: false },
+    pinnedApps: [],
+  });
+  windowManagerStore.setState({
+    windows: [],
+    apps: [],
+    nextZ: 1,
+    closedPaths: new Set(),
+    closedLayouts: new Map(),
+    focusedWindowId: null,
+    fullscreenWindowId: null,
+  });
+}
+
+describe("Desktop launcher dock button by mode", () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    const storage = createMemoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    Object.defineProperty(window, "localStorage", {
+      value: storage,
+      configurable: true,
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) return jsonResponse({ layout: { windows: [] }, apps: [], modules: [] });
+      return jsonResponse({});
+    }));
+    DesktopComponent = (await import("../../shell/src/components/Desktop.js")).Desktop;
+    desktopModeStore = (await import("../../shell/src/stores/desktop-mode.js")).useDesktopMode;
+    desktopConfigStore = (await import("../../shell/src/stores/desktop-config.js")).useDesktopConfigStore;
+    windowManagerStore = (await import("../../shell/src/hooks/useWindowManager.js")).useWindowManager;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the launcher visible in canvas mode even before mode hydration completes", async () => {
+    resetShellMode("canvas", false);
+
+    render(<DesktopComponent />);
+
+    expect(await screen.findByTestId("dock-tasks")).toBeTruthy();
+  });
+
+  it("hides the launcher in developer mode", async () => {
+    resetShellMode("dev", true);
+
+    render(<DesktopComponent />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("dock-tasks")).toBeNull();
+      expect(screen.getByTestId("dock-settings")).toBeTruthy();
+    });
+  });
+});
