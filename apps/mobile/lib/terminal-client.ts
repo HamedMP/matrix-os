@@ -138,49 +138,50 @@ export function buildTerminalWebSocketUrl(baseUrl: string, token?: string | null
 
 function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
   if (typeof data !== "string") return null;
+  let frame: Record<string, unknown>;
   try {
-    const frame = JSON.parse(data) as Record<string, unknown>;
-    if (!frame || typeof frame !== "object" || typeof frame.type !== "string") return null;
-    if (frame.type === "attached" && typeof frame.sessionId === "string") {
-      return {
-        type: "attached",
-        sessionId: frame.sessionId,
-        cwd: typeof frame.cwd === "string" ? frame.cwd : undefined,
-        replay: typeof frame.replay === "string" ? frame.replay : undefined,
-      };
-    }
-    if (frame.type === "output" && typeof frame.data === "string") {
-      return {
-        type: "output",
-        data: frame.data,
-        seq: parseTerminalSeq(frame.seq),
-      };
-    }
-    if (frame.type === "replay-start") {
-      return {
-        type: "replay-start",
-        fromSeq: parseTerminalSeq(frame.fromSeq),
-        toSeq: parseTerminalSeq(frame.toSeq),
-      };
-    }
-    if (frame.type === "replay-end") {
-      return {
-        type: "replay-end",
-        toSeq: parseTerminalSeq(frame.toSeq),
-      };
-    }
-    if (frame.type === "exit") {
-      return {
-        type: "exit",
-        exitCode: parseTerminalExitCode(frame.exitCode ?? frame.code),
-      };
-    }
-    if (frame.type === "error") return { type: "error", message: typeof frame.message === "string" ? frame.message : undefined };
-    return null;
+    frame = JSON.parse(data) as Record<string, unknown>;
   } catch (err: unknown) {
     if (err instanceof SyntaxError) return null;
-    return null;
+    throw err;
   }
+  if (!frame || typeof frame !== "object" || typeof frame.type !== "string") return null;
+  if (frame.type === "attached" && typeof frame.sessionId === "string") {
+    return {
+      type: "attached",
+      sessionId: frame.sessionId,
+      cwd: typeof frame.cwd === "string" ? frame.cwd : undefined,
+      replay: typeof frame.replay === "string" ? frame.replay : undefined,
+    };
+  }
+  if (frame.type === "output" && typeof frame.data === "string") {
+    return {
+      type: "output",
+      data: frame.data,
+      seq: parseTerminalSeq(frame.seq),
+    };
+  }
+  if (frame.type === "replay-start") {
+    return {
+      type: "replay-start",
+      fromSeq: parseTerminalSeq(frame.fromSeq),
+      toSeq: parseTerminalSeq(frame.toSeq),
+    };
+  }
+  if (frame.type === "replay-end") {
+    return {
+      type: "replay-end",
+      toSeq: parseTerminalSeq(frame.toSeq),
+    };
+  }
+  if (frame.type === "exit") {
+    return {
+      type: "exit",
+      exitCode: parseTerminalExitCode(frame.exitCode ?? frame.code),
+    };
+  }
+  if (frame.type === "error") return { type: "error", message: typeof frame.message === "string" ? frame.message : undefined };
+  return null;
 }
 
 function parseTerminalSeq(value: unknown): number | undefined {

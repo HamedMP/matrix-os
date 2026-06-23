@@ -44,6 +44,15 @@ export default function TerminalScreen() {
   const connectingRef = useRef(false);
   const outputRef = useRef<ScrollView | null>(null);
   const inputRef = useRef<TextInput | null>(null);
+  const cursorRef = useRef<{
+    activeSessionId: string | null;
+    lastSeq: number | null;
+    nextSeq: number | null;
+  }>({
+    activeSessionId: null,
+    lastSeq: null,
+    nextSeq: null,
+  });
 
   const cols = Math.max(40, Math.floor(width / (8 * state.fontScale)));
   const rows = Math.max(18, Math.floor(height / (18 * state.fontScale)));
@@ -81,6 +90,14 @@ export default function TerminalScreen() {
       connectionRef.current?.resize(cols, rows);
     }
   }, [cols, rows, state.status]);
+
+  useEffect(() => {
+    cursorRef.current = {
+      activeSessionId: state.activeSessionId,
+      lastSeq: state.lastSeq,
+      nextSeq: state.nextSeq,
+    };
+  }, [state.activeSessionId, state.lastSeq, state.nextSeq]);
 
   useEffect(() => {
     outputRef.current?.scrollToEnd({ animated: true });
@@ -143,10 +160,14 @@ export default function TerminalScreen() {
 
     let nextConnection: MobileTerminalConnection | null = null;
     try {
+      const cursor = cursorRef.current;
+      const replayFromSeq = sessionId && sessionId === cursor.activeSessionId
+        ? cursor.nextSeq ?? nextSeqFromLastSeq(cursor.lastSeq)
+        : undefined;
       nextConnection = await terminalClient.connect({
         sessionId,
         cwd: sessionId ? undefined : "projects",
-        fromSeq: sessionId && sessionId === state.activeSessionId ? (state.nextSeq ?? undefined) : undefined,
+        fromSeq: replayFromSeq,
         cols,
         rows,
         onMessage: (frame) => {
@@ -180,7 +201,7 @@ export default function TerminalScreen() {
         connectingRef.current = false;
       }
     }
-  }, [cols, handleFrame, rows, state.activeSessionId, state.nextSeq, terminalClient]);
+  }, [cols, handleFrame, rows, terminalClient]);
 
   const sendData = useCallback((data: string) => {
     if (!data) return;
@@ -320,6 +341,12 @@ export default function TerminalScreen() {
       />
     </KeyboardAvoidingView>
   );
+}
+
+function nextSeqFromLastSeq(lastSeq: number | null): number | undefined {
+  if (lastSeq === null || !Number.isSafeInteger(lastSeq) || lastSeq < 0) return undefined;
+  if (lastSeq >= Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER;
+  return lastSeq + 1;
 }
 
 interface TerminalHeaderProps {
