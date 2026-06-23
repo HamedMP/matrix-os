@@ -700,9 +700,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
 
-  // Match the padding around the xterm to the active terminal theme so the
-  // user never sees a colored seam between the OS theme bg and the xterm
-  // bg. Falls back to the desktop theme bg when "Match OS" is selected.
+  // Keep shell-controlled terminal surfaces aligned with the active terminal
+  // theme. Falls back to the desktop theme when "Match OS" is selected.
   const terminalPreset = themeId === "system" ? null : getTerminalThemePreset(themeId);
   const terminalBackground =
     themeId === "system"
@@ -1299,8 +1298,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
             <div
               className="flex-1 min-w-0 min-h-0 flex"
               style={{
-                padding: mobile ? "0" : "20px",
-                background: "#1C2019",
+                padding: 0,
+                background: terminalBackground,
                 minHeight: mobile ? 0 : undefined,
               }}
             >

@@ -12,7 +12,7 @@ const { saveThemeSpy } = vi.hoisted(() => ({
 vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
   PaneGrid: (props: unknown) => {
     paneGridSpy(props);
-    return null;
+    return <div data-testid="terminal-pane-grid" />;
   },
 }));
 
@@ -148,6 +148,21 @@ describe("TerminalApp", () => {
       type: "pane",
       sessionId: "canvas-session-123",
     });
+  });
+
+  it("renders the desktop terminal pane grid flush without an inset content frame", async () => {
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const paneGrid = screen.getByTestId("terminal-pane-grid");
+    const contentSurface = paneGrid.parentElement?.parentElement;
+
+    expect(contentSurface).toBeInstanceOf(HTMLElement);
+    expect((contentSurface as HTMLElement).style.padding).toBe("0px");
   });
 
   it("does not immediately save after hydrating a saved terminal layout", async () => {
