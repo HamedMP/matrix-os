@@ -33,8 +33,11 @@ describe("www landing team page", () => {
     expect(page).toContain("Hamed Mohammadpour");
     expect(page).toContain("CEO & Co-Founder");
     expect(page).toContain("/images/team/posthog-logo.png");
+    expect(page).toContain('href: "https://posthog.com/"');
     expect(page).toContain("/images/team/newly-logo.jpg");
+    expect(page).toContain('href: "https://newly.app/"');
     expect(page).toContain("/images/team/kth-logo.svg");
+    expect(page).toContain('href: "https://www.kth.se/"');
     expect(page).toContain("https://www.linkedin.com/in/hamedmohammadpour/");
     expect(page).toContain("https://x.com/thehamedmp");
     expect(page).toContain("PostHog and Newly");
@@ -42,10 +45,14 @@ describe("www landing team page", () => {
     expect(page).toContain("Nima Naderi");
     expect(page).toContain("CTO & Co-Founder");
     expect(page).toContain("/images/team/bending-spoons-logo.svg");
+    expect(page).toContain('href: "https://www.bendingspoons.com/"');
     expect(page).toContain("/images/team/polito-logo.png");
+    expect(page).toContain('href: "https://www.polito.it/en"');
     expect(page).toContain("/images/team/ioi-logo.png");
+    expect(page).toContain('href: "https://ioinformatics.org/"');
     expect(page).toContain("https://www.linkedin.com/in/nima-naderi04/");
     expect(page).toContain("https://x.com/NimaNaderi2004");
+    expect(page).toContain("aria-label={`${logo.alt} website`}");
     expect(page).toContain("function XLogoIcon");
     expect(page).not.toContain("XIcon");
     expect(page).toContain("Olympiad gold-medal problem solving");

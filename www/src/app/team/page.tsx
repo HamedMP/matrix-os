@@ -24,9 +24,30 @@ const founders = [
     role: "CEO & Co-Founder",
     bio: "Hamed brings product and machine-learning instincts from PostHog and Newly, with a Machine Learning Engineering background from KTH. He focuses on making Matrix OS useful in real workflows: clear, fast, and grounded in how people actually build.",
     logos: [
-      { src: "/images/team/posthog-logo.png", alt: "PostHog", width: 120, height: 23, className: "h-7 w-auto max-w-40" },
-      { src: "/images/team/newly-logo.jpg", alt: "Newly", width: 56, height: 56, className: "h-12 w-auto rounded-[4px] max-w-14" },
-      { src: "/images/team/kth-logo.svg", alt: "KTH", width: 63, height: 70, className: "h-12 w-auto max-w-20" },
+      {
+        src: "/images/team/posthog-logo.png",
+        alt: "PostHog",
+        href: "https://posthog.com/",
+        width: 120,
+        height: 23,
+        className: "h-7 w-auto max-w-40",
+      },
+      {
+        src: "/images/team/newly-logo.jpg",
+        alt: "Newly",
+        href: "https://newly.app/",
+        width: 56,
+        height: 56,
+        className: "h-12 w-auto rounded-[4px] max-w-14",
+      },
+      {
+        src: "/images/team/kth-logo.svg",
+        alt: "KTH",
+        href: "https://www.kth.se/",
+        width: 63,
+        height: 70,
+        className: "h-12 w-auto max-w-20",
+      },
     ],
     linkedin: "https://www.linkedin.com/in/hamedmohammadpour/",
     x: "https://x.com/thehamedmp",
@@ -36,9 +57,30 @@ const founders = [
     role: "CTO & Co-Founder",
     bio: "Nima brings product engineering experience from Bending Spoons, a Computer Engineering background from Polito, and Olympiad gold-medal problem solving. He focuses on the technical foundation of Matrix OS: reliable systems, polished interfaces, and the details that make AI feel native.",
     logos: [
-      { src: "/images/team/ioi-logo.png", alt: "International Olympiad in Informatics", width: 78, height: 78, className: "h-16 w-auto max-w-20" },
-      { src: "/images/team/bending-spoons-logo.svg", alt: "Bending Spoons", width: 198, height: 80, className: "h-12 w-auto max-w-56" },
-      { src: "/images/team/polito-logo.png", alt: "Politecnico di Torino", width: 182, height: 80, className: "h-10 w-auto max-w-44" },
+      {
+        src: "/images/team/ioi-logo.png",
+        alt: "International Olympiad in Informatics",
+        href: "https://ioinformatics.org/",
+        width: 78,
+        height: 78,
+        className: "h-16 w-auto max-w-20",
+      },
+      {
+        src: "/images/team/bending-spoons-logo.svg",
+        alt: "Bending Spoons",
+        href: "https://www.bendingspoons.com/",
+        width: 198,
+        height: 80,
+        className: "h-12 w-auto max-w-56",
+      },
+      {
+        src: "/images/team/polito-logo.png",
+        alt: "Politecnico di Torino",
+        href: "https://www.polito.it/en",
+        width: 182,
+        height: 80,
+        className: "h-10 w-auto max-w-44",
+      },
     ],
     linkedin: "https://www.linkedin.com/in/nima-naderi04/",
     x: "https://x.com/NimaNaderi2004",
@@ -139,14 +181,26 @@ export default function TeamPage() {
                     </p>
                     <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-3">
                       {founder.logos.map((logo) => (
-                        <Image
+                        <a
                           key={logo.src}
-                          src={logo.src}
-                          alt={logo.alt}
-                          width={logo.width}
-                          height={logo.height}
-                          className={`object-contain ${logo.className}`}
-                        />
+                          href={logo.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`${logo.alt} website`}
+                          className="inline-flex items-center transition hover:-translate-y-0.5 hover:opacity-75 focus:outline-none focus:ring-2 focus:ring-offset-4"
+                          style={{
+                            ["--tw-ring-color" as string]: c.forest,
+                            ["--tw-ring-offset-color" as string]: c.pageBg,
+                          }}
+                        >
+                          <Image
+                            src={logo.src}
+                            alt={logo.alt}
+                            width={logo.width}
+                            height={logo.height}
+                            className={`object-contain ${logo.className}`}
+                          />
+                        </a>
                       ))}
                     </div>
                   </article>
