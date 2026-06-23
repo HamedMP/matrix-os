@@ -154,6 +154,35 @@ describe("TerminalsTab", () => {
     await waitFor(() => expect(screen.getByText("Terminal matrix-other")).toBeTruthy());
   });
 
+  it("keeps a newer rename editor open when another shell rename finishes", async () => {
+    const renameResult = deferred<boolean>();
+    const rename = vi.fn().mockReturnValue(renameResult.promise);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-main", status: "active", placement: "active" },
+        { name: "matrix-other", status: "active", placement: "active" },
+      ],
+      rename,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-other/i }));
+
+    await act(async () => {
+      renameResult.resolve(true);
+      await renameResult.promise;
+    });
+
+    await waitFor(() => {
+      expect((screen.getByRole("textbox", { name: /shell name/i }) as HTMLInputElement).value).toBe("matrix-other");
+    });
+  });
+
   it("requires confirmation before deleting a shell", async () => {
     const deleteSession = vi.fn().mockResolvedValue(true);
     useShellSessions.setState({

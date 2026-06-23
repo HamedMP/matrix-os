@@ -125,6 +125,8 @@ export default function TerminalsTab() {
   const selected = selectedShell?.name ?? null;
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
+  const renamingNameRef = useRef<string | null>(null);
+  renamingNameRef.current = renamingName;
 
   const createShell = async () => {
     if (!api || creating) return;
@@ -181,21 +183,22 @@ export default function TerminalsTab() {
 
   const commitRename = async () => {
     if (!api || !renamingName) return;
+    const originalName = renamingName;
     const nextName = renameDraft.trim();
     if (!isValidShellSessionName(nextName)) {
       setRenameError(RENAME_HELP);
       return;
     }
-    setBusyName(renamingName);
-    const ok = await rename(api, renamingName, nextName);
+    setBusyName(originalName);
+    const ok = await rename(api, originalName, nextName);
     setBusyName(null);
     if (!ok) {
-      setRenameError("Could not rename shell");
+      if (renamingNameRef.current === originalName) setRenameError("Could not rename shell");
       return;
     }
-    if (selectedRef.current === renamingName) setSelectedName(nextName);
-    setRenamingName(null);
-    setRenameError(null);
+    if (selectedRef.current === originalName) setSelectedName(nextName);
+    setRenamingName((current) => (current === originalName ? null : current));
+    if (renamingNameRef.current === originalName) setRenameError(null);
   };
 
   const confirmDelete = async () => {
