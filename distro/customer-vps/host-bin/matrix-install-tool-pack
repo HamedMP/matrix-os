@@ -105,11 +105,11 @@ with_pack_lock() {
       log "${pack} install is already running"
       return 75
     fi
-    local status=0
-    if ! "$@"; then
-      status=$?
-    fi
+    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT RETURN
+    "$@"
+    local status=$?
     rmdir "$lock_dir" 2>/dev/null || true
+    trap - EXIT RETURN
     return "$status"
   fi
   exec 9>"$lock_path"
