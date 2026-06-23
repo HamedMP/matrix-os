@@ -597,8 +597,7 @@ export function getAuthPage(
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              runtime: requestedRuntime || undefined,
-              developerTools: defaultDeveloperTools
+              runtime: requestedRuntime || undefined
             }),
             credentials: 'same-origin',
             signal: controller.signal

@@ -15,7 +15,6 @@ import { Settings } from "./Settings";
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 const CHECKOUT_ATTEMPT_STORAGE_KEY = "matrix.billing.checkoutAttemptAt";
 const CHECKOUT_ATTEMPT_MAX_AGE_MS = 30 * 60 * 1000;
-const DEFAULT_DEVELOPER_TOOLS = ["codex", "claude-code", "opencode", "pi"] as const;
 const DEFAULT_SIGN_IN_URL = "https://matrix-os.com/login";
 const DEVICE_SETUP_POLL_MS = 8_000;
 const DEVICE_SETUP_MAX_POLLS = 60;
@@ -370,7 +369,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         method: "POST",
         credentials: "include",
         headers: await authHeaders(),
-        body: JSON.stringify({ developerTools: DEFAULT_DEVELOPER_TOOLS }),
+        body: JSON.stringify({}),
       });
       if (disposed) return;
       if (!provisionResponse.ok && provisionResponse.status !== 409) {
