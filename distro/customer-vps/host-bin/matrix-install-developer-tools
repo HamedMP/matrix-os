@@ -16,13 +16,27 @@ log() {
 
 link_tool() {
   local tool="$1"
-  local bin_name="$tool"
-  if [ "$tool" = "claude-code" ]; then
-    bin_name="claude"
-  fi
+  local bin_name
+  bin_name="$(tool_bin_name "$tool")"
   if [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]; then
     ln -sf "/opt/matrix/runtime/node/bin/${bin_name}" "/usr/local/bin/${bin_name}"
   fi
+}
+
+tool_bin_name() {
+  local tool="$1"
+  if [ "$tool" = "claude-code" ]; then
+    printf 'claude\n'
+    return
+  fi
+  printf '%s\n' "$tool"
+}
+
+is_tool_installed() {
+  local tool="$1"
+  local bin_name
+  bin_name="$(tool_bin_name "$tool")"
+  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]
 }
 
 mkdir -p "$STATE_DIR"
@@ -38,6 +52,11 @@ for tool in $TOOLS; do
       continue
       ;;
   esac
+
+  if is_tool_installed "$tool"; then
+    log "optional developer tool ${tool} already installed; skipping"
+    continue
+  fi
 
   log "installing optional developer tool ${tool}"
   if /opt/matrix/bin/matrix-install-tool-pack "$tool" >>"$STATE_DIR/${tool}.log" 2>&1; then

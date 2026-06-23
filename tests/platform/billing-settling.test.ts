@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import {
   getLatestCheckoutAttempt,
+  getSettlingCheckoutAttempt,
   insertCheckoutAttempt,
   resolveCheckoutAttempt,
   sweepStaleCheckoutAttempts,
@@ -105,6 +106,30 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
     await sendWebhook(app, { id: 'evt_y', type: 'checkout.session.completed', created: 1_750_000_100, data: { object: { id: 'cs_live_1' } } });
     // First terminal status wins; the later completed event must not flip expired->paid.
     expect((await getLatestCheckoutAttempt(db, 'user_123'))?.status).toBe('expired');
+  });
+
+  it('settling checkout attempts prefer paid selections over newer open selections', async () => {
+    await insertCheckoutAttempt(db, {
+      id: 'paid-tools',
+      clerkUserId: 'user_123',
+      stripeSessionId: 'cs_paid_tools',
+      status: 'paid',
+      createdAt: '2026-06-11T11:55:00.000Z',
+      developerTools: ['claude-code'],
+    });
+    await insertCheckoutAttempt(db, {
+      id: 'open-tools',
+      clerkUserId: 'user_123',
+      stripeSessionId: 'cs_open_tools',
+      status: 'open',
+      createdAt: '2026-06-11T11:59:00.000Z',
+      developerTools: ['opencode', 'pi'],
+    });
+
+    const attempt = await getSettlingCheckoutAttempt(db, 'user_123');
+
+    expect(attempt?.stripeSessionId).toBe('cs_paid_tools');
+    expect(attempt?.developerTools).toEqual(['claude-code']);
   });
 
   it('sweeps a stale open attempt to abandoned', async () => {

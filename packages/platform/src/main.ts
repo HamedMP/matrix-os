@@ -29,7 +29,7 @@ import {
   getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
   getBillingEntitlementState,
-  getLatestCheckoutAttempt,
+  getSettlingCheckoutAttempt,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
   listActiveUserMachinesByClerkId,
@@ -2655,7 +2655,7 @@ export function createApp(deps: {
       }
       const checkoutAttempt = parsed.data.developerTools
         ? null
-        : await getLatestCheckoutAttempt(db, result.userId);
+        : await getSettlingCheckoutAttempt(db, result.userId);
       const developerTools = parsed.data.developerTools ?? (
         checkoutAttempt &&
         (checkoutAttempt.status === 'paid' || checkoutAttempt.status === 'open')

@@ -148,6 +148,9 @@ describe('customer VPS host bundle', () => {
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
     expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
     expect(unit).toContain('Restart=on-failure');
+    expect(installer).toContain('is_tool_installed()');
+    expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
+    expect(installer).toContain('optional developer tool ${tool} already installed; skipping');
     expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
     expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
   });

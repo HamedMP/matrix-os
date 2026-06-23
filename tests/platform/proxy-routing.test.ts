@@ -2001,7 +2001,7 @@ describe("platform proxy routing", () => {
     });
   });
 
-  it("falls back to latest checkout-attempt developer tools when provisioning after payment", async () => {
+  it("falls back to settling checkout-attempt developer tools when provisioning after payment", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
     await insertCheckoutAttempt(db, {
@@ -2011,6 +2011,14 @@ describe("platform proxy routing", () => {
       status: "paid",
       createdAt: "2026-06-23T12:00:00.000Z",
       developerTools: ["claude-code"],
+    });
+    await insertCheckoutAttempt(db, {
+      id: "attempt_tools_newer_open",
+      clerkUserId: "user_paid_tools",
+      stripeSessionId: "cs_open_tools",
+      status: "open",
+      createdAt: "2026-06-23T12:05:00.000Z",
+      developerTools: ["opencode", "pi"],
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
