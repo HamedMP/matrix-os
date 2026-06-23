@@ -154,6 +154,31 @@ describe("TerminalsTab", () => {
     await waitFor(() => expect(screen.getByText("Terminal matrix-other")).toBeTruthy());
   });
 
+  it("updates already-open terminal tabs after shell rename", async () => {
+    const rename = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      rename,
+    });
+    useTabs.setState({
+      tabs: [{ id: "tab-main", kind: "terminal", title: "matrix-main", sessionName: "matrix-main", closable: true }],
+      activeTabId: "tab-main",
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(rename).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", "matrix-dev"));
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      title: "matrix-dev",
+      sessionName: "matrix-dev",
+    });
+  });
+
   it("keeps a newer rename editor open when another shell rename finishes", async () => {
     const renameResult = deferred<boolean>();
     const rename = vi.fn().mockReturnValue(renameResult.promise);

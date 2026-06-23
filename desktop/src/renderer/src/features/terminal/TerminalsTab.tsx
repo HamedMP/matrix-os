@@ -74,6 +74,7 @@ export default function TerminalsTab() {
   const patchUiState = useShellSessions((s) => s.patchUiState);
   const tabs = useTabs((s) => s.tabs);
   const openTab = useTabs((s) => s.openTab);
+  const renameTerminalSession = useTabs((s) => s.renameTerminalSession);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [busyNames, setBusyNames] = useState<string[]>([]);
@@ -209,6 +210,7 @@ export default function TerminalsTab() {
       if (renamingNameRef.current === originalName) setRenameError("Could not rename shell");
       return;
     }
+    renameTerminalSession(originalName, nextName);
     if (selectedRef.current === originalName) setSelectedName(nextName);
     setRenamingName((current) => (current === originalName ? null : current));
     if (renamingNameRef.current === originalName) setRenameError(null);

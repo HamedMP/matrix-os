@@ -198,4 +198,34 @@ describe("useShellSessions", () => {
       lastSeenSeq: 1,
     });
   });
+
+  it("does not undo another shell's successful placement when one placement rollback fails", async () => {
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-one", status: "active", placement: "active" },
+        { name: "matrix-two", status: "active", placement: "active" },
+      ],
+    });
+    const firstPatch = deferred<{ session?: unknown }>();
+    const patch = vi.fn((path: string) => {
+      if (path === "/api/terminal/sessions/matrix-one/ui-state") return firstPatch.promise;
+      return Promise.resolve({ session: { name: "matrix-two", status: "active", placement: "background" } });
+    });
+
+    const firstMove = useShellSessions.getState().patchUiState(makeApi({ patch }), "matrix-one", {
+      placement: "background",
+    });
+    const secondMove = await useShellSessions.getState().patchUiState(makeApi({ patch }), "matrix-two", {
+      placement: "background",
+    });
+    firstPatch.reject(new AppError("timeout"));
+    const firstOk = await firstMove;
+
+    expect(firstOk).toBe(false);
+    expect(secondMove).toBe(true);
+    expect(useShellSessions.getState().sessions).toEqual([
+      { name: "matrix-one", status: "active", placement: "active" },
+      { name: "matrix-two", status: "active", placement: "background" },
+    ]);
+  });
 });

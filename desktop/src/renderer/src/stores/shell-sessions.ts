@@ -147,6 +147,52 @@ function moveSession(sessions: ShellSessionSummary[], fromName: string, toName: 
   return next;
 }
 
+function insertSessionAt(sessions: ShellSessionSummary[], session: ShellSessionSummary, index: number): ShellSessionSummary[] {
+  if (sessions.some((entry) => entry.name === session.name)) return sessions;
+  const next = [...sessions];
+  next.splice(Math.max(0, Math.min(index, next.length)), 0, session);
+  return next;
+}
+
+function rollbackRename(
+  sessions: ShellSessionSummary[],
+  original: ShellSessionSummary,
+  originalIndex: number,
+  optimisticName: string,
+): ShellSessionSummary[] {
+  if (sessions.some((session) => session.name === original.name)) return sessions;
+  const optimisticIndex = sessions.findIndex((session) => session.name === optimisticName);
+  if (optimisticIndex < 0) return insertSessionAt(sessions, original, originalIndex);
+  return sessions.map((session, index) => (index === optimisticIndex ? original : session));
+}
+
+function rollbackOrder(current: ShellSessionSummary[], previousOrder: ShellSessionSummary[]): ShellSessionSummary[] {
+  const restored = previousOrder.flatMap((session) => {
+    const currentSession = current.find((entry) => entry.name === session.name);
+    return currentSession ? [currentSession] : [];
+  });
+  const additions = current.filter((session) => !previousOrder.some((entry) => entry.name === session.name));
+  return [...restored, ...additions];
+}
+
+function rollbackUiPatch(
+  current: ShellSessionSummary[],
+  name: string,
+  previous: ShellSessionSummary,
+  optimisticPatch: ShellUiStatePatch,
+): ShellSessionSummary[] {
+  return current.map((session) => {
+    if (session.name !== name) return session;
+    let restored: ShellSessionSummary = session;
+    for (const key of Object.keys(optimisticPatch) as Array<keyof ShellUiStatePatch>) {
+      if (Object.is(session[key], optimisticPatch[key])) {
+        restored = { ...restored, [key]: previous[key] };
+      }
+    }
+    return deriveUnread(restored);
+  });
+}
+
 async function fetchShellSessions(api: ApiClient): Promise<ShellSessionSummary[]> {
   const response = await api.get<{ sessions: unknown }>("/api/terminal/sessions");
   return parseShellSessions(response.sessions);
@@ -217,7 +263,8 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
 
   deleteSession: async (api, name) => {
     const previous = get().sessions;
-    const deleted = previous.find((session) => session.name === name);
+    const deletedIndex = previous.findIndex((session) => session.name === name);
+    const deleted = deletedIndex >= 0 ? previous[deletedIndex] : undefined;
     set({ sessions: previous.filter((session) => session.name !== name), error: null });
     try {
       await api.delete(`/api/terminal/sessions/${encodeURIComponent(name)}?force=1`);
@@ -225,7 +272,7 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
     } catch (err: unknown) {
       console.error("[shell-sessions] Failed to delete shell session:", err);
       set((state) => ({
-        sessions: deleted && !state.sessions.some((session) => session.name === name) ? previous : state.sessions,
+        sessions: deleted ? insertSessionAt(state.sessions, deleted, deletedIndex) : state.sessions,
         error: errorCategory(err),
       }));
       return false;
@@ -240,6 +287,8 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       return false;
     }
     const previous = get().sessions;
+    const originalIndex = previous.findIndex((session) => session.name === name);
+    const original = originalIndex >= 0 ? previous[originalIndex] : undefined;
     set({
       sessions: previous.map((session) => (session.name === name ? optimisticRename(session, nextName) : session)),
       error: null,
@@ -256,7 +305,10 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       return true;
     } catch (err: unknown) {
       console.error("[shell-sessions] Failed to rename shell session:", err);
-      set({ sessions: previous, error: errorCategory(err) });
+      set((state) => ({
+        sessions: original ? rollbackRename(state.sessions, original, originalIndex, nextName) : state.sessions,
+        error: errorCategory(err),
+      }));
       return false;
     }
   },
@@ -276,13 +328,14 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       return true;
     } catch (err: unknown) {
       console.error("[shell-sessions] Failed to reorder shell sessions:", err);
-      set({ sessions: previous, error: errorCategory(err) });
+      set((state) => ({ sessions: rollbackOrder(state.sessions, previous), error: errorCategory(err) }));
       return false;
     }
   },
 
   patchUiState: async (api, name, patch) => {
     const previous = get().sessions;
+    const previousSession = previous.find((session) => session.name === name);
     set({
       sessions: previous.map((session) => (session.name === name ? applyUiPatch(session, patch) : session)),
       error: null,
@@ -299,7 +352,10 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
       return true;
     } catch (err: unknown) {
       console.error("[shell-sessions] Failed to update shell session UI state:", err);
-      set({ sessions: previous, error: errorCategory(err) });
+      set((state) => ({
+        sessions: previousSession ? rollbackUiPatch(state.sessions, name, previousSession, patch) : state.sessions,
+        error: errorCategory(err),
+      }));
       return false;
     }
   },
