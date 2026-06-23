@@ -26,6 +26,7 @@ interface ShellSessionsState {
   loading: boolean;
   creating: boolean;
   error: AppErrorCategory | null;
+  loadSequence: number;
   load(api: ApiClient): Promise<void>;
   create(api: ApiClient): Promise<ShellSessionSummary | null>;
   deleteSession(api: ApiClient, name: string): Promise<boolean>;
@@ -34,11 +35,9 @@ interface ShellSessionsState {
   patchUiState(api: ApiClient, name: string, patch: ShellUiStatePatch): Promise<boolean>;
 }
 
-const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
 const DEFAULT_CWD = "projects";
 const CREATE_ATTEMPTS = 3;
-
-let loadSequence = 0;
 
 export function isValidShellSessionName(name: string): boolean {
   return SHELL_SESSION_NAME_PATTERN.test(name);
@@ -158,16 +157,17 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
   loading: false,
   creating: false,
   error: null,
+  loadSequence: 0,
 
   load: async (api) => {
-    const sequence = ++loadSequence;
-    set({ loading: true, error: null });
+    const sequence = get().loadSequence + 1;
+    set({ loading: true, error: null, loadSequence: sequence });
     try {
       const sessions = await fetchShellSessions(api);
-      if (sequence !== loadSequence) return;
+      if (sequence !== get().loadSequence) return;
       set({ sessions, loading: false, error: null });
     } catch (err: unknown) {
-      if (sequence !== loadSequence) return;
+      if (sequence !== get().loadSequence) return;
       console.error("[shell-sessions] Failed to load shell sessions:", err);
       set({ loading: false, error: errorCategory(err) });
     }

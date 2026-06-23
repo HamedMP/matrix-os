@@ -217,4 +217,27 @@ describe("TerminalsTab", () => {
       }),
     );
   });
+
+  it("does not open a native terminal tab when making a shell active fails", async () => {
+    const openTab = vi.fn();
+    const patchUiState = vi.fn().mockResolvedValue(false);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "background", latestSeq: 8 }],
+      patchUiState,
+    });
+    useTabs.setState({ openTab });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /make matrix-main active/i }));
+
+    await waitFor(() =>
+      expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", {
+        placement: "active",
+        lastSeenSeq: 8,
+      }),
+    );
+    expect(openTab).not.toHaveBeenCalled();
+    expect(await screen.findByText("Could not update shell")).toBeTruthy();
+  });
 });

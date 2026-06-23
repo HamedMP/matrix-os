@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
-import { useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
+import { isValidShellSessionName, useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
 
 function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
@@ -17,6 +17,16 @@ function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   } as ApiClient;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   useShellSessions.setState(useShellSessions.getInitialState(), true);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -27,6 +37,17 @@ afterEach(() => {
 });
 
 describe("useShellSessions", () => {
+  it("validates shell names with gateway-compatible boundaries", () => {
+    expect(isValidShellSessionName("m")).toBe(true);
+    expect(isValidShellSessionName("matrix-1")).toBe(true);
+    expect(isValidShellSessionName("matrix-")).toBe(false);
+    expect(isValidShellSessionName("-matrix")).toBe(false);
+    expect(isValidShellSessionName("Matrix")).toBe(false);
+    expect(isValidShellSessionName("matrix_shell")).toBe(false);
+    expect(isValidShellSessionName("a".repeat(31))).toBe(true);
+    expect(isValidShellSessionName("a".repeat(32))).toBe(false);
+  });
+
   it("loads only canonical shell sessions from /api/terminal/sessions", async () => {
     const get = vi.fn(async (path: string) => {
       if (path === "/api/terminal/sessions") {
@@ -60,6 +81,28 @@ describe("useShellSessions", () => {
     expect(get).toHaveBeenCalledWith("/api/terminal/sessions");
     expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-main"]);
     expect(useShellSessions.getState().sessions[0]?.tabs).toEqual([{ idx: 0, name: "main", focused: true }]);
+  });
+
+  it("ignores stale load results with a resettable store sequence", async () => {
+    const staleResponse = deferred<{ sessions: Array<{ name: string }> }>();
+    const get = vi
+      .fn()
+      .mockReturnValueOnce(staleResponse.promise)
+      .mockResolvedValueOnce({ sessions: [{ name: "matrix-fresh" }] });
+
+    const staleLoad = useShellSessions.getState().load(makeApi({ get }));
+    await useShellSessions.getState().load(makeApi({ get }));
+    staleResponse.resolve({ sessions: [{ name: "matrix-stale" }] });
+    await staleLoad;
+
+    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-fresh"]);
+
+    useShellSessions.setState(useShellSessions.getInitialState(), true);
+    await useShellSessions.getState().load(makeApi({
+      get: vi.fn().mockResolvedValue({ sessions: [{ name: "matrix-reset" }] }),
+    }));
+
+    expect(useShellSessions.getState().sessions.map((session) => session.name)).toEqual(["matrix-reset"]);
   });
 
   it("creates shell sessions with matrix names, projects cwd, and retries one 409 conflict", async () => {

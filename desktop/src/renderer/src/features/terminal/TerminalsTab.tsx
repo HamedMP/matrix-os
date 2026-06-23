@@ -31,7 +31,7 @@ interface ShellGroup {
   shells: ShellSessionSummary[];
 }
 
-const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start with a letter or number.";
+const RENAME_HELP = "Use lowercase letters, numbers, and hyphens. Start and end with a letter or number.";
 
 function attachCommand(shell: ShellSessionSummary): string {
   return shell.attachCommand ?? `matrix shell connect ${shell.name}`;
@@ -152,7 +152,7 @@ export default function TerminalsTab() {
       : { placement };
     const ok = await patchUiState(api, shell.name, patch);
     if (!ok) setActionError("Could not update shell");
-    if (placement === "active") openShell(shell);
+    if (placement === "active" && ok) openShell(shell);
     setBusyName(null);
   };
 
