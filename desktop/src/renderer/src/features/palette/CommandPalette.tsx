@@ -2,10 +2,9 @@ import { Command } from "cmdk";
 import { useEffect } from "react";
 import { Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
-import { friendlySessionName } from "../../lib/session-name";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
-import { useSessions } from "../../stores/sessions";
+import { useShellSessions } from "../../stores/shell-sessions";
 import { useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
@@ -23,7 +22,8 @@ export default function CommandPalette() {
   const activeSlug = useBoard((s) => s.activeProjectSlug);
   const projects = useBoard((s) => s.projects);
   const cardsByProject = useBoard((s) => s.cardsByProject);
-  const sessions = useSessions((s) => s.sessions);
+  const shellSessions = useShellSessions((s) => s.sessions);
+  const loadShellSessions = useShellSessions((s) => s.load);
   const apps = useApps((s) => s.apps);
   const appsError = useApps((s) => s.error);
   const loadApps = useApps((s) => s.load);
@@ -34,6 +34,10 @@ export default function CommandPalette() {
   useEffect(() => {
     if (open && api) void loadApps(api, Boolean(appsError));
   }, [open, api, appsError, loadApps]);
+
+  useEffect(() => {
+    if (open && api) void loadShellSessions(api);
+  }, [open, api, loadShellSessions]);
 
   if (!open) return null;
 
@@ -47,6 +51,7 @@ export default function CommandPalette() {
 
   return (
     <div
+      role="presentation"
       className="fixed inset-0 z-50 flex items-start justify-center pt-[16vh]"
       style={{ background: "rgba(0,0,0,0.45)" }}
       onMouseDown={(e) => {
@@ -129,17 +134,17 @@ export default function CommandPalette() {
             </Command.Group>
           ) : null}
 
-          {sessions.length > 0 ? (
+          {shellSessions.length > 0 ? (
             <Command.Group heading="Sessions" style={{ color: "var(--text-tertiary)" }}>
-              {sessions.slice(0, 20).map((session) => {
-                const label = friendlySessionName(session.attachName);
+              {shellSessions.slice(0, 20).map((session) => {
+                const label = session.name;
                 return (
                   <PaletteItem
-                    key={session.attachName}
+                    key={session.name}
                     icon={<SquareTerminal size={14} />}
                     label={label}
                     onSelect={() =>
-                      run(() => openTab({ kind: "terminal", sessionName: session.attachName, title: label }))
+                      run(() => openTab({ kind: "terminal", sessionName: session.name, title: label }))
                     }
                   />
                 );
