@@ -75,6 +75,17 @@ async function chooseNewSessionMenuItem(name: RegExp | string) {
   await Promise.resolve();
 }
 
+async function chooseNewSessionMenuItemAfterStatus(name: RegExp | string) {
+  await openNewSessionMenu();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  const menu = screen.getByRole("menu", { name: "New session menu" });
+  fireEvent.click(within(menu).getByRole("menuitem", { name }));
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 function createDragDataTransfer(): DataTransfer {
   const data = new Map<string, string>();
   return {
@@ -2559,7 +2570,84 @@ describe("TerminalApp", () => {
     expect(screen.getByText("Failed to create shell")).toBeTruthy();
   });
 
-  it("starts Claude Code and Codex directly from the new-session menu", async () => {
+  it("renders agent install state in the new-session menu without ready badges", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: true, authState: "ok" },
+              { id: "codex", installed: true, authState: "ok" },
+              { id: "opencode", installed: false, authState: "unknown", errorCode: "agent_missing" },
+              { id: "pi", installed: false, authState: "unknown", errorCode: "agent_missing" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+    expect(within(menu).getByRole("menuitem", { name: /Shell/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Claude Code/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Codex/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /OpenCode.*Install/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Pi.*Install/ })).toBeTruthy();
+    expect(within(menu).queryByText("Ready")).toBeNull();
+    expect(within(menu).getAllByText("Install")).toHaveLength(2);
+  });
+
+  it("starts installed agents directly from the new-session menu", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: true, authState: "ok" },
+              { id: "codex", installed: true, authState: "ok" },
+              { id: "opencode", installed: true, authState: "ok" },
+              { id: "pi", installed: true, authState: "ok" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
     render(<TerminalApp />);
 
     await act(async () => {
@@ -2587,6 +2675,109 @@ describe("TerminalApp", () => {
       paneTree: {
         claudeMode: false,
         startupCommand: "codex",
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/^OpenCode$/);
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        claudeMode: false,
+        startupCommand: "opencode",
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/^Pi$/);
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        claudeMode: false,
+        startupCommand: "pi",
+      },
+    });
+  });
+
+  it("opens a new shell tab that runs the installer when an agent is missing", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: false, authState: "unknown", errorCode: "agent_missing" },
+              { id: "codex", installed: false, authState: "unknown", errorCode: "agent_missing" },
+              { id: "opencode", installed: false, authState: "unknown", errorCode: "agent_missing" },
+              { id: "pi", installed: false, authState: "unknown", errorCode: "agent_missing" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/Claude Code.*Install/);
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        claudeMode: false,
+        startupCommand: "/opt/matrix/bin/matrix-install-tool-pack claude-code",
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/Codex.*Install/);
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        claudeMode: false,
+        startupCommand: "/opt/matrix/bin/matrix-install-tool-pack codex",
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/OpenCode.*Install/);
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        claudeMode: false,
+        startupCommand: "/opt/matrix/bin/matrix-install-tool-pack opencode",
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/Pi.*Install/);
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        claudeMode: false,
+        startupCommand: "/opt/matrix/bin/matrix-install-tool-pack pi",
       },
     });
   });

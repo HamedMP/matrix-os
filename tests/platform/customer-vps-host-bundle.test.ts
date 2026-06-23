@@ -99,7 +99,11 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
     expect(installer).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors');
     expect(installer).toContain('sync-matrix-agent-skills.sh');
-    expect(installer).toContain('coding-agents|code-server|hermes|linux-tools|all');
+    expect(installer).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
+    expect(installer).toContain('claude-code) with_pack_lock "$pack" install_claude_code ;;');
+    expect(installer).toContain('codex) with_pack_lock "$pack" install_codex ;;');
+    expect(installer).toContain('opencode) with_pack_lock "$pack" install_opencode ;;');
+    expect(installer).toContain('pi) with_pack_lock "$pack" install_pi ;;');
     expect(installer).toContain('return 75');
     expect(installer).not.toContain('exit 0');
     expect(installer).toContain('systemctl start matrix-linux-tools.service');

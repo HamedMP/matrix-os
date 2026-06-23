@@ -27,7 +27,7 @@ log() {
 
 usage() {
   cat >&2 <<'EOF'
-Usage: matrix-install-tool-pack <coding-agents|code-server|hermes|linux-tools|all>
+Usage: matrix-install-tool-pack <claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all>
 EOF
 }
 
@@ -94,18 +94,51 @@ sync_agent_skills() {
   fi
 }
 
-install_coding_agents() {
-  log "installing coding agent CLIs"
+finish_agent_install() {
+  runtime_chmod
+  sync_agent_skills
+}
+
+install_claude_code() {
+  log "installing Claude Code CLI"
   run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
-    @anthropic-ai/claude-code@latest \
-    @openai/codex@latest \
+    @anthropic-ai/claude-code@latest
+  finish_agent_install
+  log "Claude Code CLI installed"
+}
+
+install_codex() {
+  log "installing Codex CLI"
+  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
+    @openai/codex@latest
+  finish_agent_install
+  log "Codex CLI installed"
+}
+
+install_opencode() {
+  log "installing OpenCode CLI"
+  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
     "opencode-ai@${OPENCODE_AI_VERSION}"
+  finish_agent_install
+  log "OpenCode CLI installed"
+}
+
+install_pi() {
+  log "installing Pi CLI"
   # Upstream Pi docs recommend --ignore-scripts; the package exposes pi via
   # bin -> dist/cli.js and does not use postinstall for binary acquisition.
   run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX" \
     "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
-  runtime_chmod
-  sync_agent_skills
+  finish_agent_install
+  log "Pi CLI installed"
+}
+
+install_coding_agents() {
+  log "installing coding agent CLIs"
+  install_claude_code
+  install_codex
+  install_opencode
+  install_pi
   log "coding agent CLIs installed"
 }
 
@@ -162,6 +195,10 @@ install_linux_tools() {
 
 pack="${1:-}"
 case "$pack" in
+  claude-code) with_pack_lock "$pack" install_claude_code ;;
+  codex) with_pack_lock "$pack" install_codex ;;
+  opencode) with_pack_lock "$pack" install_opencode ;;
+  pi) with_pack_lock "$pack" install_pi ;;
   coding-agents) with_pack_lock "$pack" install_coding_agents ;;
   code-server) with_pack_lock "$pack" install_code_server ;;
   hermes) with_pack_lock "$pack" install_hermes ;;

@@ -353,6 +353,11 @@ exit 99
     expect(toolPackInstaller).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(toolPackInstaller).toContain('"$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX"');
     expect(toolPackInstaller).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
+    expect(toolPackInstaller).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
+    expect(toolPackInstaller).toContain('claude-code) with_pack_lock "$pack" install_claude_code ;;');
+    expect(toolPackInstaller).toContain('codex) with_pack_lock "$pack" install_codex ;;');
+    expect(toolPackInstaller).toContain('opencode) with_pack_lock "$pack" install_opencode ;;');
+    expect(toolPackInstaller).toContain('pi) with_pack_lock "$pack" install_pi ;;');
     expect(toolPackInstaller).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(toolPackInstaller).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(toolPackInstaller).toContain('runtime/code-server');
