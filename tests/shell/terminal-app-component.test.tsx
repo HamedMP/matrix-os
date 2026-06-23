@@ -5,8 +5,24 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
 const paneGridSpy = vi.fn();
-const { saveThemeSpy } = vi.hoisted(() => ({
+const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
   saveThemeSpy: vi.fn(async () => {}),
+  terminalSettingsState: {
+    themeId: "system",
+    fontSize: 13,
+    fontFamily: "JetBrains Mono",
+    ligatures: true,
+    cursorStyle: "block",
+    smoothScroll: true,
+    cursorBlink: true,
+    setThemeId: vi.fn(),
+    setFontSize: vi.fn(),
+    setFontFamily: vi.fn(),
+    setLigatures: vi.fn(),
+    setCursorStyle: vi.fn(),
+    setSmoothScroll: vi.fn(),
+    setCursorBlink: vi.fn(),
+  },
 }));
 
 vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
@@ -28,24 +44,8 @@ vi.mock("@/hooks/useTheme", () => ({
 }));
 
 vi.mock("@/stores/terminal-settings", () => {
-  const state = {
-    themeId: "system",
-    fontSize: 13,
-    fontFamily: "JetBrains Mono",
-    ligatures: true,
-    cursorStyle: "block",
-    smoothScroll: true,
-    cursorBlink: true,
-    setThemeId: vi.fn(),
-    setFontSize: vi.fn(),
-    setFontFamily: vi.fn(),
-    setLigatures: vi.fn(),
-    setCursorStyle: vi.fn(),
-    setSmoothScroll: vi.fn(),
-    setCursorBlink: vi.fn(),
-  };
-  const useTerminalSettings = (selector: (value: typeof state) => unknown) => selector(state);
-  useTerminalSettings.getState = () => state;
+  const useTerminalSettings = (selector: (value: typeof terminalSettingsState) => unknown) => selector(terminalSettingsState);
+  useTerminalSettings.getState = () => terminalSettingsState;
 
   return {
     TERMINAL_FONT_FAMILIES: ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"],
@@ -110,6 +110,7 @@ describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
     saveThemeSpy.mockClear();
+    terminalSettingsState.themeId = "system";
     vi.useFakeTimers();
     vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -158,11 +159,28 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    const paneGrid = screen.getByTestId("terminal-pane-grid");
-    const contentSurface = paneGrid.parentElement?.parentElement;
+    expect(screen.getByTestId("terminal-pane-grid")).toBeTruthy();
+    const contentSurface = screen.getByTestId("terminal-content-surface");
 
     expect(contentSurface).toBeInstanceOf(HTMLElement);
-    expect((contentSurface as HTMLElement).style.padding).toBe("0px");
+    expect(contentSurface.style.padding).toBe("0px");
+    expect(contentSurface.style.background).toBe("rgb(28, 32, 25)");
+  });
+
+  it("uses the selected non-system terminal theme background for the flush content surface", async () => {
+    terminalSettingsState.themeId = "dark";
+
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const contentSurface = screen.getByTestId("terminal-content-surface");
+
+    expect(contentSurface.style.padding).toBe("0px");
+    expect(contentSurface.style.background).toBe("rgb(12, 12, 12)");
   });
 
   it("does not immediately save after hydrating a saved terminal layout", async () => {

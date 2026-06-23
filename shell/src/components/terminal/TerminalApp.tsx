@@ -1296,6 +1296,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           <LocalTerminalSidebar />
           {activeTab ? (
             <div
+              data-testid="terminal-content-surface"
               className="flex-1 min-w-0 min-h-0 flex"
               style={{
                 padding: 0,
