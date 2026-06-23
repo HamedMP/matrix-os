@@ -5,7 +5,7 @@ if [ -r /opt/matrix/env/host.env ]; then
   source /opt/matrix/env/host.env
 fi
 
-TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"
+TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"
 STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
 FAILED_FILE="$STATE_DIR/failed-tools"
 INSTALLED_FILE="$STATE_DIR/installed-tools"

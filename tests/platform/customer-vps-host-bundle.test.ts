@@ -141,12 +141,15 @@ describe('customer VPS host bundle', () => {
   it('packages an asynchronous developer tools first-boot service', () => {
     const root = process.cwd();
     const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-developer-tools.service'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
     expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
     expect(unit).toContain('Restart=on-failure');
+    expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
+    expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
   });
 
   it('owner env canonicalizes Hermes home and migrates legacy Hermes data', () => {

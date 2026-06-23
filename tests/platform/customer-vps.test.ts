@@ -119,6 +119,17 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS='codex pi'");
   });
 
+  it('preserves an intentional empty developer tool selection', async () => {
+    const { service, hetzner } = createService();
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice', developerTools: [] });
+
+    const row = await getActiveUserMachineByClerkId(db, 'user_123');
+    expect(row?.developerTools).toEqual([]);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS=''");
+  });
+
   it('uses the active billing entitlement server type when provisioning new machines', async () => {
     const { service, hetzner } = createService({
       resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
