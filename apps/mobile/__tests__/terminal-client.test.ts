@@ -119,6 +119,52 @@ describe("mobile terminal client", () => {
     expect((ws as unknown as MockWebSocket).closed).toBe(true);
   });
 
+  it("includes replay cursors in attach frames when resuming an existing session", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      fromSeq: 42,
+      onMessage: jest.fn(),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+
+    expect((ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "attach", sessionId: SESSION_ID, fromSeq: 42 },
+    ]);
+  });
+
+  it("normalizes gateway replay and exit frames for mobile state handling", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const messages: unknown[] = [];
+    const connection = new MobileTerminalConnection(ws, {
+      onMessage: (frame) => messages.push(frame),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "replay-start", fromSeq: 4 }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "output", data: "resumed\n", seq: 4 }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "replay-end", toSeq: 5 }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "exit", code: 7 }),
+    });
+
+    expect(messages).toEqual([
+      { type: "replay-start", fromSeq: 4 },
+      { type: "output", data: "resumed\n", seq: 4 },
+      { type: "replay-end", toSeq: 5 },
+      { type: "exit", exitCode: 7 },
+    ]);
+  });
+
   it("opens terminal sockets with browser-compatible query auth and native bearer headers", async () => {
     const webSocketMock = jest.fn().mockImplementation(() => new MockWebSocket());
     global.WebSocket = webSocketMock as unknown as typeof WebSocket;

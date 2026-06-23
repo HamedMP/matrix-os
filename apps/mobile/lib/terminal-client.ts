@@ -14,9 +14,9 @@ export type TerminalClientFrame =
 
 export type TerminalServerFrame =
   | { type: "attached"; sessionId: string; cwd?: string; replay?: string }
-  | { type: "output"; data: string }
+  | { type: "output"; data: string; seq?: number }
   | { type: "replay-start"; fromSeq?: number; toSeq?: number }
-  | { type: "replay-end"; nextSeq?: number }
+  | { type: "replay-end"; toSeq?: number }
   | { type: "exit"; exitCode?: number | null }
   | { type: "error"; message?: string };
 
@@ -139,16 +139,59 @@ export function buildTerminalWebSocketUrl(baseUrl: string, token?: string | null
 function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
   if (typeof data !== "string") return null;
   try {
-    const frame = JSON.parse(data) as TerminalServerFrame;
+    const frame = JSON.parse(data) as Record<string, unknown>;
     if (!frame || typeof frame !== "object" || typeof frame.type !== "string") return null;
-    if (frame.type === "attached" && typeof frame.sessionId === "string") return frame;
-    if (frame.type === "output" && typeof frame.data === "string") return frame;
-    if (frame.type === "replay-start" || frame.type === "replay-end" || frame.type === "exit") return frame;
+    if (frame.type === "attached" && typeof frame.sessionId === "string") {
+      return {
+        type: "attached",
+        sessionId: frame.sessionId,
+        cwd: typeof frame.cwd === "string" ? frame.cwd : undefined,
+        replay: typeof frame.replay === "string" ? frame.replay : undefined,
+      };
+    }
+    if (frame.type === "output" && typeof frame.data === "string") {
+      return {
+        type: "output",
+        data: frame.data,
+        seq: parseTerminalSeq(frame.seq),
+      };
+    }
+    if (frame.type === "replay-start") {
+      return {
+        type: "replay-start",
+        fromSeq: parseTerminalSeq(frame.fromSeq),
+        toSeq: parseTerminalSeq(frame.toSeq),
+      };
+    }
+    if (frame.type === "replay-end") {
+      return {
+        type: "replay-end",
+        toSeq: parseTerminalSeq(frame.toSeq),
+      };
+    }
+    if (frame.type === "exit") {
+      return {
+        type: "exit",
+        exitCode: parseTerminalExitCode(frame.exitCode ?? frame.code),
+      };
+    }
     if (frame.type === "error") return { type: "error", message: typeof frame.message === "string" ? frame.message : undefined };
     return null;
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof SyntaxError) return null;
     return null;
   }
+}
+
+function parseTerminalSeq(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return undefined;
+  return value;
+}
+
+function parseTerminalExitCode(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) return undefined;
+  return value;
 }
 
 function compactFrame<T extends Record<string, unknown>>(frame: T): T {

@@ -109,7 +109,11 @@ export default function TerminalScreen() {
       return;
     }
     if (frame.type === "output") {
-      dispatch({ type: "terminal.output", data: frame.data });
+      dispatch({ type: "terminal.output", data: frame.data, seq: frame.seq });
+      return;
+    }
+    if (frame.type === "replay-end") {
+      dispatch({ type: "terminal.replayFinished", toSeq: frame.toSeq });
       return;
     }
     if (frame.type === "exit") {
@@ -142,6 +146,7 @@ export default function TerminalScreen() {
       nextConnection = await terminalClient.connect({
         sessionId,
         cwd: sessionId ? undefined : "projects",
+        fromSeq: sessionId && sessionId === state.activeSessionId ? (state.nextSeq ?? undefined) : undefined,
         cols,
         rows,
         onMessage: (frame) => {
@@ -175,7 +180,7 @@ export default function TerminalScreen() {
         connectingRef.current = false;
       }
     }
-  }, [cols, handleFrame, rows, terminalClient]);
+  }, [cols, handleFrame, rows, state.activeSessionId, state.nextSeq, terminalClient]);
 
   const sendData = useCallback((data: string) => {
     if (!data) return;

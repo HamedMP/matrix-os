@@ -25,6 +25,9 @@ export interface TerminalState {
   input: string;
   error: string | null;
   fontScale: number;
+  exitCode: number | null;
+  lastSeq: number | null;
+  nextSeq: number | null;
 }
 
 export type TerminalControlKey =
@@ -43,7 +46,8 @@ export type TerminalAction =
   | { type: "connection.changed"; status: TerminalConnectionStatus }
   | { type: "sessions.loaded"; sessions: MobileTerminalSession[] }
   | { type: "terminal.attached"; sessionId: string; cwd?: string; replay?: string }
-  | { type: "terminal.output"; data: string }
+  | { type: "terminal.output"; data: string; seq?: number }
+  | { type: "terminal.replayFinished"; toSeq?: number }
   | { type: "terminal.input"; input: string }
   | { type: "terminal.clearInput" }
   | { type: "terminal.error"; message: string }
@@ -67,6 +71,9 @@ export const initialTerminalState: TerminalState = {
   input: "",
   error: null,
   fontScale: 1,
+  exitCode: null,
+  lastSeq: null,
+  nextSeq: null,
 };
 
 export function terminalReducer(
@@ -92,19 +99,33 @@ export function terminalReducer(
         activeSessionId: activeSessionStillExists ? state.activeSessionId : null,
       };
     }
-    case "terminal.attached":
+    case "terminal.attached": {
+      const sameSession = state.activeSessionId === action.sessionId;
       return {
         ...state,
         status: "attached",
         activeSessionId: action.sessionId,
         cwd: formatTerminalCwd(action.cwd ?? state.cwd),
         output: action.replay ? trimTerminalOutput(action.replay) : state.output,
+        exitCode: null,
+        lastSeq: sameSession ? state.lastSeq : null,
+        nextSeq: sameSession ? state.nextSeq : null,
         error: null,
       };
-    case "terminal.output":
+    }
+    case "terminal.output": {
+      const nextSeq = nextTerminalSeq(action.seq);
       return {
         ...state,
         output: trimTerminalOutput(`${state.output}${action.data}`),
+        lastSeq: maxNullableSeq(state.lastSeq, action.seq),
+        nextSeq: maxNullableSeq(state.nextSeq, nextSeq),
+      };
+    }
+    case "terminal.replayFinished":
+      return {
+        ...state,
+        nextSeq: maxNullableSeq(state.nextSeq, action.toSeq),
       };
     case "terminal.input":
       return { ...state, input: action.input.slice(0, MAX_TERMINAL_INPUT_CHARS) };
@@ -113,7 +134,7 @@ export function terminalReducer(
     case "terminal.error":
       return { ...state, status: "error", error: safeTerminalError(action.message) };
     case "terminal.ended":
-      return { ...state, status: "ended", error: null };
+      return { ...state, status: "ended", exitCode: action.exitCode ?? null, error: null };
     case "font.scale":
       return {
         ...state,
@@ -204,4 +225,15 @@ function safeTerminalError(message: string): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function maxNullableSeq(current: number | null, next: number | undefined): number | null {
+  if (typeof next !== "number" || !Number.isSafeInteger(next) || next < 0) return current;
+  return current === null ? next : Math.max(current, next);
+}
+
+function nextTerminalSeq(seq: number | undefined): number | undefined {
+  if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < 0) return undefined;
+  if (seq >= Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER;
+  return seq + 1;
 }
