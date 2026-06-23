@@ -47,6 +47,13 @@ describe("mobile terminal client", () => {
         lastAttachedAt: 2,
         attachedClients: 1,
       },
+      {
+        sessionId: "850e8400-e29b-41d4-a716-446655440001",
+        cwd: "/home/matrix/home/projects",
+        state: "running",
+        createdAt: Number.NaN,
+        lastAttachedAt: Number.POSITIVE_INFINITY,
+      },
       { sessionId: "../../../secret", cwd: "/tmp", state: "running" },
       { cwd: "/tmp" },
     ])).toEqual([
@@ -57,6 +64,11 @@ describe("mobile terminal client", () => {
         createdAt: 1,
         lastAttachedAt: 2,
         attachedClients: 1,
+      },
+      {
+        sessionId: "850e8400-e29b-41d4-a716-446655440001",
+        cwd: "/home/matrix/home/projects",
+        state: "running",
       },
     ]);
   });

@@ -147,10 +147,10 @@ export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
       cwd: typeof candidate.cwd === "string" ? candidate.cwd : "~",
       state: typeof candidate.state === "string" ? candidate.state : "running",
     };
-    if (typeof candidate.createdAt === "string" || typeof candidate.createdAt === "number") {
+    if (isTerminalTimestamp(candidate.createdAt)) {
       session.createdAt = candidate.createdAt;
     }
-    if (typeof candidate.lastAttachedAt === "string" || typeof candidate.lastAttachedAt === "number") {
+    if (isTerminalTimestamp(candidate.lastAttachedAt)) {
       session.lastAttachedAt = candidate.lastAttachedAt;
     }
     if (typeof candidate.attachedClients === "number") session.attachedClients = candidate.attachedClients;
@@ -204,6 +204,10 @@ function safeTerminalError(message: string): string {
   if (!trimmed || trimmed.length > 180) return "Terminal unavailable";
   if (/\/home\/|postgres|secret|token|provider/i.test(trimmed)) return "Terminal unavailable";
   return trimmed;
+}
+
+function isTerminalTimestamp(value: unknown): value is string | number {
+  return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 
 function clamp(value: number, min: number, max: number): number {
