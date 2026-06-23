@@ -123,6 +123,8 @@ export default function TerminalsTab() {
 
   const selectedShell = shells.find((shell) => shell.name === selectedName) ?? shells[0] ?? null;
   const selected = selectedShell?.name ?? null;
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
 
   const createShell = async () => {
     if (!api || creating) return;
@@ -152,7 +154,13 @@ export default function TerminalsTab() {
       : { placement };
     const ok = await patchUiState(api, shell.name, patch);
     if (!ok) setActionError("Could not update shell");
-    if (placement === "active" && ok) openShell(shell);
+    if (placement === "active" && ok) {
+      openShell(
+        shell.latestSeq !== undefined && shell.latestSeq !== null
+          ? { ...shell, placement, lastSeenSeq: shell.latestSeq }
+          : { ...shell, placement },
+      );
+    }
     setBusyName(null);
   };
 
@@ -185,7 +193,7 @@ export default function TerminalsTab() {
       setRenameError("Could not rename shell");
       return;
     }
-    if (selected === renamingName) setSelectedName(nextName);
+    if (selectedRef.current === renamingName) setSelectedName(nextName);
     setRenamingName(null);
     setRenameError(null);
   };
@@ -202,7 +210,7 @@ export default function TerminalsTab() {
       setActionError("Could not delete shell");
       return;
     }
-    if (selected === name) {
+    if (selectedRef.current === name) {
       const next = useShellSessions.getState().sessions.find((shell) => shell.name !== name);
       setSelectedName(next?.name ?? null);
     }

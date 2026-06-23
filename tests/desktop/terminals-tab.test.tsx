@@ -22,6 +22,16 @@ function renderTab() {
   );
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("TerminalsTab", () => {
   beforeEach(() => {
     useConnection.setState({
@@ -117,6 +127,33 @@ describe("TerminalsTab", () => {
     await waitFor(() => expect(rename).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", "matrix-dev"));
   });
 
+  it("keeps a newer shell selection when rename finishes after the user changes selection", async () => {
+    const renameResult = deferred<boolean>();
+    const rename = vi.fn().mockReturnValue(renameResult.promise);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-main", status: "active", placement: "active" },
+        { name: "matrix-other", status: "active", placement: "active" },
+      ],
+      rename,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByText("matrix-other"));
+
+    await act(async () => {
+      renameResult.resolve(true);
+      await renameResult.promise;
+    });
+
+    await waitFor(() => expect(screen.getByText("Terminal matrix-other")).toBeTruthy());
+  });
+
   it("requires confirmation before deleting a shell", async () => {
     const deleteSession = vi.fn().mockResolvedValue(true);
     useShellSessions.setState({
@@ -133,6 +170,32 @@ describe("TerminalsTab", () => {
     fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main"));
+  });
+
+  it("keeps a newer shell selection when delete finishes after the user changes selection", async () => {
+    const deleteResult = deferred<boolean>();
+    const deleteSession = vi.fn().mockReturnValue(deleteResult.promise);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-main", status: "active", placement: "active" },
+        { name: "matrix-other", status: "active", placement: "active" },
+        { name: "matrix-third", status: "active", placement: "active" },
+      ],
+      deleteSession,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /delete matrix-main/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    fireEvent.click(screen.getByText("matrix-third"));
+
+    await act(async () => {
+      deleteResult.resolve(true);
+      await deleteResult.promise;
+    });
+
+    await waitFor(() => expect(screen.getByText("Terminal matrix-third")).toBeTruthy());
   });
 
   it("drag-reorders shell cards within the same group", async () => {
@@ -216,6 +279,7 @@ describe("TerminalsTab", () => {
         lastSeenSeq: 8,
       }),
     );
+    expect(patchUiState).toHaveBeenCalledTimes(2);
   });
 
   it("does not open a native terminal tab when making a shell active fails", async () => {
