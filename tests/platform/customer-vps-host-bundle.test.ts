@@ -97,6 +97,11 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(installer).toContain('"$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX"');
     expect(installer).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
+    expect(installer).toContain('install_claude_code_package()');
+    expect(installer).toContain('install_codex_package()');
+    expect(installer).toContain('install_opencode_package()');
+    expect(installer).toContain('install_pi_package()');
+    expect(installer).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
     expect(installer).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors');
     expect(installer).toContain('sync-matrix-agent-skills.sh');
     expect(installer).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');

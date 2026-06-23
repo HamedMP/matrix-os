@@ -77,13 +77,12 @@ async function chooseNewSessionMenuItem(name: RegExp | string) {
 
 async function chooseNewSessionMenuItemAfterStatus(name: RegExp | string) {
   await openNewSessionMenu();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
   const menu = screen.getByRole("menu", { name: "New session menu" });
-  fireEvent.click(within(menu).getByRole("menuitem", { name }));
-  await Promise.resolve();
-  await Promise.resolve();
+  const item = await vi.waitFor(() => within(menu).getByRole("menuitem", { name }));
+  fireEvent.click(item);
+  await vi.waitFor(() => {
+    expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull();
+  });
 }
 
 function createDragDataTransfer(): DataTransfer {
