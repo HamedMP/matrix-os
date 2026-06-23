@@ -596,6 +596,8 @@ export function getAuthPage(
               Authorization: 'Bearer ' + token,
               'Content-Type': 'application/json'
             },
+            // Omit developerTools here so the platform can recover the
+            // checkout-time selection from the settling checkout attempt.
             body: JSON.stringify({
               runtime: requestedRuntime || undefined
             }),

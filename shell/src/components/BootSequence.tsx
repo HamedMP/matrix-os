@@ -153,6 +153,8 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
           method: "POST",
           credentials: "include",
           headers: await authHeaders(getToken),
+          // Omit developerTools here so provisioning falls back to the
+          // checkout-attempt selection from the completed billing flow.
           body: JSON.stringify({}),
           signal: AbortSignal.timeout(10_000),
         });

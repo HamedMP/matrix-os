@@ -116,6 +116,27 @@ describe("BootSequence", () => {
     expect(screen.getByText("Booting your computer")).toBeTruthy();
   });
 
+  it("omits developer tools when auto-starting provisioning so checkout selections are used", async () => {
+    const fetchMock = mockJourney({
+      phase: "provisioning",
+      detail: "Building your Matrix computer…",
+      nextAction: { kind: "start_provision" },
+      progress: { stage: "creating_server", startedAt: "2026-06-11T12:00:00.000Z" },
+    });
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/auth/provision-runtime",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({}),
+        }),
+      ),
+    );
+  });
+
   it("offers retry on a retryable failure and calls retry-provision", async () => {
     const fetchMock = mockJourney({
       phase: "provisioning_failed",

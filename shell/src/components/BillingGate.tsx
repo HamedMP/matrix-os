@@ -369,6 +369,8 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         method: "POST",
         credentials: "include",
         headers: await authHeaders(),
+        // Omit developerTools here so the platform can use the checkout-attempt
+        // selection recorded before Stripe redirected back to device setup.
         body: JSON.stringify({}),
       });
       if (disposed) return;
