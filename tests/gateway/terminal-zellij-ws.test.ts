@@ -217,6 +217,33 @@ describe("zellij terminal WebSocket", () => {
     expect(ws.closed).toBe(true);
   });
 
+  it("hides missing zellij destroy wiring behind a generic websocket error", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    await session.onMessage(JSON.stringify({ type: "destroy" }));
+
+    expect(ws.sent).toContainEqual({
+      type: "error",
+      code: "destroy_failed",
+      message: "Terminal session cleanup failed",
+    });
+    expect(ws.sent).not.toContainEqual(expect.objectContaining({
+      message: expect.stringContaining("registry"),
+    }));
+    expect(pty.killed).toBe(true);
+    expect(ws.closed).toBe(true);
+  });
+
   it("normalizes binary websocket frames before protocol parsing", async () => {
     const pty = new FakePty();
     const ws = socket();

@@ -422,6 +422,15 @@ export function createAllowedOriginController(options: {
   };
 }
 
+function dispatchNamedTerminalMessage(
+  session: { onMessage(raw: string): void | Promise<void> },
+  raw: string,
+): void {
+  void Promise.resolve(session.onMessage(raw)).catch((err: unknown) => {
+    console.warn("[shell] terminal session message failed:", err instanceof Error ? err.message : String(err));
+  });
+}
+
 type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
 
 export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getConfig">): Promise<number | undefined> {
@@ -2348,14 +2357,6 @@ export async function createGateway(config: GatewayConfig) {
       let namedHandle: { onMessage(raw: string): void | Promise<void>; onClose(): void } | null = null;
       let namedSocketClosed = false;
       const pendingInput = createPendingTerminalInputQueue();
-      const dispatchNamedMessage = (
-        session: { onMessage(raw: string): void | Promise<void> },
-        raw: string,
-      ) => {
-        void Promise.resolve(session.onMessage(raw)).catch((err: unknown) => {
-          console.warn("[shell] terminal session message failed:", err instanceof Error ? err.message : String(err));
-        });
-      };
 
       return {
         onOpen(_evt, ws) {
@@ -2383,7 +2384,7 @@ export async function createGateway(config: GatewayConfig) {
             }
             namedHandle = session;
             pendingInput.drain((raw) => {
-              dispatchNamedMessage(session, raw);
+              dispatchNamedTerminalMessage(session, raw);
             });
           }).catch((err: unknown) => {
             console.warn("[shell] terminal session attach failed:", err instanceof Error ? err.message : String(err));
@@ -2409,7 +2410,7 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
           if (namedHandle) {
-            dispatchNamedMessage(namedHandle, raw);
+            dispatchNamedTerminalMessage(namedHandle, raw);
             return;
           }
           if (!pendingInput.enqueue(raw)) {
@@ -2446,14 +2447,6 @@ export async function createGateway(config: GatewayConfig) {
       let namedSocketClosed = false;
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
       let autoCreatedSessionId: string | null = null;
-      const dispatchNamedMessage = (
-        session: { onMessage(raw: string): void | Promise<void> },
-        raw: string,
-      ) => {
-        void Promise.resolve(session.onMessage(raw)).catch((err: unknown) => {
-          console.warn("[shell] terminal session message failed:", err instanceof Error ? err.message : String(err));
-        });
-      };
 
       const cleanupAutoCreatedSession = (destroyAutoCreated = true) => {
         logTerminalDebug("ws-cleanup", {
@@ -2575,7 +2568,7 @@ export async function createGateway(config: GatewayConfig) {
           }
           if (namedSession) {
             if (namedHandle) {
-              dispatchNamedMessage(namedHandle, raw);
+              dispatchNamedTerminalMessage(namedHandle, raw);
             }
             return;
           }
