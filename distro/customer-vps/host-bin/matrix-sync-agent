@@ -24,6 +24,10 @@ readonly HEALTH_URL="http://127.0.0.1:4000/health"
 readonly AUTO_APPLY_FAILED_MARKER="$APP_DIR/.auto-apply-failed"
 readonly STAGING_ARTIFACT_TTL_SECONDS="${MATRIX_STAGING_ARTIFACT_TTL_SECONDS:-86400}"
 readonly STAGING_CLEANUP_INTERVAL_SECONDS="${MATRIX_STAGING_CLEANUP_INTERVAL_SECONDS:-3600}"
+readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"
+readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
+readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
+readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
 readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
 # Keys this agent owns and rewrites on every sync from platform-provided values.
 # Any other key in symphony.env (e.g. an operator-set SYMPHONY_LINEAR_PROJECT_SLUG)
@@ -199,7 +203,7 @@ apply_update() {
 
   sudo mkdir -p "$STAGING_DIR"
   sudo chown matrix:matrix "$STAGING_DIR"
-  clean_staging || true
+  ensure_update_headroom "$(json_field "$manifest" size)" || return 1
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
   extract_dir="$STAGING_DIR/bundle-${version}"
 
@@ -358,6 +362,57 @@ clean_staging() {
   return 0
 }
 
+clean_legacy_upgrade_artifacts() {
+  [ -d "$LEGACY_UPGRADE_DIR" ] || return 0
+  local count=0 now cutoff path
+  now="$(date +%s)"
+  cutoff=$((now - LEGACY_UPGRADE_TTL_SECONDS))
+  while IFS= read -r -d '' path; do
+    [ -e "$path" ] || continue
+    [ ! -L "$path" ] || continue
+    if [ "$(stat -c %Y "$path" 2>/dev/null || echo "$now")" -gt "$cutoff" ]; then
+      continue
+    fi
+    sudo rm -f -- "$path"
+    count=$((count + 1))
+  done < <(find "$LEGACY_UPGRADE_DIR" -maxdepth 1 -type f \( -name 'matrix-host-bundle.tar.gz' -o -name 'matrix-host-bundle.tar.gz.sha256' \) -print0)
+  if [ "$count" -gt 0 ]; then
+    log "Cleaned $count stale legacy upgrade artifacts"
+  fi
+  return 0
+}
+
+required_update_free_kb() {
+  local bundle_size_bytes="${1:-}"
+  if [ -z "$bundle_size_bytes" ] || [[ "$bundle_size_bytes" == *[!0-9]* ]]; then
+    echo $((UPDATE_FREE_BUFFER_KB + 5242880))
+    return 0
+  fi
+  local bundle_kb
+  bundle_kb=$(((bundle_size_bytes + 1023) / 1024))
+  echo $((bundle_kb * UPDATE_EXPANSION_FACTOR + UPDATE_FREE_BUFFER_KB))
+}
+
+ensure_update_headroom() {
+  local bundle_size_bytes="${1:-}"
+  clean_staging || true
+  clean_legacy_upgrade_artifacts || true
+
+  local available required
+  required="$(required_update_free_kb "$bundle_size_bytes")"
+  available="$(df -Pk "$STAGING_DIR" | awk 'NR==2 {print $4}')"
+  if [ -z "$available" ]; then
+    log "WARN: could not determine free disk space before update"
+    return 0
+  fi
+  if [ "$available" -lt "$required" ]; then
+    log "ERROR: insufficient disk space for update (available: ${available}KB, required: ${required}KB)"
+    return 1
+  fi
+  log "Update disk headroom OK (available: ${available}KB, required: ${required}KB)"
+  return 0
+}
+
 last_staging_cleanup=0
 
 maybe_clean_staging() {
@@ -374,6 +429,7 @@ maybe_clean_staging() {
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
 mkdir -p "$STAGING_DIR"
 clean_staging
+clean_legacy_upgrade_artifacts || true
 last_staging_cleanup="$(date +%s)"
 
 while true; do
