@@ -45,6 +45,8 @@ const founders = [
   },
 ] as const;
 
+const founderRoleColor = "#2F6B3F";
+
 function XLogoIcon({ className }: { className?: string }) {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" className={className} fill="currentColor">
@@ -62,7 +64,7 @@ export default function TeamPage() {
           <section aria-labelledby="team-heading" className="mx-auto max-w-[50rem] text-center">
             <p
               className="mb-5 text-[1.125rem] leading-[1.12] md:text-[1.3125rem]"
-              style={{ fontFamily: fonts.display, color: c.mutedFg }}
+              style={{ fontFamily: fonts.display, color: founderRoleColor }}
             >
               Mission
             </p>
@@ -84,7 +86,7 @@ export default function TeamPage() {
             <section aria-label="Founders" className="max-w-[34rem]">
               <h2
                 className="text-[1.225rem] leading-[1.15] md:text-[1.4rem]"
-                style={{ fontFamily: fonts.display, color: c.deep, fontWeight: 400 }}
+                style={{ fontFamily: fonts.display, color: founderRoleColor, fontWeight: 400 }}
               >
                 Meet our founders
               </h2>
@@ -98,7 +100,7 @@ export default function TeamPage() {
                       <span aria-hidden="true" className="hidden text-[1.25rem] leading-none sm:inline" style={{ color: c.subtle }}>
                         |
                       </span>
-                      <p className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: "#2F6B3F" }}>
+                      <p className="text-[1.25rem] font-medium leading-[1.25]" style={{ color: founderRoleColor }}>
                         {founder.role}
                       </p>
                       <div className="flex shrink-0 items-center gap-2 pl-1">
