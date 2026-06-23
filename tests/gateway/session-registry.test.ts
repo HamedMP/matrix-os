@@ -578,6 +578,7 @@ describe("SessionRegistry", () => {
       clock.advance(101);
       expect(registry.getSession(id)!.attachedClients).toBe(0);
       handle.send({ type: "input", data: "stale" });
+      handle.send({ type: "input", data: "still-stale" });
 
       expect(mockPty.write).not.toHaveBeenCalled();
     });

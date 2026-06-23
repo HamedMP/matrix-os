@@ -468,6 +468,7 @@ export class SessionRegistry {
     });
 
     let subscriberFn: SubscriberFn | null = null;
+    let subscriberPruned = false;
     let detached = false;
     const nowFn = this.now;
 
@@ -494,14 +495,17 @@ export class SessionRegistry {
         }
 
         subscriberFn = cb;
+        subscriberPruned = false;
         if (!previousSubscriberWasActive) {
           session.incrementClients();
         }
       },
 
       send(msg: ClientMessage) {
+        if (subscriberPruned) return;
         if (subscriberFn && !session.touchSubscriber(subscriberFn, nowFn())) {
           subscriberFn = null;
+          subscriberPruned = true;
           return;
         }
         switch (msg.type) {
@@ -515,9 +519,11 @@ export class SessionRegistry {
       },
 
       replay(fromSeq: number) {
+        if (subscriberPruned) return;
         if (!subscriberFn) return;
         if (!session.touchSubscriber(subscriberFn, nowFn())) {
           subscriberFn = null;
+          subscriberPruned = true;
           return;
         }
         const chunks = session.buffer.getSince(fromSeq);
@@ -633,7 +639,7 @@ export class SessionRegistry {
     }
   }
 
-  private evictExpiredSessions(now = Date.now()): void {
+  private evictExpiredSessions(now = this.now()): void {
     for (const session of this.sessions.values()) {
       if (session.attachedClients > 0) continue;
       if (!this.isExpired(session, now)) continue;
