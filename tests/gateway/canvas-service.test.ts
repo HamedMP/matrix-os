@@ -166,6 +166,8 @@ describe("CanvasService", () => {
       state: "missing",
       recoverable: true,
     });
+    expect(terminalRegistry.getSession).toHaveBeenCalledTimes(1);
+    expect(terminalRegistry.getSession).toHaveBeenCalledWith("550e8400-e29b-41d4-a716-446655440000");
     expect(terminalRegistry.create).not.toHaveBeenCalled();
   });
 
@@ -188,6 +190,8 @@ describe("CanvasService", () => {
     const result = await service.listCanvases("user_a");
 
     expect(result.canvases[0].nodeCounts).toEqual({ total: 1, stale: 0, live: 0 });
+    expect(terminalRegistry.getSession).toHaveBeenCalledTimes(1);
+    expect(terminalRegistry.getSession).toHaveBeenCalledWith("550e8400-e29b-41d4-a716-446655440000");
     expect(terminalRegistry.create).not.toHaveBeenCalled();
   });
 
