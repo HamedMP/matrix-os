@@ -265,6 +265,7 @@ describe("mobile terminal client", () => {
 
     await expect(connectPromise).rejects.toThrow("Terminal connection opened before attach could be sent");
     expect(socket.sent).toEqual([]);
+    expect(socket.closed).toBe(true);
     expect(statuses).toEqual(["connecting"]);
     expect(warnSpy).toHaveBeenCalledWith("[mobile] terminal websocket send failed", "Error");
   });

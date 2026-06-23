@@ -93,6 +93,7 @@ export class MobileTerminalConnection {
         if (settled) return;
         if (!this.sendFrame(this.attachFrame)) {
           rejectAttach(new Error("Terminal connection opened before attach could be sent"));
+          this.close();
           return;
         }
         this.attached = true;
