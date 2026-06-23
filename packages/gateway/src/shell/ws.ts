@@ -20,6 +20,10 @@ const ShellWsDetachSchema = z.object({
   type: z.literal("detach"),
 });
 
+const ShellWsDestroySchema = z.object({
+  type: z.literal("destroy"),
+});
+
 const ShellWsPingSchema = z.object({
   type: z.literal("ping"),
 });
@@ -28,6 +32,7 @@ const ShellWsClientMessageSchema = z.union([
   ShellWsInputSchema,
   ShellWsResizeSchema,
   ShellWsDetachSchema,
+  ShellWsDestroySchema,
   ShellWsPingSchema,
 ]);
 
@@ -41,6 +46,7 @@ export interface ShellWsSocket {
 
 interface ShellWsRegistry {
   list(): Promise<Array<{ name: string; status?: "active" | "exited" }>>;
+  delete?(name: string, options?: { force?: boolean }): Promise<void>;
 }
 
 interface ShellWsAdapter {
@@ -62,8 +68,16 @@ export interface ShellWsOpenOptions {
 }
 
 export interface ShellWsSession {
-  onMessage(raw: string): void;
+  onMessage(raw: string): void | Promise<void>;
   onClose(): void;
+}
+
+function isMissingSessionError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const candidate = err as { code?: unknown; status?: unknown };
+  return candidate.code === "session_not_found" || candidate.status === 404;
 }
 
 export function shellWsMessageDataToString(data: unknown): string | null {
@@ -219,8 +233,29 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       child.kill();
     };
 
+    const destroySession = async () => {
+      try {
+        if (!options.registry.delete) {
+          throw new Error("shell registry delete unavailable");
+        }
+        await options.registry.delete(safeName, { force: true });
+      } catch (err: unknown) {
+        if (!isMissingSessionError(err)) {
+          console.warn("[shell] zellij session destroy failed:", err instanceof Error ? err.message : String(err));
+          sendJson(ws, {
+            type: "error",
+            code: "destroy_failed",
+            message: "Terminal session cleanup failed",
+          });
+        }
+      } finally {
+        closeSession();
+        ws.close?.();
+      }
+    };
+
     return {
-      onMessage(raw: string) {
+      async onMessage(raw: string) {
         let parsed: unknown;
         try {
           parsed = JSON.parse(raw);
@@ -244,6 +279,10 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         if (msg.type === "detach") {
           closeSession();
           ws.close?.();
+          return;
+        }
+        if (msg.type === "destroy") {
+          await destroySession();
           return;
         }
         if (msg.type === "input") {

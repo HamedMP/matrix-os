@@ -134,6 +134,89 @@ describe("zellij terminal WebSocket", () => {
     expect(pty.writes).toEqual([]);
   });
 
+  it("destroys an attached zellij session through the canonical registry delete path", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const deleteSession = vi.fn(async () => undefined);
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+        delete: deleteSession,
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    await session.onMessage(JSON.stringify({ type: "destroy" }));
+
+    expect(deleteSession).toHaveBeenCalledWith("main", { force: true });
+    expect(pty.killed).toBe(true);
+    expect(ws.closed).toBe(true);
+    expect(ws.sent).not.toContainEqual({ type: "error", code: "invalid_message", message: "Invalid message" });
+  });
+
+  it("treats an already-deleted session as a successful destroy fallback", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const deleteSession = vi.fn(async () => {
+      throw Object.assign(new Error("Session not found"), {
+        code: "session_not_found",
+        status: 404,
+      });
+    });
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+        delete: deleteSession,
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    await session.onMessage(JSON.stringify({ type: "destroy" }));
+
+    expect(deleteSession).toHaveBeenCalledWith("main", { force: true });
+    expect(pty.killed).toBe(true);
+    expect(ws.closed).toBe(true);
+    expect(ws.sent).not.toContainEqual(expect.objectContaining({ type: "error" }));
+  });
+
+  it("hides unexpected zellij destroy failures behind a generic websocket error", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const deleteSession = vi.fn(async () => {
+      throw new Error("zellij delete-session exploded with /internal/path");
+    });
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+        delete: deleteSession,
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    await session.onMessage(JSON.stringify({ type: "destroy" }));
+
+    expect(deleteSession).toHaveBeenCalledWith("main", { force: true });
+    expect(ws.sent).toContainEqual({
+      type: "error",
+      code: "destroy_failed",
+      message: "Terminal session cleanup failed",
+    });
+    expect(ws.sent).not.toContainEqual(expect.objectContaining({
+      message: expect.stringContaining("zellij"),
+    }));
+    expect(pty.killed).toBe(true);
+    expect(ws.closed).toBe(true);
+  });
+
   it("normalizes binary websocket frames before protocol parsing", async () => {
     const pty = new FakePty();
     const ws = socket();
