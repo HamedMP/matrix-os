@@ -311,6 +311,40 @@ describe("TerminalsTab", () => {
     expect(patchUiState).toHaveBeenCalledTimes(2);
   });
 
+  it("allows other shell actions while one shell operation is busy", async () => {
+    const firstMove = deferred<boolean>();
+    const patchUiState = vi.fn((_api, name: string) => (name === "matrix-one" ? firstMove.promise : Promise.resolve(true)));
+    const deleteSession = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-one", status: "active", placement: "active" },
+        { name: "matrix-two", status: "active", placement: "active" },
+        { name: "matrix-three", status: "active", placement: "active" },
+      ],
+      patchUiState,
+      deleteSession,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /move matrix-one to background/i }));
+    fireEvent.click(screen.getByRole("button", { name: /move matrix-two to background/i }));
+    fireEvent.click(screen.getByRole("button", { name: /delete matrix-three/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() =>
+      expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-two", {
+        placement: "background",
+      }),
+    );
+    await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(useConnection.getState().api, "matrix-three"));
+
+    await act(async () => {
+      firstMove.resolve(true);
+      await firstMove.promise;
+    });
+  });
+
   it("does not open a native terminal tab when making a shell active fails", async () => {
     const openTab = vi.fn();
     const patchUiState = vi.fn().mockResolvedValue(false);

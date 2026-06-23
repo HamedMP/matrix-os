@@ -76,7 +76,7 @@ export default function TerminalsTab() {
   const openTab = useTabs((s) => s.openTab);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [busyName, setBusyName] = useState<string | null>(null);
+  const [busyNames, setBusyNames] = useState<string[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [renamingName, setRenamingName] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -127,6 +127,20 @@ export default function TerminalsTab() {
   selectedRef.current = selected;
   const renamingNameRef = useRef<string | null>(null);
   renamingNameRef.current = renamingName;
+  const busyNamesRef = useRef<string[]>([]);
+  busyNamesRef.current = busyNames;
+
+  const isShellBusy = (name: string) => busyNames.includes(name);
+
+  const markShellBusy = (name: string): boolean => {
+    if (busyNamesRef.current.includes(name)) return false;
+    setBusyNames((current) => (current.includes(name) ? current : [...current, name]));
+    return true;
+  };
+
+  const clearShellBusy = (name: string) => {
+    setBusyNames((current) => current.filter((busyName) => busyName !== name));
+  };
 
   const createShell = async () => {
     if (!api || creating) return;
@@ -148,8 +162,7 @@ export default function TerminalsTab() {
   };
 
   const moveShell = async (shell: ShellSessionSummary, placement: ShellSessionPlacement) => {
-    if (!api || busyName) return;
-    setBusyName(shell.name);
+    if (!api || !markShellBusy(shell.name)) return;
     setActionError(null);
     const patch = placement === "active" && shell.latestSeq !== undefined && shell.latestSeq !== null
       ? { placement, lastSeenSeq: shell.latestSeq }
@@ -163,7 +176,7 @@ export default function TerminalsTab() {
           : { ...shell, placement },
       );
     }
-    setBusyName(null);
+    clearShellBusy(shell.name);
   };
 
   const copyAttachCommand = async (shell: ShellSessionSummary) => {
@@ -189,9 +202,9 @@ export default function TerminalsTab() {
       setRenameError(RENAME_HELP);
       return;
     }
-    setBusyName(originalName);
+    if (!markShellBusy(originalName)) return;
     const ok = await rename(api, originalName, nextName);
-    setBusyName(null);
+    clearShellBusy(originalName);
     if (!ok) {
       if (renamingNameRef.current === originalName) setRenameError("Could not rename shell");
       return;
@@ -202,12 +215,12 @@ export default function TerminalsTab() {
   };
 
   const confirmDelete = async () => {
-    if (!api || !deleteTarget || busyName) return;
+    if (!api || !deleteTarget) return;
     const name = deleteTarget.name;
-    setBusyName(name);
+    if (!markShellBusy(name)) return;
     setActionError(null);
     const ok = await deleteSession(api, name);
-    setBusyName(null);
+    clearShellBusy(name);
     setDeleteTarget(null);
     if (!ok) {
       setActionError("Could not delete shell");
@@ -311,7 +324,7 @@ export default function TerminalsTab() {
                       key={shell.name}
                       shell={shell}
                       selected={shell.name === selected}
-                      busy={busyName === shell.name}
+                      busy={isShellBusy(shell.name)}
                       placement={placementFor(shell, openShellNames)}
                       renaming={renamingName === shell.name}
                       renameDraft={renameDraft}
@@ -385,7 +398,7 @@ export default function TerminalsTab() {
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-            <Button variant="danger" disabled={!deleteTarget || busyName === deleteTarget.name} onClick={() => void confirmDelete()}>
+            <Button variant="danger" disabled={!deleteTarget || isShellBusy(deleteTarget.name)} onClick={() => void confirmDelete()}>
               Delete
             </Button>
           </div>
