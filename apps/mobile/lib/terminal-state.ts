@@ -10,8 +10,8 @@ export interface MobileTerminalSession {
   sessionId: string;
   cwd: string;
   state: "running" | "exited" | "destroyed" | string;
-  createdAt?: string;
-  lastAttachedAt?: string;
+  createdAt?: string | number;
+  lastAttachedAt?: string | number;
   attachedClients?: number;
   exitCode?: number | null;
 }
@@ -147,8 +147,12 @@ export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
       cwd: typeof candidate.cwd === "string" ? candidate.cwd : "~",
       state: typeof candidate.state === "string" ? candidate.state : "running",
     };
-    if (typeof candidate.createdAt === "string") session.createdAt = candidate.createdAt;
-    if (typeof candidate.lastAttachedAt === "string") session.lastAttachedAt = candidate.lastAttachedAt;
+    if (typeof candidate.createdAt === "string" || typeof candidate.createdAt === "number") {
+      session.createdAt = candidate.createdAt;
+    }
+    if (typeof candidate.lastAttachedAt === "string" || typeof candidate.lastAttachedAt === "number") {
+      session.lastAttachedAt = candidate.lastAttachedAt;
+    }
     if (typeof candidate.attachedClients === "number") session.attachedClients = candidate.attachedClients;
     if (typeof candidate.exitCode === "number" || candidate.exitCode === null) session.exitCode = candidate.exitCode;
     return [session];

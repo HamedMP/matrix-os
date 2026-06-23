@@ -39,26 +39,54 @@ describe("mobile terminal client", () => {
 
   it("parses only safe terminal session summaries", () => {
     expect(parseTerminalSessions([
-      { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running", attachedClients: 1 },
+      {
+        sessionId: SESSION_ID,
+        cwd: "/home/matrix/home",
+        state: "running",
+        createdAt: 1,
+        lastAttachedAt: 2,
+        attachedClients: 1,
+      },
       { sessionId: "../../../secret", cwd: "/tmp", state: "running" },
       { cwd: "/tmp" },
     ])).toEqual([
-      { sessionId: SESSION_ID, cwd: "/home/matrix/home", state: "running", attachedClients: 1 },
+      {
+        sessionId: SESSION_ID,
+        cwd: "/home/matrix/home",
+        state: "running",
+        createdAt: 1,
+        lastAttachedAt: 2,
+        attachedClients: 1,
+      },
     ]);
   });
 
-  it("fetches terminal sessions through the authenticated gateway", async () => {
+  it("fetches legacy PTY terminal sessions through the authenticated gateway", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
-      { sessionId: SESSION_ID, cwd: "/home/matrix/home/projects", state: "running" },
+      {
+        sessionId: SESSION_ID,
+        cwd: "projects",
+        state: "running",
+        createdAt: 1,
+        lastAttachedAt: 2,
+        attachedClients: 1,
+      },
     ]));
 
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
     await expect(gateway.getTerminalSessions()).resolves.toEqual([
-      { sessionId: SESSION_ID, cwd: "/home/matrix/home/projects", state: "running" },
+      {
+        sessionId: SESSION_ID,
+        cwd: "projects",
+        state: "running",
+        createdAt: 1,
+        lastAttachedAt: 2,
+        attachedClients: 1,
+      },
     ]);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://app.matrix-os.test/api/terminal/sessions",
+      "https://app.matrix-os.test/api/terminal/pty-sessions",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer clerk-token" }),
       }),
@@ -74,7 +102,7 @@ describe("mobile terminal client", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      `https://app.matrix-os.test/api/terminal/sessions/${SESSION_ID}`,
+      `https://app.matrix-os.test/api/terminal/pty-sessions/${SESSION_ID}`,
       expect.objectContaining({ method: "DELETE" }),
     );
   });
