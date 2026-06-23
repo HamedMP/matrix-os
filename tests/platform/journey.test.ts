@@ -46,12 +46,21 @@ function entitlement(status: BillingEntitlementStatus, overrides: Partial<Billin
 }
 
 function attempt(status: BillingCheckoutAttemptRecord['status'], createdAt: string): BillingCheckoutAttemptRecord {
-  return { id: 'a1', clerkUserId: 'user_123', stripeSessionId: 'cs_1', status, createdAt, resolvedAt: null };
+  return {
+    id: 'a1',
+    clerkUserId: 'user_123',
+    stripeSessionId: 'cs_1',
+    status,
+    developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
+    createdAt,
+    resolvedAt: null,
+  };
 }
 
 function machine(status: string, overrides: Partial<UserMachineRecord> = {}): UserMachineRecord {
   return {
     machineId: 'm1', clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+    developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
     hetznerServerId: null, publicIPv4: null, publicIPv6: null, status,
     imageVersion: 'stable', serverType: 'cpx32', registrationTokenHash: null,
     registrationTokenExpiresAt: null, provisionedAt: '2026-06-11T11:59:00.000Z',

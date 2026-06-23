@@ -29,6 +29,7 @@ import {
   getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
   getBillingEntitlementState,
+  getLatestCheckoutAttempt,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
   listActiveUserMachinesByClerkId,
@@ -108,6 +109,7 @@ import {
 } from './launch-readiness.js';
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { HetznerServerTypeSchema, RuntimeSlotSchema } from './customer-vps-schema.js';
+import { DeveloperToolsSchema } from './developer-tools.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
   PlatformStartupConfigError,
@@ -269,6 +271,7 @@ const AppSessionExchangeBodySchema = z.object({
 
 const AppSessionProvisionBodySchema = z.object({
   runtime: RuntimeSlotSchema.optional().default('primary'),
+  developerTools: DeveloperToolsSchema.optional(),
 }).strict();
 
 const ClerkImageUrlSchema = z.preprocess((value) => {
@@ -330,6 +333,7 @@ const ProvisionBodySchema = z.object({
   email: z.string().email().max(320).optional(),
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   serverType: HetznerServerTypeSchema.optional(),
+  developerTools: DeveloperToolsSchema.optional(),
 });
 
 const ClerkUserSyncBodySchema = z.object({
@@ -2649,10 +2653,20 @@ export function createApp(deps: {
         applyNoStoreHeaders(c);
         return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
       }
+      const checkoutAttempt = parsed.data.developerTools
+        ? null
+        : await getLatestCheckoutAttempt(db, result.userId);
+      const developerTools = parsed.data.developerTools ?? (
+        checkoutAttempt &&
+        (checkoutAttempt.status === 'paid' || checkoutAttempt.status === 'open')
+          ? checkoutAttempt.developerTools
+          : undefined
+      );
       const provisioned = await deps.customerVpsService.provision({
         handle: identity.handle,
         clerkUserId: result.userId,
         runtimeSlot: parsed.data.runtime,
+        ...(developerTools ? { developerTools } : {}),
       });
       await ensureProvisionedPlatformUser(db, {
         clerkUserId: result.userId,
@@ -3688,13 +3702,19 @@ export function createApp(deps: {
       return c.json({ error: 'Validation error' }, 400);
     }
 
-    const { handle, clerkUserId, displayName, email, runtimeSlot, serverType } = parsed.data;
+    const { handle, clerkUserId, displayName, email, runtimeSlot, serverType, developerTools } = parsed.data;
     if (!handle || !clerkUserId) {
       return c.json({ error: 'handle and clerkUserId required' }, 400);
     }
     try {
       if (deps.customerVpsService) {
-        const machine = await deps.customerVpsService.provision({ handle, clerkUserId, runtimeSlot, serverType });
+        const machine = await deps.customerVpsService.provision({
+          handle,
+          clerkUserId,
+          runtimeSlot,
+          serverType,
+          ...(developerTools ? { developerTools } : {}),
+        });
         await ensureProvisionedPlatformUser(db, {
           clerkUserId,
           handle,

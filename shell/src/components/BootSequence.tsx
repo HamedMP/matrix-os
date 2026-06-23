@@ -15,6 +15,7 @@ import { useJourney, type JourneyState } from "@/hooks/useJourney";
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
 // ready is the running shell. BootSequence only renders the billing/build steps.
 const PASSTHROUGH_PHASES = new Set<JourneyState["phase"]>(["first_run", "ready"]);
+const DEFAULT_DEVELOPER_TOOLS = ["codex", "claude-code", "opencode", "pi"] as const;
 
 const STAGE_LABEL: Record<string, string> = {
   creating_server: "Creating your server",
@@ -153,7 +154,7 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
           method: "POST",
           credentials: "include",
           headers: await authHeaders(getToken),
-          body: JSON.stringify({}),
+          body: JSON.stringify({ developerTools: DEFAULT_DEVELOPER_TOOLS }),
           signal: AbortSignal.timeout(10_000),
         });
         if (!disposed && !res.ok && res.status !== 409) {

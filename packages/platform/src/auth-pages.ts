@@ -271,6 +271,7 @@ export function getAuthPage(
     var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
     var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
+    var defaultDeveloperTools = ['codex', 'claude-code', 'opencode', 'pi'];
     function hasTrustedCheckoutReturn() {
       try {
         var rawAttemptAt = window.sessionStorage.getItem(checkoutAttemptStorageKey);
@@ -511,7 +512,8 @@ export function getAuthPage(
           var checkoutBody = {
             planSlug: 'matrix_builder',
             interval: 'monthly',
-            regionSlug: 'region_fsn1'
+            regionSlug: 'region_fsn1',
+            developerTools: defaultDeveloperTools
           };
           if (deviceReturnTarget) checkoutBody.returnPath = redirectTarget;
           return fetch('/billing/checkout', {
@@ -595,7 +597,8 @@ export function getAuthPage(
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              runtime: requestedRuntime || undefined
+              runtime: requestedRuntime || undefined,
+              developerTools: defaultDeveloperTools
             }),
             credentials: 'same-origin',
             signal: controller.signal

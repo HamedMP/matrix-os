@@ -31,9 +31,17 @@ import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 
 export type BillingPanelMode = "settings" | "provisioning" | "device-setup";
 type BillingInterval = "monthly" | "annual";
+type DeveloperToolId = "codex" | "claude-code" | "opencode" | "pi";
 
 const profileLabels = ["Starter", "Recommended", "Scale"] as const;
 const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
+const developerToolOptions: Array<{ id: DeveloperToolId; label: string }> = [
+  { id: "codex", label: "Codex" },
+  { id: "claude-code", label: "Claude Code" },
+  { id: "opencode", label: "OpenCode" },
+  { id: "pi", label: "Pi" },
+] as const;
+const defaultDeveloperTools = developerToolOptions.map((tool) => tool.id);
 const acceptedPaymentMarks = ["Visa", "Mastercard"] as const;
 const billingPlanNames: Record<string, string> = {
   matrix_starter: "Starter",
@@ -59,6 +67,8 @@ type BillingTelemetryProperties = {
   selected_region_slug: string;
   selected_region_location: string;
   selected_region_zone: string;
+  selected_developer_tools: string;
+  selected_developer_tool_count: number;
 };
 
 function captureBillingTelemetry(
@@ -86,6 +96,7 @@ function CheckoutPanel({
   telemetryProperties,
   planSlug,
   regionSlug,
+  developerTools,
   billingInterval,
   onBillingIntervalChange,
 }: {
@@ -95,6 +106,7 @@ function CheckoutPanel({
   telemetryProperties: BillingTelemetryProperties;
   planSlug: string;
   regionSlug: string;
+  developerTools: DeveloperToolId[];
   billingInterval: BillingInterval;
   onBillingIntervalChange: (interval: BillingInterval) => void;
 }) {
@@ -131,6 +143,7 @@ function CheckoutPanel({
           planSlug,
           interval: billingInterval,
           regionSlug,
+          developerTools,
           ...(checkoutReturnPath ? { returnPath: checkoutReturnPath } : {}),
         }),
       });
@@ -614,6 +627,50 @@ function RegionList({
   );
 }
 
+function DeveloperToolsSelector({
+  selectedTools,
+  onToggle,
+}: {
+  selectedTools: DeveloperToolId[];
+  onToggle: (tool: DeveloperToolId) => void;
+}) {
+  return (
+    <section className="rounded-[22px] border border-forest/12 bg-white p-3 sm:p-3.5">
+      <div className="mb-3 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <h4 className="text-sm font-semibold text-deep">Developer tools</h4>
+        <p className="text-xs text-forest/45">Preinstall command-line agents on this VPS.</p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {developerToolOptions.map((tool) => {
+          const checked = selectedTools.includes(tool.id);
+          return (
+            <label
+              key={tool.id}
+              className={`flex min-h-16 cursor-pointer items-center justify-between rounded-xl border px-3 py-2.5 transition-all ${
+                checked
+                  ? "border-ember bg-[#fff7ec] shadow-[0_10px_24px_rgba(83,68,48,0.10)]"
+                  : "border-forest/10 bg-white hover:border-forest/25"
+              }`}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-deep">{tool.label}</span>
+                <code className="mt-0.5 block truncate text-xs text-forest/50">{tool.id}</code>
+              </span>
+              <input
+                type="checkbox"
+                aria-label={tool.label}
+                checked={checked}
+                onChange={() => onToggle(tool.id)}
+                className="size-4 accent-ember"
+              />
+            </label>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function PlanSummary({
   selectedProfile,
   selectedRegion,
@@ -743,6 +800,7 @@ export function BillingPanel({
   );
   const [selectedRegionSlug, setSelectedRegionSlug] = useState(getNearestRegionSlug);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
+  const [selectedDeveloperTools, setSelectedDeveloperTools] = useState<DeveloperToolId[]>(defaultDeveloperTools);
   const selectedProfile =
     MATRIX_BILLING_SERVER_PROFILES.find(
       (profile) => profile.featureSlug === selectedProfileSlug,
@@ -764,8 +822,10 @@ export function BillingPanel({
       selected_region_slug: selectedRegion.featureSlug,
       selected_region_location: selectedRegion.location,
       selected_region_zone: selectedRegion.networkZone,
+      selected_developer_tools: selectedDeveloperTools.join(","),
+      selected_developer_tool_count: selectedDeveloperTools.length,
     }),
-    [active, billingInterval, mode, selectedProfile, selectedRegion],
+    [active, billingInterval, mode, selectedDeveloperTools, selectedProfile, selectedRegion],
   );
   const initialViewTracked = useRef(false);
   const telemetryPropertiesRef = useRef(telemetryProperties);
@@ -820,6 +880,26 @@ export function BillingPanel({
     });
   };
 
+  const handleDeveloperToolToggle = (tool: DeveloperToolId) => {
+    const nextTools: DeveloperToolId[] = [];
+    const selectedSet = new Set(selectedDeveloperTools);
+    const removeTool = selectedSet.has(tool);
+    for (const option of developerToolOptions) {
+      if (removeTool && option.id === tool) continue;
+      if (option.id === tool || selectedSet.has(option.id)) {
+        nextTools.push(option.id);
+      }
+    }
+    setSelectedDeveloperTools(nextTools);
+    captureBillingTelemetry("developer_tool_toggle", {
+      ...telemetryProperties,
+      selected_developer_tools: nextTools.join(","),
+      selected_developer_tool_count: nextTools.length,
+      developer_tool_id: tool,
+      developer_tool_selected: nextTools.includes(tool),
+    });
+  };
+
   if (active === true) {
     return <ActiveBillingPanel entitlement={entitlement ?? null} accessReason={accessReason ?? null} />;
   }
@@ -866,6 +946,7 @@ export function BillingPanel({
           telemetryProperties={telemetryProperties}
           planSlug={selectedProfile.planSlug}
           regionSlug={selectedRegion.featureSlug}
+          developerTools={selectedDeveloperTools}
           billingInterval={billingInterval}
           onBillingIntervalChange={handleBillingIntervalChange}
         />
@@ -882,6 +963,11 @@ export function BillingPanel({
           onSelect={handleProfileSelect}
         />
       </section>
+
+      <DeveloperToolsSelector
+        selectedTools={selectedDeveloperTools}
+        onToggle={handleDeveloperToolToggle}
+      />
 
       <section className="rounded-[22px] border border-forest/12 bg-white p-3 sm:p-3.5">
         <div className="mb-3 flex flex-col gap-1 px-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">

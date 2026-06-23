@@ -74,6 +74,11 @@ describe("BillingSection", () => {
     expect(screen.getByText("Mastercard")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByText("Developer tools")).toBeTruthy();
+    expect(screen.getByText("Preinstall command-line agents on this VPS.")).toBeTruthy();
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
+    }
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 
@@ -118,6 +123,7 @@ describe("BillingSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
     fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "OpenCode" }));
     fireEvent.click(screen.getByRole("button", { name: "Annual" }));
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
@@ -130,6 +136,7 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "annual",
             regionSlug: "region_nbg1",
+            developerTools: ["codex", "claude-code", "pi"],
           }),
         }),
       ),
@@ -165,6 +172,7 @@ describe("BillingSection", () => {
             planSlug: "matrix_builder",
             interval: "monthly",
             regionSlug: "region_fsn1",
+            developerTools: ["codex", "claude-code", "opencode", "pi"],
             returnPath: "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
           }),
         }),

@@ -105,7 +105,7 @@ describe('platform/customer-vps', () => {
   it('provisions a user machine idempotently by clerkUserId', async () => {
     const { service, hetzner } = createService();
 
-    const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice', developerTools: ['codex', 'pi'] });
     const second = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
     expect(first).toEqual({ machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112', status: 'provisioning', etaSeconds: 90 });
@@ -114,6 +114,9 @@ describe('platform/customer-vps', () => {
     const row = await getActiveUserMachineByClerkId(db, 'user_123');
     expect(row?.hetznerServerId).toBe(123456);
     expect(row?.registrationTokenHash).toBe(hashRegistrationToken('registration-token'));
+    expect(row?.developerTools).toEqual(['codex', 'pi']);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS='codex pi'");
   });
 
   it('uses the active billing entitlement server type when provisioning new machines', async () => {

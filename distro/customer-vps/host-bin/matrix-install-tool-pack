@@ -27,7 +27,7 @@ log() {
 
 usage() {
   cat >&2 <<'EOF'
-Usage: matrix-install-tool-pack <coding-agents|code-server|hermes|linux-tools|all>
+Usage: matrix-install-tool-pack <codex|claude-code|opencode|pi|coding-agents|code-server|hermes|linux-tools|all>
 EOF
 }
 
@@ -94,18 +94,44 @@ sync_agent_skills() {
   fi
 }
 
-install_coding_agents() {
-  log "installing coding agent CLIs"
-  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
-    @anthropic-ai/claude-code@latest \
-    @openai/codex@latest \
-    "opencode-ai@${OPENCODE_AI_VERSION}"
-  # Upstream Pi docs recommend --ignore-scripts; the package exposes pi via
-  # bin -> dist/cli.js and does not use postinstall for binary acquisition.
-  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX" \
-    "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
+install_developer_tool() {
+  local tool="$1"
+  case "$tool" in
+    codex)
+      log "installing Codex CLI"
+      run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" @openai/codex@latest
+      ;;
+    claude-code)
+      log "installing Claude Code CLI"
+      run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" @anthropic-ai/claude-code@latest
+      ;;
+    opencode)
+      log "installing OpenCode CLI"
+      run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" "opencode-ai@${OPENCODE_AI_VERSION}"
+      ;;
+    pi)
+      log "installing Pi coding agent CLI"
+      # Upstream Pi docs recommend --ignore-scripts; the package exposes pi via
+      # bin -> dist/cli.js and does not use postinstall for binary acquisition.
+      run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX" \
+        "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
+      ;;
+    *)
+      usage
+      return 2
+      ;;
+  esac
   runtime_chmod
   sync_agent_skills
+  log "${tool} CLI installed"
+}
+
+install_coding_agents() {
+  log "installing coding agent CLIs"
+  install_developer_tool codex
+  install_developer_tool claude-code
+  install_developer_tool opencode
+  install_developer_tool pi
   log "coding agent CLIs installed"
 }
 
@@ -162,6 +188,7 @@ install_linux_tools() {
 
 pack="${1:-}"
 case "$pack" in
+  codex|claude-code|opencode|pi) with_pack_lock "$pack" install_developer_tool "$pack" ;;
   coding-agents) with_pack_lock "$pack" install_coding_agents ;;
   code-server) with_pack_lock "$pack" install_code_server ;;
   hermes) with_pack_lock "$pack" install_hermes ;;

@@ -63,12 +63,17 @@ describe('platform billing checkout-attempt settling (spec 092)', () => {
     const res = await app.request('/billing/checkout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly' }),
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        developerTools: ['codex', 'pi'],
+      }),
     });
     expect(res.status).toBe(200);
     const attempt = await getLatestCheckoutAttempt(db, 'user_123');
     expect(attempt?.stripeSessionId).toBe('cs_live_1');
     expect(attempt?.status).toBe('open');
+    expect(attempt?.developerTools).toEqual(['codex', 'pi']);
   });
 
   it('marks the attempt paid on checkout.session.completed', async () => {
