@@ -77,6 +77,7 @@ export class MobileTerminalConnection {
 
     return new Promise((resolve, reject) => {
       let settled = false;
+      let attachSent = false;
       const resolveAttach = () => {
         if (settled) return;
         settled = true;
@@ -95,6 +96,7 @@ export class MobileTerminalConnection {
           return;
         }
         this.attached = true;
+        attachSent = true;
         if (this.options.cols && this.options.rows) {
           this.resize(this.options.cols, this.options.rows);
         }
@@ -104,12 +106,12 @@ export class MobileTerminalConnection {
       this.ws.onopen = handleOpen;
 
       this.ws.onerror = () => {
-        this.options.onStatus?.("error");
+        if (attachSent) this.options.onStatus?.("error");
         rejectAttach(new Error("Terminal connection failed before attach"));
       };
 
       this.ws.onclose = () => {
-        this.options.onStatus?.("closed");
+        if (!settled || attachSent) this.options.onStatus?.("closed");
         rejectAttach(new Error("Terminal connection closed before attach"));
       };
 
@@ -151,8 +153,13 @@ export class MobileTerminalConnection {
 
   private sendFrame(frame: TerminalClientFrame): boolean {
     if (this.ws.readyState !== WS_OPEN) return false;
-    this.ws.send(JSON.stringify(frame));
-    return true;
+    try {
+      this.ws.send(JSON.stringify(frame));
+      return true;
+    } catch (err: unknown) {
+      console.warn("[mobile] terminal websocket send failed", err instanceof Error ? err.name : typeof err);
+      return false;
+    }
   }
 }
 
