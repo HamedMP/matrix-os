@@ -108,6 +108,61 @@ describe("device routes", () => {
       expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
     });
 
+    it("includes a signed canonical native callback for the Electron desktop client", async () => {
+      const res = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-desktop",
+          redirectUri: "matrixos://auth?status=approved",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const verificationUri = new URL(body.verificationUri);
+      expect(verificationUri.searchParams.get("redirect_uri")).toBe(
+        "matrixos://auth?status=approved",
+      );
+      expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
+    });
+
+    it("keeps the legacy app-owned scheme signable for trusted desktop clients", async () => {
+      const res = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-desktop",
+          redirectUri: "matrix-os://device-auth",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const verificationUri = new URL(body.verificationUri);
+      expect(verificationUri.searchParams.get("redirect_uri")).toBe(
+        "matrix-os://device-auth",
+      );
+      expect(verificationUri.searchParams.get("redirect_sig")).toEqual(expect.any(String));
+    });
+
+    it("rejects arbitrary legacy scheme callbacks even for trusted desktop clients", async () => {
+      const res = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientId: "matrix-os-desktop",
+          redirectUri: "matrix-os://settings?status=approved",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const verificationUri = new URL(body.verificationUri);
+      expect(verificationUri.searchParams.has("redirect_uri")).toBe(false);
+      expect(verificationUri.searchParams.has("redirect_sig")).toBe(false);
+    });
+
     it("uses the app shell origin for macOS approval even when platform API origin differs", async () => {
       process.env.PLATFORM_PUBLIC_URL = "https://api.matrix-os.com";
       process.env.NEXT_PUBLIC_MATRIX_APP_URL = "https://app.matrix-os.com";
@@ -161,7 +216,9 @@ describe("device routes", () => {
       const cliBody = await cliRes.json();
       const invalidBody = await invalidRes.json();
       expect(new URL(cliBody.verificationUri).searchParams.has("redirect_uri")).toBe(false);
+      expect(new URL(cliBody.verificationUri).searchParams.has("redirect_sig")).toBe(false);
       expect(new URL(invalidBody.verificationUri).searchParams.has("redirect_uri")).toBe(false);
+      expect(new URL(invalidBody.verificationUri).searchParams.has("redirect_sig")).toBe(false);
     });
 
     it("rejects oversized body with 413", async () => {
@@ -449,7 +506,7 @@ describe("device routes", () => {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            clientId: "matrix-os-macos",
+            clientId: "matrix-os-desktop",
             redirectUri: "matrixos://auth?status=approved",
           }),
         })

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { requestDeviceCode, pollForToken, DEVICE_CLIENT_ID } from "@desktop/main/auth/device-auth";
+import {
+  requestDeviceCode,
+  pollForToken,
+  DEVICE_CLIENT_ID,
+  DEVICE_REDIRECT_URI,
+} from "@desktop/main/auth/device-auth";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -28,6 +33,11 @@ describe("requestDeviceCode", () => {
     expect(url).toBe("https://app.matrix-os.com/api/auth/device/code");
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.clientId).toBe(DEVICE_CLIENT_ID);
+    expect(body.redirectUri).toBe(DEVICE_REDIRECT_URI);
+    expect(body).toMatchObject({
+      clientId: "matrix-os-desktop",
+      redirectUri: "matrixos://auth?status=approved",
+    });
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 

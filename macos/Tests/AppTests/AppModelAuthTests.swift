@@ -56,6 +56,24 @@ final class AppModelAuthTests: XCTestCase {
         XCTAssertEqual(state.token, "native-token")
     }
 
+    func testHandleOpenURLAcceptsCanonicalAndLegacyAuthCallbacks() {
+        let model = AppModel(
+            principal: PrincipalProvider(store: MemoryTokenStore()),
+            projectSlug: "default",
+            profile: nil,
+            makeClient: { url, provider in GatewayHTTPClient(baseURL: url, tokenProvider: provider) },
+            makeLoader: { _ in EmptyBoardLoader() },
+            deviceAuth: MockDeviceAuthorizer(),
+            openExternalURL: { _ in }
+        )
+
+        model.handleOpenURL(URL(string: "matrixos://auth?status=approved")!)
+        XCTAssertEqual(model.signIn, .idle)
+
+        model.handleOpenURL(URL(string: "matrix-os://auth?status=approved")!)
+        XCTAssertEqual(model.signIn, .idle)
+    }
+
     func testRefreshRequiresTokenEvenWhenProfileIsPersisted() async {
         let principal = PrincipalProvider(store: MemoryTokenStore())
         let profile = ConnectionProfile(handle: "alice", gatewayHost: "app.matrix-os.com")

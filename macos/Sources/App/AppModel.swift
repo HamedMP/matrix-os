@@ -718,7 +718,7 @@ public final class AppModel: ObservableObject {
     }
 
     public func handleOpenURL(_ url: URL) {
-        guard url.scheme == "matrixos", url.host == "auth" else { return }
+        guard (url.scheme == "matrixos" || url.scheme == "matrix-os"), url.host == "auth" else { return }
         let status = URLComponents(url: url, resolvingAgainstBaseURL: false)?
             .queryItems?
             .first(where: { $0.name == "status" })?
