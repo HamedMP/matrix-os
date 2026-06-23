@@ -229,6 +229,61 @@ describe("TerminalScreen", () => {
     await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(1));
   });
 
+  it("keeps duplicate connect actions gated until the terminal socket opens", async () => {
+    global.WebSocket = {
+      CONNECTING: 0,
+      OPEN: 1,
+      CLOSED: 3,
+    } as typeof WebSocket;
+    const socket = new MockTerminalSocket();
+    socket.readyState = WebSocket.CONNECTING;
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
+    const gatewayClient = {
+      getTerminalSessions: jest.fn().mockResolvedValue([]),
+      getWsToken: jest.fn().mockResolvedValue("ws-token"),
+      setWebSocketToken: jest.fn(),
+      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
+      deleteTerminalSession: jest.fn().mockResolvedValue(true),
+    };
+    jest.mocked(useGateway).mockReturnValue({
+      client: gatewayClient as unknown as GatewayClient,
+      connectionState: "connected",
+      gateway: null,
+      setGateway: jest.fn(),
+      unreadCount: 0,
+      incrementUnread: jest.fn(),
+      clearUnread: jest.fn(),
+    });
+
+    render(<TerminalScreen />);
+
+    const newSession = screen.getByLabelText("New session");
+    fireEvent.press(newSession);
+    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(1));
+
+    fireEvent.press(newSession);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(gatewayClient.getWsToken).toHaveBeenCalledTimes(1);
+    expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(1);
+    expect(socket.sent).toEqual([]);
+
+    await act(async () => {
+      socket.readyState = WebSocket.OPEN;
+      socket.onopen?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual(
+      expect.arrayContaining([{ type: "attach", cwd: "projects" }]),
+    );
+  });
+
   it("keeps terminal recovery state when deleting a session fails", async () => {
     global.WebSocket = {
       OPEN: 1,

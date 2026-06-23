@@ -11,7 +11,9 @@ import { jsonResponse } from "./mobile-shell-test-utils";
 const SESSION_ID = "c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9";
 
 class MockWebSocket {
+  static CONNECTING = 0;
   static OPEN = 1;
+  static CLOSED = 3;
   readyState = MockWebSocket.OPEN;
   sent: string[] = [];
   closed = false;
@@ -26,7 +28,14 @@ class MockWebSocket {
 
   close() {
     this.closed = true;
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
   }
+}
+
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 describe("mobile terminal client", () => {
@@ -87,7 +96,7 @@ describe("mobile terminal client", () => {
     expect(isSafeSessionId("../bad")).toBe(false);
   });
 
-  it("sends attach, resize, input, and detach frames over the terminal websocket", () => {
+  it("sends attach, resize, input, and detach frames over the terminal websocket", async () => {
     const ws = new MockWebSocket() as unknown as WebSocket;
     const messages: unknown[] = [];
     const statuses: string[] = [];
@@ -100,14 +109,15 @@ describe("mobile terminal client", () => {
       onStatus: (status) => statuses.push(status),
     });
 
-    connection.attach();
+    const attachPromise = connection.attach();
     (ws as unknown as MockWebSocket).onopen?.();
+    await expect(attachPromise).resolves.toBeUndefined();
     connection.sendInput("pwd\r");
     connection.resize(999, 999);
     (ws as unknown as MockWebSocket).onmessage?.({ data: JSON.stringify({ type: "output", data: "ok" }) });
     connection.detach();
 
-    expect(statuses).toEqual(["connecting", "open"]);
+    expect(statuses).toEqual(["connecting", "open", "closed"]);
     expect((ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame))).toEqual([
       { type: "attach", sessionId: SESSION_ID, cwd: "projects" },
       { type: "resize", cols: 220, rows: 70 },
@@ -139,6 +149,70 @@ describe("mobile terminal client", () => {
     );
   });
 
+  it("keeps connect pending until socket open sends the attach frame", async () => {
+    const socket = new MockWebSocket();
+    socket.readyState = MockWebSocket.CONNECTING;
+    const gateway = {
+      getWsToken: jest.fn().mockResolvedValue("ws-token"),
+      setWebSocketToken: jest.fn(),
+      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
+    };
+    const terminalClient = new MobileTerminalClient(gateway as unknown as GatewayClient);
+    const statuses: string[] = [];
+    let settled = false;
+
+    const connectPromise = terminalClient.connect({
+      cwd: "projects",
+      onMessage: jest.fn(),
+      onStatus: (status) => statuses.push(status),
+    }).then((connection) => {
+      settled = true;
+      return connection;
+    });
+
+    await flushPromises();
+
+    expect(gateway.openTerminalWebSocket).toHaveBeenCalledWith("ws-token");
+    expect(settled).toBe(false);
+    expect(socket.sent).toEqual([]);
+    expect(statuses).toEqual(["connecting"]);
+
+    socket.readyState = MockWebSocket.OPEN;
+    socket.onopen?.();
+
+    await expect(connectPromise).resolves.toBeTruthy();
+    expect(settled).toBe(true);
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "attach", cwd: "projects" },
+    ]);
+    expect(statuses).toEqual(["connecting", "open"]);
+  });
+
+  it("rejects pending connects when a socket closes before attach is sent", async () => {
+    const socket = new MockWebSocket();
+    socket.readyState = MockWebSocket.CONNECTING;
+    const gateway = {
+      getWsToken: jest.fn().mockResolvedValue("ws-token"),
+      setWebSocketToken: jest.fn(),
+      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
+    };
+    const terminalClient = new MobileTerminalClient(gateway as unknown as GatewayClient);
+    const statuses: string[] = [];
+
+    const connectPromise = terminalClient.connect({
+      cwd: "projects",
+      onMessage: jest.fn(),
+      onStatus: (status) => statuses.push(status),
+    });
+
+    await flushPromises();
+    socket.close();
+
+    await expect(connectPromise).rejects.toThrow("Terminal connection closed before attach");
+    expect(socket.sent).toEqual([]);
+    expect(statuses).toEqual(["connecting", "closed"]);
+  });
+
   it("opens unauthenticated terminal sockets when the gateway returns no ws token", async () => {
     const webSocketMock = jest.fn().mockImplementation(() => new MockWebSocket());
     global.WebSocket = webSocketMock as unknown as typeof WebSocket;
@@ -159,7 +233,7 @@ describe("mobile terminal client", () => {
     );
   });
 
-  it("closes sockets before open and uses local ready-state constants", () => {
+  it("closes sockets before open and uses local ready-state constants", async () => {
     const ws = new MockWebSocket() as unknown as WebSocket;
     (ws as unknown as MockWebSocket).readyState = 0;
     const connection = new MobileTerminalConnection(ws, {
@@ -167,9 +241,10 @@ describe("mobile terminal client", () => {
       onMessage: jest.fn(),
     });
 
-    connection.attach();
+    const attachPromise = connection.attach();
     connection.detach();
 
+    await expect(attachPromise).rejects.toThrow("Terminal connection closed before attach");
     expect((ws as unknown as MockWebSocket).closed).toBe(true);
     expect((ws as unknown as MockWebSocket).sent).toEqual([]);
   });

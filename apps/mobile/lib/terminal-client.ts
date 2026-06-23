@@ -46,7 +46,7 @@ export class MobileTerminalClient {
     this.gateway.setWebSocketToken(token);
     const ws = this.gateway.openTerminalWebSocket(token);
     const connection = new MobileTerminalConnection(ws, options);
-    connection.attach();
+    await connection.attach();
     return connection;
   }
 }
@@ -67,30 +67,56 @@ export class MobileTerminalConnection {
     });
   }
 
-  attach(): void {
+  attach(): Promise<void> {
     this.options.onStatus?.("connecting");
-
-    this.ws.onopen = () => {
-      this.attached = true;
-      this.options.onStatus?.("open");
-      this.sendFrame(this.attachFrame);
-      if (this.options.cols && this.options.rows) {
-        this.resize(this.options.cols, this.options.rows);
-      }
-    };
 
     this.ws.onmessage = (event) => {
       const frame = parseTerminalServerFrame(event.data);
       if (frame) this.options.onMessage(frame);
     };
 
-    this.ws.onerror = () => {
-      this.options.onStatus?.("error");
-    };
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const resolveAttach = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const rejectAttach = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
 
-    this.ws.onclose = () => {
-      this.options.onStatus?.("closed");
-    };
+      const handleOpen = () => {
+        if (settled) return;
+        if (!this.sendFrame(this.attachFrame)) {
+          rejectAttach(new Error("Terminal connection opened before attach could be sent"));
+          return;
+        }
+        this.attached = true;
+        if (this.options.cols && this.options.rows) {
+          this.resize(this.options.cols, this.options.rows);
+        }
+        this.options.onStatus?.("open");
+        resolveAttach();
+      };
+      this.ws.onopen = handleOpen;
+
+      this.ws.onerror = () => {
+        this.options.onStatus?.("error");
+        rejectAttach(new Error("Terminal connection failed before attach"));
+      };
+
+      this.ws.onclose = () => {
+        this.options.onStatus?.("closed");
+        rejectAttach(new Error("Terminal connection closed before attach"));
+      };
+
+      if (this.ws.readyState === WS_OPEN) {
+        handleOpen();
+      }
+    });
   }
 
   sendInput(data: string): boolean {
@@ -106,13 +132,13 @@ export class MobileTerminalConnection {
   }
 
   detach(): boolean {
-    const sent = this.sendFrame({ type: "detach" });
+    const sent = this.attached ? this.sendFrame({ type: "detach" }) : false;
     this.close();
     return sent;
   }
 
   destroy(): boolean {
-    const sent = this.sendFrame({ type: "destroy" });
+    const sent = this.attached ? this.sendFrame({ type: "destroy" }) : false;
     this.close();
     return sent;
   }
