@@ -57,6 +57,7 @@ const navItems: NavItem[] = [
     },
   },
   { label: "Pricing", href: "/#pricing" },
+  { label: "About us", href: "/team" },
   { label: "Docs", href: "/docs" },
 ];
 
