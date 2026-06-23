@@ -26,7 +26,7 @@ const founders = [
     logos: [
       { src: "/images/team/posthog-logo.png", alt: "PostHog", width: 120, height: 23, className: "h-7 w-auto max-w-40" },
       { src: "/images/team/newly-logo.jpg", alt: "Newly", width: 56, height: 56, className: "h-12 w-auto rounded-[4px] max-w-14" },
-      { src: "/images/team/kth-logo.svg", alt: "KTH", width: 57, height: 64, className: "h-11 w-auto max-w-16" },
+      { src: "/images/team/kth-logo.svg", alt: "KTH", width: 63, height: 70, className: "h-12 w-auto max-w-20" },
     ],
     linkedin: "https://www.linkedin.com/in/hamedmohammadpour/",
     x: "https://x.com/thehamedmp",
@@ -38,6 +38,7 @@ const founders = [
     logos: [
       { src: "/images/team/ioi-logo.png", alt: "International Olympiad in Informatics", width: 78, height: 78, className: "h-16 w-auto max-w-20" },
       { src: "/images/team/bending-spoons-logo.svg", alt: "Bending Spoons", width: 198, height: 80, className: "h-12 w-auto max-w-56" },
+      { src: "/images/team/polito-logo.png", alt: "Politecnico di Torino", width: 182, height: 80, className: "h-10 w-auto max-w-44" },
     ],
     linkedin: "https://www.linkedin.com/in/nima-naderi04/",
     x: "https://x.com/NimaNaderi2004",
