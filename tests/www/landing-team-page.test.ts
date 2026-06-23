@@ -55,7 +55,10 @@ describe("www landing team page", () => {
     expect(page).toContain("aria-label={`${logo.alt} website`}");
     expect(page).toContain("function XLogoIcon");
     expect(page).not.toContain("XIcon");
+    expect(page).toContain("security and engineering depth");
     expect(page).toContain("Olympiad gold-medal problem solving");
+    expect(page).toContain("IOI Scientific Committee");
+    expect(page).toContain("DEF CON conference and competition community");
     expect(page).toContain("reliable systems");
     expect(page).toContain("<SiteFooter />");
     expect(firstLogoIndex).toBeGreaterThan(-1);

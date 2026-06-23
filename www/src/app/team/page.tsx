@@ -55,7 +55,7 @@ const founders = [
   {
     name: "Nima Naderi",
     role: "CTO & Co-Founder",
-    bio: "Nima brings product engineering experience from Bending Spoons, a Computer Engineering background from Polito, and Olympiad gold-medal problem solving. He focuses on the technical foundation of Matrix OS: reliable systems, polished interfaces, and the details that make AI feel native.",
+    bio: "Nima brings security and engineering depth to Matrix OS, shaped by Olympiad gold-medal problem solving, two years on the IOI Scientific Committee, and hands-on security work in the DEF CON conference and competition community. He focuses on reliable systems, polished interfaces, and the details that make AI feel native.",
     logos: [
       {
         src: "/images/team/ioi-logo.png",
