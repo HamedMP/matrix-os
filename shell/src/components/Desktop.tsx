@@ -1172,8 +1172,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const setDesktopMode = useDesktopMode((s) => s.setMode);
   const visibleModes = useDesktopMode((s) => s.visibleModes);
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
-  const hydrated = useDesktopMode((s) => s._hydrated);
-  const modeConfig = getModeConfig(hydrated ? desktopMode : "dev");
+  const modeConfig = getModeConfig(desktopMode);
   const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
   const developerDashboardVisible = shouldShowDeveloperDashboard(firstRunStatus, desktopMode, visibleWindowCount);
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
