@@ -351,8 +351,12 @@ exit 99
     expect(toolPackInstaller).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
     expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
     expect(toolPackInstaller).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
-    expect(toolPackInstaller).toContain('"$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX"');
+    expect(toolPackInstaller).toContain('run_npm_install()');
+    expect(toolPackInstaller).toContain('run_as_matrix "$timeout_bin" 900 "$NODE_PREFIX/bin/npm" "$@"');
+    expect(toolPackInstaller).toContain('run_npm_install install -g --ignore-scripts --prefix "$NODE_PREFIX"');
     expect(toolPackInstaller).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
+    expect(toolPackInstaller).toContain('node_prefix_chmod()');
+    expect(toolPackInstaller).toContain('if ! command -v flock >/dev/null 2>&1; then');
     expect(toolPackInstaller).toContain('install_claude_code_package()');
     expect(toolPackInstaller).toContain('install_codex_package()');
     expect(toolPackInstaller).toContain('install_opencode_package()');

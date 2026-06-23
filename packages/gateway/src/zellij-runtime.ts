@@ -65,6 +65,7 @@ const SAFE_PROCESS_ENV_KEYS = new Set([
   "HOME",
   "LANG",
   "LOGNAME",
+  "MATRIX_INSTALL_TOOL_PACK",
   "PATH",
   "SHELL",
   "TERM",

@@ -85,6 +85,22 @@ async function chooseNewSessionMenuItemAfterStatus(name: RegExp | string) {
   });
 }
 
+function expectedAgentInstallCommand(target: string): string {
+  return [
+    'tool="${MATRIX_INSTALL_TOOL_PACK:-}"',
+    'if [ -n "$tool" ] && [ -x "$tool" ]; then',
+    `  "$tool" '${target}'`,
+    "elif command -v matrix-install-tool-pack >/dev/null 2>&1; then",
+    `  matrix-install-tool-pack '${target}'`,
+    "elif [ -x /opt/matrix/bin/matrix-install-tool-pack ]; then",
+    `  /opt/matrix/bin/matrix-install-tool-pack '${target}'`,
+    "else",
+    "  printf '%s\\n' 'Matrix installer helper was not found. Update Matrix OS and try again.' >&2",
+    "  exit 127",
+    "fi",
+  ].join("; ");
+}
+
 function createDragDataTransfer(): DataTransfer {
   const data = new Map<string, string>();
   return {
@@ -2743,7 +2759,7 @@ describe("TerminalApp", () => {
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
         claudeMode: false,
-        startupCommand: "/opt/matrix/bin/matrix-install-tool-pack claude-code",
+        startupCommand: expectedAgentInstallCommand("claude-code"),
       },
     });
 
@@ -2754,7 +2770,7 @@ describe("TerminalApp", () => {
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
         claudeMode: false,
-        startupCommand: "/opt/matrix/bin/matrix-install-tool-pack codex",
+        startupCommand: expectedAgentInstallCommand("codex"),
       },
     });
 
@@ -2765,7 +2781,7 @@ describe("TerminalApp", () => {
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
         claudeMode: false,
-        startupCommand: "/opt/matrix/bin/matrix-install-tool-pack opencode",
+        startupCommand: expectedAgentInstallCommand("opencode"),
       },
     });
 
@@ -2776,7 +2792,7 @@ describe("TerminalApp", () => {
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
         claudeMode: false,
-        startupCommand: "/opt/matrix/bin/matrix-install-tool-pack pi",
+        startupCommand: expectedAgentInstallCommand("pi"),
       },
     });
   });

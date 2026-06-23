@@ -105,6 +105,7 @@ const SAFE_ATTACH_ENV_KEYS = new Set([
   "HOME",
   "LANG",
   "LOGNAME",
+  "MATRIX_INSTALL_TOOL_PACK",
   "PATH",
   "SHELL",
   "TMPDIR",

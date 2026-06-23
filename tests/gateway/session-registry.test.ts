@@ -44,6 +44,10 @@ function createRegistry(
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 describe("SessionRegistry", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   describe("create", () => {
     it("returns a UUID string", () => {
       const registry = createRegistry();
@@ -92,6 +96,21 @@ describe("SessionRegistry", () => {
       registry.create("/home", "/bin/zsh");
       const call = mockSpawn.mock.calls[0];
       expect(call[0]).toBe("/bin/zsh");
+    });
+
+    it("passes the Matrix installer helper override to spawned terminals", () => {
+      vi.stubEnv("MATRIX_INSTALL_TOOL_PACK", "/tmp/matrix-install-tool-pack");
+      const mockSpawn = createMockSpawn();
+      const registry = createRegistry({}, mockSpawn);
+
+      registry.create("/home");
+
+      const call = mockSpawn.mock.calls[0];
+      expect(call[2]).toMatchObject({
+        env: expect.objectContaining({
+          MATRIX_INSTALL_TOOL_PACK: "/tmp/matrix-install-tool-pack",
+        }),
+      });
     });
 
     it("falls back to homePath if spawn fails for a vanished cwd", () => {

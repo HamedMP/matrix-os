@@ -605,6 +605,7 @@ export class SessionRegistry {
         ...(process.env.MATRIX_HANDLE ? { MATRIX_HANDLE: process.env.MATRIX_HANDLE } : {}),
         ...(process.env.MATRIX_DISPLAY_NAME ? { MATRIX_DISPLAY_NAME: process.env.MATRIX_DISPLAY_NAME } : {}),
         ...(process.env.MATRIX_HOME ? { MATRIX_HOME: process.env.MATRIX_HOME } : {}),
+        ...(process.env.MATRIX_INSTALL_TOOL_PACK ? { MATRIX_INSTALL_TOOL_PACK: process.env.MATRIX_INSTALL_TOOL_PACK } : {}),
       },
     };
   }

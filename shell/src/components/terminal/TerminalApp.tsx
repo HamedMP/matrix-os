@@ -2570,8 +2570,25 @@ function parseTerminalAgentStatuses(value: unknown): TerminalAgentStatus[] {
     .map((agent) => ({ id: agent.id, installed: agent.installed }));
 }
 
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
 function terminalAgentInstallCommand(option: TerminalAgentOption): string {
-  return `/opt/matrix/bin/matrix-install-tool-pack ${option.installTarget}`;
+  const target = shellSingleQuote(option.installTarget);
+  return [
+    'tool="${MATRIX_INSTALL_TOOL_PACK:-}"',
+    'if [ -n "$tool" ] && [ -x "$tool" ]; then',
+    `  "$tool" ${target}`,
+    "elif command -v matrix-install-tool-pack >/dev/null 2>&1; then",
+    `  matrix-install-tool-pack ${target}`,
+    "elif [ -x /opt/matrix/bin/matrix-install-tool-pack ]; then",
+    `  /opt/matrix/bin/matrix-install-tool-pack ${target}`,
+    "else",
+    "  printf '%s\\n' 'Matrix installer helper was not found. Update Matrix OS and try again.' >&2",
+    "  exit 127",
+    "fi",
+  ].join("; ");
 }
 
 function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSummary[]): boolean {

@@ -66,20 +66,52 @@ run_as_matrix() {
     "$@"
 }
 
-runtime_chmod() {
-  if [ "$(id -u)" = "0" ]; then
-    chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
-    find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} +
+run_npm_install() {
+  local timeout_bin
+  timeout_bin="$(command -v timeout 2>/dev/null || true)"
+  if [ -n "$timeout_bin" ]; then
+    run_as_matrix "$timeout_bin" 900 "$NODE_PREFIX/bin/npm" "$@"
     return
   fi
-  sudo chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
-  sudo find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} +
+  run_as_matrix "$NODE_PREFIX/bin/npm" "$@"
+}
+
+node_prefix_chmod() {
+  "$@" chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
+  if ! "$@" find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} + 2>/dev/null; then
+    log "warning: unable to apply setgid bit to node prefix directories"
+  fi
+}
+
+runtime_chmod() {
+  if [ "$(id -u)" = "0" ]; then
+    node_prefix_chmod
+    return
+  fi
+  if [ -w "$NODE_PREFIX/lib/node_modules" ] && [ -w "$NODE_PREFIX/bin" ]; then
+    node_prefix_chmod
+    return
+  fi
+  node_prefix_chmod sudo
 }
 
 with_pack_lock() {
   local pack="$1"
   shift
   local lock_path="/tmp/matrix-tool-pack-${pack}.lock"
+  if ! command -v flock >/dev/null 2>&1; then
+    local lock_dir="${lock_path}.d"
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+      log "${pack} install is already running"
+      return 75
+    fi
+    local status=0
+    if ! "$@"; then
+      status=$?
+    fi
+    rmdir "$lock_dir" 2>/dev/null || true
+    return "$status"
+  fi
   exec 9>"$lock_path"
   if ! flock -n 9; then
     log "${pack} install is already running"
@@ -100,7 +132,7 @@ finish_agent_install() {
 }
 
 install_claude_code_package() {
-  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
+  run_npm_install install -g --prefix "$NODE_PREFIX" \
     @anthropic-ai/claude-code@latest
 }
 
@@ -112,7 +144,7 @@ install_claude_code() {
 }
 
 install_codex_package() {
-  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
+  run_npm_install install -g --prefix "$NODE_PREFIX" \
     @openai/codex@latest
 }
 
@@ -124,7 +156,7 @@ install_codex() {
 }
 
 install_opencode_package() {
-  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
+  run_npm_install install -g --prefix "$NODE_PREFIX" \
     "opencode-ai@${OPENCODE_AI_VERSION}"
 }
 
@@ -138,7 +170,7 @@ install_opencode() {
 install_pi_package() {
   # Upstream Pi docs recommend --ignore-scripts; the package exposes pi via
   # bin -> dist/cli.js and does not use postinstall for binary acquisition.
-  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX" \
+  run_npm_install install -g --ignore-scripts --prefix "$NODE_PREFIX" \
     "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
 }
 
