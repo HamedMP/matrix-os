@@ -31,6 +31,10 @@ import {
 } from "@/lib/terminal-state";
 import { colors, fonts } from "@/lib/theme";
 
+function closePendingConnection(connection: MobileTerminalConnection | null): void {
+  connection?.close();
+}
+
 export default function TerminalScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -40,6 +44,7 @@ export default function TerminalScreen() {
   const [lastTerminalSessionId, setLastTerminalSessionId] = useState<string | null>(null);
   const terminalClient = useMemo(() => (client ? new MobileTerminalClient(client) : null), [client]);
   const connectionRef = useRef<MobileTerminalConnection | null>(null);
+  const pendingConnectionRef = useRef<MobileTerminalConnection | null>(null);
   const connectAttemptRef = useRef(0);
   const connectingRef = useRef(false);
   const outputRef = useRef<ScrollView | null>(null);
@@ -71,6 +76,8 @@ export default function TerminalScreen() {
     return () => {
       connectAttemptRef.current += 1;
       connectingRef.current = false;
+      closePendingConnection(pendingConnectionRef.current);
+      pendingConnectionRef.current = null;
       connectionRef.current?.detach();
       connectionRef.current = null;
     };
@@ -133,6 +140,8 @@ export default function TerminalScreen() {
     const attemptId = connectAttemptRef.current + 1;
     connectAttemptRef.current = attemptId;
     connectingRef.current = true;
+    closePendingConnection(pendingConnectionRef.current);
+    pendingConnectionRef.current = null;
     connectionRef.current?.detach();
     connectionRef.current = null;
     dispatch({ type: "connection.changed", status: "connecting" });
@@ -147,6 +156,13 @@ export default function TerminalScreen() {
         onMessage: (frame) => {
           if (connectAttemptRef.current === attemptId) handleFrame(frame);
         },
+        onConnection: (connection) => {
+          if (connectAttemptRef.current === attemptId) {
+            pendingConnectionRef.current = connection;
+            return;
+          }
+          connection.close();
+        },
         onStatus: (status) => {
           if (connectAttemptRef.current !== attemptId) return;
           if (status === "open") dispatch({ type: "connection.changed", status: "attached" });
@@ -159,13 +175,17 @@ export default function TerminalScreen() {
         return;
       }
       if (!nextConnection) {
+        pendingConnectionRef.current = null;
         dispatch({ type: "terminal.error", message: "Terminal unavailable" });
         return;
       }
+      pendingConnectionRef.current = null;
       connectionRef.current = nextConnection;
       inputRef.current?.focus();
     } catch (err: unknown) {
       if (connectAttemptRef.current === attemptId) {
+        closePendingConnection(pendingConnectionRef.current);
+        pendingConnectionRef.current = null;
         console.warn("[mobile] terminal connection failed", err instanceof Error ? err.message : String(err));
         dispatch({ type: "terminal.error", message: "Terminal unavailable" });
         dispatch({ type: "connection.changed", status: "detached" });
@@ -201,6 +221,8 @@ export default function TerminalScreen() {
     }
     connectAttemptRef.current += 1;
     connectingRef.current = false;
+    closePendingConnection(pendingConnectionRef.current);
+    pendingConnectionRef.current = null;
     connectionRef.current?.destroy();
     connectionRef.current = null;
     setLastTerminalSessionId(null);

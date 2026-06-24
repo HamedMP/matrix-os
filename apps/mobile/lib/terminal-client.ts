@@ -27,6 +27,7 @@ export interface MobileTerminalConnectOptions {
   rows?: number;
   fromSeq?: number;
   onMessage: (frame: TerminalServerFrame) => void;
+  onConnection?: (connection: MobileTerminalConnection) => void;
   onStatus?: (status: "connecting" | "open" | "closed" | "error") => void;
 }
 
@@ -46,6 +47,7 @@ export class MobileTerminalClient {
     this.gateway.setWebSocketToken(token);
     const ws = this.gateway.openTerminalWebSocket(token);
     const connection = new MobileTerminalConnection(ws, options);
+    options.onConnection?.(connection);
     await connection.attach();
     return connection;
   }
@@ -54,6 +56,7 @@ export class MobileTerminalClient {
 export class MobileTerminalConnection {
   private readonly attachFrame: TerminalClientFrame;
   private attached = false;
+  private cancelled = false;
 
   constructor(
     private readonly ws: WebSocket,
@@ -90,7 +93,7 @@ export class MobileTerminalConnection {
       };
 
       const handleOpen = () => {
-        if (settled) return;
+        if (settled || this.cancelled) return;
         if (!this.sendFrame(this.attachFrame)) {
           rejectAttach(new Error("Terminal connection opened before attach could be sent"));
           this.close();
@@ -148,6 +151,7 @@ export class MobileTerminalConnection {
 
   close(): void {
     if (this.ws.readyState !== WS_CONNECTING && this.ws.readyState !== WS_OPEN) return;
+    this.cancelled = true;
     this.attached = false;
     this.ws.close();
   }

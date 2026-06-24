@@ -284,6 +284,52 @@ describe("TerminalScreen", () => {
     );
   });
 
+  it("closes a pending terminal socket on unmount before late open can attach", async () => {
+    global.WebSocket = {
+      CONNECTING: 0,
+      OPEN: 1,
+      CLOSED: 3,
+    } as typeof WebSocket;
+    const socket = new MockTerminalSocket();
+    socket.readyState = WebSocket.CONNECTING;
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
+    const gatewayClient = {
+      getTerminalSessions: jest.fn().mockResolvedValue([]),
+      getWsToken: jest.fn().mockResolvedValue("ws-token"),
+      setWebSocketToken: jest.fn(),
+      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
+      deleteTerminalSession: jest.fn().mockResolvedValue(true),
+    };
+    jest.mocked(useGateway).mockReturnValue({
+      client: gatewayClient as unknown as GatewayClient,
+      connectionState: "connected",
+      gateway: null,
+      setGateway: jest.fn(),
+      unreadCount: 0,
+      incrementUnread: jest.fn(),
+      clearUnread: jest.fn(),
+    });
+
+    const rendered = render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("New session"));
+    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(1));
+
+    rendered.unmount();
+
+    expect(socket.closed).toBe(true);
+
+    await act(async () => {
+      socket.readyState = WebSocket.OPEN;
+      socket.onopen?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(socket.sent).toEqual([]);
+  });
+
   it("keeps terminal recovery state when deleting a session fails", async () => {
     global.WebSocket = {
       OPEN: 1,

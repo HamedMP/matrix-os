@@ -189,6 +189,35 @@ describe("mobile terminal client", () => {
     expect(statuses).toEqual(["connecting", "open"]);
   });
 
+  it("does not send attach after a pending connection is closed before open", async () => {
+    const socket = new MockWebSocket();
+    socket.readyState = MockWebSocket.CONNECTING;
+    const gateway = {
+      getWsToken: jest.fn().mockResolvedValue("ws-token"),
+      setWebSocketToken: jest.fn(),
+      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
+    };
+    const terminalClient = new MobileTerminalClient(gateway as unknown as GatewayClient);
+    const pendingConnections: MobileTerminalConnection[] = [];
+
+    const connectPromise = terminalClient.connect({
+      cwd: "projects",
+      onMessage: jest.fn(),
+      onConnection: (connection) => {
+        pendingConnections.push(connection);
+      },
+    });
+
+    await flushPromises();
+    pendingConnections[0]?.close();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.onopen?.();
+
+    await expect(connectPromise).rejects.toThrow("Terminal connection closed before attach");
+    expect(socket.closed).toBe(true);
+    expect(socket.sent).toEqual([]);
+  });
+
   it("rejects pending connects when a socket closes before attach is sent", async () => {
     const socket = new MockWebSocket();
     socket.readyState = MockWebSocket.CONNECTING;
