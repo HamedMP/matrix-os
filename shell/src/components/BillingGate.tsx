@@ -424,7 +424,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isLoaded || billingChecking) return;
     const state = hasBillingAccess
       ? "billing_active"
       : !isSignedIn
@@ -446,7 +446,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
       access_state: state,
       checkout_return_requested: checkoutReturnRequested,
     });
-  }, [checkoutReturnRequested, hasBillingAccess, isLoaded, isSignedIn]);
+  }, [billingChecking, checkoutReturnRequested, hasBillingAccess, isLoaded, isSignedIn]);
 
   if (e2eBillingBypass) {
     return <>{children}</>;

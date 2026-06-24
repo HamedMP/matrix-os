@@ -73,8 +73,11 @@ export function useMatrixBillingAccess(): BillingAccessState {
       return;
     }
     const billingCacheKey = isSignedIn ? userId : PLATFORM_SESSION_BILLING_CACHE_KEY;
+    const shouldUseSnapshotCache = isSignedIn;
     const checkoutReturnRequested = isCheckoutSuccessReturn();
-    const cached = checkoutReturnRequested ? null : readCachedBillingStatus(billingCacheKey);
+    const cached = checkoutReturnRequested || !shouldUseSnapshotCache
+      ? null
+      : readCachedBillingStatus(billingCacheKey);
     if (cached !== null) {
       setRemoteState(cached);
       setRemoteChecked(true);
@@ -83,7 +86,10 @@ export function useMatrixBillingAccess(): BillingAccessState {
     let disposed = false;
     let retryTimeoutId: number | undefined;
     setRemoteChecked(false);
-    readRemoteBillingStatus(billingCacheKey, { skipInactiveCache: checkoutReturnRequested })
+    readRemoteBillingStatus(billingCacheKey, {
+      skipCache: !shouldUseSnapshotCache,
+      skipInactiveCache: checkoutReturnRequested,
+    })
       .then((state) => {
         if (disposed) return;
         setRemoteState(state);
@@ -138,7 +144,7 @@ function isCheckoutSuccessReturn(): boolean {
 
 function readRemoteBillingStatus(
   cacheKey: string,
-  options: { skipInactiveCache?: boolean } = {},
+  options: { skipCache?: boolean; skipInactiveCache?: boolean } = {},
 ): Promise<BillingAccessRemoteState> {
   if (billingStatusRequest?.cacheKey === cacheKey) return billingStatusRequest.promise;
 
@@ -167,7 +173,7 @@ function readRemoteBillingStatus(
       };
     })
     .then((state) => {
-      if (state.active || !options.skipInactiveCache) {
+      if (!options.skipCache && (state.active || !options.skipInactiveCache)) {
         billingStatusSnapshot = { cacheKey, state, checkedAt: Date.now() };
       }
       return state;
