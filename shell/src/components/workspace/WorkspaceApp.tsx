@@ -133,6 +133,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [selectedAgent, setSelectedAgent] = useState<WorkspaceAgent>("codex");
   const [agentPrompt, setAgentPrompt] = useState("");
   const [agentMessage, setAgentMessage] = useState("");
+  const [shellMessage, setShellMessage] = useState("");
   const [worktreeMessage, setWorktreeMessage] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingWorktree, setCreatingWorktree] = useState(false);
@@ -155,6 +156,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setPrevActiveSlug(activeSlug);
     setSelectedWorktreeId("");
     setAgentMessage("");
+    setShellMessage("");
     setWorktreeMessage("");
     setCreatingWorktree(false);
     setStartingAgent(false);
@@ -447,7 +449,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       });
       if (activeSlugRef.current === activeSlug) {
         if (attach.terminalSessionId) openTerminalSession(attach.terminalSessionId);
-        setAgentMessage(`Started shell ${sessionId}`);
+        setShellMessage(`Started shell ${sessionId}`);
         setAttachMessage(attach.terminalSessionId ? `Attached ${attach.terminalSessionId}` : "");
         await loadProjectDetail(activeSlug);
         setError("");
@@ -698,6 +700,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
             ))}
             {attachMessage && <p className="pt-2 text-xs text-muted-foreground">{attachMessage}</p>}
             {agentMessage && <p className="pt-2 text-xs text-muted-foreground">{agentMessage}</p>}
+            {shellMessage && <p className="pt-2 text-xs text-muted-foreground">{shellMessage}</p>}
           </WorkspacePanel>
 
           <WorkspacePanel title="Worktrees" icon={<GitBranchIcon className="size-3.5" />}>
