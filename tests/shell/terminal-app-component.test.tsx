@@ -75,6 +75,26 @@ async function chooseNewSessionMenuItem(name: RegExp | string) {
   await Promise.resolve();
 }
 
+async function chooseNewSessionMenuItemAfterStatus(name: RegExp | string) {
+  await openNewSessionMenu();
+  const menu = screen.getByRole("menu", { name: "New session menu" });
+  const item = await vi.waitFor(() => within(menu).getByRole("menuitem", { name }));
+  fireEvent.click(item);
+  await vi.waitFor(() => {
+    expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull();
+  });
+}
+
+function expectOptimizedImageSrc(element: HTMLElement, expectedPath: string): void {
+  expect(decodeURIComponent(element.getAttribute("src") ?? "")).toContain(expectedPath);
+}
+
+function terminalSessionPostBodies(): string[] {
+  return vi.mocked(fetch).mock.calls
+    .filter(([input, init]) => String(input).includes("/api/terminal/sessions") && init?.method === "POST")
+    .map(([, init]) => String(init?.body ?? ""));
+}
+
 function createDragDataTransfer(): DataTransfer {
   const data = new Map<string, string>();
   return {
@@ -2693,7 +2713,99 @@ describe("TerminalApp", () => {
     expect(screen.getByText("Failed to create shell")).toBeTruthy();
   });
 
-  it("starts Claude Code and Codex directly from the new-session menu", async () => {
+  it("renders agent install state in the new-session menu without ready badges", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: true, authState: "ok" },
+              { id: "codex", installed: true, authState: "ok" },
+              { id: "opencode", installed: false, authState: "unknown", errorCode: "agent_missing" },
+              { id: "pi", installed: false, authState: "unknown", errorCode: "agent_missing" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+    expect(within(menu).getByRole("menuitem", { name: /Shell/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Claude Code/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Codex/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /OpenCode.*Install/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /Pi.*Install/ })).toBeTruthy();
+    expect(within(menu).queryByText("Ready")).toBeNull();
+    expect(within(menu).getAllByText("Install")).toHaveLength(2);
+    expect(within(menu).getByTestId("terminal-agent-logo-claude")).toBeTruthy();
+    expect(within(menu).getByTestId("terminal-agent-logo-codex")).toBeTruthy();
+    expect(within(menu).getByTestId("terminal-agent-logo-opencode")).toBeTruthy();
+    expect(within(menu).getByTestId("terminal-agent-logo-pi")).toBeTruthy();
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-claude"), "/agent-logos/claude-code.png");
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-codex"), "/agent-logos/codex.png");
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-opencode"), "/agent-logos/opencode-white.png");
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-pi"), "/agent-logos/pi-coding-agent.png");
+  });
+
+  it("starts installed agents directly from the new-session menu", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: true, authState: "ok" },
+              { id: "codex", installed: true, authState: "ok" },
+              { id: "opencode", installed: true, authState: "ok" },
+              { id: "pi", installed: true, authState: "ok" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name, created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
     render(<TerminalApp />);
 
     await act(async () => {
@@ -2706,10 +2818,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItem(/Claude Code/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"claude-[a-z0-9-]+".*"cmd":"claude"/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: true,
-        startupCommand: undefined,
+        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
       },
     });
 
@@ -2717,10 +2829,191 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItem(/Codex/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"codex-[a-z0-9-]+".*"cmd":"codex"/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: false,
-        startupCommand: "codex",
+        sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/^OpenCode$/);
+    });
+
+    expect(terminalSessionPostBodies().some((body) => /"name":"opencode-[a-z0-9-]+".*"cmd":"opencode"/.test(body))).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^opencode-[a-z0-9-]+$/),
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/^Pi$/);
+    });
+
+    expect(terminalSessionPostBodies().some((body) => /"name":"pi-[a-z0-9-]+".*"cmd":"pi"/.test(body))).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^pi-[a-z0-9-]+$/),
+      },
+    });
+  });
+
+  it("retries agent session creation from home when the selected cwd is missing", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: true, authState: "ok" },
+              { id: "codex", installed: true, authState: "ok" },
+              { id: "opencode", installed: true, authState: "ok" },
+              { id: "pi", installed: true, authState: "ok" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string; cwd?: string };
+        if (body.name?.startsWith("claude-") && body.cwd === "projects") {
+          return Promise.resolve({
+            ok: false,
+            status: 400,
+            json: async () => ({ error: { code: "invalid_cwd", message: "Invalid cwd" } }),
+            clone() {
+              return this;
+            },
+          } as Response);
+        }
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name, created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main", status: "active" }] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItem(/Claude Code/);
+    });
+
+    const claudeBodies = terminalSessionPostBodies()
+      .map((body) => JSON.parse(body) as { name: string; cwd: string; cmd?: string })
+      .filter((body) => body.name.startsWith("claude-"));
+
+    expect(claudeBodies.map((body) => body.cwd)).toEqual(["projects", "~"]);
+    expect(claudeBodies.every((body) => body.cmd === "claude")).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        cwd: "~",
+        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
+      },
+    });
+  });
+
+  it("opens a new shell tab that runs the installer when an agent is missing", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: false, authState: "unknown", errorCode: "agent_missing" },
+              { id: "codex", installed: false, authState: "unknown", errorCode: "agent_missing" },
+              { id: "opencode", installed: false, authState: "unknown", errorCode: "agent_missing" },
+              { id: "pi", installed: false, authState: "unknown", errorCode: "agent_missing" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name, created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/Claude Code.*Install/);
+    });
+
+    expect(terminalSessionPostBodies().some((body) => /"name":"claude-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/Codex.*Install/);
+    });
+
+    expect(terminalSessionPostBodies().some((body) => /"name":"codex-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/OpenCode.*Install/);
+    });
+
+    expect(terminalSessionPostBodies().some((body) => /"name":"opencode-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^opencode-[a-z0-9-]+$/),
+      },
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItemAfterStatus(/Pi.*Install/);
+    });
+
+    expect(terminalSessionPostBodies().some((body) => /"name":"pi-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=.*--ignore-scripts/.test(body))).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        sessionId: expect.stringMatching(/^pi-[a-z0-9-]+$/),
       },
     });
   });

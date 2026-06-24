@@ -97,6 +97,13 @@ describe("proxy auth: route classification", () => {
 });
 
 describe("proxy auth: screenshot bypass", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.doUnmock("@clerk/nextjs/server");
+    vi.doUnmock("next/server");
+  });
+
   it("bypasses auth when the explicit E2E flag is set", () => {
     expect(shouldBypassAuth({ E2E_TEST_BYPASS: "1", NODE_ENV: "production" })).toBe(true);
     expect(shouldBypassAuth({ E2E_TEST_BYPASS: "1", NODE_ENV: "test" })).toBe(true);
@@ -105,6 +112,48 @@ describe("proxy auth: screenshot bypass", () => {
   it("does not bypass auth without the explicit E2E flag", () => {
     expect(shouldBypassAuth({ NODE_ENV: "test" })).toBe(false);
     expect(shouldBypassAuth({ E2E_TEST_BYPASS: "0", NODE_ENV: "production" })).toBe(false);
+  });
+
+  it("still rewrites gateway paths and injects the gateway token in bypass mode", async () => {
+    vi.resetModules();
+    vi.stubEnv("E2E_TEST_BYPASS", "1");
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "local-gateway-token");
+    vi.stubEnv("GATEWAY_URL", "http://localhost:4000");
+
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn((handler) => handler),
+    }));
+
+    const nextResponseNext = vi.fn((init?: unknown) => ({ kind: "next", init }));
+    const nextResponseRewrite = vi.fn((url: URL, init?: { request?: { headers?: Headers } }) => ({
+      kind: "rewrite",
+      url,
+      init,
+    }));
+    class MockNextResponse extends Response {
+      static next = nextResponseNext;
+      static rewrite = nextResponseRewrite;
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    proxy({
+      headers: new Headers(),
+      nextUrl: {
+        host: "localhost:3001",
+        pathname: "/api/shell/bootstrap",
+        protocol: "http:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(nextResponseNext).not.toHaveBeenCalled();
+    expect(nextResponseRewrite).toHaveBeenCalledTimes(1);
+    const [url, init] = nextResponseRewrite.mock.calls[0] ?? [];
+    expect(url?.toString()).toBe("http://localhost:4000/api/shell/bootstrap");
+    expect(init?.request?.headers?.get("authorization")).toBe("Bearer local-gateway-token");
   });
 });
 

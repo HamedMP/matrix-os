@@ -1,0 +1,43 @@
+name: Agent Install Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      managers:
+        description: "Comma-separated package managers to smoke test"
+        required: false
+        default: "npm,pnpm,bun,yarn"
+  schedule:
+    - cron: "23 6 * * *"
+
+concurrency:
+  group: agent-install-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  agent-install-smoke:
+    name: Agent install smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Yarn classic
+        run: npm install -g yarn@1.22.22
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Smoke test agent CLI installers
+        env:
+          MATRIX_AGENT_INSTALL_SMOKE: "1"
+          MATRIX_AGENT_INSTALL_SMOKE_MANAGERS: ${{ inputs.managers || 'npm,pnpm,bun,yarn' }}
+        run: bun run test:integration -- tests/platform/agent-cli-install-smoke.integration.ts
