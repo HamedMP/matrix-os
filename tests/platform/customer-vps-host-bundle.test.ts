@@ -221,6 +221,80 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     }
   });
 
+  it('bundled home sync recovers from a corrupt installed manifest', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-corrupt-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const bundledNotes = join(appDir, 'home', 'apps', 'notes', 'src');
+    const homeNotes = join(homeDir, 'apps', 'notes', 'src');
+
+    try {
+      mkdirSync(bundledNotes, { recursive: true });
+      mkdirSync(homeNotes, { recursive: true });
+
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/notes/src/App.tsx': sha256('bundled v2'),
+      }, null, 2));
+      writeFileSync(join(homeDir, '.template-manifest.json'), '{"apps/notes/src/App.tsx":');
+      writeFileSync(join(appDir, 'home', 'apps', 'notes', 'src', 'App.tsx'), 'bundled v2');
+      writeFileSync(join(homeDir, 'apps', 'notes', 'src', 'App.tsx'), 'bundled v2');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(JSON.parse(readFileSync(join(homeDir, '.template-manifest.json'), 'utf8'))).toEqual({
+        'apps/notes/src/App.tsx': sha256('bundled v2'),
+      });
+      expect(readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8')).toContain(
+        'Ignoring invalid installed manifest',
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync rotates its log before appending past the size cap', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-log-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const logDir = join(homeDir, 'system', 'logs');
+    const logPath = join(logDir, 'template-sync.log');
+
+    try {
+      mkdirSync(join(appDir, 'home'), { recursive: true });
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), '{}');
+      writeFileSync(logPath, 'x'.repeat(240));
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+          TEMPLATE_SYNC_LOG_MAX_BYTES: '128',
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(readFileSync(`${logPath}.1`, 'utf8')).toBe('x'.repeat(240));
+      expect(readFileSync(logPath, 'utf8')).toContain('Template sync completed');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('host bundle manifest keeps the sync-agent compatibility fields', () => {
     const root = process.cwd();
     const releaseScript = readFileSync(join(root, 'scripts/host-bundle-release.mjs'), 'utf8');
