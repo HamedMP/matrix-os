@@ -79,13 +79,18 @@ function uniq(values: Array<string | null>): string[] {
 }
 
 function isLocalDevRendererOrigin(origin: string): boolean {
-  const normalized = normalizedHttpOrigin(origin);
-  if (!normalized) return false;
-  const url = new URL(normalized);
-  return (
-    (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]") &&
-    url.port === "5173"
-  );
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "http:") return false;
+    return (
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "[::1]" ||
+      url.hostname === "::1"
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function buildRendererCsp(gatewayOrigin: string | null, rendererOrigin: string): string {
