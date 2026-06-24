@@ -19,7 +19,7 @@ import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContex
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
+import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type ClientMessage, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
@@ -269,6 +269,35 @@ function logTerminalDebug(event: string, details: Record<string, unknown> = {}):
 export const TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES = 1024;
 
 export type TerminalSessionRouteRegistry = Pick<SessionRegistry, "list" | "getSession" | "destroy">;
+
+export interface LegacyTerminalHandleDispatchOptions {
+  handle: SessionHandle;
+  msg: ClientMessage;
+  sendJson: (message: PtyServerMessage) => void;
+  close: () => void;
+  onDeadHandle?: () => void;
+}
+
+export function dispatchLegacyTerminalHandleMessage(options: LegacyTerminalHandleDispatchOptions): boolean {
+  if (options.handle.send(options.msg)) return true;
+  closeDeadLegacyTerminalHandle(options);
+  return false;
+}
+
+export function replayLegacyTerminalHandleOrClose(
+  options: Omit<LegacyTerminalHandleDispatchOptions, "msg"> & { fromSeq: number },
+): boolean {
+  if (options.handle.replay(options.fromSeq)) return true;
+  closeDeadLegacyTerminalHandle(options);
+  return false;
+}
+
+function closeDeadLegacyTerminalHandle(options: Omit<LegacyTerminalHandleDispatchOptions, "msg">): void {
+  options.sendJson({ type: "error", message: "Terminal session unavailable" });
+  options.handle.detach();
+  options.onDeadHandle?.();
+  options.close();
+}
 
 export function registerTerminalSessionRoutes(
   app: Hono,
@@ -2533,7 +2562,13 @@ export async function createGateway(config: GatewayConfig) {
                 if (handle) {
                   handle.subscribe(sendJson);
                   sendJson({ type: "attached", sessionId, state: "running" });
-                  handle.replay(0);
+                  replayLegacyTerminalHandleOrClose({
+                    handle,
+                    fromSeq: 0,
+                    sendJson,
+                    close: () => ws.close(),
+                    onDeadHandle: () => { handle = null; },
+                  });
                 } else {
                   sessionRegistry.destroy(sessionId);
                   autoCreatedSessionId = null;
@@ -2594,6 +2629,16 @@ export async function createGateway(config: GatewayConfig) {
 
           switch (msg.type) {
             case "ping":
+              if (handle) {
+                const alive = dispatchLegacyTerminalHandleMessage({
+                  handle,
+                  msg,
+                  sendJson,
+                  close: () => ws.close(),
+                  onDeadHandle: () => { handle = null; },
+                });
+                if (!alive) break;
+              }
               ws.send(JSON.stringify({ type: "pong" }));
               break;
             case "attach": {
@@ -2629,7 +2674,13 @@ export async function createGateway(config: GatewayConfig) {
                   if (handle) {
                     handle.subscribe(sendJson);
                     sendJson({ type: "attached", sessionId, state: "running" });
-                    handle.replay(0);
+                    replayLegacyTerminalHandleOrClose({
+                      handle,
+                      fromSeq: 0,
+                      sendJson,
+                      close: () => ws.close(),
+                      onDeadHandle: () => { handle = null; },
+                    });
                   } else {
                     sessionRegistry.destroy(sessionId);
                   }
@@ -2661,7 +2712,13 @@ export async function createGateway(config: GatewayConfig) {
                       state: info?.state ?? "running",
                       exitCode: info?.exitCode,
                     });
-                    handle.replay(msg.fromSeq ?? 0);
+                    replayLegacyTerminalHandleOrClose({
+                      handle,
+                      fromSeq: msg.fromSeq ?? 0,
+                      sendJson,
+                      close: () => ws.close(),
+                      onDeadHandle: () => { handle = null; },
+                    });
                   } else {
                     logTerminalDebug("attach-existing-miss", { sessionId: msg.sessionId });
                     captureTerminalEvent("attach-miss");
@@ -2682,7 +2739,13 @@ export async function createGateway(config: GatewayConfig) {
             case "input":
             case "resize":
               if (handle) {
-                handle.send(msg);
+                dispatchLegacyTerminalHandleMessage({
+                  handle,
+                  msg,
+                  sendJson,
+                  close: () => ws.close(),
+                  onDeadHandle: () => { handle = null; },
+                });
               }
               break;
             case "detach":

@@ -13,6 +13,7 @@ import {
   DestroySchema,
 } from "../../packages/gateway/src/session-registry.js";
 import {
+  dispatchLegacyTerminalHandleMessage,
   resetVolatilePtySessionList,
   registerTerminalSessionRoutes,
   TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
@@ -279,5 +280,96 @@ describe("Terminal session REST routes", () => {
     expect(res.status).toBe(413);
     expect(registry.getSession).not.toHaveBeenCalled();
     expect(registry.destroy).not.toHaveBeenCalled();
+  });
+});
+
+describe("legacy terminal websocket handle dispatch", () => {
+  it("keeps live terminal pings eligible for pong responses", () => {
+    const sent: unknown[] = [];
+    const handle = {
+      sessionId: SESSION_ID,
+      send: vi.fn(() => true),
+      replay: vi.fn(),
+      subscribe: vi.fn(),
+      detach: vi.fn(),
+    };
+    const closed = vi.fn();
+
+    const alive = dispatchLegacyTerminalHandleMessage({
+      handle,
+      msg: { type: "ping" },
+      sendJson: (message) => sent.push(message),
+      close: closed,
+    });
+
+    if (alive) {
+      sent.push({ type: "pong" });
+    }
+
+    expect(alive).toBe(true);
+    expect(handle.send).toHaveBeenCalledWith({ type: "ping" });
+    expect(handle.detach).not.toHaveBeenCalled();
+    expect(closed).not.toHaveBeenCalled();
+    expect(sent).toEqual([{ type: "pong" }]);
+  });
+
+  it("sends a generic error and closes instead of ponging stale-pruned terminal pings", () => {
+    const sent: unknown[] = [];
+    const onDeadHandle = vi.fn();
+    const handle = {
+      sessionId: SESSION_ID,
+      send: vi.fn(() => false),
+      replay: vi.fn(),
+      subscribe: vi.fn(),
+      detach: vi.fn(),
+    };
+    const closed = vi.fn();
+
+    const alive = dispatchLegacyTerminalHandleMessage({
+      handle,
+      msg: { type: "ping" },
+      sendJson: (message) => sent.push(message),
+      close: closed,
+      onDeadHandle,
+    });
+
+    if (alive) {
+      sent.push({ type: "pong" });
+    }
+
+    expect(alive).toBe(false);
+    expect(handle.send).toHaveBeenCalledWith({ type: "ping" });
+    expect(handle.detach).toHaveBeenCalledTimes(1);
+    expect(onDeadHandle).toHaveBeenCalledTimes(1);
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual([{ type: "error", message: "Terminal session unavailable" }]);
+  });
+
+  it("sends a generic error and closes instead of silently dropping stale-pruned terminal input", () => {
+    const sent: unknown[] = [];
+    const onDeadHandle = vi.fn();
+    const handle = {
+      sessionId: SESSION_ID,
+      send: vi.fn(() => false),
+      replay: vi.fn(),
+      subscribe: vi.fn(),
+      detach: vi.fn(),
+    };
+    const closed = vi.fn();
+
+    const alive = dispatchLegacyTerminalHandleMessage({
+      handle,
+      msg: { type: "input", data: "pwd\r" },
+      sendJson: (message) => sent.push(message),
+      close: closed,
+      onDeadHandle,
+    });
+
+    expect(alive).toBe(false);
+    expect(handle.send).toHaveBeenCalledWith({ type: "input", data: "pwd\r" });
+    expect(handle.detach).toHaveBeenCalledTimes(1);
+    expect(onDeadHandle).toHaveBeenCalledTimes(1);
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(sent).toEqual([{ type: "error", message: "Terminal session unavailable" }]);
   });
 });

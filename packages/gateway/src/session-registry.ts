@@ -10,6 +10,7 @@ import { resolveWithinHome } from "./path-security.js";
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG === "1";
 export const MIN_TERMINAL_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_TERMINAL_SUBSCRIBER_TTL_MS = 2 * 60 * 1000;
 
 function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
   if (!TERMINAL_DEBUG_ENABLED) {
@@ -107,8 +108,8 @@ export type PtyServerMessage =
 export interface SessionHandle {
   readonly sessionId: string;
   subscribe(cb: (msg: PtyServerMessage) => void): void;
-  send(msg: ClientMessage): void;
-  replay(fromSeq: number): void;
+  send(msg: ClientMessage): boolean;
+  replay(fromSeq: number): boolean;
   detach(): void;
 }
 
@@ -118,6 +119,8 @@ export interface SessionRegistryOptions {
   persistPath?: string;
   allowedShells?: string[];
   sessionTtlMs?: number;
+  subscriberTtlMs?: number;
+  now?: () => number;
   /**
    * When false, the registry skips reading and restoring persisted sessions
    * from `persistPath` on construction. Defense-in-depth for callers that
@@ -129,6 +132,10 @@ export interface SessionRegistryOptions {
 }
 
 type SubscriberFn = (msg: PtyServerMessage) => void;
+
+interface SubscriberRecord {
+  lastTouchedAt: number;
+}
 
 interface PtyLike {
   onData: (cb: (data: string) => void) => void;
@@ -180,8 +187,9 @@ class PtySession {
   exitCode?: number;
   private ptyProcess: PtyLike;
   private static readonly MAX_SUBSCRIBERS = 10;
-  private subscribers = new Set<SubscriberFn>();
+  private subscribers = new Map<SubscriberFn, SubscriberRecord>();
   private _attachedClients = 0;
+  private readonly now: () => number;
 
   constructor(
     sessionId: string,
@@ -190,13 +198,15 @@ class PtySession {
     cwd: string,
     shell: string,
     metadata?: Pick<SessionInfo, "createdAt" | "lastAttachedAt">,
+    now: () => number = Date.now,
   ) {
     this.sessionId = sessionId;
     this.ptyProcess = ptyProcess;
     this.buffer = buffer;
     this.cwd = cwd;
     this.shell = shell;
-    this.createdAt = metadata?.createdAt ?? Date.now();
+    this.now = now;
+    this.createdAt = metadata?.createdAt ?? this.now();
     this.lastAttachedAt = metadata?.lastAttachedAt ?? this.createdAt;
 
     this.ptyProcess.onData((data: string) => {
@@ -207,7 +217,7 @@ class PtySession {
           continue;
         }
         const msg: PtyServerMessage = { type: "output", data: chunk, seq };
-        for (const sub of this.subscribers) {
+        for (const sub of this.subscribers.keys()) {
           sub(msg);
         }
       }
@@ -217,7 +227,7 @@ class PtySession {
       this.state = "exited";
       this.exitCode = exitCode;
       const msg: PtyServerMessage = { type: "exit", code: exitCode };
-      for (const sub of this.subscribers) {
+      for (const sub of this.subscribers.keys()) {
         sub(msg);
       }
     });
@@ -229,7 +239,7 @@ class PtySession {
 
   incrementClients(): void {
     this._attachedClients++;
-    this.lastAttachedAt = Date.now();
+    this.lastAttachedAt = this.now();
   }
 
   decrementClients(): void {
@@ -238,19 +248,44 @@ class PtySession {
     }
   }
 
-  addSubscriber(fn: SubscriberFn): void {
-    if (this.subscribers.size >= PtySession.MAX_SUBSCRIBERS) {
+  addSubscriber(fn: SubscriberFn, now = this.now()): void {
+    if (!this.subscribers.has(fn) && this.subscribers.size >= PtySession.MAX_SUBSCRIBERS) {
       throw new Error("Too many subscribers");
     }
-    this.subscribers.add(fn);
+    this.subscribers.set(fn, { lastTouchedAt: now });
+    this.lastAttachedAt = now;
   }
 
-  removeSubscriber(fn: SubscriberFn): void {
-    this.subscribers.delete(fn);
+  removeSubscriber(fn: SubscriberFn): boolean {
+    return this.subscribers.delete(fn);
+  }
+
+  touchSubscriber(fn: SubscriberFn, now = this.now()): boolean {
+    const subscriber = this.subscribers.get(fn);
+    if (!subscriber) {
+      return false;
+    }
+    subscriber.lastTouchedAt = now;
+    this.lastAttachedAt = now;
+    return true;
+  }
+
+  pruneStaleSubscribers(now: number, subscriberTtlMs: number): number {
+    let removed = 0;
+    for (const [fn, subscriber] of this.subscribers) {
+      if (now - subscriber.lastTouchedAt < subscriberTtlMs) {
+        continue;
+      }
+      this.subscribers.delete(fn);
+      this.decrementClients();
+      removed += 1;
+    }
+    return removed;
   }
 
   clearSubscribers(): void {
     this.subscribers.clear();
+    this._attachedClients = 0;
   }
 
   write(data: string): void {
@@ -300,6 +335,8 @@ export class SessionRegistry {
   private readonly spawnFn: SpawnFn;
   private readonly allowedShells: Set<string>;
   private readonly sessionTtlMs: number;
+  private readonly subscriberTtlMs: number;
+  private readonly now: () => number;
   private persistTimer?: ReturnType<typeof setTimeout>;
   private persistQueue: Promise<void> = Promise.resolve();
 
@@ -313,6 +350,8 @@ export class SessionRegistry {
     this.bufferSize = options?.bufferSize ?? 1024 * 1024;
     this.persistPath = options?.persistPath ?? join(homePath, "system", "terminal-sessions.json");
     this.sessionTtlMs = normalizeSessionTtl(options?.sessionTtlMs);
+    this.subscriberTtlMs = normalizeSubscriberTtl(options?.subscriberTtlMs);
+    this.now = options?.now ?? Date.now;
     this.allowedShells = options?.allowedShells
       ? new Set(options.allowedShells)
       : DEFAULT_ALLOWED_SHELLS;
@@ -336,8 +375,10 @@ export class SessionRegistry {
   }
 
   create(cwd: string, shell?: string): string {
-    this.evictExpiredSessions();
-    this.evictIfNeeded();
+    const now = this.now();
+    this.cleanupStaleSubscribers(now);
+    this.evictExpiredSessions(now);
+    this.evictIfNeeded(now);
 
     if (this.sessions.size >= this.maxSessions) {
       throw new Error("Session limit reached");
@@ -363,7 +404,7 @@ export class SessionRegistry {
       }
     }
 
-    const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, resolvedShell);
+    const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, resolvedShell, undefined, this.now);
     this.sessions.set(sessionId, session);
     this.schedulePersist();
     logTerminalDebug("create", {
@@ -377,8 +418,10 @@ export class SessionRegistry {
   }
 
   registerExternal(input: ExternalSessionRegistration): string {
-    this.evictExpiredSessions();
-    this.evictIfNeeded();
+    const now = this.now();
+    this.cleanupStaleSubscribers(now);
+    this.evictExpiredSessions(now);
+    this.evictIfNeeded(now);
 
     if (this.sessions.size >= this.maxSessions) {
       throw new Error("Session limit reached");
@@ -395,7 +438,7 @@ export class SessionRegistry {
       this.spawnOptions(targetCwd, "/bin/bash"),
     );
 
-    const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, parsed.command);
+    const session = new PtySession(sessionId, ptyProcess, buffer, targetCwd, parsed.command, undefined, this.now);
     this.sessions.set(sessionId, session);
     this.schedulePersist();
     logTerminalDebug("register-external", {
@@ -409,6 +452,9 @@ export class SessionRegistry {
   }
 
   attach(sessionId: string): SessionHandle | null {
+    const now = this.now();
+    this.cleanupStaleSubscribers(now);
+    this.evictExpiredSessions(now);
     const session = this.sessions.get(sessionId);
     if (!session) {
       logTerminalDebug("attach-miss", { sessionId, totalSessions: this.sessions.size });
@@ -422,7 +468,9 @@ export class SessionRegistry {
     });
 
     let subscriberFn: SubscriberFn | null = null;
+    let subscriberPruned = false;
     let detached = false;
+    const nowFn = this.now;
 
     const handle: SessionHandle = {
       sessionId,
@@ -430,27 +478,36 @@ export class SessionRegistry {
       subscribe(cb: (msg: PtyServerMessage) => void) {
         if (detached) return;
 
+        const now = nowFn();
         const previousSubscriber = subscriberFn;
+        let previousSubscriberWasActive = false;
         if (previousSubscriber) {
-          session.removeSubscriber(previousSubscriber);
+          previousSubscriberWasActive = session.removeSubscriber(previousSubscriber);
         }
 
         try {
-          session.addSubscriber(cb);
+          session.addSubscriber(cb, now);
         } catch (error) {
-          if (previousSubscriber) {
-            session.addSubscriber(previousSubscriber);
+          if (previousSubscriber && previousSubscriberWasActive) {
+            session.addSubscriber(previousSubscriber, now);
           }
           throw error;
         }
 
         subscriberFn = cb;
-        if (!previousSubscriber) {
+        subscriberPruned = false;
+        if (!previousSubscriberWasActive) {
           session.incrementClients();
         }
       },
 
       send(msg: ClientMessage) {
+        if (detached || subscriberPruned) return false;
+        if (subscriberFn && !session.touchSubscriber(subscriberFn, nowFn())) {
+          subscriberFn = null;
+          subscriberPruned = true;
+          return false;
+        }
         switch (msg.type) {
           case "input":
             session.write(msg.data);
@@ -459,16 +516,24 @@ export class SessionRegistry {
             session.resize(msg.cols, msg.rows);
             break;
         }
+        return true;
       },
 
       replay(fromSeq: number) {
-        if (!subscriberFn) return;
+        if (detached || subscriberPruned) return false;
+        if (!subscriberFn) return false;
+        if (!session.touchSubscriber(subscriberFn, nowFn())) {
+          subscriberFn = null;
+          subscriberPruned = true;
+          return false;
+        }
         const chunks = session.buffer.getSince(fromSeq);
         subscriberFn({ type: "replay-start", fromSeq });
         for (const chunk of chunks) {
           subscriberFn({ type: "output", data: chunk.data, seq: chunk.seq });
         }
         subscriberFn({ type: "replay-end", toSeq: session.buffer.nextSeq });
+        return true;
       },
 
       detach() {
@@ -480,8 +545,9 @@ export class SessionRegistry {
           attachedClientsBefore: session.attachedClients,
         });
         if (subscriberFn) {
-          session.removeSubscriber(subscriberFn);
-          session.decrementClients();
+          if (session.removeSubscriber(subscriberFn)) {
+            session.decrementClients();
+          }
           subscriberFn = null;
         }
       },
@@ -515,12 +581,16 @@ export class SessionRegistry {
   }
 
   list(): SessionInfo[] {
-    this.evictExpiredSessions();
+    const now = this.now();
+    this.cleanupStaleSubscribers(now);
+    this.evictExpiredSessions(now);
     return Array.from(this.sessions.values()).map((s) => s.toInfo());
   }
 
   getSession(sessionId: string): SessionInfo | null {
-    this.evictExpiredSessions();
+    const now = this.now();
+    this.cleanupStaleSubscribers(now);
+    this.evictExpiredSessions(now);
     const session = this.sessions.get(sessionId);
     return session ? session.toInfo() : null;
   }
@@ -534,11 +604,21 @@ export class SessionRegistry {
     await this.persistNow();
   }
 
-  private evictIfNeeded(): void {
+  private cleanupStaleSubscribers(now = this.now()): void {
+    let removed = 0;
+    for (const session of this.sessions.values()) {
+      removed += session.pruneStaleSubscribers(now, this.subscriberTtlMs);
+    }
+    if (removed > 0) {
+      logTerminalDebug("prune-stale-subscribers", { removed });
+      this.schedulePersist();
+    }
+  }
+
+  private evictIfNeeded(now = this.now()): void {
     if (this.sessions.size < this.maxSessions) return;
 
     let candidate: PtySession | null = null;
-    const now = Date.now();
     for (const session of this.sessions.values()) {
       if (session.attachedClients > 0) continue;
       if (!this.isExpired(session, now)) continue;
@@ -561,7 +641,7 @@ export class SessionRegistry {
     }
   }
 
-  private evictExpiredSessions(now = Date.now()): void {
+  private evictExpiredSessions(now = this.now()): void {
     for (const session of this.sessions.values()) {
       if (session.attachedClients > 0) continue;
       if (!this.isExpired(session, now)) continue;
@@ -644,7 +724,7 @@ export class SessionRegistry {
         }
       }
 
-      const now = Date.now();
+      const now = this.now();
       let restored = 0;
       let expired = 0;
       for (const session of sessions) {
@@ -687,6 +767,7 @@ export class SessionRegistry {
           createdAt: info.createdAt,
           lastAttachedAt: info.lastAttachedAt,
         },
+        this.now,
       );
       this.sessions.set(info.sessionId, session);
       return true;
@@ -705,4 +786,11 @@ function normalizeSessionTtl(value: number | undefined): number {
     return MIN_TERMINAL_SESSION_TTL_MS;
   }
   return Math.max(value, MIN_TERMINAL_SESSION_TTL_MS);
+}
+
+function normalizeSubscriberTtl(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return DEFAULT_TERMINAL_SUBSCRIBER_TTL_MS;
+  }
+  return value;
 }

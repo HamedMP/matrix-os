@@ -43,6 +43,16 @@ function createRegistry(
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function createClock(initialNow = 1_000) {
+  let now = initialNow;
+  return {
+    now: () => now,
+    advance(ms: number) {
+      now += ms;
+    },
+  };
+}
+
 describe("SessionRegistry", () => {
   describe("create", () => {
     it("returns a UUID string", () => {
@@ -191,6 +201,37 @@ describe("SessionRegistry", () => {
       handle.detach(); // second detach is a no-op
       expect(registry.getSession(id)!.attachedClients).toBe(0);
     });
+
+    it("keeps detach idempotent after stale subscriber cleanup", () => {
+      const clock = createClock();
+      const registry = createRegistry({ subscriberTtlMs: 100, now: clock.now });
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
+
+      expect(registry.getSession(id)!.attachedClients).toBe(1);
+
+      clock.advance(101);
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
+
+      handle.detach();
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
+    });
+
+    it("counts a resubscribe after stale cleanup as a fresh attachment", () => {
+      const clock = createClock();
+      const registry = createRegistry({ subscriberTtlMs: 100, now: clock.now });
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
+
+      clock.advance(101);
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
+
+      handle.subscribe(() => {});
+
+      expect(registry.getSession(id)!.attachedClients).toBe(1);
+    });
   });
 
   describe("destroy", () => {
@@ -309,6 +350,43 @@ describe("SessionRegistry", () => {
       expect(() => registry.create("/home")).toThrow("Session limit reached");
       expect(registry.list()).toHaveLength(2);
     });
+
+    it("prunes stale subscribers before deciding session cap eviction", () => {
+      const clock = createClock();
+      const registry = createRegistry({ maxSessions: 2, subscriberTtlMs: 100, now: clock.now });
+
+      const id1 = registry.create("/home");
+      const id2 = registry.create("/home");
+      registry.attach(id1)!.subscribe(() => {});
+
+      const sessionMap = (registry as unknown as { sessions: Map<string, { lastAttachedAt: number }> }).sessions;
+      sessionMap.get(id1)!.lastAttachedAt = clock.now() - MIN_TERMINAL_SESSION_TTL_MS - 1;
+
+      clock.advance(101);
+      const id3 = registry.create("/home");
+
+      expect(registry.getSession(id1)).toBeNull();
+      expect(registry.getSession(id2)).not.toBeNull();
+      expect(registry.getSession(id3)).not.toBeNull();
+    });
+
+    it("keeps recently touched subscribers protected from cap eviction", () => {
+      const clock = createClock();
+      const registry = createRegistry({ maxSessions: 2, subscriberTtlMs: 100, now: clock.now });
+
+      const id1 = registry.create("/home");
+      registry.create("/home");
+      registry.attach(id1)!.subscribe(() => {});
+
+      const sessionMap = (registry as unknown as { sessions: Map<string, { lastAttachedAt: number }> }).sessions;
+      sessionMap.get(id1)!.lastAttachedAt = clock.now() - MIN_TERMINAL_SESSION_TTL_MS - 1;
+
+      clock.advance(99);
+
+      expect(() => registry.create("/home")).toThrow("Session limit reached");
+      expect(registry.getSession(id1)).not.toBeNull();
+      expect(registry.getSession(id1)!.attachedClients).toBe(1);
+    });
   });
 
   describe("list", () => {
@@ -382,7 +460,7 @@ describe("SessionRegistry", () => {
       const handle = registry.attach(id)!;
       const received: PtyServerMessage[] = [];
       handle.subscribe((msg) => received.push(msg));
-      handle.replay(0);
+      expect(handle.replay(0)).toBe(true);
 
       expect(received[0]).toEqual({ type: "replay-start", fromSeq: 0 });
       expect(received[1]).toEqual({ type: "output", data: "line1\r\n", seq: 0 });
@@ -405,7 +483,7 @@ describe("SessionRegistry", () => {
       const handle = registry.attach(id)!;
       const received: PtyServerMessage[] = [];
       handle.subscribe((msg) => received.push(msg));
-      handle.replay(2);
+      expect(handle.replay(2)).toBe(true);
 
       expect(received[0]).toEqual({ type: "replay-start", fromSeq: 2 });
       expect(received[1]).toEqual({ type: "output", data: "c", seq: 2 });
@@ -419,11 +497,28 @@ describe("SessionRegistry", () => {
       const handle = registry.attach(id)!;
       const received: PtyServerMessage[] = [];
       handle.subscribe((msg) => received.push(msg));
-      handle.replay(0);
+      expect(handle.replay(0)).toBe(true);
 
       expect(received).toHaveLength(2);
       expect(received[0]).toEqual({ type: "replay-start", fromSeq: 0 });
       expect(received[1]).toEqual({ type: "replay-end", toSeq: 0 });
+    });
+
+    it("refreshes subscriber liveness when replay is requested", () => {
+      const clock = createClock();
+      const registry = createRegistry({ subscriberTtlMs: 100, now: clock.now });
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
+
+      clock.advance(90);
+      expect(handle.replay(0)).toBe(true);
+      clock.advance(90);
+
+      expect(registry.getSession(id)!.attachedClients).toBe(1);
+
+      clock.advance(11);
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
     });
   });
 
@@ -435,7 +530,7 @@ describe("SessionRegistry", () => {
       const id = registry.create("/home");
       const handle = registry.attach(id)!;
 
-      handle.send({ type: "input", data: "hello" });
+      expect(handle.send({ type: "input", data: "hello" })).toBe(true);
       expect(mockPty.write).toHaveBeenCalledWith("hello");
     });
 
@@ -446,8 +541,60 @@ describe("SessionRegistry", () => {
       const id = registry.create("/home");
       const handle = registry.attach(id)!;
 
-      handle.send({ type: "resize", cols: 120, rows: 40 });
+      expect(handle.send({ type: "resize", cols: 120, rows: 40 })).toBe(true);
       expect(mockPty.resize).toHaveBeenCalledWith(120, 40);
+    });
+
+    it("refreshes subscriber liveness on input, resize, and ping", () => {
+      const clock = createClock();
+      const registry = createRegistry({ subscriberTtlMs: 100, now: clock.now });
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
+
+      clock.advance(90);
+      expect(handle.send({ type: "input", data: "hello" })).toBe(true);
+      clock.advance(90);
+      expect(handle.send({ type: "resize", cols: 80, rows: 24 })).toBe(true);
+      clock.advance(90);
+      expect(handle.send({ type: "ping" })).toBe(true);
+      clock.advance(90);
+
+      expect(registry.getSession(id)!.attachedClients).toBe(1);
+
+      clock.advance(11);
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
+    });
+
+    it("does not let a stale pruned handle continue writing to the PTY", () => {
+      const clock = createClock();
+      const mockPty = createMockPty();
+      const mockSpawn = createMockSpawn(mockPty);
+      const registry = createRegistry({ subscriberTtlMs: 100, now: clock.now }, mockSpawn);
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
+
+      clock.advance(101);
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
+      expect(handle.send({ type: "input", data: "stale" })).toBe(false);
+      expect(handle.send({ type: "input", data: "still-stale" })).toBe(false);
+
+      expect(mockPty.write).not.toHaveBeenCalled();
+    });
+
+    it("reports failure for stale pruned ping and replay handles", () => {
+      const clock = createClock();
+      const registry = createRegistry({ subscriberTtlMs: 100, now: clock.now });
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
+
+      clock.advance(101);
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
+
+      expect(handle.send({ type: "ping" })).toBe(false);
+      expect(handle.replay(0)).toBe(false);
     });
   });
 
@@ -539,6 +686,25 @@ describe("SessionRegistry", () => {
         { type: "output", data: "6", seq: 1 },
         { type: "replay-end", toSeq: 2 },
       ]);
+    });
+
+    it("does not treat PTY output broadcast as subscriber liveness", () => {
+      const clock = createClock();
+      const mockPty = createMockPty();
+      const mockSpawn = createMockSpawn(mockPty);
+      const registry = createRegistry({ subscriberTtlMs: 100, now: clock.now }, mockSpawn);
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      const received: PtyServerMessage[] = [];
+      handle.subscribe((msg) => received.push(msg));
+
+      clock.advance(90);
+      const dataCb = mockPty.onData.mock.calls[0][0];
+      dataCb("still not proof of life");
+      clock.advance(11);
+
+      expect(received).toContainEqual({ type: "output", data: "still not proof of life", seq: 0 });
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
     });
   });
 
