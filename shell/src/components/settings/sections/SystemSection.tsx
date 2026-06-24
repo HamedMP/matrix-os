@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { getGatewayUrl } from "@/lib/gateway";
-import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon, CloudIcon, Code2Icon } from "lucide-react";
+import { MonitorIcon, ActivityIcon, InfoIcon, ArrowUpCircleIcon, CloudIcon, Code2Icon, AlertTriangleIcon } from "lucide-react";
 
 const GATEWAY = getGatewayUrl();
 const SETTINGS_FETCH_TIMEOUT_MS = 10_000;
@@ -59,6 +59,15 @@ interface SystemUpdateStatus {
   updateAvailable?: boolean;
   checkedAt?: string;
   error?: string;
+  installError?: {
+    code?: string;
+    message?: string;
+    version?: string;
+    availableKb?: number;
+    requiredKb?: number;
+    failedAt?: string;
+    repairAvailable?: boolean;
+  } | null;
 }
 
 interface SystemRelease {
@@ -85,6 +94,7 @@ import {
   formatReleaseBuildId,
   formatReleaseBuildShortId,
   releaseActionLabel,
+  resolveUpdateFailureNotice,
   resolveUpgradeInstallCopy,
   severityBadgeStyle,
   resolveSystemUpdateState,
@@ -107,6 +117,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
   const [releaseList, setReleaseList] = useState<SystemReleaseList | null>(null);
   const [releaseLoading, setReleaseLoading] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
+  const [repairingUpdate, setRepairingUpdate] = useState(false);
   const [installingTarget, setInstallingTarget] = useState<string | null>(null);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
   const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
@@ -211,6 +222,7 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
     message: upgradeMessage,
     statusIndex: upgradeWaitingIndex,
   });
+  const updateFailureNotice = resolveUpdateFailureNotice(updateStatus?.installError);
 
   const waitForInstalledUpdate = async (
     target: { channel?: ReleaseChannel; version?: string },
@@ -317,6 +329,51 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
 
   const handleUpgrade = async () => {
     await startUpdate({ channel: selectedChannel });
+  };
+
+  const handleRepairUpdate = async () => {
+    if (!billingActive) {
+      setUpgradeError("System upgrades are locked until billing is active.");
+      return;
+    }
+    const failedVersion = updateStatus?.installError?.version;
+    const targetKey = failedVersion ?? latestVersion ?? selectedChannel;
+    setRepairingUpdate(true);
+    setUpgrading(true);
+    setInstallingTarget(targetKey);
+    setUpgradeWaitingIndex(0);
+    setUpgradeError(null);
+    setUpgradeMessage("Cleaning safe temporary files and retrying the update...");
+    try {
+      const res = await fetch(`${GATEWAY}/api/system/update/repair`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        setUpgradeError("Update cleanup could not start.");
+        setUpgradeMessage(null);
+        setUpgrading(false);
+        setInstallingTarget(null);
+        setRepairingUpdate(false);
+        return;
+      }
+    } catch (err: unknown) {
+      console.warn("[system-settings] update repair request interrupted:", err instanceof Error ? err.message : String(err));
+      setUpgradeMessage("Cleanup started. Waiting for the update to finish...");
+    }
+    setRepairingUpdate(false);
+
+    const installed = await waitForInstalledUpdate(failedVersion ? { version: failedVersion } : { channel: selectedChannel });
+    if (!mountedRef.current) return;
+    if (!installed) {
+      setUpgradeMessage(null);
+      setUpgradeError("Update cleanup started, but the install has not finished yet.");
+      setUpgrading(false);
+      setInstallingTarget(null);
+      void refreshReleaseData(selectedChannel);
+    }
   };
 
   return (
@@ -447,6 +504,33 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
             <p className="text-xs text-red-600 font-medium pt-1">
               This is a security update scheduled for automatic installation. Use the button below if it hasn't taken effect.
             </p>
+          )}
+          {updateFailureNotice && (
+            <div className={`rounded-lg border p-3 ${
+              updateFailureNotice.tone === "warning"
+                ? "border-amber-500/25 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                : "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300"
+            }`}>
+              <div className="flex items-start gap-2">
+                <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">{updateFailureNotice.title}</p>
+                    <p className="text-xs leading-5">{updateFailureNotice.detail}</p>
+                  </div>
+                  {updateFailureNotice.actionLabel && (
+                    <button
+                      type="button"
+                      onClick={() => void handleRepairUpdate()}
+                      disabled={upgrading || repairingUpdate || systemUpdatesLocked}
+                      className="inline-flex items-center justify-center rounded-md border border-current/30 px-3 py-1.5 text-xs font-medium hover:bg-background/60 transition-colors disabled:opacity-50"
+                    >
+                      {repairingUpdate ? "Starting cleanup..." : updateFailureNotice.actionLabel}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
           {upgradeError && (
             <p className="text-xs text-red-500">{upgradeError}</p>

@@ -12,7 +12,9 @@ import {
   parseUpdateVersion,
   resolveInternalUpgradeStartTarget,
   resolveSystemUpdateChannel,
+  readSystemUpdateFailure,
   startSystemUpdate,
+  startSystemUpdateRepair,
   writeInternalUpgradeTrigger,
 } from "../../packages/gateway/src/system-update.js";
 
@@ -140,6 +142,42 @@ describe("system update checks", () => {
       expect(readFileSync(join(appDir, ".update-channel"), "utf8")).toBe("canary");
       expect(existsSync(join(appDir, ".update-version"))).toBe(false);
       expect(readFileSync(join(appDir, ".update-now"), "utf8")).toBe("");
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads sanitized update failure details for low disk failures", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "matrix-upgrade-"));
+    try {
+      writeFileSync(join(appDir, ".update-error.json"), JSON.stringify({
+        code: "insufficient_disk_space",
+        message: "tar: /secret/path: No space left on device",
+        version: "v2026.06.23-467",
+        availableKb: 3584640,
+        requiredKb: 8232960,
+        failedAt: "2026-06-24T08:14:31Z",
+      }));
+
+      await expect(readSystemUpdateFailure({ appDir })).resolves.toEqual({
+        code: "insufficient_disk_space",
+        message: "Not enough free disk space to install this update.",
+        version: "v2026.06.23-467",
+        availableKb: 3584640,
+        requiredKb: 8232960,
+        failedAt: "2026-06-24T08:14:31Z",
+        repairAvailable: true,
+      });
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores malformed update failure marker contents", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "matrix-upgrade-"));
+    try {
+      writeFileSync(join(appDir, ".update-error.json"), "{ nope");
+      await expect(readSystemUpdateFailure({ appDir })).resolves.toBeNull();
     } finally {
       rmSync(appDir, { recursive: true, force: true });
     }
@@ -310,6 +348,29 @@ describe("system update start", () => {
       expect(spawnImpl).toHaveBeenCalledWith(
         "sudo",
         ["-n", updateCommand, "v2026.05.12-1"],
+        expect.objectContaining({ detached: true, stdio: "ignore" }),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("starts safe update repair through sudo without launching a shell", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "matrix-update-"));
+    const updateCommand = join(dir, "matrix-update");
+    writeFileSync(updateCommand, "#!/bin/sh\n", { mode: 0o755 });
+    const spawnImpl = vi.fn().mockReturnValue({ unref: vi.fn() });
+
+    try {
+      const result = await startSystemUpdateRepair({
+        updateCommand,
+        spawnImpl,
+      });
+
+      expect(result).toEqual({ ok: true, status: "started" });
+      expect(spawnImpl).toHaveBeenCalledWith(
+        "sudo",
+        ["-n", updateCommand, "repair"],
         expect.objectContaining({ detached: true, stdio: "ignore" }),
       );
     } finally {

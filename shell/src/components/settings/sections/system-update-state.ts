@@ -123,6 +123,46 @@ export function resolveUpgradeInstallCopy(input: {
   };
 }
 
+export interface UpdateFailureInput {
+  code?: string;
+  message?: string;
+  availableKb?: number;
+  requiredKb?: number;
+  repairAvailable?: boolean;
+}
+
+function formatGbFromKb(kb: number): string {
+  return `${(kb / 1024 / 1024).toFixed(1)} GB`;
+}
+
+export function resolveUpdateFailureNotice(input: UpdateFailureInput | null | undefined): {
+  tone: "warning" | "error";
+  title: string;
+  detail: string;
+  actionLabel: string | null;
+} | null {
+  if (!input) return null;
+  if (input.code === "insufficient_disk_space") {
+    const missingKb = typeof input.requiredKb === "number" && typeof input.availableKb === "number"
+      ? Math.max(0, input.requiredKb - input.availableKb)
+      : null;
+    return {
+      tone: "warning",
+      title: "Not enough disk space",
+      detail: missingKb && missingKb > 0
+        ? `Free about ${formatGbFromKb(missingKb)} before retrying the update.`
+        : "Free disk space before retrying the update.",
+      actionLabel: input.repairAvailable ? "Clean Up and Retry" : null,
+    };
+  }
+  return {
+    tone: "error",
+    title: "Update failed",
+    detail: input.message && input.message.length <= 120 ? input.message : "Update failed.",
+    actionLabel: null,
+  };
+}
+
 export function resolveSystemUpdateState(input: {
   installedVersion?: string;
   latestVersion?: string | null;

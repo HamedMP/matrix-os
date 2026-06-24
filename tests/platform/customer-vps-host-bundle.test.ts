@@ -476,9 +476,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(updater).toContain('/opt/matrix/app/.update-version');
     expect(updater).toContain('touch /opt/matrix/app/.update-now');
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
+    expect(updater).toContain('touch /opt/matrix/app/.update-repair-now');
+    expect(updater).toContain('repair)');
     expect(updater).toContain('stable|canary|beta|dev|v[0-9]*|main-[A-Za-z0-9]*');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
-    expect(updater).toContain('Usage: matrix-update [apply|rollback|stable|canary|beta|dev|v<version>|main-<build>]');
+    expect(updater).toContain('Usage: matrix-update [apply|rollback|repair|stable|canary|beta|dev|v<version>|main-<build>]');
   });
 
   it('sync agent installs bundled messaging systemd units during updates', () => {
@@ -505,6 +507,23 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('maybe_clean_staging');
     expect(syncAgent).toContain('clean_staging || true');
     expect(syncAgent).toContain('last_staging_cleanup="$(date +%s)"');
+  });
+
+  it('sync agent reports low disk update failures and supports safe repair cleanup', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"');
+    expect(syncAgent).toContain('readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"');
+    expect(syncAgent).toContain('readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"');
+    expect(syncAgent).toContain('readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"');
+    expect(syncAgent).toContain('write_update_error()');
+    expect(syncAgent).toContain('write_update_error "insufficient_disk_space"');
+    expect(syncAgent).toContain('ERROR: insufficient disk space for update');
+    expect(syncAgent).toContain('perform_update_repair()');
+    expect(syncAgent).toContain("find /tmp -xdev -user matrix -type f -mtime +1 \\( -name '*.so' -o -path '/tmp/node-compile-cache/*' \\)");
+    expect(syncAgent).toContain('sudo rm -f "$UPDATE_REPAIR_TRIGGER"');
+    expect(syncAgent).toContain('Repair complete; retrying pending update');
   });
 
   it('sync agent replaces the app tree with root permissions', () => {

@@ -4,6 +4,7 @@ set -euo pipefail
 # matrix-update — trigger the sync agent to apply an update or rollback.
 # Usage: matrix-update                    Apply pending update
 #        matrix-update <channel|version>  Apply selected channel/version
+#        matrix-update repair             Clean safe temp artifacts and retry
 #        matrix-update rollback           Rollback to previous version
 
 write_update_target() {
@@ -18,7 +19,7 @@ write_update_target() {
       rm -f /opt/matrix/app/.update-channel
       ;;
     *)
-      echo "Usage: matrix-update [apply|rollback|stable|canary|beta|dev|v<version>|main-<build>]" >&2
+      echo "Usage: matrix-update [apply|rollback|repair|stable|canary|beta|dev|v<version>|main-<build>]" >&2
       exit 1
       ;;
   esac
@@ -36,13 +37,17 @@ case "${1:-apply}" in
     touch /opt/matrix/app/.rollback-now
     echo "Rollback triggered. Tailing sync-agent log (Ctrl-C to stop)..."
     ;;
+  repair)
+    touch /opt/matrix/app/.update-repair-now
+    echo "Update repair triggered. Tailing sync-agent log (Ctrl-C to stop)..."
+    ;;
   stable|canary|beta|dev|v[0-9]*|main-[A-Za-z0-9]*)
     write_update_target "$1"
     touch /opt/matrix/app/.update-now
     echo "Update to $1 triggered. Tailing sync-agent log (Ctrl-C to stop)..."
     ;;
   *)
-    echo "Usage: matrix-update [apply|rollback|stable|canary|beta|dev|v<version>|main-<build>]" >&2
+    echo "Usage: matrix-update [apply|rollback|repair|stable|canary|beta|dev|v<version>|main-<build>]" >&2
     exit 1
     ;;
 esac

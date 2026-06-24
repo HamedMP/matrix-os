@@ -1,4 +1,4 @@
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
@@ -51,6 +51,7 @@ export interface SystemUpdateCheck {
   updateAvailable: boolean;
   checkedAt: string;
   error?: string;
+  installError?: SystemUpdateFailure | null;
 }
 
 export interface SystemReleaseList {
@@ -61,6 +62,16 @@ export interface SystemReleaseList {
 }
 
 export type UpdateChannel = "stable" | "canary" | "beta" | "dev";
+
+export interface SystemUpdateFailure {
+  code: "insufficient_disk_space" | "update_failed";
+  message: string;
+  version?: string;
+  availableKb?: number;
+  requiredKb?: number;
+  failedAt?: string;
+  repairAvailable: boolean;
+}
 
 export function parseUpdateChannel(value: unknown): UpdateChannel | null {
   if (typeof value !== "string") return null;
@@ -215,6 +226,50 @@ function isExpectedAccessFailure(err: unknown): boolean {
   return code === "ENOENT" || code === "EACCES" || code === "EPERM" || code === "ENOTDIR";
 }
 
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function boundedString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > maxLength) return undefined;
+  return trimmed;
+}
+
+export async function readSystemUpdateFailure(options: {
+  appDir?: string;
+  readFileImpl?: typeof readFile;
+} = {}): Promise<SystemUpdateFailure | null> {
+  const appDir = options.appDir ?? process.env.MATRIX_APP_DIR ?? "/opt/matrix/app";
+  const readFileImpl = options.readFileImpl ?? readFile;
+  let data: unknown;
+  try {
+    data = JSON.parse(await readFileImpl(join(appDir, ".update-error.json"), "utf8"));
+  } catch (err: unknown) {
+    if (isExpectedAccessFailure(err) || err instanceof SyntaxError) return null;
+    console.warn(
+      "[system-update] Failed to read update failure marker:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const record = data as Record<string, unknown>;
+  const rawCode = record.code === "insufficient_disk_space" ? "insufficient_disk_space" : "update_failed";
+  return {
+    code: rawCode,
+    message: rawCode === "insufficient_disk_space"
+      ? "Not enough free disk space to install this update."
+      : "Update failed.",
+    version: parseUpdateVersion(record.version) ?? undefined,
+    availableKb: finiteNumber(record.availableKb),
+    requiredKb: finiteNumber(record.requiredKb),
+    failedAt: boundedString(record.failedAt, 40),
+    repairAvailable: rawCode === "insufficient_disk_space",
+  };
+}
+
 export async function fetchHostBundleChannelManifest(options: {
   platformUrl: string;
   channel: UpdateChannel;
@@ -356,6 +411,33 @@ export async function startSystemUpdate(options: {
 
   const spawnImpl = options.spawnImpl ?? spawn;
   const child = spawnImpl("sudo", ["-n", updateCommand, target.value], {
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  }) as ChildProcess;
+  child.unref();
+  return { ok: true, status: "started" };
+}
+
+export async function startSystemUpdateRepair(options: {
+  updateCommand?: string;
+  spawnImpl?: typeof spawn;
+} = {}): Promise<{ ok: true; status: "started" } | { ok: false; status: "not_configured" }> {
+  const updateCommand = options.updateCommand ?? process.env.MATRIX_UPDATE_COMMAND ?? "/opt/matrix/bin/matrix-update";
+  try {
+    await access(updateCommand, constants.X_OK);
+  } catch (err: unknown) {
+    if (!isExpectedAccessFailure(err)) {
+      console.warn(
+        "[system-update] Failed to check updater repair command:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    return { ok: false, status: "not_configured" };
+  }
+
+  const spawnImpl = options.spawnImpl ?? spawn;
+  const child = spawnImpl("sudo", ["-n", updateCommand, "repair"], {
     detached: true,
     stdio: "ignore",
     env: process.env,
