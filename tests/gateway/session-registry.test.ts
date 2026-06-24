@@ -98,8 +98,13 @@ describe("SessionRegistry", () => {
       expect(call[0]).toBe("/bin/zsh");
     });
 
-    it("passes the Matrix installer helper override to spawned terminals", () => {
+    it("passes Matrix installer runtime overrides to spawned terminals", () => {
+      vi.stubEnv("MATRIX_APP_DIR", "/tmp/matrix-app");
       vi.stubEnv("MATRIX_INSTALL_TOOL_PACK", "/tmp/matrix-install-tool-pack");
+      vi.stubEnv("MATRIX_NODE_PREFIX", "/tmp/matrix-node");
+      vi.stubEnv("MATRIX_RUNTIME_DIR", "/tmp/matrix-runtime");
+      vi.stubEnv("MATRIX_RUNTIME_HOME", "/tmp/matrix-home");
+      vi.stubEnv("MATRIX_RUNTIME_USER", "local-user");
       const mockSpawn = createMockSpawn();
       const registry = createRegistry({}, mockSpawn);
 
@@ -108,7 +113,12 @@ describe("SessionRegistry", () => {
       const call = mockSpawn.mock.calls[0];
       expect(call[2]).toMatchObject({
         env: expect.objectContaining({
+          MATRIX_APP_DIR: "/tmp/matrix-app",
           MATRIX_INSTALL_TOOL_PACK: "/tmp/matrix-install-tool-pack",
+          MATRIX_NODE_PREFIX: "/tmp/matrix-node",
+          MATRIX_RUNTIME_DIR: "/tmp/matrix-runtime",
+          MATRIX_RUNTIME_HOME: "/tmp/matrix-home",
+          MATRIX_RUNTIME_USER: "local-user",
         }),
       });
     });

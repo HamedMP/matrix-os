@@ -352,6 +352,8 @@ exit 99
     expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
     expect(toolPackInstaller).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(toolPackInstaller).toContain('run_npm_install()');
+    expect(toolPackInstaller).toContain('resolve_runtime_user()');
+    expect(toolPackInstaller).toContain('runtime user ${MATRIX_RUNTIME_USER} not found; using current user ${current_user}');
     expect(toolPackInstaller).toContain('run_as_matrix "$timeout_bin" 900 "$NODE_PREFIX/bin/npm" "$@"');
     expect(toolPackInstaller).toContain('run_npm_install install -g --ignore-scripts --prefix "$NODE_PREFIX"');
     expect(toolPackInstaller).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');

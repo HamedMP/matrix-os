@@ -9,6 +9,8 @@ if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
   matrix_export_owner_env
 fi
+MATRIX_RUNTIME_HOME_WAS_SET="${MATRIX_RUNTIME_HOME+x}"
+MATRIX_HOME_WAS_SET="${MATRIX_HOME+x}"
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 MATRIX_RUNTIME_DIR="${MATRIX_RUNTIME_DIR:-/opt/matrix/runtime}"
@@ -24,6 +26,24 @@ export PATH="$NODE_PREFIX/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 log() {
   printf 'matrix-install-tool-pack: %s\n' "$*"
 }
+
+resolve_runtime_user() {
+  if id -u "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
+    return
+  fi
+
+  local current_user current_group
+  current_user="$(id -u -n)"
+  current_group="$(id -g -n)"
+  log "runtime user ${MATRIX_RUNTIME_USER} not found; using current user ${current_user}"
+  MATRIX_RUNTIME_USER="$current_user"
+  MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$current_group}"
+  if [ -z "$MATRIX_RUNTIME_HOME_WAS_SET" ] && [ -z "$MATRIX_HOME_WAS_SET" ]; then
+    MATRIX_RUNTIME_HOME="${HOME:-$MATRIX_RUNTIME_HOME}"
+  fi
+}
+
+resolve_runtime_user
 
 usage() {
   cat >&2 <<'EOF'

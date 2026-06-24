@@ -96,6 +96,8 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
     expect(installer).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(installer).toContain('run_npm_install()');
+    expect(installer).toContain('resolve_runtime_user()');
+    expect(installer).toContain('runtime user ${MATRIX_RUNTIME_USER} not found; using current user ${current_user}');
     expect(installer).toContain('run_as_matrix "$timeout_bin" 900 "$NODE_PREFIX/bin/npm" "$@"');
     expect(installer).toContain('run_npm_install install -g --ignore-scripts --prefix "$NODE_PREFIX"');
     expect(installer).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
