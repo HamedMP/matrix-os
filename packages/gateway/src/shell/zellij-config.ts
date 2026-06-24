@@ -13,15 +13,8 @@ export type MatrixZellijConfigPaths = {
   layoutFile: string;
 };
 
-export const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS minimal Zellij layout, shared by desktop and mobile clients.
+export const MATRIX_ZELLIJ_LAYOUT = `// Matrix OS chrome-free Zellij layout, shared by desktop and mobile clients.
 layout {
-  default_tab_template {
-    children
-    pane size=1 borderless=true {
-      plugin location="zellij:compact-bar"
-    }
-  }
-
   tab name="main" {
     pane
   }

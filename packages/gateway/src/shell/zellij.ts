@@ -589,13 +589,6 @@ function initialCommandLayout(command: string, cwd?: string): string {
     ? `      args ${args.map(kdlString).join(" ")}\n`
     : "";
   return `layout {
-  default_tab_template {
-    children
-    pane size=1 borderless=true {
-      plugin location="zellij:compact-bar"
-    }
-  }
-
   tab name="main" {
     pane ${paneAttrs} {
 ${argLine}    }
