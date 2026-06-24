@@ -106,4 +106,40 @@ describe("platform/internal-integration-routes", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ clerkUserId: "user_bob" });
   });
+
+  it("keeps unknown internal integration handles as 404", async () => {
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/charlie/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("charlie", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Unknown handle" });
+  });
+
+  it("does not resolve non-running VPS machines for internal integrations", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-dana",
+      clerkUserId: "user_dana",
+      handle: "dana",
+      hetznerServerId: 124,
+      publicIPv4: "203.0.113.13",
+      status: "stopped",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-06-24T00:00:00.000Z",
+    });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/dana/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("dana", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Unknown handle" });
+  });
 });
