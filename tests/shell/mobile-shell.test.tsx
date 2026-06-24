@@ -9,8 +9,13 @@ import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
+const terminalRender = vi.hoisted(() => vi.fn());
+
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
-  TerminalApp: () => <div data-testid="terminal-app" />,
+  TerminalApp: (props: unknown) => {
+    terminalRender(props);
+    return <div data-testid="terminal-app" />;
+  },
 }));
 
 vi.mock("../../shell/src/components/Settings.js", () => ({
@@ -68,6 +73,7 @@ async function loadMobileShell() {
 describe("mobile shell", () => {
   beforeEach(() => {
     setDesktopViewport();
+    terminalRender.mockClear();
   });
 
   afterEach(() => {
@@ -208,6 +214,21 @@ describe("mobile shell", () => {
     render(<MobileShell launchAppPath="__terminal__" />);
 
     await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
+  });
+
+  it("passes workspace terminal session ids from mobile launch paths into TerminalApp", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell launchAppPath="__terminal__:session-term_mobile123" />);
+
+    await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
+    expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
+      initialSessionId: "term_mobile123",
+    }));
   });
 
   it("renders a hydration-stable clock placeholder before mounting", async () => {

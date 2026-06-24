@@ -17,6 +17,7 @@ import {
   shouldShowDeveloperDashboard,
   type DesktopFirstRunStatus,
 } from "@/lib/desktop-first-run";
+import { parseTerminalSessionLaunchPath } from "@/lib/terminal-launch";
 import { AppViewer } from "./AppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
 import { WorkspaceApp } from "./workspace/WorkspaceApp";
@@ -2021,6 +2022,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 <CardContent className="relative flex-1 p-0 min-h-0">
                   {win.path.startsWith("__terminal__") ? (
                     <TerminalApp
+                      initialSessionId={parseTerminalSessionLaunchPath(win.path) ?? undefined}
                       launchTargetId={win.id}
                       windowControls={{
                         close: () => wmCloseWindow(win.id),

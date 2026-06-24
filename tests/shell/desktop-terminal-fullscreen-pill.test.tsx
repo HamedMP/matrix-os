@@ -204,4 +204,15 @@ describe("Desktop terminal fullscreen chrome", () => {
 
     expect(useWindowManager.getState().fullscreenWindowId).toBe("win-terminal");
   });
+
+  it("passes workspace terminal session ids from Desktop window paths into TerminalApp", async () => {
+    resetStores({ ...terminalWindow, path: "__terminal__:session-term_desktop123" }, null);
+
+    render(<Desktop />);
+
+    await screen.findByText("Terminal content");
+    expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
+      initialSessionId: "term_desktop123",
+    }), undefined);
+  });
 });

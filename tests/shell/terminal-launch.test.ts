@@ -2,9 +2,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createTerminalSessionLaunchPath,
   createTerminalLaunchPath,
   drainTerminalLaunchQueue,
   enqueueTerminalLaunch,
+  parseTerminalSessionLaunchPath,
   parseTerminalLaunchPath,
   TERMINAL_SETUP_WINDOW_PATH,
 } from "../../shell/src/lib/terminal-launch.js";
@@ -41,6 +43,22 @@ describe("terminal launch paths", () => {
 
   it("targets setup actions at the canonical terminal surface", () => {
     expect(TERMINAL_SETUP_WINDOW_PATH).toBe("__terminal__");
+  });
+
+  it("round-trips workspace terminal session launch paths", () => {
+    expect(parseTerminalSessionLaunchPath(createTerminalSessionLaunchPath("term_abc123"))).toBe("term_abc123");
+    expect(parseTerminalSessionLaunchPath(createTerminalSessionLaunchPath("550e8400-e29b-41d4-a716-446655440000"))).toBe("550e8400-e29b-41d4-a716-446655440000");
+    expect(createTerminalSessionLaunchPath("term_owner_abc123")).toBe("__terminal__:session-term_owner_abc123");
+  });
+
+  it("keeps workspace session launch paths distinct from setup launch paths", () => {
+    const setupPath = createTerminalLaunchPath("codex-login");
+
+    expect(parseTerminalSessionLaunchPath("__terminal__")).toBeNull();
+    expect(parseTerminalSessionLaunchPath("__terminal__:random")).toBeNull();
+    expect(parseTerminalSessionLaunchPath("__terminal__:session-")).toBeNull();
+    expect(parseTerminalSessionLaunchPath(setupPath)).toBeNull();
+    expect(parseTerminalLaunchPath(createTerminalSessionLaunchPath("term_abc123"))).toBeNull();
   });
 
   it("queues setup actions so an existing terminal can open them as tabs", () => {
