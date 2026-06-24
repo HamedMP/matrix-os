@@ -65,7 +65,6 @@ export interface ShellNameScopedStore {
 export interface ShellRegistryOptions {
   homePath: string;
   adapter: ShellRegistryAdapter;
-  maxSessions?: number;
   persistPath?: string;
   scrollbackStore?: ScrollbackStore;
   preferencesStore?: ShellNameScopedStore;
@@ -73,13 +72,11 @@ export interface ShellRegistryOptions {
 
 export class ShellRegistry {
   private readonly persistPath: string;
-  private readonly maxSessions: number;
   private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: ShellRegistryOptions) {
     this.persistPath =
       options.persistPath ?? join(options.homePath, "system", "shell-sessions.json");
-    this.maxSessions = options.maxSessions ?? 20;
   }
 
   async list(): Promise<ShellSession[]> {
@@ -168,10 +165,6 @@ export class ShellRegistry {
       if (changed) {
         await this.write(file);
       }
-      if (live.size >= this.maxSessions) {
-        throw shellError("session_limit", "Session limit reached", 507);
-      }
-
       await this.options.adapter.createSession({ name, cwd, layout: layoutName, cmd: input.cmd });
       const now = new Date().toISOString();
       const session: PersistedShellSession = {

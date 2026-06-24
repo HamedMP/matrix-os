@@ -515,7 +515,6 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
-    maxSessions: 10,
     scrollbackStore: shellScrollbackStore,
     preferencesStore: shellPreferencesStore,
   });
