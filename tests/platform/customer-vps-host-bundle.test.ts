@@ -3,6 +3,11 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+
+function sha256(content: string) {
+  return createHash('sha256').update(content).digest('hex');
+}
 
 function runDevBundleGate(env: Record<string, string>) {
   const root = process.cwd();
@@ -44,6 +49,8 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');
+    expect(script).toContain('generateTemplateManifest');
+    expect(script).toContain('home/.template-manifest.json');
     expect(script).toContain('scripts/reset-shipped-icons.mjs');
     expect(script).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
@@ -168,6 +175,47 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       expect(result.stdout).toContain(`HERMES_HOME=${matrixHome}/.hermes`);
       expect(existsSync(join(matrixHome, '.hermes', 'jobs', 'watcher.json'))).toBe(true);
       expect(lstatSync(join(legacyHome, '.hermes')).isSymbolicLink()).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync preserves customized default app files', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const bundledNotes = join(appDir, 'home', 'apps', 'notes', 'src');
+    const homeNotes = join(homeDir, 'apps', 'notes', 'src');
+
+    try {
+      mkdirSync(bundledNotes, { recursive: true });
+      mkdirSync(homeNotes, { recursive: true });
+
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/notes/src/App.tsx': sha256('bundled v2'),
+      }, null, 2));
+      writeFileSync(join(homeDir, '.template-manifest.json'), JSON.stringify({
+        'apps/notes/src/App.tsx': sha256('bundled v1'),
+      }, null, 2));
+      writeFileSync(join(appDir, 'home', 'apps', 'notes', 'src', 'App.tsx'), 'bundled v2');
+      writeFileSync(join(homeDir, 'apps', 'notes', 'src', 'App.tsx'), 'custom user app');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(readFileSync(join(homeDir, 'apps', 'notes', 'src', 'App.tsx'), 'utf8')).toBe('custom user app');
+      expect(readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8')).toContain(
+        'Skipped: apps/notes/src/App.tsx (customized by user)',
+      );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -581,12 +629,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(launcher).toContain('sync_bundled_home_assets');
     expect(launcher).toContain('sync-matrix-agent-skills.sh');
     expect(launcher).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
-    expect(launcher).toContain('$MATRIX_HOME/system/icons');
-    expect(launcher).toContain('[ -e "$target" ] && continue');
-    expect(launcher).toContain('find "$bundled_home/apps" -type f -name matrix.json');
-    expect(launcher).toContain('matrix.json package.json index.html vite.config.ts tsconfig.json src public dist .build-stamp');
+    expect(launcher).toContain('matrix-sync-bundled-home-assets');
+    expect(launcher).toContain('MATRIX_SYNC_BUNDLED_HOME_ASSETS');
     expect(launcher).toContain('cd "$APP_DIR"');
     expect(launcher).not.toContain('cp -a "$bundled_home/." "$MATRIX_HOME"');
+    expect(launcher).not.toContain('rm -rf "$dst_app/$path"');
     expect(launcher).not.toContain('desktop.json');
     expect(launcher).not.toContain('theme.json');
     expect(launcher).not.toContain('system/wallpapers');

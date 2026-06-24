@@ -45,36 +45,16 @@ else
 fi
 
 sync_bundled_home_assets() {
-  local bundled_home="$APP_DIR/home"
-  [ -d "$bundled_home" ] || return 0
-
-  mkdir -p "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
-  if [ -d "$bundled_home/system/icons" ]; then
-    while IFS= read -r icon; do
-      local target
-      target="$MATRIX_HOME/system/icons/$(basename "$icon")"
-      [ -e "$target" ] && continue
-      cp -a "$icon" "$target"
-    done < <(find "$bundled_home/system/icons" -maxdepth 1 -type f \( -name '*.svg' -o -name '*.png' \))
+  local script_dir sync_script
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  sync_script="${MATRIX_SYNC_BUNDLED_HOME_ASSETS:-$script_dir/matrix-sync-bundled-home-assets}"
+  if [ -x "$sync_script" ]; then
+    APP_DIR="$APP_DIR" MATRIX_HOME="$MATRIX_HOME" MATRIX_NODE_BIN="$NODE_BIN" "$sync_script"
+  else
+    echo "matrix-gateway: bundled home sync script not executable: $sync_script" >&2
   fi
 
-  if [ -d "$bundled_home/apps" ]; then
-    while IFS= read -r manifest; do
-      local rel app_rel src_app dst_app
-      rel="${manifest#"$bundled_home/apps/"}"
-      app_rel="${rel%/matrix.json}"
-      src_app="$bundled_home/apps/$app_rel"
-      dst_app="$MATRIX_HOME/apps/$app_rel"
-      mkdir -p "$dst_app"
-      for path in matrix.json package.json index.html vite.config.ts tsconfig.json src public dist .build-stamp; do
-        [ -e "$src_app/$path" ] || continue
-        rm -rf "$dst_app/$path"
-        cp -a "$src_app/$path" "$dst_app/$path"
-      done
-    done < <(find "$bundled_home/apps" -type f -name matrix.json)
-  fi
-
-  if id matrix >/dev/null 2>&1; then
+  if [ -d "$MATRIX_HOME/apps" ] && id matrix >/dev/null 2>&1; then
     chown -R matrix:matrix "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"
   fi
 }
