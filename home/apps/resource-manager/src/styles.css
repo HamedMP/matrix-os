@@ -1,18 +1,21 @@
 :root {
   color-scheme: light;
-  --bg: #f7f7f2;
-  --panel: #ffffff;
-  --panel-soft: #f0f4ef;
-  --text: #20251f;
-  --muted: #667063;
-  --border: #d7ddd2;
-  --good: #207245;
-  --good-bg: #e6f5ec;
-  --warn: #9a5f00;
-  --warn-bg: #fff1d2;
-  --bad: #b52d2a;
-  --bad-bg: #fee7e5;
-  --accent: #356f8c;
+  --bg: var(--matrix-bg, #FAFAF9);
+  --panel: var(--matrix-card, #FCFCF8);
+  --panel-soft: var(--matrix-muted, #E1E1D0);
+  --text: var(--matrix-fg, #32352E);
+  --muted: var(--matrix-muted-fg, #747668);
+  --border: var(--matrix-border, #D8D6C7);
+  --primary: var(--matrix-primary, #434E3F);
+  --primary-fg: var(--matrix-primary-fg, #FAFAF5);
+  --accent: var(--matrix-accent, #D06F25);
+  --accent-fg: var(--matrix-accent-fg, #FAFAF5);
+  --good: var(--matrix-success, #3A7D44);
+  --good-bg: color-mix(in srgb, var(--good) 12%, var(--panel));
+  --warn: var(--matrix-warning, #E0A12E);
+  --warn-bg: color-mix(in srgb, var(--warn) 16%, var(--panel));
+  --bad: var(--matrix-destructive, #D74A3A);
+  --bad-bg: color-mix(in srgb, var(--bad) 12%, var(--panel));
   --shadow: 0 12px 28px rgba(30, 35, 28, 0.08);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--bg);
@@ -76,8 +79,8 @@ button {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-fg);
   font-weight: 800;
   font-size: 13px;
 }
@@ -123,10 +126,10 @@ h2 {
   margin-left: auto;
   min-width: 88px;
   height: 38px;
-  border: 1px solid #9db1bc;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   border-radius: 8px;
-  background: #edf6fa;
-  color: #19495f;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: var(--accent);
   font-weight: 700;
   cursor: pointer;
 }
@@ -200,7 +203,7 @@ h2 {
   height: 8px;
   overflow: hidden;
   border-radius: 8px;
-  background: #e7ece4;
+  background: var(--panel-soft);
 }
 
 .bar {
@@ -255,7 +258,7 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border: 1px solid #e1e6dd;
+  border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-soft);
   padding: 9px 10px;
@@ -304,13 +307,13 @@ h2 {
 }
 
 .tone-muted {
-  background: #ecefeb;
-  color: #526050;
+  background: var(--panel-soft);
+  color: var(--muted);
 }
 
 .notice {
   justify-content: flex-start;
-  color: #4e5b4b;
+  color: var(--muted);
   font-size: 13px;
 }
 

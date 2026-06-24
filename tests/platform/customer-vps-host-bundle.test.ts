@@ -244,6 +244,77 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     }
   });
 
+  it('bundled home sync upgrades pre-manifest system-owned first-party app files', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-system-app-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const bundledResourceManager = join(appDir, 'home', 'apps', 'resource-manager', 'src');
+    const homeResourceManager = join(homeDir, 'apps', 'resource-manager', 'src');
+
+    try {
+      mkdirSync(bundledResourceManager, { recursive: true });
+      mkdirSync(homeResourceManager, { recursive: true });
+      mkdirSync(join(appDir, 'home', 'apps', 'resource-manager'), { recursive: true });
+      mkdirSync(join(homeDir, 'apps', 'resource-manager'), { recursive: true });
+
+      const bundledManifest = JSON.stringify({
+        name: 'Resource Manager',
+        slug: 'resource-manager',
+        author: 'system',
+        listingTrust: 'first_party',
+      }, null, 2);
+      const oldSystemManifest = JSON.stringify({
+        name: 'Resource Manager',
+        slug: 'resource-manager',
+        author: 'system',
+        listingTrust: 'first_party',
+      }, null, 2);
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/resource-manager/matrix.json': sha256(bundledManifest),
+        'apps/resource-manager/src/App.tsx': sha256('new bridged app'),
+      }, null, 2));
+      writeFileSync(join(homeDir, '.template-manifest.json'), '{}');
+      writeFileSync(join(appDir, 'home', 'apps', 'resource-manager', 'matrix.json'), bundledManifest);
+      writeFileSync(join(appDir, 'home', 'apps', 'resource-manager', 'src', 'App.tsx'), 'new bridged app');
+      writeFileSync(join(homeDir, 'apps', 'resource-manager', 'matrix.json'), oldSystemManifest);
+      writeFileSync(join(homeDir, 'apps', 'resource-manager', 'src', 'App.tsx'), 'old mock app');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(readFileSync(join(homeDir, 'apps', 'resource-manager', 'src', 'App.tsx'), 'utf8')).toBe('new bridged app');
+      expect(JSON.parse(readFileSync(join(homeDir, '.template-manifest.json'), 'utf8'))).toMatchObject({
+        'apps/resource-manager/matrix.json': sha256(bundledManifest),
+        'apps/resource-manager/src/App.tsx': sha256('new bridged app'),
+      });
+      expect(readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8')).toContain(
+        'Updated: apps/resource-manager/src/App.tsx',
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync caches first-party app ownership by slug', () => {
+    const script = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets'),
+      'utf8',
+    );
+
+    expect(script).toContain('systemOwnedFirstPartyAppCache');
+    expect(script).toContain('systemOwnedFirstPartyAppCache.has(slug)');
+    expect(script).toContain('systemOwnedFirstPartyAppCache.set(slug');
+  });
+
   it('bundled home sync recovers from a corrupt installed manifest', () => {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-corrupt-'));

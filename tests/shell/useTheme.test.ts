@@ -121,7 +121,7 @@ describe("theme system", () => {
   it("converts theme to CSS variables", () => {
     const vars = themeToCssVars(DEFAULT_THEME);
     expect(vars["--background"]).toBe("#FAFAF9");
-    expect(vars["--primary"]).toBe("#9AA48C");
+    expect(vars["--primary"]).toBe("#434E3F");
     expect(vars["--font-mono"]).toBe("JetBrains Mono, monospace");
     expect(vars["--radius"]).toBe("0.75rem");
   });
@@ -149,7 +149,7 @@ describe("theme system", () => {
     const vars = themeToCssVars(custom);
     expect(vars["--background"]).toBe("#001122");
     expect(vars["--primary"]).toBe("#00ccff");
-    expect(vars["--foreground"]).toBe("#1c1917");
+    expect(vars["--foreground"]).toBe("#32352E");
   });
 
   it("normalizes missing persisted theme fields to defaults", () => {
