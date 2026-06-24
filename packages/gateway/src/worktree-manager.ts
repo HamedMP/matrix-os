@@ -210,13 +210,16 @@ export function createWorktreeManager(options: {
           }
           let addArgs = ["worktree", "add", "--", path, currentBranch];
           if (input.branch && input.createBranch) {
+            const canCreateFallbackBranch = !project.remote && !project.github;
             const branchExists = await gitRefExists(runCommand, project.localPath, `refs/heads/${currentBranch}`);
             if (!branchExists) {
               const remoteRef = `refs/remotes/origin/${currentBranch}`;
               const remoteBranchExists = await gitRefExists(runCommand, project.localPath, remoteRef);
-              addArgs = remoteBranchExists
-                ? ["worktree", "add", "-b", currentBranch, "--track", "--", path, `origin/${currentBranch}`]
-                : ["worktree", "add", "-b", currentBranch, "--", path, baseRef];
+              if (remoteBranchExists) {
+                addArgs = ["worktree", "add", "-b", currentBranch, "--track", "--", path, `origin/${currentBranch}`];
+              } else if (canCreateFallbackBranch) {
+                addArgs = ["worktree", "add", "-b", currentBranch, "--", path, baseRef];
+              }
             }
           }
           await runCommand("git", addArgs, {

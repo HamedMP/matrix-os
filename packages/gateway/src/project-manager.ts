@@ -211,6 +211,8 @@ export function createProjectManager(options: {
               "user.name=Matrix OS",
               "-c",
               "user.email=matrix-os@example.invalid",
+              "-c",
+              "commit.gpgSign=false",
               "commit",
               "--allow-empty",
               "-m",
