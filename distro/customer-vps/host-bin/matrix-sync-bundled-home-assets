@@ -214,5 +214,10 @@ if (!existsSync(templateManifestPath)) {
 const logDir = join(homeDir, "system", "logs");
 mkdirSync(logDir, { recursive: true });
 logLines.push(`[${now}] Template sync completed: ${updated.length} updated, ${added.length} added, ${skipped.length} skipped`);
-appendBoundedLog(join(logDir, "template-sync.log"), `${logLines.join("\n")}\n`);
+try {
+  appendBoundedLog(join(logDir, "template-sync.log"), `${logLines.join("\n")}\n`);
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`matrix-sync-bundled-home-assets: unable to write template sync log: ${message}`);
+}
 NODE

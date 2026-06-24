@@ -295,6 +295,43 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     }
   });
 
+  it('bundled home sync treats log write failures as best effort', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-log-fail-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const logDir = join(homeDir, 'system', 'logs');
+    const logPath = join(logDir, 'template-sync.log');
+
+    try {
+      mkdirSync(join(appDir, 'home'), { recursive: true });
+      mkdirSync(logPath, { recursive: true });
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/notes/src/App.tsx': sha256('bundled v1'),
+      }, null, 2));
+      mkdirSync(join(appDir, 'home', 'apps', 'notes', 'src'), { recursive: true });
+      writeFileSync(join(appDir, 'home', 'apps', 'notes', 'src', 'App.tsx'), 'bundled v1');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.stderr).toContain('unable to write template sync log');
+      expect(JSON.parse(readFileSync(join(homeDir, '.template-manifest.json'), 'utf8'))).toEqual({
+        'apps/notes/src/App.tsx': sha256('bundled v1'),
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('host bundle manifest keeps the sync-agent compatibility fields', () => {
     const root = process.cwd();
     const releaseScript = readFileSync(join(root, 'scripts/host-bundle-release.mjs'), 'utf8');
