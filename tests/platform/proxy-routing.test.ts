@@ -415,6 +415,110 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("serves platform billing status for app-shell session cookie callers", async () => {
+    await upsertBillingEntitlement(db, {
+      clerkUserId: "user_alice",
+      source: "stripe",
+      planSlug: "matrix_builder",
+      status: "active",
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: "cpx32",
+      allowedServerTypes: ["cpx22", "cpx32"],
+      stripeSubscriptionId: "sub_123",
+      stripePriceId: "price_builder_monthly",
+      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+      effectiveFrom: "2026-05-30T00:00:00.000Z",
+      effectiveUntil: null,
+      updatedAt: "2026-05-30T00:00:00.000Z",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+    });
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: `matrix_app_session=${encodeURIComponent(issued.token)}`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      entitlement: { planSlug: "matrix_builder" },
+      access: { runtimeProxyAllowed: true },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not authorize billing routes with per-app session cookies", async () => {
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+    });
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: `matrix_app_session__calculator=${encodeURIComponent(issued.token)}`,
+      },
+    });
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
+  it("returns unauthorized for invalid app-shell session cookies on billing routes", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: "matrix_app_session=not-a-sync-jwt",
+      },
+    });
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
   it("uses the raw bearer sync JWT for native billing fallback when a stale Clerk cookie is present", async () => {
     await upsertBillingEntitlement(db, {
       clerkUserId: "user_alice",
