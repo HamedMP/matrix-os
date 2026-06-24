@@ -11,6 +11,7 @@ const activeBilling = {
   access: { runtimeProxyAllowed: true, reason: "active" },
   entitlement: {
     source: "stripe",
+    clerkUserId: "user_test",
     planSlug: "matrix_builder",
     status: "active",
     maxRuntimeSlots: 2,
@@ -119,5 +120,19 @@ describe("desktop billing settings", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
       url: "https://checkout.stripe.test/session",
     });
+  });
+
+  it("keeps the billing portal available for locked Stripe subscriptions", async () => {
+    const api = makeApi({
+      access: { runtimeProxyAllowed: false, reason: "billing_required" },
+      entitlement: { ...activeBilling.entitlement, status: "past_due" },
+    });
+    useConnection.setState({ api: api as never });
+
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Billing required")).not.toBeNull());
+
+    expect(screen.getByRole("button", { name: /Open portal/i })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Continue to checkout/i })).not.toBeNull();
   });
 });

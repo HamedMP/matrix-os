@@ -1,5 +1,5 @@
 import { CreditCard, ExternalLink } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { z } from "zod/v4";
 import { Button } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";
@@ -9,6 +9,7 @@ import { Card, Row, SectionHeader } from "./section-kit";
 const BillingEntitlementSchema = z
   .object({
     source: z.enum(["stripe", "override"]),
+    clerkUserId: z.string().min(1).max(128),
     planSlug: z.string().min(1).max(64),
     status: z.string().min(1).max(64),
     maxRuntimeSlots: z.number().int().nonnegative(),
@@ -52,6 +53,31 @@ type BillingStatus = z.infer<typeof BillingStatusSchema>;
 type BillingInterval = "monthly" | "annual";
 type BillingPlan = "matrix_starter" | "matrix_builder" | "matrix_max";
 type BillingRegion = "region_fsn1" | "region_nbg1" | "region_ash" | "region_hil";
+type BillingAction = "checkout" | "portal";
+
+interface BillingUiState {
+  plan: BillingPlan;
+  interval: BillingInterval;
+  region: BillingRegion;
+  actionError: string | null;
+  actionLoading: BillingAction | null;
+}
+
+type BillingUiAction =
+  | { type: "set-plan"; plan: BillingPlan }
+  | { type: "set-interval"; interval: BillingInterval }
+  | { type: "set-region"; region: BillingRegion }
+  | { type: "start-action"; action: BillingAction }
+  | { type: "finish-action" }
+  | { type: "fail-action"; message: string };
+
+const INITIAL_BILLING_UI_STATE: BillingUiState = {
+  plan: "matrix_builder",
+  interval: "monthly",
+  region: "region_fsn1",
+  actionError: null,
+  actionLoading: null,
+};
 
 const PLAN_LABELS: Record<string, string> = {
   matrix_starter: "Starter",
@@ -84,6 +110,27 @@ function formatStatus(status: string): string {
 function entitlementSummary(entitlement: BillingEntitlement | null): string {
   if (!entitlement) return "No billing entitlement found.";
   return `${planLabel(entitlement.planSlug)} · ${formatStatus(entitlement.status)}`;
+}
+
+function billingUiReducer(state: BillingUiState, action: BillingUiAction): BillingUiState {
+  switch (action.type) {
+    case "set-plan":
+      return { ...state, plan: action.plan };
+    case "set-interval":
+      return { ...state, interval: action.interval };
+    case "set-region":
+      return { ...state, region: action.region };
+    case "start-action":
+      return { ...state, actionError: null, actionLoading: action.action };
+    case "finish-action":
+      return { ...state, actionLoading: null };
+    case "fail-action":
+      return { ...state, actionError: action.message, actionLoading: null };
+  }
+}
+
+async function openBillingUrl(url: string): Promise<void> {
+  await invoke("shell:open-external", { url });
 }
 
 function useBillingStatus() {
@@ -125,11 +172,7 @@ export default function BillingSection() {
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
   const { status, loading, error, refresh } = useBillingStatus();
-  const [plan, setPlan] = useState<BillingPlan>("matrix_builder");
-  const [interval, setInterval] = useState<BillingInterval>("monthly");
-  const [region, setRegion] = useState<BillingRegion>("region_fsn1");
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<"checkout" | "portal" | null>(null);
+  const [ui, dispatchUi] = useReducer(billingUiReducer, INITIAL_BILLING_UI_STATE);
 
   const active = status?.access.runtimeProxyAllowed === true;
   const entitlement = status?.entitlement ?? null;
@@ -139,43 +182,35 @@ export default function BillingSection() {
     return `${base.replace(/\/$/, "")}/?billing=setup`;
   }, [platformHost]);
 
-  async function openBillingUrl(url: string): Promise<void> {
-    await invoke("shell:open-external", { url });
-  }
-
   async function startCheckout(): Promise<void> {
-    if (!api || actionLoading) return;
-    setActionError(null);
-    setActionLoading("checkout");
+    if (!api || ui.actionLoading) return;
+    dispatchUi({ type: "start-action", action: "checkout" });
     try {
       const raw = await api.post<unknown>("/billing/checkout", {
-        planSlug: plan,
-        interval,
-        regionSlug: region,
+        planSlug: ui.plan,
+        interval: ui.interval,
+        regionSlug: ui.region,
       });
       const parsed = BillingRedirectSchema.parse(raw);
       await openBillingUrl(parsed.url);
+      dispatchUi({ type: "finish-action" });
     } catch (err: unknown) {
       console.warn("[billing] checkout unavailable:", err instanceof Error ? err.message : String(err));
-      setActionError("Checkout is unavailable. Try again in a moment.");
-    } finally {
-      setActionLoading(null);
+      dispatchUi({ type: "fail-action", message: "Checkout is unavailable. Try again in a moment." });
     }
   }
 
   async function openPortal(): Promise<void> {
-    if (!api || !portalAvailable || actionLoading) return;
-    setActionError(null);
-    setActionLoading("portal");
+    if (!api || !portalAvailable || ui.actionLoading) return;
+    dispatchUi({ type: "start-action", action: "portal" });
     try {
       const raw = await api.post<unknown>("/billing/portal", {});
       const parsed = BillingRedirectSchema.parse(raw);
       await openBillingUrl(parsed.url);
+      dispatchUi({ type: "finish-action" });
     } catch (err: unknown) {
       console.warn("[billing] portal unavailable:", err instanceof Error ? err.message : String(err));
-      setActionError("Billing portal is unavailable. Try again in a moment.");
-    } finally {
-      setActionLoading(null);
+      dispatchUi({ type: "fail-action", message: "Billing portal is unavailable. Try again in a moment." });
     }
   }
 
@@ -225,24 +260,26 @@ export default function BillingSection() {
           </>
         ) : null}
 
-        {active ? (
+        {portalAvailable ? (
           <div className="flex items-center justify-between border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
               Invoices, payment methods, coupons, and cancellation live in Stripe.
             </p>
-            <Button onClick={() => void openPortal()} disabled={!portalAvailable || actionLoading !== null}>
-              {actionLoading === "portal" ? "Opening..." : "Open portal"}
+            <Button onClick={() => void openPortal()} disabled={!portalAvailable || ui.actionLoading !== null}>
+              {ui.actionLoading === "portal" ? "Opening..." : "Open portal"}
               <ExternalLink size={14} />
             </Button>
           </div>
-        ) : (
+        ) : null}
+
+        {!active ? (
           <div className="flex flex-col gap-3 border-t pt-3" style={{ borderColor: "var(--border-subtle)" }}>
             <div className="grid gap-3 md:grid-cols-3">
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
                 Plan
                 <select
-                  value={plan}
-                  onChange={(event) => setPlan(event.currentTarget.value as BillingPlan)}
+                  value={ui.plan}
+                  onChange={(event) => dispatchUi({ type: "set-plan", plan: event.currentTarget.value as BillingPlan })}
                   className="h-9 rounded-md border px-2 text-sm"
                   style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
                 >
@@ -254,8 +291,8 @@ export default function BillingSection() {
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
                 Interval
                 <select
-                  value={interval}
-                  onChange={(event) => setInterval(event.currentTarget.value as BillingInterval)}
+                  value={ui.interval}
+                  onChange={(event) => dispatchUi({ type: "set-interval", interval: event.currentTarget.value as BillingInterval })}
                   className="h-9 rounded-md border px-2 text-sm"
                   style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
                 >
@@ -266,8 +303,8 @@ export default function BillingSection() {
               <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--text-secondary)" }}>
                 Region
                 <select
-                  value={region}
-                  onChange={(event) => setRegion(event.currentTarget.value as BillingRegion)}
+                  value={ui.region}
+                  onChange={(event) => dispatchUi({ type: "set-region", region: event.currentTarget.value as BillingRegion })}
                   className="h-9 rounded-md border px-2 text-sm"
                   style={{ background: "var(--bg-sunken)", borderColor: "var(--border-default)", color: "var(--text-primary)" }}
                 >
@@ -281,8 +318,8 @@ export default function BillingSection() {
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
                 Checkout opens in your browser and returns to Matrix OS after Stripe confirms payment.
               </p>
-              <Button variant="primary" onClick={() => void startCheckout()} disabled={!api || actionLoading !== null}>
-                {actionLoading === "checkout" ? "Opening..." : "Continue to checkout"}
+              <Button variant="primary" onClick={() => void startCheckout()} disabled={!api || ui.actionLoading !== null}>
+                {ui.actionLoading === "checkout" ? "Opening..." : "Continue to checkout"}
                 <ExternalLink size={14} />
               </Button>
             </div>
@@ -290,11 +327,11 @@ export default function BillingSection() {
               Open billing setup in browser
             </Button>
           </div>
-        )}
+        ) : null}
 
-        {actionError ? (
+        {ui.actionError ? (
           <p className="text-sm" style={{ color: "var(--danger)" }}>
-            {actionError}
+            {ui.actionError}
           </p>
         ) : null}
       </Card>

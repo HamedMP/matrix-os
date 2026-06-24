@@ -148,9 +148,11 @@ describe("installGatewayCors", () => {
 
   it("allows Vite React Refresh inline preamble only for localhost development renderers", () => {
     const localhostCsp = buildRendererCsp(GATEWAY, "http://127.0.0.1:5173");
+    const otherLoopbackCsp = buildRendererCsp(GATEWAY, "http://127.0.0.1:9000");
     const remoteCsp = buildRendererCsp(GATEWAY, "https://preview.example.com");
 
     expect(scriptDirective(localhostCsp)).toBe("script-src 'self' 'unsafe-inline'");
+    expect(scriptDirective(otherLoopbackCsp)).toBe("script-src 'self'");
     expect(scriptDirective(remoteCsp)).toBe("script-src 'self'");
   });
 });

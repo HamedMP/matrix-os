@@ -414,6 +414,64 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("uses the raw bearer sync JWT for native billing fallback when a stale Clerk cookie is present", async () => {
+    await upsertBillingEntitlement(db, {
+      clerkUserId: "user_alice",
+      source: "stripe",
+      planSlug: "matrix_builder",
+      status: "active",
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: "cpx32",
+      allowedServerTypes: ["cpx22", "cpx32"],
+      stripeSubscriptionId: "sub_123",
+      stripePriceId: "price_builder_monthly",
+      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+      effectiveFrom: "2026-05-30T00:00:00.000Z",
+      effectiveUntil: null,
+      updatedAt: "2026-05-30T00:00:00.000Z",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+    });
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: {
+        extractToken: vi.fn((_authorization, cookie) => (cookie ? "stale-clerk-cookie" : null)),
+        verify: vi.fn().mockResolvedValue({ authenticated: false }),
+        verifyAndMatchOwner: vi.fn(),
+        revokeSession: vi.fn(),
+        isPublicPath: vi.fn(() => false),
+      },
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+        cookie: "__session=stale-clerk-cookie",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      entitlement: { planSlug: "matrix_builder" },
+      access: { runtimeProxyAllowed: true },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("returns unauthorized instead of leaking Clerk verification failures on billing routes", async () => {
     const app = createApp({
       db,

@@ -2077,22 +2077,24 @@ export function createApp(deps: {
   async function resolveBillingClerkUserId(c: Context): Promise<string | null> {
     const authorization = c.req.header('authorization');
     const cookie = c.req.header('cookie');
-    const token = clerkAuth?.extractToken(authorization, cookie) ?? (authorization?.startsWith('Bearer ') ? authorization.slice(7) : null);
-    if (!token) return null;
+    const clerkToken = clerkAuth?.extractToken(authorization, cookie);
+    const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : null;
+    if (!clerkToken && !bearerToken) return null;
 
     try {
-      if (clerkAuth) {
-        const result = await clerkAuth.verify(token);
+      if (clerkAuth && clerkToken) {
+        const result = await clerkAuth.verify(clerkToken);
         if (result.authenticated && result.userId) return result.userId;
+        console.warn('[billing] Clerk verification returned unauthenticated');
       }
     } catch (err: unknown) {
       const kind = err instanceof Error ? err.name : typeof err;
       console.warn(`[billing] Clerk verification failed: ${kind}`);
     }
 
-    if (!platformJwtSecret) return null;
+    if (!platformJwtSecret || !bearerToken) return null;
     try {
-      const claims = await verifySyncJwt(token, { secret: platformJwtSecret });
+      const claims = await verifySyncJwt(bearerToken, { secret: platformJwtSecret });
       return claims.sub;
     } catch (err: unknown) {
       const kind = err instanceof Error ? err.name : typeof err;
