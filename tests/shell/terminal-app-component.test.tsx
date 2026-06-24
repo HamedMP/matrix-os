@@ -2635,7 +2635,7 @@ describe("TerminalApp", () => {
     expect(within(menu).getByTestId("terminal-agent-logo-pi")).toBeTruthy();
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-claude"), "/agent-logos/claude-code.png");
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-codex"), "/agent-logos/codex.png");
-    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-opencode"), "/agent-logos/opencode.png");
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-opencode"), "/agent-logos/opencode-white.png");
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-pi"), "/agent-logos/pi-coding-agent.png");
   });
 

@@ -2559,7 +2559,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "opencode",
     label: "OpenCode",
     color: "#111111",
-    logoSrc: "/agent-logos/opencode.png",
+    logoSrc: "/agent-logos/opencode-white.png",
     launchCommand: "opencode",
     installPackage: "opencode-ai@latest",
     fallbackInstalled: false,
