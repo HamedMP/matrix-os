@@ -13,8 +13,8 @@ import {
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
 import {
   DefaultInstallsStep,
-  type DeveloperToolId,
 } from "@/components/onboarding/DefaultInstallsStep";
+import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
 // ready is the running shell. BootSequence only renders the billing/build steps.

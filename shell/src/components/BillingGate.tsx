@@ -12,8 +12,8 @@ import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   DefaultInstallsStep,
-  type DeveloperToolId,
 } from "@/components/onboarding/DefaultInstallsStep";
+import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "./Settings";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";

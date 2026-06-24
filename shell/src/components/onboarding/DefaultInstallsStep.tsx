@@ -1,18 +1,26 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Loader2Icon, ServerIcon } from "lucide-react";
 
-export type DeveloperToolId = "codex" | "claude-code" | "opencode" | "pi";
+import {
+  defaultDeveloperTools,
+  developerToolOptions,
+  nextDeveloperToolsSelection,
+  type DeveloperToolId,
+} from "./developer-tools";
 
-export const developerToolOptions: Array<{ id: DeveloperToolId; label: string }> = [
-  { id: "codex", label: "Codex" },
-  { id: "claude-code", label: "Claude Code" },
-  { id: "opencode", label: "OpenCode" },
-  { id: "pi", label: "Pi" },
-];
-
-export const defaultDeveloperTools: DeveloperToolId[] = developerToolOptions.map((tool) => tool.id);
+function DeveloperToolLogo({ logoPath }: { logoPath: string }) {
+  return (
+    <span
+      className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-forest/10 bg-white p-2 shadow-sm"
+      aria-hidden="true"
+    >
+      <Image src={logoPath} alt="" width={20} height={20} className="size-full object-contain" draggable={false} />
+    </span>
+  );
+}
 
 export function DeveloperToolsSelector({
   selectedTools,
@@ -39,9 +47,9 @@ export function DeveloperToolsSelector({
                   : "border-forest/10 bg-white hover:border-forest/25"
               }`}
             >
-              <span className="min-w-0">
+              <span className="flex min-w-0 items-center gap-2.5">
+                <DeveloperToolLogo logoPath={tool.logoPath} />
                 <span className="block truncate text-sm font-medium text-deep">{tool.label}</span>
-                <code className="mt-0.5 block truncate text-xs text-forest/50">{tool.id}</code>
               </span>
               <input
                 type="checkbox"
@@ -56,21 +64,6 @@ export function DeveloperToolsSelector({
       </div>
     </section>
   );
-}
-
-export function nextDeveloperToolsSelection(
-  selectedTools: readonly DeveloperToolId[],
-  tool: DeveloperToolId,
-): DeveloperToolId[] {
-  const nextTools: DeveloperToolId[] = [];
-  const removeTool = selectedTools.includes(tool);
-  for (const option of developerToolOptions) {
-    if (removeTool && option.id === tool) continue;
-    if (option.id === tool || selectedTools.includes(option.id)) {
-      nextTools.push(option.id);
-    }
-  }
-  return nextTools;
 }
 
 export function DefaultInstallsStep({
