@@ -1,4 +1,5 @@
 import SwiftUI
+import MatrixSyncSupport
 
 struct MenuBarView: View {
     @ObservedObject var status: SyncStatusModel
@@ -264,8 +265,6 @@ struct MenuBarView: View {
     }
 
     private func openWebShell() {
-        if let url = URL(string: "https://matrix-os.com") {
-            NSWorkspace.shared.open(url)
-        }
+        NSWorkspace.shared.open(MatrixSyncURLs.webShell)
     }
 }
