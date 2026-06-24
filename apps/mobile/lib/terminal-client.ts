@@ -27,6 +27,7 @@ export interface MobileTerminalConnectOptions {
   rows?: number;
   fromSeq?: number;
   onMessage: (frame: TerminalServerFrame) => void;
+  onConnection?: (connection: MobileTerminalConnection) => void;
   onStatus?: (status: "connecting" | "open" | "closed" | "error") => void;
 }
 
@@ -46,7 +47,8 @@ export class MobileTerminalClient {
     this.gateway.setWebSocketToken(token);
     const ws = this.gateway.openTerminalWebSocket(token);
     const connection = new MobileTerminalConnection(ws, options);
-    connection.attach();
+    options.onConnection?.(connection);
+    await connection.attach();
     return connection;
   }
 }
@@ -54,6 +56,7 @@ export class MobileTerminalClient {
 export class MobileTerminalConnection {
   private readonly attachFrame: TerminalClientFrame;
   private attached = false;
+  private cancelled = false;
 
   constructor(
     private readonly ws: WebSocket,
@@ -67,30 +70,59 @@ export class MobileTerminalConnection {
     });
   }
 
-  attach(): void {
+  attach(): Promise<void> {
     this.options.onStatus?.("connecting");
-
-    this.ws.onopen = () => {
-      this.attached = true;
-      this.options.onStatus?.("open");
-      this.sendFrame(this.attachFrame);
-      if (this.options.cols && this.options.rows) {
-        this.resize(this.options.cols, this.options.rows);
-      }
-    };
 
     this.ws.onmessage = (event) => {
       const frame = parseTerminalServerFrame(event.data);
       if (frame) this.options.onMessage(frame);
     };
 
-    this.ws.onerror = () => {
-      this.options.onStatus?.("error");
-    };
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let attachSent = false;
+      const resolveAttach = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const rejectAttach = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
 
-    this.ws.onclose = () => {
-      this.options.onStatus?.("closed");
-    };
+      const handleOpen = () => {
+        if (settled || this.cancelled) return;
+        if (!this.sendFrame(this.attachFrame)) {
+          rejectAttach(new Error("Terminal connection opened before attach could be sent"));
+          this.close();
+          return;
+        }
+        this.attached = true;
+        attachSent = true;
+        if (this.options.cols && this.options.rows) {
+          this.resize(this.options.cols, this.options.rows);
+        }
+        this.options.onStatus?.("open");
+        resolveAttach();
+      };
+      this.ws.onopen = handleOpen;
+
+      this.ws.onerror = () => {
+        if (attachSent) this.options.onStatus?.("error");
+        rejectAttach(new Error("Terminal connection failed before attach"));
+      };
+
+      this.ws.onclose = () => {
+        if (!settled || attachSent) this.options.onStatus?.("closed");
+        rejectAttach(new Error("Terminal connection closed before attach"));
+      };
+
+      if (this.ws.readyState === WS_OPEN) {
+        handleOpen();
+      }
+    });
   }
 
   sendInput(data: string): boolean {
@@ -106,27 +138,33 @@ export class MobileTerminalConnection {
   }
 
   detach(): boolean {
-    const sent = this.sendFrame({ type: "detach" });
+    const sent = this.attached ? this.sendFrame({ type: "detach" }) : false;
     this.close();
     return sent;
   }
 
   destroy(): boolean {
-    const sent = this.sendFrame({ type: "destroy" });
+    const sent = this.attached ? this.sendFrame({ type: "destroy" }) : false;
     this.close();
     return sent;
   }
 
   close(): void {
     if (this.ws.readyState !== WS_CONNECTING && this.ws.readyState !== WS_OPEN) return;
+    this.cancelled = true;
     this.attached = false;
     this.ws.close();
   }
 
   private sendFrame(frame: TerminalClientFrame): boolean {
     if (this.ws.readyState !== WS_OPEN) return false;
-    this.ws.send(JSON.stringify(frame));
-    return true;
+    try {
+      this.ws.send(JSON.stringify(frame));
+      return true;
+    } catch (err: unknown) {
+      console.warn("[mobile] terminal websocket send failed", err instanceof Error ? err.name : typeof err);
+      return false;
+    }
   }
 }
 
