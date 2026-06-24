@@ -63,6 +63,136 @@ const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
   padding: "0 12px",
 };
 
+const TERMINAL_THEME_MOBILE_DIALOG_STYLE: CSSProperties = {
+  alignItems: "flex-end",
+  background: "rgba(2, 5, 2, 0.42)",
+  border: 0,
+  display: "flex",
+  height: "100dvh",
+  inset: 0,
+  justifyContent: "center",
+  margin: 0,
+  maxHeight: "none",
+  maxWidth: "none",
+  overflow: "hidden",
+  padding: 0,
+  position: "fixed",
+  width: "100vw",
+  zIndex: 94,
+};
+
+const TERMINAL_THEME_MOBILE_SHEET_STYLE: CSSProperties = {
+  background: "#FFFDF7",
+  borderRadius: "26px 26px 0 0",
+  boxShadow: "0 -18px 50px rgba(0, 0, 0, 0.44)",
+  color: "#2A2E22",
+  display: "flex",
+  flexDirection: "column",
+  gap: 16,
+  padding: "10px 20px 17px",
+  position: "relative",
+  width: "min(390px, 100%)",
+  zIndex: 1,
+};
+
+const TERMINAL_THEME_DESKTOP_MENU_STYLE: CSSProperties = {
+  background: "#20241C",
+  border: "1px solid #2D3127",
+  borderRadius: 14,
+  boxShadow: "0 18px 44px rgba(0, 0, 0, 0.42)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  marginTop: 8,
+  padding: 6,
+  position: "absolute",
+  right: 0,
+  top: "100%",
+  width: 280,
+  zIndex: 90,
+};
+
+const TERMINAL_THEME_MENU_DISMISS_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  cursor: "default",
+  inset: 0,
+  padding: 0,
+  position: "absolute",
+};
+
+const TERMINAL_THEME_MENU_ITEM_TEXT_STYLE: CSSProperties = {
+  display: "flex",
+  flex: 1,
+  flexDirection: "column",
+  gap: 1,
+  minWidth: 0,
+};
+
+function getTerminalThemeMenuItemStyle(mobile: boolean, selected: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    background: selected ? (mobile ? "#F4F3E9" : "#2A2E22") : "transparent",
+    border: mobile ? `1px solid ${selected ? "#E4E2D2" : "transparent"}` : 0,
+    borderRadius: mobile ? 14 : 10,
+    color: mobile ? "#2A2E22" : "#F0EFE5",
+    cursor: "pointer",
+    display: "flex",
+    gap: mobile ? 14 : 12,
+    minHeight: mobile ? 64 : 51,
+    padding: mobile ? "12px 14px" : "8px 10px",
+    textAlign: "left",
+    width: "100%",
+  };
+}
+
+function getTerminalThemePreviewStyle(option: TerminalAppThemeOption, mobile: boolean): CSSProperties {
+  return {
+    background: option.preview.background,
+    border: `1px solid ${option.preview.border}`,
+    borderRadius: mobile ? 9 : 8,
+    display: "flex",
+    flexDirection: "column",
+    flexShrink: 0,
+    gap: mobile ? 5 : 4,
+    height: mobile ? 38 : 32,
+    justifyContent: "center",
+    padding: mobile ? 9 : 7,
+    width: mobile ? 48 : 40,
+  };
+}
+
+function getChangeShellThemeMenuItemStyle(mobile: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    background: mobile ? "#F4F3E9" : "transparent",
+    border: mobile ? "1px solid #E4E2D2" : 0,
+    borderRadius: mobile ? 14 : 10,
+    cursor: "pointer",
+    display: "flex",
+    gap: mobile ? 14 : 12,
+    minHeight: mobile ? 64 : 48,
+    padding: mobile ? "12px 14px" : "8px 10px",
+    textAlign: "left",
+    width: "100%",
+  };
+}
+
+function getChangeShellThemeIconStyle(mobile: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    background: mobile ? "#15180F" : "#171A13",
+    border: mobile ? 0 : "1px solid #2D3127",
+    borderRadius: mobile ? 10 : 8,
+    color: mobile ? "#9CB77A" : "#6F7167",
+    display: "flex",
+    flexShrink: 0,
+    height: mobile ? 38 : 32,
+    justifyContent: "center",
+    width: mobile ? 38 : 40,
+  };
+}
+
 const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
   alignItems: "center",
   alignSelf: "center",
@@ -1578,23 +1708,7 @@ function TerminalAppThemeMenu({
         aria-label="Theme"
         aria-modal="true"
         open
-        style={{
-          alignItems: "flex-end",
-          background: "rgba(2, 5, 2, 0.42)",
-          border: 0,
-          display: "flex",
-          height: "100dvh",
-          inset: 0,
-          justifyContent: "center",
-          margin: 0,
-          maxHeight: "none",
-          maxWidth: "none",
-          overflow: "hidden",
-          padding: 0,
-          position: "fixed",
-          width: "100vw",
-          zIndex: 94,
-        }}
+        style={TERMINAL_THEME_MOBILE_DIALOG_STYLE}
         onCancel={(event) => {
           event.preventDefault();
           onClose();
@@ -1605,24 +1719,12 @@ function TerminalAppThemeMenu({
           aria-label="Dismiss theme menu"
           tabIndex={-1}
           onClick={onClose}
-          style={{ background: "transparent", border: 0, cursor: "default", inset: 0, padding: 0, position: "absolute" }}
+          style={TERMINAL_THEME_MENU_DISMISS_STYLE}
         />
         <div
           role="menu"
           aria-label="Theme"
-          style={{
-            background: "#FFFDF7",
-            borderRadius: "26px 26px 0 0",
-            boxShadow: "0 -18px 50px rgba(0, 0, 0, 0.44)",
-            color: "#2A2E22",
-            display: "flex",
-            flexDirection: "column",
-            gap: 16,
-            padding: "10px 20px 17px",
-            position: "relative",
-            width: "min(390px, 100%)",
-            zIndex: 1,
-          }}
+          style={TERMINAL_THEME_MOBILE_SHEET_STYLE}
         >
           <div style={{ alignItems: "center", display: "flex", justifyContent: "center", paddingBottom: 4 }}>
             <div style={{ background: "#D6D5C4", borderRadius: 999, height: 5, width: 42 }} />
@@ -1655,25 +1757,10 @@ function TerminalAppThemeMenu({
     <div
       role="menu"
       aria-label="Theme"
-      style={{
-        background: "#20241C",
-        border: "1px solid #2D3127",
-        borderRadius: 14,
-        boxShadow: "0 18px 44px rgba(0, 0, 0, 0.42)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        marginTop: 8,
-        padding: 6,
-        position: "absolute",
-        right: 0,
-        top: "100%",
-        width: 280,
-        zIndex: 90,
-      }}
+      style={TERMINAL_THEME_DESKTOP_MENU_STYLE}
     >
       <div style={{ padding: "8px 10px 4px" }}>
-        <div style={{ color: "#6F7167", fontFamily: "Inter, system-ui, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", lineHeight: "14px", textTransform: "uppercase" }}>
+        <div style={{ color: "#6F7167", fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", lineHeight: "15px", textTransform: "uppercase" }}>
           Theme
         </div>
       </div>
@@ -1709,23 +1796,10 @@ function TerminalAppThemeMenuItem({
       aria-checked={selected}
       aria-label={`${option.label} ${option.description}`}
       onClick={onClick}
-      style={{
-        alignItems: "center",
-        background: selected ? (mobile ? "#F4F3E9" : "#2A2E22") : "transparent",
-        border: mobile ? `1px solid ${selected ? "#E4E2D2" : "transparent"}` : 0,
-        borderRadius: mobile ? 14 : 10,
-        color: mobile ? "#2A2E22" : "#F0EFE5",
-        cursor: "pointer",
-        display: "flex",
-        gap: mobile ? 14 : 12,
-        minHeight: mobile ? 64 : 51,
-        padding: mobile ? "12px 14px" : "8px 10px",
-        textAlign: "left",
-        width: "100%",
-      }}
+      style={getTerminalThemeMenuItemStyle(mobile, selected)}
     >
       <TerminalAppThemePreview option={option} mobile={mobile} />
-      <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
+      <span style={TERMINAL_THEME_MENU_ITEM_TEXT_STYLE}>
         <span style={{ color: mobile ? "#2A2E22" : "#F0EFE5", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 16 : 14, fontWeight: 600, lineHeight: mobile ? "20px" : "18px" }}>
           {option.label}
         </span>
@@ -1748,19 +1822,7 @@ function TerminalAppThemePreview({
   return (
     <span
       aria-hidden="true"
-      style={{
-        background: option.preview.background,
-        border: `1px solid ${option.preview.border}`,
-        borderRadius: mobile ? 9 : 8,
-        display: "flex",
-        flexDirection: "column",
-        flexShrink: 0,
-        gap: mobile ? 5 : 4,
-        height: mobile ? 38 : 32,
-        justifyContent: "center",
-        padding: mobile ? 9 : 7,
-        width: mobile ? 48 : 40,
-      }}
+      style={getTerminalThemePreviewStyle(option, mobile)}
     >
       <span style={{ background: option.preview.stripe, borderRadius: 2, display: "block", height: 3, width: mobile ? 22 : 18 }} />
       <span style={{ display: "flex", gap: mobile ? 4 : 3 }}>
@@ -1784,42 +1846,19 @@ function ChangeShellThemeMenuItem({
       role="menuitem"
       aria-label="Change shell theme Advanced terminal colors"
       onClick={onClick}
-      style={{
-        alignItems: "center",
-        background: mobile ? "#F4F3E9" : "transparent",
-        border: mobile ? "1px solid #E4E2D2" : 0,
-        borderRadius: mobile ? 14 : 10,
-        cursor: "pointer",
-        display: "flex",
-        gap: mobile ? 14 : 12,
-        minHeight: mobile ? 64 : 48,
-        padding: mobile ? "12px 14px" : "8px 10px",
-        textAlign: "left",
-        width: "100%",
-      }}
+      style={getChangeShellThemeMenuItemStyle(mobile)}
     >
       <span
         aria-hidden="true"
-        style={{
-          alignItems: "center",
-          background: mobile ? "#15180F" : "#171A13",
-          border: mobile ? 0 : "1px solid #2D3127",
-          borderRadius: mobile ? 10 : 8,
-          color: mobile ? "#9CB77A" : "#6F7167",
-          display: "flex",
-          flexShrink: 0,
-          height: mobile ? 38 : 32,
-          justifyContent: "center",
-          width: mobile ? 38 : 40,
-        }}
+        style={getChangeShellThemeIconStyle(mobile)}
       >
         <SquareTerminalIcon size={mobile ? 18 : 16} strokeWidth={2} />
       </span>
-      <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
+      <span style={TERMINAL_THEME_MENU_ITEM_TEXT_STYLE}>
         <span style={{ color: mobile ? "#5F6258" : "#858578", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 15 : 13, fontWeight: 600, lineHeight: mobile ? "18px" : "16px" }}>
           Change shell theme
         </span>
-        <span style={{ color: mobile ? "#A09F92" : "#5F6258", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
+        <span style={{ color: mobile ? "#A09F92" : "#5F6258", fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, lineHeight: mobile ? "16px" : "15px" }}>
           Advanced · terminal colors
         </span>
       </span>
