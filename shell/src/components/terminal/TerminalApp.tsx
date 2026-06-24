@@ -1729,7 +1729,7 @@ function TerminalAppThemeMenuItem({
         <span style={{ color: mobile ? "#2A2E22" : "#F0EFE5", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 16 : 14, fontWeight: 600, lineHeight: mobile ? "20px" : "18px" }}>
           {option.label}
         </span>
-        <span style={{ color: mobile ? "#858578" : "#858578", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 13 : 12, lineHeight: "16px" }}>
+        <span style={{ color: "#858578", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 13 : 12, lineHeight: "16px" }}>
           {option.description}
         </span>
       </span>
