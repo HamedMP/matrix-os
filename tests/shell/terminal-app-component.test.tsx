@@ -2625,6 +2625,10 @@ describe("TerminalApp", () => {
     expect(within(menu).getByRole("menuitem", { name: /Pi.*Install/ })).toBeTruthy();
     expect(within(menu).queryByText("Ready")).toBeNull();
     expect(within(menu).getAllByText("Install")).toHaveLength(2);
+    expect(within(menu).getByTestId("terminal-agent-logo-claude")).toBeTruthy();
+    expect(within(menu).getByTestId("terminal-agent-logo-codex")).toBeTruthy();
+    expect(within(menu).getByTestId("terminal-agent-logo-opencode")).toBeTruthy();
+    expect(within(menu).getByTestId("terminal-agent-logo-pi")).toBeTruthy();
   });
 
   it("starts installed agents directly from the new-session menu", async () => {

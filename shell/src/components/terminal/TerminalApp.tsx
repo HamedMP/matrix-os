@@ -2519,6 +2519,8 @@ interface TerminalAgentOption {
   id: TerminalAgentId;
   label: string;
   color: string;
+  logoText: string;
+  logoFontSize?: number;
   shortcut?: string;
   launchCommand?: string;
   installPackage: string;
@@ -2537,6 +2539,8 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "claude",
     label: "Claude Code",
     color: "#D8792C",
+    logoText: "✦",
+    logoFontSize: 15,
     shortcut: "⌘⇧C",
     installPackage: "@anthropic-ai/claude-code@latest",
     claudeMode: true,
@@ -2546,6 +2550,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "codex",
     label: "Codex",
     color: "#465243",
+    logoText: "Cx",
     shortcut: "⌘⇧X",
     launchCommand: "codex",
     installPackage: "@openai/codex@latest",
@@ -2555,6 +2560,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "opencode",
     label: "OpenCode",
     color: "#111111",
+    logoText: "</>",
     launchCommand: "opencode",
     installPackage: "opencode-ai@latest",
     fallbackInstalled: false,
@@ -2563,12 +2569,40 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "pi",
     label: "Pi",
     color: "#1E2F5C",
+    logoText: "π",
+    logoFontSize: 15,
     launchCommand: "pi",
     installPackage: "@earendil-works/pi-coding-agent@latest",
     installFlags: ["--ignore-scripts"],
     fallbackInstalled: false,
   },
 ];
+
+const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
+  alignItems: "center",
+  border: "1px solid rgba(255, 255, 255, 0.56)",
+  borderRadius: 8,
+  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 5px 12px rgba(49, 54, 45, 0.16)",
+  boxSizing: "border-box",
+  color: "#FFFDF7",
+  display: "flex",
+  flex: "0 0 26px",
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 11,
+  fontWeight: 900,
+  height: 26,
+  justifyContent: "center",
+  letterSpacing: 0,
+  lineHeight: "26px",
+  overflow: "hidden",
+  width: 26,
+};
+
+const TERMINAL_AGENT_LOGO_CODE_STYLE: CSSProperties = {
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontSize: 9,
+  fontWeight: 900,
+};
 
 function isTerminalAgentId(value: unknown): value is TerminalAgentId {
   return value === "claude" || value === "codex" || value === "opencode" || value === "pi";
@@ -3819,12 +3853,32 @@ function NewSessionMenu({
             label={option.label}
             shortcut={installed ? option.shortcut : undefined}
             install={!installed}
-            icon={<span aria-hidden="true" style={{ background: option.color, borderRadius: 6, flexShrink: 0, height: 20, width: 20 }} />}
+            icon={<TerminalAgentLogo muted={!installed} option={option} />}
             onClick={() => onCreateAgent(option, installed)}
           />
         );
       })}
     </div>
+  );
+}
+
+function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; muted: boolean }) {
+  const isCodeMark = option.id === "opencode" || option.id === "codex";
+  return (
+    <span
+      aria-hidden="true"
+      data-testid={`terminal-agent-logo-${option.id}`}
+      style={{
+        ...TERMINAL_AGENT_LOGO_STYLE,
+        background: option.color,
+        fontSize: option.logoFontSize ?? TERMINAL_AGENT_LOGO_STYLE.fontSize,
+        opacity: muted ? 0.74 : 1,
+      }}
+    >
+      <span style={isCodeMark ? TERMINAL_AGENT_LOGO_CODE_STYLE : undefined}>
+        {option.logoText}
+      </span>
+    </span>
   );
 }
 
