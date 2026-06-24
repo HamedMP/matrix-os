@@ -6,6 +6,7 @@ set -euo pipefail
 # Env (from host.env):  MATRIX_MACHINE_ID, MATRIX_HOST_BUNDLE_URL, PLATFORM_INTERNAL_URL
 # Trigger files:        /opt/matrix/app/.update-now   — apply pending update
 #                       /opt/matrix/app/.rollback-now  — rollback to previous version
+#                       /opt/matrix/app/.update-repair-now — clean safe temp artifacts and retry
 # Signals:              SIGUSR1 — alternative apply-update trigger
 
 source /opt/matrix/env/host.env
@@ -19,11 +20,17 @@ readonly UPDATE_MARKER="$APP_DIR/.update-available.json"
 readonly UPDATE_TRIGGER="$APP_DIR/.update-now"
 readonly UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
 readonly UPDATE_VERSION_FILE="$APP_DIR/.update-version"
+readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"
+readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"
 readonly ROLLBACK_TRIGGER="$APP_DIR/.rollback-now"
 readonly HEALTH_URL="http://127.0.0.1:4000/health"
 readonly AUTO_APPLY_FAILED_MARKER="$APP_DIR/.auto-apply-failed"
 readonly STAGING_ARTIFACT_TTL_SECONDS="${MATRIX_STAGING_ARTIFACT_TTL_SECONDS:-86400}"
 readonly STAGING_CLEANUP_INTERVAL_SECONDS="${MATRIX_STAGING_CLEANUP_INTERVAL_SECONDS:-3600}"
+readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"
+readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"
+readonly LEGACY_UPGRADE_DIR="/opt/matrix-upgrade"
+readonly LEGACY_UPGRADE_TTL_SECONDS="${MATRIX_LEGACY_UPGRADE_TTL_SECONDS:-86400}"
 readonly SYMPHONY_ENV_FILE="/opt/matrix/env/symphony.env"
 # Keys this agent owns and rewrites on every sync from platform-provided values.
 # Any other key in symphony.env (e.g. an operator-set SYMPHONY_LINEAR_PROJECT_SLUG)
@@ -98,6 +105,33 @@ release_url_for_version() { echo "$(platform_url)/system-bundles/releases/$1.jso
 release_url_for_channel() { echo "$(platform_url)/system-bundles/channels/$1.json"; }
 
 json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
+
+write_update_error() {
+  local code="$1" message="$2" version="${3:-}" available_kb="${4:-}" required_kb="${5:-}"
+  python3 - "$UPDATE_ERROR_MARKER" "$code" "$message" "$version" "$available_kb" "$required_kb" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+path, code, message, version, available_kb, required_kb = sys.argv[1:7]
+payload = {
+    "code": code,
+    "message": message,
+    "failedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+if version:
+    payload["version"] = version
+for key, value in (("availableKb", available_kb), ("requiredKb", required_kb)):
+    if value:
+        try:
+            payload[key] = int(value)
+        except ValueError:
+            pass
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, separators=(",", ":"))
+    handle.write("\n")
+PY
+}
 
 fetch_manifest() {
   local url="$1" manifest
@@ -199,7 +233,8 @@ apply_update() {
 
   sudo mkdir -p "$STAGING_DIR"
   sudo chown matrix:matrix "$STAGING_DIR"
-  clean_staging || true
+  ensure_update_headroom "$(json_field "$manifest" size)" "$version" || return 1
+  rm -f "$UPDATE_ERROR_MARKER"
   bundle_file="$STAGING_DIR/bundle-${version}.tar.gz"
   extract_dir="$STAGING_DIR/bundle-${version}"
 
@@ -290,7 +325,7 @@ apply_update() {
   done
   if [ "$healthy" = true ]; then
     log "Health check passed — update to $version complete"
-    rm -f "$UPDATE_MARKER"
+    rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
   else
     log "ERROR: health check failed — rolling back"
     do_rollback
@@ -299,6 +334,7 @@ apply_update() {
   fi
   rm -rf "$extract_dir" "$bundle_file"
   clean_staging || true
+  restart_sync_agent_after_update
 }
 
 # ── Rollback ─────────────────────────────────────────────────────────
@@ -358,6 +394,108 @@ clean_staging() {
   return 0
 }
 
+clean_staging_now() {
+  [ -d "$STAGING_DIR" ] || return 0
+  local count=0 path
+  while IFS= read -r -d '' path; do
+    [ -e "$path" ] || continue
+    [ ! -L "$path" ] || continue
+    sudo rm -rf -- "$path"
+    count=$((count + 1))
+  done < <(find "$STAGING_DIR" -mindepth 1 -maxdepth 1 \( -name 'failed-*' -o -name 'bundle-*' \) -print0)
+  if [ "$count" -gt 0 ]; then
+    log "Cleaned $count update staging artifacts"
+  fi
+  return 0
+}
+
+clean_legacy_upgrade_artifacts() {
+  [ -d "$LEGACY_UPGRADE_DIR" ] || return 0
+  local count=0 now cutoff path
+  now="$(date +%s)"
+  cutoff=$((now - LEGACY_UPGRADE_TTL_SECONDS))
+  while IFS= read -r -d '' path; do
+    [ -e "$path" ] || continue
+    [ ! -L "$path" ] || continue
+    if [ "$(stat -c %Y "$path" 2>/dev/null || echo "$now")" -gt "$cutoff" ]; then
+      continue
+    fi
+    sudo rm -f -- "$path"
+    count=$((count + 1))
+  done < <(find "$LEGACY_UPGRADE_DIR" -maxdepth 1 -type f \( -name 'matrix-host-bundle.tar.gz' -o -name 'matrix-host-bundle.tar.gz.sha256' \) -print0)
+  if [ "$count" -gt 0 ]; then
+    log "Cleaned $count stale legacy upgrade artifacts"
+  fi
+  return 0
+}
+
+required_update_free_kb() {
+  local bundle_size_bytes="${1:-}"
+  if [ -z "$bundle_size_bytes" ] || [[ "$bundle_size_bytes" == *[!0-9]* ]]; then
+    echo $((UPDATE_FREE_BUFFER_KB + 5242880))
+    return 0
+  fi
+  local bundle_kb
+  bundle_kb=$(((bundle_size_bytes + 1023) / 1024))
+  echo $((bundle_kb * UPDATE_EXPANSION_FACTOR + UPDATE_FREE_BUFFER_KB))
+}
+
+ensure_update_headroom() {
+  local bundle_size_bytes="${1:-}" version="${2:-}"
+  clean_staging || true
+  clean_legacy_upgrade_artifacts || true
+
+  local available required
+  required="$(required_update_free_kb "$bundle_size_bytes")"
+  available="$(df -Pk "$STAGING_DIR" | awk 'NR==2 {print $4}')"
+  if [ -z "$available" ]; then
+    log "WARN: could not determine free disk space before update"
+    return 0
+  fi
+  if [ "$available" -lt "$required" ]; then
+    log "ERROR: insufficient disk space for update (available: ${available}KB, required: ${required}KB)"
+    write_update_error "insufficient_disk_space" "Not enough free disk space to install this update." "$version" "$available" "$required"
+    return 1
+  fi
+  log "Update disk headroom OK (available: ${available}KB, required: ${required}KB)"
+  return 0
+}
+
+clean_repairable_tmp_artifacts() {
+  local staging_device tmp_device
+  staging_device="$(df -Pk "$STAGING_DIR" 2>/dev/null | awk 'NR==2 {print $1}')"
+  tmp_device="$(df -Pk /tmp 2>/dev/null | awk 'NR==2 {print $1}')"
+  if [ -n "$staging_device" ] && [ -n "$tmp_device" ] && [ "$staging_device" != "$tmp_device" ]; then
+    log "WARN: /tmp and update staging are on different filesystems; temp cleanup may not free update staging space"
+  fi
+
+  local count=0 path
+  while IFS= read -r -d '' path; do
+    [ -e "$path" ] || continue
+    [ ! -L "$path" ] || continue
+    sudo rm -f -- "$path"
+    count=$((count + 1))
+  done < <(find /tmp -xdev -user matrix -type f -mtime +1 \( -name '*.so' -o -path '/tmp/node-compile-cache/*' \) -print0)
+  if [ "$count" -gt 0 ]; then
+    log "Cleaned $count stale Matrix-owned temp files"
+  fi
+  return 0
+}
+
+restart_sync_agent_after_update() {
+  log "Restarting sync agent to load updated agent code"
+  sudo systemctl restart --no-block matrix-sync-agent.service || log "WARN: failed to restart matrix-sync-agent.service"
+}
+
+perform_update_repair() {
+  log "Starting safe update repair cleanup"
+  clean_staging_now || true
+  clean_legacy_upgrade_artifacts || true
+  clean_repairable_tmp_artifacts || true
+  rm -f "$UPDATE_ERROR_MARKER"
+  log "Repair complete; retrying pending update"
+}
+
 last_staging_cleanup=0
 
 maybe_clean_staging() {
@@ -374,6 +512,7 @@ maybe_clean_staging() {
 log "Started for ${MATRIX_MACHINE_ID} (version: $(current_version))"
 mkdir -p "$STAGING_DIR"
 clean_staging
+clean_legacy_upgrade_artifacts || true
 last_staging_cleanup="$(date +%s)"
 
 while true; do
@@ -396,6 +535,20 @@ while true; do
     sudo rm -f "$ROLLBACK_TRIGGER"
     do_rollback || log "Rollback failed"
   fi
+  if [ -f "$UPDATE_REPAIR_TRIGGER" ]; then
+    sudo rm -f "$UPDATE_REPAIR_TRIGGER"
+    perform_update_repair
+    if prepare_triggered_update; then
+      if apply_update; then
+        rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
+      else
+        log "Update repair retry failed — will retry on next trigger"
+      fi
+    else
+      log "Requested release metadata fetch failed after repair — skipping apply"
+      rm -f "$UPDATE_MARKER"
+    fi
+  fi
   if [ "$update_requested" = true ]; then
     update_requested=false
     if prepare_triggered_update; then
@@ -417,7 +570,7 @@ while true; do
   # Sleep in 6s increments (50x = 5 min) so we react quickly to triggers
   for _ in $(seq 1 50); do
     sleep 6
-    if [ -f "$UPDATE_TRIGGER" ] || [ -f "$ROLLBACK_TRIGGER" ] || [ "$update_requested" = true ]; then
+    if [ -f "$UPDATE_TRIGGER" ] || [ -f "$ROLLBACK_TRIGGER" ] || [ -f "$UPDATE_REPAIR_TRIGGER" ] || [ "$update_requested" = true ]; then
       break
     fi
   done

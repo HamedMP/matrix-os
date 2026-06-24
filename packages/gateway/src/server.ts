@@ -117,9 +117,11 @@ import {
   checkForSystemUpdate,
   listSystemReleases,
   parseInternalUpgradeTarget,
+  readSystemUpdateFailure,
   resolveInternalUpgradeStartTarget,
   resolveSystemUpdateChannel,
   startSystemUpdate,
+  startSystemUpdateRepair,
   writeInternalUpgradeTrigger,
 } from "./system-update.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -4017,7 +4019,8 @@ export async function createGateway(config: GatewayConfig) {
       platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
       channel,
     });
-    return c.json(result);
+    const installError = await readSystemUpdateFailure();
+    return c.json({ ...result, installError });
   });
 
   app.get("/api/system/releases", async (c) => {
@@ -4086,6 +4089,23 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);
+
+  app.post("/api/system/update/repair", upgradeBodyLimit, async (c) => {
+    const result = await startSystemUpdateRepair();
+    if (!result.ok) {
+      return c.json({ error: "Update repair not configured" }, 503);
+    }
+    void posthogErrorTracker.captureEvent("matrix_system_update_repair_requested", {
+      distinctId: ownerTelemetryDistinctId,
+      properties: {
+        handle: process.env.MATRIX_HANDLE,
+      },
+    }).catch((err: unknown) => {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[posthog] Failed to queue system update repair event: ${kind}`);
+    });
+    return c.json({ ok: true, status: result.status }, 202);
+  });
 
   app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
     return startUpdateFromRequest(c);
