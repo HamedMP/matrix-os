@@ -190,6 +190,14 @@ describe("CanvasWindow terminal interactivity", () => {
     }));
   });
 
+  it("passes workspace terminal session ids from Canvas window paths into TerminalApp", () => {
+    render(<CanvasWindow win={{ ...terminalWindow, path: "__terminal__:session-term_abc123" }} />);
+
+    expect(terminalRender).toHaveBeenCalledWith(expect.objectContaining({
+      initialSessionId: "term_abc123",
+    }));
+  });
+
   it("moves terminal Canvas windows through the delegated Terminal chrome drag handle", () => {
     useWindowManager.setState({
       windows: [terminalWindow],

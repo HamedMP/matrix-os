@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
+import { createTerminalSessionLaunchPath } from "@/lib/terminal-launch";
+import { useWindowManager } from "@/hooks/useWindowManager";
 
 const GATEWAY_URL = getGatewayUrl();
 const FETCH_TIMEOUT_MS = 10_000;
@@ -104,6 +106,14 @@ function worktreePrNumber(worktree?: WorkspaceWorktree): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
+function openTerminalSession(terminalSessionId: string): void {
+  useWindowManager.getState().openWindow(
+    "Terminal",
+    createTerminalSessionLaunchPath(terminalSessionId),
+    0,
+  );
+}
+
 // react-doctor-disable-next-line react-doctor/prefer-useReducer, react-doctor/no-giant-component -- the 22 useState fields are mostly independent (separate form inputs, transient status messages, multiple server lists, and per-action in-flight flags) rather than one related cluster; collapsing them into a single reducer would not be a mechanical, behavior-identical change and would obscure the independent update sites. The component is a single cohesive workspace dashboard whose handlers all close over this shared state, so splitting it would require threading every setter through props with no behavior change.
 export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -127,6 +137,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingWorktree, setCreatingWorktree] = useState(false);
   const [startingAgent, setStartingAgent] = useState(false);
+  const [startingShell, setStartingShell] = useState(false);
   const [error, setError] = useState("");
 
   const selectedProject = projects.find((project) => project.slug === selectedSlug) ?? projects[0];
@@ -147,6 +158,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
     setWorktreeMessage("");
     setCreatingWorktree(false);
     setStartingAgent(false);
+    setStartingShell(false);
   }
 
   // Default the selected worktree to the first available one (and drop a
@@ -222,6 +234,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       method: "POST",
       body: JSON.stringify({}),
     });
+    if (data.terminalSessionId) openTerminalSession(data.terminalSessionId);
     setAttachMessage(data.terminalSessionId ? `Attached ${data.terminalSessionId}` : "Attached");
   };
 
@@ -230,6 +243,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       method: "POST",
       body: JSON.stringify({}),
     });
+    if (data.terminalSessionId) openTerminalSession(data.terminalSessionId);
     setAttachMessage(data.terminalSessionId ? `Attached ${data.terminalSessionId}` : "Attached");
   };
 
@@ -389,6 +403,61 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       }
     } finally {
       setStartingAgent(false);
+    }
+  };
+
+  const startShell = async () => {
+    if (!activeSlug) {
+      setError("Select a project first");
+      return;
+    }
+    const worktreeId = selectedWorktreeId.trim();
+    if (!worktreeId) {
+      setError("Select a worktree");
+      return;
+    }
+
+    setStartingShell(true);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally; the finally clause guarantees the in-flight flag resets regardless of outcome, which is the correct shape here.
+    try {
+      const selectedWorktree = worktrees.find((worktree) => worktree.id === worktreeId);
+      const pr = worktreePrNumber(selectedWorktree);
+      if (activeSlugRef.current !== activeSlug) return;
+      const data = await fetchJson<{ session?: WorkspaceSession }>("/api/sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "shell",
+          projectSlug: activeSlug,
+          worktreeId,
+          ...(pr ? { pr } : {}),
+          runtimePreference: "zellij",
+        }),
+      });
+      const sessionId = activeSlugRef.current === activeSlug ? data.session?.id : undefined;
+      if (!sessionId) {
+        if (activeSlugRef.current === activeSlug) {
+          setError("Shell start failed");
+        }
+        return;
+      }
+      if (activeSlugRef.current !== activeSlug) return;
+      const attach = await fetchJson<{ terminalSessionId?: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/takeover`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      if (activeSlugRef.current === activeSlug) {
+        if (attach.terminalSessionId) openTerminalSession(attach.terminalSessionId);
+        setAgentMessage(`Started shell ${sessionId}`);
+        setAttachMessage(attach.terminalSessionId ? `Attached ${attach.terminalSessionId}` : "");
+        await loadProjectDetail(activeSlug);
+        setError("");
+      }
+    } catch (err: unknown) {
+      if (activeSlugRef.current === activeSlug) {
+        setError(err instanceof Error ? err.message : "Shell start failed");
+      }
+    } finally {
+      setStartingShell(false);
     }
   };
 
@@ -574,14 +643,25 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
                 rows={3}
                 className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground"
               />
-              <button
-                type="submit"
-                disabled={startingAgent || !activeSlug || worktrees.length === 0}
-                className="inline-flex h-8 w-full items-center justify-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <PlayIcon className="size-3.5" />
-                {startingAgent ? "Starting" : "Start agent"}
-              </button>
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  disabled={startingShell || !activeSlug || worktrees.length === 0}
+                  onClick={() => void startShell()}
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <PanelRightOpenIcon className="size-3.5" />
+                  {startingShell ? "Starting" : "Start shell"}
+                </button>
+                <button
+                  type="submit"
+                  disabled={startingAgent || !activeSlug || worktrees.length === 0}
+                  className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border px-2 text-xs hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <PlayIcon className="size-3.5" />
+                  {startingAgent ? "Starting" : "Start agent"}
+                </button>
+              </div>
             </form>
             <label className="mb-2 block text-xs text-muted-foreground">
               Search sessions

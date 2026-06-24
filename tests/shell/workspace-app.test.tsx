@@ -4,9 +4,20 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceApp } from "../../shell/src/components/workspace/WorkspaceApp.js";
+import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
 describe("WorkspaceApp", () => {
   beforeEach(() => {
+    useWindowManager.setState({
+      windows: [],
+      nextZ: 1,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: null,
+      appLaunchTimes: {},
+      fullscreenWindowId: null,
+    });
     let createdWorktree: { id: string; currentBranch: string; dirtyState: string; pr?: number | { number: number } } | undefined;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -63,14 +74,17 @@ describe("WorkspaceApp", () => {
       if (url.includes("/api/sessions/sess_abc123/takeover") && init?.method === "POST") {
         return json({ terminalSessionId: "term_owner_abc123" });
       }
+      if (url.includes("/api/sessions/sess_shell123/takeover") && init?.method === "POST") {
+        return json({ terminalSessionId: "term_shell_owner123" });
+      }
       if (url.includes("/api/sessions/sess_abc123") && init?.method === "DELETE") {
         return json({ session: { id: "sess_abc123", status: "exited" } });
       }
       if (url.endsWith("/api/sessions") && init?.method === "POST") {
-        const body = typeof init.body === "string" ? JSON.parse(init.body) as { kind?: string } : {};
+        const body = typeof init.body === "string" ? JSON.parse(init.body) as { kind?: string; worktreeId?: string } : {};
         return json({
           session: {
-            id: body.kind === "agent" ? "sess_agent123" : "sess_duplicate",
+            id: body.kind === "agent" ? "sess_agent123" : body.kind === "shell" && body.worktreeId === "wt_abc123" ? "sess_shell123" : "sess_duplicate",
             status: "starting",
           },
         });
@@ -131,11 +145,25 @@ describe("WorkspaceApp", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(await screen.findByText("Attached term_abc123")).toBeTruthy();
+    expect(useWindowManager.getState().windows).toEqual([
+      expect.objectContaining({
+        title: "Terminal",
+        path: "__terminal__:session-term_abc123",
+        minimized: false,
+      }),
+    ]);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /take over sess_abc123/i }));
     });
     expect(await screen.findByText("Attached term_owner_abc123")).toBeTruthy();
+    expect(useWindowManager.getState().windows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: "Terminal",
+        path: "__terminal__:session-term_owner_abc123",
+        minimized: false,
+      }),
+    ]));
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /duplicate sess_abc123/i }));
@@ -241,6 +269,41 @@ describe("WorkspaceApp", () => {
       }),
     );
     expect(await screen.findByText("Started sess_agent123")).toBeTruthy();
+  });
+
+  it("starts a shell workspace session and opens its terminal transport", async () => {
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("feature/workspace").length).toBeGreaterThan(0));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start shell/i }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/sessions"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "shell",
+          projectSlug: "repo",
+          worktreeId: "wt_abc123",
+          runtimePreference: "zellij",
+        }),
+      }),
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/sessions/sess_shell123/takeover"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(await screen.findByText("Started shell sess_shell123")).toBeTruthy();
+    expect(useWindowManager.getState().windows).toEqual([
+      expect.objectContaining({
+        title: "Terminal",
+        path: "__terminal__:session-term_shell_owner123",
+        minimized: false,
+      }),
+    ]);
   });
 
   it("clears pending project action spinners when switching projects", async () => {

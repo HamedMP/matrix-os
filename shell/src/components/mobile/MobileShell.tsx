@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatContext } from "@/stores/chat-context";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { getGatewayUrl } from "@/lib/gateway";
+import { parseTerminalSessionLaunchPath } from "@/lib/terminal-launch";
 import { nameToSlug } from "@/lib/utils";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
@@ -200,8 +201,8 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
       // Bring existing instance to the front rather than open a duplicate
       // (terminals are the only deliberately-multi-instance case and we
       // special-case them).
-      if (app.path === "__terminal__") {
-        const terminalInstances = prev.filter((entry) => entry.app.path === "__terminal__");
+      if (app.path.startsWith("__terminal__")) {
+        const terminalInstances = prev.filter((entry) => entry.app.path.startsWith("__terminal__"));
         if (terminalInstances.length >= MAX_TERMINAL_INSTANCES) {
           const latestTerminal = terminalInstances[terminalInstances.length - 1];
           return [...prev.filter((entry) => entry.id !== latestTerminal.id), latestTerminal];
@@ -224,7 +225,11 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
 
   useEffect(() => {
     if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
-    const app = apps.find((candidate) => candidate.path === launchAppPath);
+    const app = apps.find((candidate) => candidate.path === launchAppPath) ?? (
+      parseTerminalSessionLaunchPath(launchAppPath)
+        ? { id: "terminal-session", name: "Terminal", path: launchAppPath, iconSlug: "terminal" }
+        : undefined
+    );
     if (!app) return;
     launchPathConsumedRef.current = launchAppPath;
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
@@ -433,7 +438,14 @@ function MobileAppFrame({
   chat: ReturnType<typeof useChatContext>;
 }) {
   if (app.path.startsWith("__terminal__")) {
-    return <TerminalApp key={openId} mobile launchTargetId={openId} />;
+    return (
+      <TerminalApp
+        key={openId}
+        initialSessionId={parseTerminalSessionLaunchPath(app.path) ?? undefined}
+        mobile
+        launchTargetId={openId}
+      />
+    );
   }
   if (app.path === "__file-browser__") {
     return <FileBrowser windowId={openId} mobile />;

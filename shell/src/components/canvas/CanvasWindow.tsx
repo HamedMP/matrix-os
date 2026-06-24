@@ -5,6 +5,7 @@ import { useCanvasTransform, INTERACTION_THRESHOLD } from "@/hooks/useCanvasTran
 import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { useCanvasSettings } from "@/stores/canvas-settings";
+import { parseTerminalSessionLaunchPath } from "@/lib/terminal-launch";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { AppViewer } from "../AppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
@@ -574,6 +575,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
     <>
       {win.path.startsWith("__terminal__") ? (
         <TerminalApp
+          initialSessionId={parseTerminalSessionLaunchPath(win.path) ?? undefined}
           mobile={isMobile}
           launchTargetId={win.id}
           windowControls={{

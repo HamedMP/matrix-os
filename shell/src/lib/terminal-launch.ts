@@ -46,6 +46,22 @@ export function parseTerminalLaunchPath(path: string): TerminalLaunchConfig | nu
   return TERMINAL_ACTIONS[match[1] as TerminalLaunchAction];
 }
 
+export function createTerminalSessionLaunchPath(sessionId: string): string {
+  return `__terminal__:session-${encodeURIComponent(sessionId)}`;
+}
+
+export function parseTerminalSessionLaunchPath(path: string): string | null {
+  if (!path.startsWith("__terminal__:session-")) return null;
+  const encodedSessionId = path.slice("__terminal__:session-".length);
+  if (!encodedSessionId) return null;
+  try {
+    const sessionId = decodeURIComponent(encodedSessionId);
+    return sessionId.trim() ? sessionId : null;
+  } catch (_err: unknown) {
+    return null;
+  }
+}
+
 function readLaunchQueue(): QueuedTerminalLaunch[] {
   if (typeof window === "undefined") return [];
   try {
