@@ -431,6 +431,105 @@ function dispatchNamedTerminalMessage(
   });
 }
 
+type NamedTerminalRouteSession = {
+  onMessage(raw: string): void | Promise<void>;
+  onClose(): void;
+};
+
+type NamedTerminalPendingInputQueue = {
+  enqueue(raw: string): boolean;
+  drain(callback: (raw: string) => void): void;
+  clear(): void;
+};
+
+function isNamedTerminalDestroyFrame(raw: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) {
+      console.warn("[shell] terminal message parse failed:", err instanceof Error ? err.message : String(err));
+    }
+    return false;
+  }
+  return typeof parsed === "object" && parsed !== null && "type" in parsed && parsed.type === "destroy";
+}
+
+export function createNamedTerminalRouteController(options: {
+  pendingInput?: NamedTerminalPendingInputQueue;
+  onBufferOverflow?: () => void;
+} = {}) {
+  let namedHandle: NamedTerminalRouteSession | null = null;
+  let socketClosed = false;
+  let pendingDestroyFrame: string | null = null;
+
+  const dispatchDestroyOrClose = (session: NamedTerminalRouteSession) => {
+    const destroyFrame = pendingDestroyFrame;
+    pendingDestroyFrame = null;
+    if (destroyFrame) {
+      dispatchNamedTerminalMessage(session, destroyFrame);
+      return;
+    }
+    session.onClose();
+  };
+
+  return {
+    isSocketClosed(): boolean {
+      return socketClosed;
+    },
+    clearPendingState(): void {
+      pendingDestroyFrame = null;
+      options.pendingInput?.clear();
+    },
+    onOpenResolved(session: NamedTerminalRouteSession, openOptions: { drainPendingInput: boolean }): void {
+      if (socketClosed) {
+        options.pendingInput?.clear();
+        dispatchDestroyOrClose(session);
+        return;
+      }
+
+      namedHandle = session;
+      if (pendingDestroyFrame) {
+        options.pendingInput?.clear();
+        dispatchDestroyOrClose(session);
+        return;
+      }
+
+      if (openOptions.drainPendingInput) {
+        options.pendingInput?.drain((raw) => {
+          dispatchNamedTerminalMessage(session, raw);
+        });
+      }
+    },
+    onMessage(raw: string, messageOptions: { onBufferOverflow?: () => void } = {}): boolean {
+      if (namedHandle) {
+        dispatchNamedTerminalMessage(namedHandle, raw);
+        return true;
+      }
+
+      if (isNamedTerminalDestroyFrame(raw)) {
+        pendingDestroyFrame = raw;
+        return true;
+      }
+
+      if (!options.pendingInput) {
+        return false;
+      }
+
+      if (!options.pendingInput.enqueue(raw)) {
+        (messageOptions.onBufferOverflow ?? options.onBufferOverflow)?.();
+      }
+      return true;
+    },
+    onClose(): void {
+      socketClosed = true;
+      options.pendingInput?.clear();
+      namedHandle?.onClose();
+      namedHandle = null;
+    },
+  };
+}
+
 type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
 
 export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getConfig">): Promise<number | undefined> {
@@ -2354,9 +2453,8 @@ export async function createGateway(config: GatewayConfig) {
     upgradeWebSocket((c) => {
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
-      let namedHandle: { onMessage(raw: string): void | Promise<void>; onClose(): void } | null = null;
-      let namedSocketClosed = false;
       const pendingInput = createPendingTerminalInputQueue();
+      const namedRouteController = createNamedTerminalRouteController({ pendingInput });
 
       return {
         onOpen(_evt, ws) {
@@ -2378,18 +2476,11 @@ export async function createGateway(config: GatewayConfig) {
             session: namedSession,
             fromSeq,
           }).then((session) => {
-            if (namedSocketClosed) {
-              session.onClose();
-              return;
-            }
-            namedHandle = session;
-            pendingInput.drain((raw) => {
-              dispatchNamedTerminalMessage(session, raw);
-            });
+            namedRouteController.onOpenResolved(session, { drainPendingInput: true });
           }).catch((err: unknown) => {
             console.warn("[shell] terminal session attach failed:", err instanceof Error ? err.message : String(err));
-            pendingInput.clear();
-            if (namedSocketClosed) {
+            namedRouteController.clearPendingState();
+            if (namedRouteController.isSocketClosed()) {
               return;
             }
             try {
@@ -2409,28 +2500,23 @@ export async function createGateway(config: GatewayConfig) {
           if (raw === null) {
             return;
           }
-          if (namedHandle) {
-            dispatchNamedTerminalMessage(namedHandle, raw);
-            return;
-          }
-          if (!pendingInput.enqueue(raw)) {
-            try {
-              ws.send(JSON.stringify({
-                type: "error",
-                code: "buffer_overflow",
-                message: "Input buffer overflow before session was ready",
-              }));
-            } catch (sendErr: unknown) {
-              logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
-            }
-            ws.close();
-          }
+          namedRouteController.onMessage(raw, {
+            onBufferOverflow: () => {
+              try {
+                ws.send(JSON.stringify({
+                  type: "error",
+                  code: "buffer_overflow",
+                  message: "Input buffer overflow before session was ready",
+                }));
+              } catch (sendErr: unknown) {
+                logUnexpectedWsSendFailure("Terminal WebSocket send failed", sendErr);
+              }
+              ws.close();
+            },
+          });
         },
         onClose() {
-          namedSocketClosed = true;
-          pendingInput.clear();
-          namedHandle?.onClose();
-          namedHandle = null;
+          namedRouteController.onClose();
         },
       };
     }),
@@ -2443,8 +2529,7 @@ export async function createGateway(config: GatewayConfig) {
       const namedSession = c.req.query("session");
       const fromSeqParam = c.req.query("fromSeq");
       let handle: SessionHandle | null = null;
-      let namedHandle: { onMessage(raw: string): void | Promise<void>; onClose(): void } | null = null;
-      let namedSocketClosed = false;
+      const namedRouteController = createNamedTerminalRouteController();
       let autoCreateTimer: ReturnType<typeof setTimeout> | null = null;
       let autoCreatedSessionId: string | null = null;
 
@@ -2495,18 +2580,15 @@ export async function createGateway(config: GatewayConfig) {
               session: namedSession,
               fromSeq,
             }).then((session) => {
-              if (namedSocketClosed) {
-                session.onClose();
-                return;
-              }
-              namedHandle = session;
+              namedRouteController.onOpenResolved(session, { drainPendingInput: false });
             }).catch((err: unknown) => {
               console.warn("[shell] zellij terminal attach failed:", err instanceof Error ? err.message : String(err));
               captureTerminalEvent("named-attach-failed", {
                 namedSession: true,
-                socketClosed: namedSocketClosed,
+                socketClosed: namedRouteController.isSocketClosed(),
               });
-              if (namedSocketClosed) {
+              namedRouteController.clearPendingState();
+              if (namedRouteController.isSocketClosed()) {
                 return;
               }
               try {
@@ -2567,9 +2649,7 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
           if (namedSession) {
-            if (namedHandle) {
-              dispatchNamedTerminalMessage(namedHandle, raw);
-            }
+            namedRouteController.onMessage(raw);
             return;
           }
           let parsed: unknown;
@@ -2716,11 +2796,7 @@ export async function createGateway(config: GatewayConfig) {
         },
 
         onClose() {
-          namedSocketClosed = true;
-          if (namedHandle) {
-            namedHandle.onClose();
-            namedHandle = null;
-          }
+          namedRouteController.onClose();
           logTerminalDebug("ws-close", {
             handleSessionId: handle?.sessionId ?? null,
             autoCreatedSessionId,
