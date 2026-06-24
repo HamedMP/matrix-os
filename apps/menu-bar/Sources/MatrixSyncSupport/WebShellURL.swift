@@ -1,3 +1,5 @@
 import Foundation
 
-public let webShellURL = URL(string: "https://app.matrix-os.com")!
+public enum MatrixSyncURLs {
+    public static let webShell = URL(string: "https://app.matrix-os.com")!
+}

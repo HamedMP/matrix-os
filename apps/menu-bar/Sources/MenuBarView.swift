@@ -265,6 +265,6 @@ struct MenuBarView: View {
     }
 
     private func openWebShell() {
-        NSWorkspace.shared.open(webShellURL)
+        NSWorkspace.shared.open(MatrixSyncURLs.webShell)
     }
 }
