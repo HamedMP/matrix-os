@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NODE_BIN="${MATRIX_NODE_BIN:-/opt/matrix/runtime/node/bin/node}"
+if ! command -v "$NODE_BIN" >/dev/null 2>&1; then
+  NODE_BIN="$(command -v node)"
+fi
+
+"$NODE_BIN" <<'NODE'
+const {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} = require("node:fs");
+const { createHash } = require("node:crypto");
+const { dirname, isAbsolute, join, normalize } = require("node:path");
+
+const appDir = process.env.APP_DIR || process.env.MATRIX_APP_DIR || "/opt/matrix/app";
+const homeDir = process.env.MATRIX_HOME || "/home/matrix/home";
+const templateDir = join(appDir, "home");
+const templateManifestPath = join(templateDir, ".template-manifest.json");
+const installedManifestPath = join(homeDir, ".template-manifest.json");
+const now = new Date().toISOString();
+const added = [];
+const updated = [];
+const skipped = [];
+const logLines = [`[${now}] Template sync started`];
+const logMaxBytes = parsePositiveInt(process.env.TEMPLATE_SYNC_LOG_MAX_BYTES, 256 * 1024);
+
+const userOwnedFiles = new Set([
+  "system/activity.log",
+  "system/ai-profile.md",
+  "system/canvas.json",
+  "system/config.json",
+  "system/cron.json",
+  "system/desktop.json",
+  "system/handle.json",
+  "system/identity.md",
+  "system/layout.json",
+  "system/modules.json",
+  "system/profile.md",
+  "system/session.json",
+  "system/social-config.json",
+  "system/state.md",
+  "system/theme.json",
+  "system/user.md",
+]);
+const userOwnedPrefixes = [
+  "system/conversations/",
+  "system/layouts/",
+  "system/logs/",
+  "system/memory/",
+  "system/voice/",
+  "system/wallpapers/",
+];
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readJson(path) {
+  if (!existsSync(path)) return {};
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function readInstalledManifest(path) {
+  try {
+    return readJson(path);
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      logLines.push(`[${now}] Ignoring invalid installed manifest: ${err.message}`);
+      return {};
+    }
+    throw err;
+  }
+}
+
+function hashFile(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function safeRelPath(relPath) {
+  if (typeof relPath !== "string" || relPath.length === 0) return null;
+  const normalized = normalize(relPath).replaceAll("\\", "/");
+  if (isAbsolute(relPath) || normalized === ".." || normalized.startsWith("../") || normalized.includes("/../")) {
+    return null;
+  }
+  if (normalized.split("/").some((part) => part.length === 0 || part === "." || part === "..")) {
+    return null;
+  }
+  return normalized;
+}
+
+function isProtectedUserPath(relPath) {
+  return userOwnedFiles.has(relPath) || userOwnedPrefixes.some((prefix) => relPath.startsWith(prefix));
+}
+
+function isIconPath(relPath) {
+  return relPath.startsWith("system/icons/");
+}
+
+function copyTemplateFile(templatePath, homePath) {
+  const sourceStat = statSync(templatePath);
+  mkdirSync(dirname(homePath), { recursive: true });
+  const tmpPath = `${homePath}.tmp-${process.pid}-${Date.now()}`;
+  copyFileSync(templatePath, tmpPath);
+  chmodSync(tmpPath, sourceStat.mode & 0o777);
+  renameSync(tmpPath, homePath);
+}
+
+function writeTextAtomic(path, content, mode = 0o644) {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(tmpPath, content, { mode });
+  renameSync(tmpPath, path);
+}
+
+function appendBoundedLog(path, content) {
+  mkdirSync(dirname(path), { recursive: true });
+  const nextBytes = Buffer.byteLength(content);
+  if (existsSync(path) && statSync(path).size + nextBytes > logMaxBytes) {
+    renameSync(path, `${path}.1`);
+  }
+  writeFileSync(path, content, { flag: "a" });
+}
+
+function logSkipped(relPath, reason) {
+  skipped.push(relPath);
+  logLines.push(`[${now}] Skipped: ${relPath} (${reason})`);
+}
+
+if (!existsSync(templateManifestPath)) {
+  logLines.push(`[${now}] No template manifest found, skipping sync`);
+} else {
+  const templateManifest = readJson(templateManifestPath);
+  const installedManifest = readInstalledManifest(installedManifestPath);
+
+  for (const [rawRelPath, templateHash] of Object.entries(templateManifest).sort(([a], [b]) => a.localeCompare(b))) {
+    const relPath = safeRelPath(rawRelPath);
+    if (!relPath || typeof templateHash !== "string") {
+      logSkipped(String(rawRelPath), "unsafe template manifest entry");
+      continue;
+    }
+
+    const templatePath = join(templateDir, ...relPath.split("/"));
+    const homePath = join(homeDir, ...relPath.split("/"));
+    if (!existsSync(templatePath) || !statSync(templatePath).isFile()) continue;
+
+    if (isProtectedUserPath(relPath)) {
+      logSkipped(relPath, "protected user data");
+      continue;
+    }
+
+    if (isIconPath(relPath) && existsSync(homePath)) {
+      installedManifest[relPath] = hashFile(homePath);
+      continue;
+    }
+
+    if (!existsSync(homePath)) {
+      copyTemplateFile(templatePath, homePath);
+      installedManifest[relPath] = templateHash;
+      added.push(relPath);
+      logLines.push(`[${now}] Added: ${relPath}`);
+      continue;
+    }
+
+    const homeStat = lstatSync(homePath);
+    if (!homeStat.isFile()) {
+      logSkipped(relPath, "customized by user");
+      continue;
+    }
+
+    const userHash = hashFile(homePath);
+    const installedHash = installedManifest[relPath];
+
+    if (installedHash === undefined) {
+      if (userHash === templateHash) {
+        installedManifest[relPath] = templateHash;
+      } else {
+        logSkipped(relPath, "customized by user");
+      }
+      continue;
+    }
+
+    if (userHash === installedHash) {
+      if (templateHash !== installedHash) {
+        copyTemplateFile(templatePath, homePath);
+        installedManifest[relPath] = templateHash;
+        updated.push(relPath);
+        logLines.push(`[${now}] Updated: ${relPath}`);
+      }
+      continue;
+    }
+
+    if (userHash === templateHash) {
+      installedManifest[relPath] = templateHash;
+      continue;
+    }
+
+    logSkipped(relPath, "customized by user");
+  }
+
+  mkdirSync(dirname(installedManifestPath), { recursive: true });
+  writeTextAtomic(installedManifestPath, `${JSON.stringify(installedManifest, null, 2)}\n`);
+}
+
+const logDir = join(homeDir, "system", "logs");
+mkdirSync(logDir, { recursive: true });
+logLines.push(`[${now}] Template sync completed: ${updated.length} updated, ${added.length} added, ${skipped.length} skipped`);
+try {
+  appendBoundedLog(join(logDir, "template-sync.log"), `${logLines.join("\n")}\n`);
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`matrix-sync-bundled-home-assets: unable to write template sync log: ${message}`);
+}
+NODE

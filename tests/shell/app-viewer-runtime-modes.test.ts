@@ -162,5 +162,13 @@ describe("AppViewer bridged runtime loading", () => {
       expect(isAllowedBridgeFetchUrl("symphony", "/api/auth/app-session")).toBe(false);
       expect(isAllowedBridgeFetchUrl("notes", "/api/bridge/query")).toBe(true);
     });
+
+    it("only allows Resource Manager to bridge system activity reads", () => {
+      expect(isAllowedBridgeFetchUrl("resource-manager", "/api/system/activity")).toBe(true);
+      expect(isAllowedBridgeFetchUrl("apps/resource-manager", "/api/system/activity?processLimit=25")).toBe(true);
+      expect(isAllowedBridgeFetchUrl("notes", "/api/system/activity")).toBe(false);
+      expect(isAllowedBridgeFetchUrl("resource-manager", "/api/system/update")).toBe(false);
+      expect(isAllowedBridgeFetchUrl("resource-manager", "https://app.matrix-os.com/api/system/activity")).toBe(false);
+    });
   });
 });
