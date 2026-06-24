@@ -13,6 +13,22 @@ export interface CleanupPolicy {
   maxFiles: number;
 }
 
+function missingReferenceMetadata(
+  node: object,
+  sourceRef: { kind?: string; id?: string },
+): Record<string, unknown> {
+  const metadata = { ...(node as { metadata?: Record<string, unknown> }).metadata };
+  if (sourceRef.kind === "terminal_session" && sourceRef.id) {
+    return {
+      ...metadata,
+      recoveryReason: "terminal_session_missing",
+      terminalSessionState: "missing",
+      terminalSessionId: sourceRef.id,
+    };
+  }
+  return { ...metadata, recoveryReason: "missing_reference" };
+}
+
 export async function materializeCanvasExport(record: CanvasRecord, deps: RecoveryDeps): Promise<string> {
   const now = deps.now?.() ?? Date.now();
   const canvasId = CanvasIdSchema.parse(record.id);
@@ -43,7 +59,7 @@ export function reconcileCanvasRecord(record: CanvasRecord, liveRefs: { terminal
       sourceRef.kind === "review_loop" &&
       !liveRefs.reviewLoopIds.has(sourceRef.id);
     if (missingTerminal || missingProject || missingReview) {
-      return { ...node, displayState: "recoverable", metadata: { ...(node as { metadata?: object }).metadata, recoveryReason: "missing_reference" } };
+      return { ...node, displayState: "recoverable", metadata: missingReferenceMetadata(node, sourceRef) };
     }
     return node;
   });

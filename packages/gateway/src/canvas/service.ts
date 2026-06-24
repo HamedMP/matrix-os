@@ -61,6 +61,9 @@ export interface CanvasTerminalRegistry {
   destroy(sessionId: string): void;
 }
 
+type TerminalSessionSnapshot = NonNullable<ReturnType<CanvasTerminalRegistry["getSession"]>>;
+type TerminalSessionSnapshotById = Record<string, TerminalSessionSnapshot>;
+
 export interface CanvasServiceOptions {
   terminalRegistry?: CanvasTerminalRegistry;
   homePath?: string;
@@ -101,7 +104,13 @@ function nodeCounts(record: CanvasRecord) {
     const displayState = (node as { displayState?: unknown }).displayState;
     const type = (node as { type?: unknown }).type;
     if (displayState === "stale") stale += 1;
-    if (type === "terminal" || type === "review_loop" || type === "preview" || type === "app_window") live += 1;
+    const liveDisplayState = displayState !== "stale" && displayState !== "recoverable" && displayState !== "missing";
+    if (
+      liveDisplayState &&
+      (type === "terminal" || type === "review_loop" || type === "preview" || type === "app_window")
+    ) {
+      live += 1;
+    }
   }
   return { total: record.nodes.length, stale, live };
 }
@@ -224,7 +233,7 @@ export class CanvasService {
     let records = await this.repository.list(ownerFromUser(userId), query.limit ?? 50);
     if (query.scopeType) records = records.filter((record) => record.scopeType === query.scopeType);
     if (query.scopeId) records = records.filter((record) => JSON.stringify(record.scopeRef ?? {}).includes(query.scopeId ?? ""));
-    records = safeSearch(records, query.q).map((record) => this.reconcileRecord(record));
+    records = safeSearch(records, query.q).map((record) => this.reconcileRecord(record).record);
     return {
       canvases: records.map((record) => ({
         id: record.id,
@@ -253,10 +262,10 @@ export class CanvasService {
   async getCanvas(userId: string, canvasId: string): Promise<CanvasDocumentResult> {
     const stored = await this.repository.get(ownerFromUser(userId), canvasId);
     if (!stored) throw new CanvasNotFoundError(canvasId);
-    const record = this.reconcileRecord(stored);
+    const { record, terminalSessionsById } = this.reconcileRecord(stored);
     return {
       document: record,
-      linkedState: this.resolveLinkedState(record),
+      linkedState: this.resolveLinkedState(record, terminalSessionsById),
     };
   }
 
@@ -334,20 +343,23 @@ export class CanvasService {
     return record.nodes.filter((node) => JSON.stringify(node).toLowerCase().includes(needle));
   }
 
-  private reconcileRecord(record: CanvasRecord): CanvasRecord {
+  private reconcileRecord(record: CanvasRecord): { record: CanvasRecord; terminalSessionsById: TerminalSessionSnapshotById } {
     const terminalSessionIds = new Set<string>();
+    const terminalSessionsById: TerminalSessionSnapshotById = Object.create(null) as TerminalSessionSnapshotById;
     for (const node of record.nodes) {
       if (typeof node !== "object" || node === null) continue;
       const sourceRef = (node as { sourceRef?: { kind?: string; id?: string } | null }).sourceRef;
       if (sourceRef?.kind !== "terminal_session" || typeof sourceRef.id !== "string" || sourceRef.id === "unattached") continue;
-      if (this.terminalRegistry?.getSession(sourceRef.id)) {
+      const session = this.terminalRegistry?.getSession(sourceRef.id);
+      if (session) {
         terminalSessionIds.add(sourceRef.id);
+        terminalSessionsById[sourceRef.id] = session;
       }
     }
-    return reconcileCanvasRecord(record, { terminalSessionIds });
+    return { record: reconcileCanvasRecord(record, { terminalSessionIds }), terminalSessionsById };
   }
 
-  private resolveLinkedState(record: CanvasRecord): CanvasDocumentResult["linkedState"] {
+  private resolveLinkedState(record: CanvasRecord, terminalSessionsById?: TerminalSessionSnapshotById): CanvasDocumentResult["linkedState"] {
     const terminalSessions: unknown[] = [];
     const pullRequests: unknown[] = [];
     const reviewLoops: unknown[] = [];
@@ -357,9 +369,18 @@ export class CanvasService {
       const sourceRef = (node as { sourceRef?: { kind?: string; id?: string } | null }).sourceRef;
       if (!sourceRef?.id) continue;
       if (sourceRef.kind === "terminal_session") {
-        const session = sourceRef.id === "unattached" ? null : this.terminalRegistry?.getSession(sourceRef.id);
+        const session = sourceRef.id === "unattached"
+          ? null
+          : terminalSessionsById
+            ? Object.hasOwn(terminalSessionsById, sourceRef.id) ? terminalSessionsById[sourceRef.id] : null
+            : this.terminalRegistry?.getSession(sourceRef.id);
         if (session) terminalSessions.push(session);
-        else missingRefs.push({ kind: sourceRef.kind, id: sourceRef.id });
+        else missingRefs.push({
+          kind: sourceRef.kind,
+          id: sourceRef.id,
+          state: sourceRef.id === "unattached" ? "unattached" : "missing",
+          recoverable: sourceRef.id !== "unattached",
+        });
       }
       if (sourceRef.kind === "pull_request") pullRequests.push(sourceRef);
       if (sourceRef.kind === "review_loop") reviewLoops.push(sourceRef);
