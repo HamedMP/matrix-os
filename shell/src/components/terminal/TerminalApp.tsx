@@ -740,9 +740,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
 
-  // Match the padding around the xterm to the active terminal theme so the
-  // user never sees a colored seam between the OS theme bg and the xterm
-  // bg. Falls back to the desktop theme bg when "Match OS" is selected.
+  // Keep shell-controlled terminal surfaces aligned with the active terminal
+  // theme. Falls back to the desktop theme when "Match OS" is selected.
   const terminalPreset = themeId === "system" ? null : getTerminalThemePreset(themeId);
   const terminalBackground =
     themeId === "system"
@@ -1279,6 +1278,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarWidth, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
+    terminalBackground,
     addTab: (...args: Parameters<typeof addTab>) => {
       markTerminalLayoutDirty();
       return addTab(...args);
@@ -1351,10 +1351,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           <LocalTerminalSidebar />
           {activeTab ? (
             <div
+              data-testid="terminal-content-surface"
               className="flex-1 min-w-0 min-h-0 flex"
               style={{
-                padding: mobile ? "0" : "20px",
-                background: "#1C2019",
+                padding: 0,
+                background: terminalBackground,
                 minHeight: mobile ? 0 : undefined,
               }}
             >
@@ -1428,6 +1429,7 @@ interface TerminalAppContextType {
   focusedPaneId: string | null;
   mobile: boolean;
   windowControls?: TerminalWindowControls;
+  terminalBackground: string;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
   createShellSessionTab: (label: string, cwd?: string, options?: { namePrefix?: string; cmd?: string }) => Promise<string | null>;
@@ -3331,6 +3333,7 @@ function LocalTerminalSidebar() {
   const activeShellName = activePaneSessionId && isCanonicalShellSessionId(activePaneSessionId)
     ? activePaneSessionId
     : null;
+  const terminalDividerColor = ctx.terminalBackground || "#080A08";
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
   const startSidebarResize = (event: ReactPointerEvent<HTMLElement>) => {
     if (ctx.mobile) return;
@@ -3541,6 +3544,7 @@ function LocalTerminalSidebar() {
           <CollapsedSessionsRail
             shells={unfilteredRenderedShells}
             selectedShellName={activeShellName}
+            terminalDividerColor={terminalDividerColor}
             onExpand={() => ctx.setSidebarOpen(true)}
             creatingShell={creatingShell}
             newSessionMenuOpen={newSessionMenuAnchor === "rail"}
@@ -3568,7 +3572,7 @@ function LocalTerminalSidebar() {
         className="shrink-0 overflow-hidden"
         style={{
           background: "#E9E9D8",
-          borderRight: ctx.mobile ? "none" : "1px solid #D6D5C4",
+          borderRight: ctx.mobile ? "none" : `1px solid ${terminalDividerColor}`,
           borderBottom: ctx.mobile ? "1px solid #D6D5C4" : "none",
           color: "#31362D",
           display: "flex",
@@ -3792,7 +3796,7 @@ function LocalTerminalSidebar() {
           onPointerDown={startSidebarResize}
           onKeyDown={resizeSidebarWithKeyboard}
           style={{
-            background: "linear-gradient(to right, transparent 0 2px, #C5C4B4 2px 4px, transparent 4px 8px)",
+            background: terminalDividerColor,
             border: 0,
             bottom: 0,
             cursor: "col-resize",
@@ -4400,6 +4404,7 @@ function getShellStatusDotClassName(shell: ShellSessionSummary): string {
 function CollapsedSessionsRail({
   shells,
   selectedShellName,
+  terminalDividerColor,
   onExpand,
   creatingShell,
   newSessionMenuOpen,
@@ -4412,6 +4417,7 @@ function CollapsedSessionsRail({
 }: {
   shells: ShellSessionSummary[];
   selectedShellName: string | null;
+  terminalDividerColor: string;
   onExpand: () => void;
   creatingShell: boolean;
   newSessionMenuOpen: boolean;
@@ -4431,7 +4437,7 @@ function CollapsedSessionsRail({
       style={{
         alignItems: "center",
         background: "#E9E9D8",
-        borderRight: "1px solid #D6D5C4",
+        borderRight: `1px solid ${terminalDividerColor}`,
         color: "#31362D",
         display: "flex",
         flexDirection: "column",

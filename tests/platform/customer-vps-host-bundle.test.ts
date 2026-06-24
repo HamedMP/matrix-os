@@ -3,6 +3,11 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+
+function sha256(content: string) {
+  return createHash('sha256').update(content).digest('hex');
+}
 
 function runDevBundleGate(env: Record<string, string>) {
   const root = process.cwd();
@@ -44,6 +49,8 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');
+    expect(script).toContain('generateTemplateManifest');
+    expect(script).toContain('home/.template-manifest.json');
     expect(script).toContain('scripts/reset-shipped-icons.mjs');
     expect(script).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(script).toContain('scripts/host-bundle-release.mjs" write-release');
@@ -88,6 +95,7 @@ describe('customer VPS host bundle', () => {
     expect(script).not.toContain('tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE"');
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
     expect(installer).toContain('install_coding_agents()');
+    expect(installer).toContain('finish_agent_install()');
     expect(installer).toContain('install_code_server()');
     expect(installer).toContain('install_hermes()');
     expect(installer).toContain('@anthropic-ai/claude-code@latest');
@@ -147,6 +155,23 @@ describe('customer VPS host bundle', () => {
     }
   });
 
+  it('packages an asynchronous developer tools first-boot service', () => {
+    const root = process.cwd();
+    const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-developer-tools.service'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
+
+    expect(unit).toContain('Description=Matrix OS optional developer tools');
+    expect(unit).toContain('After=network-online.target matrix-restore.service');
+    expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
+    expect(unit).toContain('Restart=on-failure');
+    expect(installer).toContain('is_tool_installed()');
+    expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
+    expect(installer).toContain('optional developer tool ${tool} already installed; skipping');
+    expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
+    expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
+  });
+
   it('owner env canonicalizes Hermes home and migrates legacy Hermes data', () => {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-owner-env-'));
@@ -183,6 +208,229 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       expect(result.stdout).toContain(`HERMES_HOME=${matrixHome}/.hermes`);
       expect(existsSync(join(matrixHome, '.hermes', 'jobs', 'watcher.json'))).toBe(true);
       expect(lstatSync(join(legacyHome, '.hermes')).isSymbolicLink()).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync preserves customized default app files', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const bundledNotes = join(appDir, 'home', 'apps', 'notes', 'src');
+    const homeNotes = join(homeDir, 'apps', 'notes', 'src');
+
+    try {
+      mkdirSync(bundledNotes, { recursive: true });
+      mkdirSync(homeNotes, { recursive: true });
+
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/notes/src/App.tsx': sha256('bundled v2'),
+      }, null, 2));
+      writeFileSync(join(homeDir, '.template-manifest.json'), JSON.stringify({
+        'apps/notes/src/App.tsx': sha256('bundled v1'),
+      }, null, 2));
+      writeFileSync(join(appDir, 'home', 'apps', 'notes', 'src', 'App.tsx'), 'bundled v2');
+      writeFileSync(join(homeDir, 'apps', 'notes', 'src', 'App.tsx'), 'custom user app');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(readFileSync(join(homeDir, 'apps', 'notes', 'src', 'App.tsx'), 'utf8')).toBe('custom user app');
+      expect(readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8')).toContain(
+        'Skipped: apps/notes/src/App.tsx (customized by user)',
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync upgrades pre-manifest system-owned first-party app files', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-system-app-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const bundledResourceManager = join(appDir, 'home', 'apps', 'resource-manager', 'src');
+    const homeResourceManager = join(homeDir, 'apps', 'resource-manager', 'src');
+
+    try {
+      mkdirSync(bundledResourceManager, { recursive: true });
+      mkdirSync(homeResourceManager, { recursive: true });
+      mkdirSync(join(appDir, 'home', 'apps', 'resource-manager'), { recursive: true });
+      mkdirSync(join(homeDir, 'apps', 'resource-manager'), { recursive: true });
+
+      const bundledManifest = JSON.stringify({
+        name: 'Resource Manager',
+        slug: 'resource-manager',
+        author: 'system',
+        listingTrust: 'first_party',
+      }, null, 2);
+      const oldSystemManifest = JSON.stringify({
+        name: 'Resource Manager',
+        slug: 'resource-manager',
+        author: 'system',
+        listingTrust: 'first_party',
+      }, null, 2);
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/resource-manager/matrix.json': sha256(bundledManifest),
+        'apps/resource-manager/src/App.tsx': sha256('new bridged app'),
+      }, null, 2));
+      writeFileSync(join(homeDir, '.template-manifest.json'), '{}');
+      writeFileSync(join(appDir, 'home', 'apps', 'resource-manager', 'matrix.json'), bundledManifest);
+      writeFileSync(join(appDir, 'home', 'apps', 'resource-manager', 'src', 'App.tsx'), 'new bridged app');
+      writeFileSync(join(homeDir, 'apps', 'resource-manager', 'matrix.json'), oldSystemManifest);
+      writeFileSync(join(homeDir, 'apps', 'resource-manager', 'src', 'App.tsx'), 'old mock app');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(readFileSync(join(homeDir, 'apps', 'resource-manager', 'src', 'App.tsx'), 'utf8')).toBe('new bridged app');
+      expect(JSON.parse(readFileSync(join(homeDir, '.template-manifest.json'), 'utf8'))).toMatchObject({
+        'apps/resource-manager/matrix.json': sha256(bundledManifest),
+        'apps/resource-manager/src/App.tsx': sha256('new bridged app'),
+      });
+      expect(readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8')).toContain(
+        'Updated: apps/resource-manager/src/App.tsx',
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync caches first-party app ownership by slug', () => {
+    const script = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets'),
+      'utf8',
+    );
+
+    expect(script).toContain('systemOwnedFirstPartyAppCache');
+    expect(script).toContain('systemOwnedFirstPartyAppCache.has(slug)');
+    expect(script).toContain('systemOwnedFirstPartyAppCache.set(slug');
+  });
+
+  it('bundled home sync recovers from a corrupt installed manifest', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-corrupt-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const bundledNotes = join(appDir, 'home', 'apps', 'notes', 'src');
+    const homeNotes = join(homeDir, 'apps', 'notes', 'src');
+
+    try {
+      mkdirSync(bundledNotes, { recursive: true });
+      mkdirSync(homeNotes, { recursive: true });
+
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/notes/src/App.tsx': sha256('bundled v2'),
+      }, null, 2));
+      writeFileSync(join(homeDir, '.template-manifest.json'), '{"apps/notes/src/App.tsx":');
+      writeFileSync(join(appDir, 'home', 'apps', 'notes', 'src', 'App.tsx'), 'bundled v2');
+      writeFileSync(join(homeDir, 'apps', 'notes', 'src', 'App.tsx'), 'bundled v2');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(JSON.parse(readFileSync(join(homeDir, '.template-manifest.json'), 'utf8'))).toEqual({
+        'apps/notes/src/App.tsx': sha256('bundled v2'),
+      });
+      expect(readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8')).toContain(
+        'Ignoring invalid installed manifest',
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync rotates its log before appending past the size cap', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-log-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const logDir = join(homeDir, 'system', 'logs');
+    const logPath = join(logDir, 'template-sync.log');
+
+    try {
+      mkdirSync(join(appDir, 'home'), { recursive: true });
+      mkdirSync(logDir, { recursive: true });
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), '{}');
+      writeFileSync(logPath, 'x'.repeat(240));
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+          TEMPLATE_SYNC_LOG_MAX_BYTES: '128',
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(readFileSync(`${logPath}.1`, 'utf8')).toBe('x'.repeat(240));
+      expect(readFileSync(logPath, 'utf8')).toContain('Template sync completed');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync treats log write failures as best effort', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-log-fail-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const logDir = join(homeDir, 'system', 'logs');
+    const logPath = join(logDir, 'template-sync.log');
+
+    try {
+      mkdirSync(join(appDir, 'home'), { recursive: true });
+      mkdirSync(logPath, { recursive: true });
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/notes/src/App.tsx': sha256('bundled v1'),
+      }, null, 2));
+      mkdirSync(join(appDir, 'home', 'apps', 'notes', 'src'), { recursive: true });
+      writeFileSync(join(appDir, 'home', 'apps', 'notes', 'src', 'App.tsx'), 'bundled v1');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.stderr).toContain('unable to write template sync log');
+      expect(JSON.parse(readFileSync(join(homeDir, '.template-manifest.json'), 'utf8'))).toEqual({
+        'apps/notes/src/App.tsx': sha256('bundled v1'),
+      });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -491,9 +739,13 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(updater).toContain('/opt/matrix/app/.update-version');
     expect(updater).toContain('touch /opt/matrix/app/.update-now');
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
+    expect(updater).toContain('touch /opt/matrix/app/.update-repair-now');
+    expect(updater).toContain('repair)');
+    expect(updater).toContain('matrix-update --no-tail repair');
+    expect(updater).toContain('if [ "$tail_logs" -eq 0 ]; then');
     expect(updater).toContain('stable|canary|beta|dev|v[0-9]*|main-[A-Za-z0-9]*');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
-    expect(updater).toContain('Usage: matrix-update [apply|rollback|stable|canary|beta|dev|v<version>|main-<build>]');
+    expect(updater).toContain('Usage: matrix-update [--no-tail] [apply|rollback|repair|stable|canary|beta|dev|v<version>|main-<build>]');
   });
 
   it('sync agent installs bundled messaging systemd units during updates', () => {
@@ -522,6 +774,25 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('last_staging_cleanup="$(date +%s)"');
   });
 
+  it('sync agent reports low disk update failures and supports safe repair cleanup', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+
+    expect(syncAgent).toContain('readonly UPDATE_ERROR_MARKER="$APP_DIR/.update-error.json"');
+    expect(syncAgent).toContain('readonly UPDATE_REPAIR_TRIGGER="$APP_DIR/.update-repair-now"');
+    expect(syncAgent).toContain('readonly UPDATE_FREE_BUFFER_KB="${MATRIX_UPDATE_FREE_BUFFER_KB:-1048576}"');
+    expect(syncAgent).toContain('readonly UPDATE_EXPANSION_FACTOR="${MATRIX_UPDATE_EXPANSION_FACTOR:-8}"');
+    expect(syncAgent).toContain('write_update_error()');
+    expect(syncAgent).toContain('write_update_error "insufficient_disk_space"');
+    expect(syncAgent).toContain('ERROR: insufficient disk space for update');
+    expect(syncAgent).toContain('perform_update_repair()');
+    expect(syncAgent).toContain('df -Pk /tmp');
+    expect(syncAgent).toContain('WARN: /tmp and update staging are on different filesystems');
+    expect(syncAgent).toContain("find /tmp -xdev -user matrix -type f -mtime +1 \\( -name '*.so' -o -path '/tmp/node-compile-cache/*' \\)");
+    expect(syncAgent).toContain('sudo rm -f "$UPDATE_REPAIR_TRIGGER"');
+    expect(syncAgent).toContain('Repair complete; retrying pending update');
+  });
+
   it('sync agent replaces the app tree with root permissions', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
@@ -533,6 +804,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
     expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
     expect(syncAgent).toContain('prepare_triggered_update');
+    expect(syncAgent).toContain('restart_sync_agent_after_update');
+    expect(syncAgent).toContain('sudo systemctl restart --no-block matrix-sync-agent.service');
     expect(syncAgent).toContain('release_url_for_version');
     expect(syncAgent).toContain('release_url_for_channel');
     expect(syncAgent).toContain('default_update_channel');
@@ -571,12 +844,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(launcher).toContain('sync_bundled_home_assets');
     expect(launcher).toContain('sync-matrix-agent-skills.sh');
     expect(launcher).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
-    expect(launcher).toContain('$MATRIX_HOME/system/icons');
-    expect(launcher).toContain('[ -e "$target" ] && continue');
-    expect(launcher).toContain('find "$bundled_home/apps" -type f -name matrix.json');
-    expect(launcher).toContain('matrix.json package.json index.html vite.config.ts tsconfig.json src public dist .build-stamp');
+    expect(launcher).toContain('matrix-sync-bundled-home-assets');
+    expect(launcher).toContain('MATRIX_SYNC_BUNDLED_HOME_ASSETS');
+    expect(launcher).toMatch(
+      /else\s+echo "matrix-gateway: bundled home sync script not executable: \$sync_script" >&2\s+return 1\s+fi/
+    );
     expect(launcher).toContain('cd "$APP_DIR"');
     expect(launcher).not.toContain('cp -a "$bundled_home/." "$MATRIX_HOME"');
+    expect(launcher).not.toContain('rm -rf "$dst_app/$path"');
     expect(launcher).not.toContain('desktop.json');
     expect(launcher).not.toContain('theme.json');
     expect(launcher).not.toContain('system/wallpapers');

@@ -131,13 +131,6 @@ function renderLayout(input: {
   return [
     `// Matrix OS generated layout for ${input.sessionName}`,
     "layout {",
-    "  default_tab_template {",
-    "    children",
-    "    pane size=1 borderless=true {",
-    "      plugin location=\"zellij:compact-bar\"",
-    "    }",
-    "  }",
-    "",
     "  tab name=\"Agent\" {",
     `    pane cwd=${kdlString(input.launch.cwd)} command=${kdlString(input.launch.command)} {`,
     argsLine.trimEnd(),

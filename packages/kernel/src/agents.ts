@@ -134,7 +134,12 @@ MATRIX OS DESIGN SYSTEM (always apply -- non-negotiable):
 
 Brand: "Technology that understands you." Warm, calm, personal. Every app must feel like it belongs in Matrix OS.
 
-COLOR PALETTE (use these exact values):
+THEME CONTRACT:
+- Apps inherit the shell theme through injected --matrix-* CSS variables. Use literal colors only as fallbacks.
+- Default aliases: --bg: var(--matrix-bg,#FAFAF9); --fg: var(--matrix-fg,#32352E); --primary: var(--matrix-primary,#434E3F); --primary-fg: var(--matrix-primary-fg,#FAFAF5); --accent: var(--matrix-accent,#D06F25); --card: var(--matrix-card,#FCFCF8); --border: var(--matrix-border,#D8D6C7).
+- Add explicit app branding only when the user asks for it or the app has a clear domain reason. Keep system controls, panels, focus rings, and status colors on Matrix tokens.
+
+COLOR PALETTE (fallback values):
 - Forest #434E3F — primary brand, headers, primary buttons, structural elements
 - Cream #E0E1CA — secondary surfaces, warm backgrounds, hover states
 - Ember #D06F25 — accent CTAs, highlights, active states (ONE per view max)
@@ -147,10 +152,9 @@ COLOR PALETTE (use these exact values):
 - Destructive #C4342D | Success #3A7D44 | Warning #D49B2A
 
 TYPOGRAPHY:
-- Display/H1/H2 only: "Orbitron" — page titles, hero headings, large stat numbers. Never for subtitles, card titles, or text below 16px.
-- Everything else: "Inter" — body, buttons, labels, navigation, subtitles (H3+), card titles, descriptions.
-- Code: "JetBrains Mono" — terminal, code blocks, technical data.
-- Load fonts: <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+- Use inherited shell fonts: var(--matrix-font-sans, Inter, system-ui, sans-serif) for UI and var(--matrix-font-mono, "JetBrains Mono", monospace) for code.
+- Do not load remote font stylesheets from generated apps.
+- Use compact headings that fit app windows; avoid oversized marketing typography inside tools.
 
 SHAPES & ELEVATION:
 - Border radius: 22px for cards/windows, 50px (capsule) for buttons/inputs/pills. No sharp corners.
@@ -231,34 +235,24 @@ matrix.json: {"name":"<name>","slug":"<slug>","description":"...","icon":"<slug>
 index.html: single self-contained HTML file with inline CSS+JS. No CDN imports.
 
 THEME (both types — Matrix OS design system):
-:root{--bg:#FAFAF5;--fg:#32352E;--primary:#434E3F;--primary-fg:#FAFAF5;--accent:#D06F25;--accent-fg:#fff;--secondary:#E0E1CA;--muted:#F0EDE4;--muted-fg:#7A7768;--card:#fff;--border:#D6D3C8;--sand-light:#F7F1E7;--sand-mid:#F3EAE0;--sand-warm:#D6AB8B;--radius:22px;--shadow:0 2px 4px rgba(50,53,46,0.06)}
-*{margin:0;padding:0;box-sizing:border-box}body{background:linear-gradient(170deg,var(--sand-light) 0%,var(--sand-mid) 30%,#F7F3ED 60%,var(--sand-light) 100%);color:var(--fg);font-family:'Inter',system-ui,sans-serif;min-height:100vh}h1,h2{font-family:'Orbitron',system-ui,sans-serif;color:var(--fg)}h3,h4,h5,h6{font-family:'Inter',system-ui,sans-serif;font-weight:600;color:var(--fg)}button{background:var(--primary);color:var(--primary-fg);border:none;padding:10px 24px;border-radius:50px;cursor:pointer;font-family:'Inter',system-ui,sans-serif;font-size:0.875rem;font-weight:500;transition:all 0.2s}button:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(50,53,46,0.1)}input,textarea,select{background:var(--card);color:var(--fg);border:1.5px solid var(--border);padding:12px 20px;border-radius:50px;font-family:'Inter',system-ui,sans-serif;width:100%;outline:none;transition:all 0.2s}input:focus,textarea:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(67,78,63,0.08)}
+:root{--bg:var(--matrix-bg,#FAFAF9);--fg:var(--matrix-fg,#32352E);--primary:var(--matrix-primary,#434E3F);--primary-fg:var(--matrix-primary-fg,#FAFAF5);--accent:var(--matrix-accent,#D06F25);--accent-fg:var(--matrix-accent-fg,#FAFAF5);--secondary:var(--matrix-secondary,#F1F0E3);--muted:var(--matrix-muted,#E1E1D0);--muted-fg:var(--matrix-muted-fg,#747668);--card:var(--matrix-card,#FCFCF8);--border:var(--matrix-border,#D8D6C7);--success:var(--matrix-success,#3A7D44);--warning:var(--matrix-warning,#E0A12E);--danger:var(--matrix-destructive,#D74A3A);--sand-light:#F7F1E7;--sand-mid:#F3EAE0;--sand-warm:#D6AB8B;--radius:22px;--shadow:0 2px 4px rgba(50,53,46,0.06)}
+*{margin:0;padding:0;box-sizing:border-box}body{background:linear-gradient(170deg,var(--sand-light) 0%,var(--sand-mid) 30%,#F7F3ED 60%,var(--sand-light) 100%);color:var(--fg);font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);min-height:100vh}h1,h2,h3,h4,h5,h6{font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);color:var(--fg)}h3,h4,h5,h6{font-weight:600}button{background:var(--primary);color:var(--primary-fg);border:none;padding:10px 24px;border-radius:50px;cursor:pointer;font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);font-size:0.875rem;font-weight:500;transition:all 0.2s}button:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(50,53,46,0.1)}input,textarea,select{background:var(--card);color:var(--fg);border:1.5px solid var(--border);padding:12px 20px;border-radius:50px;font-family:var(--matrix-font-sans,Inter,system-ui,sans-serif);width:100%;outline:none;transition:all 0.2s}input:focus,textarea:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(67,78,63,0.08)}
 
 BRIDGE API (persistent data):
 Use Matrix bridge APIs for app data. Do not add app-owned API routes or a Node server just to persist CRM, roadmap, task, or dashboard data.
 
 INTEGRATIONS API (connected services like Gmail, Calendar, GitHub, Slack):
 
-For HTML apps, use the browser request API directly (MatrixOS bridge is injected AFTER page load, so it may not be available immediately):
-- GET /api/bridge/service → {services: [{service:"gmail", account_label:"...", account_email:"user@gmail.com", status:"active"}]}
-- POST /api/bridge/service with JSON {service, action, params} → {data: ..., service, action}
-
-For React apps or when MatrixOS bridge is available:
+Apps run in sandboxed srcdoc iframes. Direct fetch() calls to /api/bridge/* are blocked by CORS/CSP, so use the injected MatrixOS bridge:
 - MatrixOS.integrations() → Promise<[{service, account_label, account_email, status}]>
 - MatrixOS.service(service, action, params) → Promise<{data, service, action}>
 
-COMPLETE EXAMPLE (HTML app fetching Gmail):
+COMPLETE EXAMPLE (app fetching Gmail):
 async function loadEmails() {
-  const request = window["fetch"].bind(window);
-  const res = await request("/api/bridge/service");
-  const {services} = await res.json();
+  const services = await window.MatrixOS.integrations();
   const gmail = services.find(s => s.service === "gmail" && s.status === "active");
   if (!gmail) { showError("Connect Gmail in Settings"); return; }
-  const resp = await request("/api/bridge/service", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({service: "gmail", action: "list_messages", params: {maxResults: 20}})
-  });
-  const {data} = await resp.json();
+  const {data} = await window.MatrixOS.service("gmail", "list_messages", {maxResults: 20});
   // data.messages = [{id, threadId}, ...] — call get_message for full content
 }
 

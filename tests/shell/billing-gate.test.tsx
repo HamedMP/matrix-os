@@ -327,7 +327,7 @@ describe("BillingGate", () => {
     expect(navigationState.replace).toHaveBeenCalledWith("/");
   });
 
-  it("provisions and polls with the CLI device return path once billing is active", async () => {
+  it("shows default installs before provisioning with the CLI device return path once billing is active", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState(
       {},
@@ -366,13 +366,19 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByText("Confirming your subscription")).toBeTruthy();
+    expect(await screen.findByText("Default installs")).toBeTruthy();
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
+    }
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/provision-runtime")).toBe(false);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Pi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/auth/provision-runtime",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({ developerTools: ["codex", "claude-code", "opencode"] }),
         }),
       ),
     );
@@ -421,6 +427,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
+    expect(await screen.findByText("Default installs")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
     expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
@@ -459,6 +467,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
+    expect(await screen.findByText("Default installs")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
     expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();

@@ -50,6 +50,11 @@ import {
   getRuntimeAccessDecision,
   type BillingEntitlement,
 } from './billing.js';
+import {
+  DEFAULT_DEVELOPER_TOOLS,
+  canonicalizeDeveloperTools,
+  developerToolsShellList,
+} from './developer-tools.js';
 
 export interface ProvisionResponse {
   machineId: string;
@@ -139,6 +144,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
   '      MATRIX_HANDLE={{handle}}',
   '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
+  "      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'",
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
   '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
   '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
@@ -225,6 +231,7 @@ function buildHostConfig(
     clerkUserId: input.clerkUserId,
     handle: input.handle,
     runtimeSlot: input.runtimeSlot,
+    developerTools: developerToolsShellList(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
     imageVersion: bundleRef.imageVersion,
     updateChannel: config.imageVersion,
     hostBundleUrl: bundleRef.hostBundleUrl,
@@ -490,7 +497,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
 
   return {
     async provision(input) {
-      const request = { ...input, runtimeSlot: input.runtimeSlot ?? 'primary' };
+      const request = {
+        ...input,
+        runtimeSlot: input.runtimeSlot ?? 'primary',
+        developerTools: canonicalizeDeveloperTools(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
+      };
       const currentTime = now();
       const machineId = machineIdFactory();
       const registration = tokenFactory(currentTime, deps.config.registrationTokenTtlMs);
@@ -563,6 +574,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           status: 'provisioning',
           imageVersion: bundleRef.imageVersion,
           serverType: billingContext?.serverType ?? deps.config.serverType,
+          developerTools: request.developerTools,
           registrationTokenHash: registration.hash,
           registrationTokenExpiresAt: registration.expiresAt,
           provisionedAt: currentTime.toISOString(),
@@ -722,7 +734,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       const bundleRef = await resolveHostBundleRef(deps.db, deps.config);
       const hostConfig = buildHostConfig(
         deps.config,
-        { clerkUserId: active.clerkUserId, handle: active.handle, runtimeSlot: active.runtimeSlot },
+        {
+          clerkUserId: active.clerkUserId,
+          handle: active.handle,
+          runtimeSlot: active.runtimeSlot,
+          developerTools: active.developerTools,
+        },
         machineId,
         registration.token,
         postgresPassword,

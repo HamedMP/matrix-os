@@ -38,7 +38,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.list()).resolves.toMatchObject([
       { name: "main" },
@@ -55,7 +55,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await registry.list();
     await expect(registry.reorder(["docs", "main"])).resolves.toMatchObject([
@@ -64,7 +64,7 @@ describe("shell registry", () => {
       { name: "bench" },
     ]);
 
-    const reloaded = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+    const reloaded = new ShellRegistry({ homePath: root, adapter });
     await expect(reloaded.list()).resolves.toMatchObject([
       { name: "docs" },
       { name: "main" },
@@ -84,7 +84,7 @@ describe("shell registry", () => {
         live.delete(name);
       }),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await registry.list();
     await registry.reorder(["docs", "bench", "main"]);
@@ -115,7 +115,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.list()).resolves.toMatchObject([
       { name: "docs" },
@@ -133,7 +133,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await registry.create({ name: "main" });
 
@@ -141,7 +141,7 @@ describe("shell registry", () => {
     expect(JSON.parse(raw).sessions.main.name).toBe("main");
   });
 
-  it("rejects new sessions at the configured cap", async () => {
+  it("does not cap live zellij shell sessions", async () => {
     const root = await tempRoot();
     const live = new Set<string>();
     const adapter = {
@@ -151,12 +151,14 @@ describe("shell registry", () => {
       }),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 1 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
     await registry.create({ name: "one" });
 
-    await expect(registry.create({ name: "two" })).rejects.toMatchObject({
-      code: "session_limit",
+    await expect(registry.create({ name: "two" })).resolves.toMatchObject({
+      name: "two",
+      status: "active",
     });
+    expect(adapter.createSession).toHaveBeenCalledTimes(2);
   });
 
   it("reconciles stale metadata against live zellij sessions", async () => {
@@ -177,7 +179,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.list()).resolves.toEqual([]);
     const raw = await readFile(persistPath, "utf-8");
@@ -191,7 +193,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.list()).resolves.toMatchObject([
       { name: "main", status: "active", attachedClients: 0, tabs: [] },
@@ -219,7 +221,6 @@ describe("shell registry", () => {
     const registry = new ShellRegistry({
       homePath: root,
       adapter,
-      maxSessions: 4,
       scrollbackStore: scrollbackStore as never,
     });
 
@@ -312,7 +313,6 @@ describe("shell registry", () => {
     const registry = new ShellRegistry({
       homePath: root,
       adapter,
-      maxSessions: 8,
       scrollbackStore: scrollbackStore as never,
     });
 
@@ -338,7 +338,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.updateUiState("ghost", { placement: "active" })).rejects.toMatchObject({
       code: "session_not_found",
@@ -358,7 +358,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 4 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await registry.updateUiState("codex-backend", { visualStatus: "waiting" });
     await registry.updateUiState("shell-main", { visualStatus: "idle" });
@@ -392,7 +392,6 @@ describe("shell registry", () => {
     const registry = new ShellRegistry({
       homePath: root,
       adapter,
-      maxSessions: 4,
       scrollbackStore: scrollbackStore as never,
       preferencesStore: preferencesStore as never,
     });
@@ -451,7 +450,6 @@ describe("shell registry", () => {
     const registry = new ShellRegistry({
       homePath: root,
       adapter,
-      maxSessions: 4,
       scrollbackStore: scrollbackStore as never,
       preferencesStore: preferencesStore as never,
     });
@@ -476,7 +474,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.get("main")).resolves.toMatchObject({
       name: "main",
@@ -502,7 +500,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.get("main")).resolves.toMatchObject({
       name: "main",
@@ -519,7 +517,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.create({ name: "main" })).resolves.toMatchObject({
       name: "main",
@@ -536,7 +534,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.delete("bench", { force: true })).resolves.toBeUndefined();
 
@@ -563,7 +561,7 @@ describe("shell registry", () => {
       createSession: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
     };
-    const registry = new ShellRegistry({ homePath: root, adapter, maxSessions: 2 });
+    const registry = new ShellRegistry({ homePath: root, adapter });
 
     await expect(registry.delete("main")).resolves.toBeUndefined();
 
@@ -585,7 +583,6 @@ describe("shell registry", () => {
     const registry = new ShellRegistry({
       homePath: root,
       adapter,
-      maxSessions: 2,
     });
 
     await expect(registry.create({ name: "main" })).rejects.toBeInstanceOf(Error);

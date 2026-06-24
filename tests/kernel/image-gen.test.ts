@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createImageClient,
+  DEFAULT_ICON_STYLE,
   generateIconBatch,
   type ImageClient,
   type ImageResult,
@@ -311,5 +312,14 @@ describe("generateIconBatch", () => {
     expect(result).toEqual({ generated: 0, failed: ["../evil"] });
     expect(mockFetch).not.toHaveBeenCalled();
     expect(existsSync(resolve(imageDir, "../evil.png"))).toBe(false);
+  });
+});
+
+describe("DEFAULT_ICON_STYLE", () => {
+  it("keeps generated app icons aligned with the Matrix shell and landing palette", () => {
+    expect(DEFAULT_ICON_STYLE).toContain("warm off-white or pale pastel background");
+    expect(DEFAULT_ICON_STYLE).toContain("forest");
+    expect(DEFAULT_ICON_STYLE).toContain("ember");
+    expect(DEFAULT_ICON_STYLE).toContain("Matrix shell owns the final corner radius");
   });
 });

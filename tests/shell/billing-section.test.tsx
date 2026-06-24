@@ -74,6 +74,7 @@ describe("BillingSection", () => {
     expect(screen.getByText("Mastercard")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByText("Developer tools")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });
 

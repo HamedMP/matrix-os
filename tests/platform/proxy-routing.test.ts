@@ -8,6 +8,7 @@ import {
   getContainer,
   getPlatformUserByClerkId,
   insertContainer,
+  insertCheckoutAttempt,
   insertUserMachine,
   updateContainerStatus,
   upsertBillingEntitlement,
@@ -350,6 +351,117 @@ describe("platform proxy routing", () => {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      entitlement: { planSlug: "matrix_builder" },
+      access: { runtimeProxyAllowed: true },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("serves platform billing status for native desktop sync-JWT callers", async () => {
+    await upsertBillingEntitlement(db, {
+      clerkUserId: "user_alice",
+      source: "stripe",
+      planSlug: "matrix_builder",
+      status: "active",
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: "cpx32",
+      allowedServerTypes: ["cpx22", "cpx32"],
+      stripeSubscriptionId: "sub_123",
+      stripePriceId: "price_builder_monthly",
+      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+      effectiveFrom: "2026-05-30T00:00:00.000Z",
+      effectiveUntil: null,
+      updatedAt: "2026-05-30T00:00:00.000Z",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+    });
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("not a Clerk token")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      entitlement: { planSlug: "matrix_builder" },
+      access: { runtimeProxyAllowed: true },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the raw bearer sync JWT for native billing fallback when a stale Clerk cookie is present", async () => {
+    await upsertBillingEntitlement(db, {
+      clerkUserId: "user_alice",
+      source: "stripe",
+      planSlug: "matrix_builder",
+      status: "active",
+      maxRuntimeSlots: 1,
+      includedRuntimeSlots: 1,
+      addonRuntimeSlots: 0,
+      defaultServerType: "cpx32",
+      allowedServerTypes: ["cpx22", "cpx32"],
+      stripeSubscriptionId: "sub_123",
+      stripePriceId: "price_builder_monthly",
+      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
+      effectiveFrom: "2026-05-30T00:00:00.000Z",
+      effectiveUntil: null,
+      updatedAt: "2026-05-30T00:00:00.000Z",
+    });
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+    });
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("wrong target", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: {
+        extractToken: vi.fn((_authorization, cookie) => (cookie ? "stale-clerk-cookie" : null)),
+        verify: vi.fn().mockResolvedValue({ authenticated: false }),
+        verifyAndMatchOwner: vi.fn(),
+        revokeSession: vi.fn(),
+        isPublicPath: vi.fn(() => false),
+      },
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: `Bearer ${issued.token}`,
+        cookie: "__session=stale-clerk-cookie",
       },
     });
 
@@ -1951,6 +2063,120 @@ describe("platform proxy routing", () => {
     });
   });
 
+  it("passes directly selected developer tools to hosted runtime provisioning", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "newuser",
+        first_name: "New",
+        last_name: "User",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new_tools" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ developerTools: ["opencode", "pi"] }),
+    });
+
+    expect(provision.status).toBe(202);
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "newuser",
+      clerkUserId: "user_new_tools",
+      runtimeSlot: "primary",
+      developerTools: ["opencode", "pi"],
+    });
+  });
+
+  it("falls back to settling checkout-attempt developer tools when provisioning after payment", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertCheckoutAttempt(db, {
+      id: "attempt_tools",
+      clerkUserId: "user_paid_tools",
+      stripeSessionId: "cs_paid_tools",
+      status: "paid",
+      createdAt: "2026-06-23T12:00:00.000Z",
+      developerTools: ["claude-code"],
+    });
+    await insertCheckoutAttempt(db, {
+      id: "attempt_tools_newer_open",
+      clerkUserId: "user_paid_tools",
+      stripeSessionId: "cs_open_tools",
+      status: "open",
+      createdAt: "2026-06-23T12:05:00.000Z",
+      developerTools: ["opencode", "pi"],
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "newuser",
+        first_name: "New",
+        last_name: "User",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_paid_tools" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(provision.status).toBe(202);
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "newuser",
+      clerkUserId: "user_paid_tools",
+      runtimeSlot: "primary",
+      developerTools: ["claude-code"],
+    });
+  });
+
   it("does not block hosted runtime provisioning when Clerk returns an empty avatar URL", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
@@ -2545,7 +2771,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("Checkout unavailable");
     expect(html).toContain("showCheckoutUnavailableState();");
     expect(html).toContain("Opening secure checkout");
-    expect(html).toContain("retryProvisioningAfterBillingDelay()");
+    expect(html).toContain("retryProvisioningAfterBillingDelay(developerTools)");
     expect(html).toContain("Confirming billing");
     expect(html).toContain("provisioning_conflict");
     expect(html).toContain("if (body && body.code === 'provisioning_conflict') {\n                billingConfirmationPolls = 0;\n                provisioningPolls = 0;");

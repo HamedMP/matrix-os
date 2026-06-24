@@ -5,14 +5,30 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
 const paneGridSpy = vi.fn();
-const { saveThemeSpy } = vi.hoisted(() => ({
+const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
   saveThemeSpy: vi.fn(async () => {}),
+  terminalSettingsState: {
+    themeId: "system",
+    fontSize: 13,
+    fontFamily: "JetBrains Mono",
+    ligatures: true,
+    cursorStyle: "block",
+    smoothScroll: true,
+    cursorBlink: true,
+    setThemeId: vi.fn(),
+    setFontSize: vi.fn(),
+    setFontFamily: vi.fn(),
+    setLigatures: vi.fn(),
+    setCursorStyle: vi.fn(),
+    setSmoothScroll: vi.fn(),
+    setCursorBlink: vi.fn(),
+  },
 }));
 
 vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
   PaneGrid: (props: unknown) => {
     paneGridSpy(props);
-    return null;
+    return <div data-testid="terminal-pane-grid" />;
   },
 }));
 
@@ -28,24 +44,8 @@ vi.mock("@/hooks/useTheme", () => ({
 }));
 
 vi.mock("@/stores/terminal-settings", () => {
-  const state = {
-    themeId: "system",
-    fontSize: 13,
-    fontFamily: "JetBrains Mono",
-    ligatures: true,
-    cursorStyle: "block",
-    smoothScroll: true,
-    cursorBlink: true,
-    setThemeId: vi.fn(),
-    setFontSize: vi.fn(),
-    setFontFamily: vi.fn(),
-    setLigatures: vi.fn(),
-    setCursorStyle: vi.fn(),
-    setSmoothScroll: vi.fn(),
-    setCursorBlink: vi.fn(),
-  };
-  const useTerminalSettings = (selector: (value: typeof state) => unknown) => selector(state);
-  useTerminalSettings.getState = () => state;
+  const useTerminalSettings = (selector: (value: typeof terminalSettingsState) => unknown) => selector(terminalSettingsState);
+  useTerminalSettings.getState = () => terminalSettingsState;
 
   return {
     TERMINAL_FONT_FAMILIES: ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"],
@@ -130,6 +130,7 @@ describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
     saveThemeSpy.mockClear();
+    terminalSettingsState.themeId = "system";
     vi.useFakeTimers();
     vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -168,6 +169,38 @@ describe("TerminalApp", () => {
       type: "pane",
       sessionId: "canvas-session-123",
     });
+  });
+
+  it("renders the desktop terminal pane grid flush without an inset content frame", async () => {
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("terminal-pane-grid")).toBeTruthy();
+    const contentSurface = screen.getByTestId("terminal-content-surface");
+
+    expect(contentSurface).toBeInstanceOf(HTMLElement);
+    expect(contentSurface.style.padding).toBe("0px");
+    expect(contentSurface.style.background).toBe("rgb(28, 32, 25)");
+  });
+
+  it("uses the selected non-system terminal theme background for the flush content surface", async () => {
+    terminalSettingsState.themeId = "dark";
+
+    render(<TerminalApp initialSessionId="canvas-session-123" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const contentSurface = screen.getByTestId("terminal-content-surface");
+
+    expect(contentSurface.style.padding).toBe("0px");
+    expect(contentSurface.style.background).toBe("rgb(12, 12, 12)");
   });
 
   it("does not immediately save after hydrating a saved terminal layout", async () => {
@@ -1462,6 +1495,30 @@ describe("TerminalApp", () => {
     });
 
     expect(sidebarShell.style.width).toBe("440px");
+  });
+
+  it("uses the terminal background for the sessions drawer terminal-facing divider", async () => {
+    terminalSettingsState.themeId = "dark";
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
+
+    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(12, 12, 12)");
+    expect(resizeHandle.style.background).toBe("rgb(12, 12, 12)");
+    expect(resizeHandle.style.background).not.toContain("transparent");
+    expect(resizeHandle.style.background).not.toContain("197, 196, 180");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
+
+    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(12, 12, 12)");
   });
 
   it("stops terminal drawer resizing when the drag is canceled", async () => {

@@ -53,6 +53,7 @@ interface TabsState {
   closeTab(id: string): void;
   focusTab(id: string): void;
   renameTab(id: string, title: string): void;
+  renameTerminalSession(fromName: string, toName: string): void;
 }
 
 let counter = 0;
@@ -102,4 +103,13 @@ export const useTabs = create<TabsState>()((set, get) => ({
 
   renameTab: (id, title) =>
     set((state) => ({ tabs: state.tabs.map((t) => (t.id === id ? { ...t, title } : t)) })),
+
+  renameTerminalSession: (fromName, toName) =>
+    set((state) => ({
+      tabs: state.tabs.map((tab) =>
+        tab.kind === "terminal" && tab.sessionName === fromName
+          ? { ...tab, sessionName: toName, title: toName }
+          : tab,
+      ),
+    })),
 }));

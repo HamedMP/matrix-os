@@ -102,11 +102,9 @@ Orbitron is the Matrix OS brand typeface. Use it **minimally**:
 
 Labels: `letter-spacing: 0.15-0.25em; text-transform: uppercase`.
 
-### Loading Fonts (in standalone apps)
+### Fonts In Apps
 
-```html
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-```
+Use inherited shell font tokens in app CSS: `var(--matrix-font-sans, Inter, system-ui, sans-serif)` and `var(--matrix-font-mono, "JetBrains Mono", monospace)`. Do not load remote font stylesheets from generated apps; sandboxed apps should stay self-contained and CSP-friendly.
 
 ## Shapes
 
@@ -142,6 +140,8 @@ border-radius: 22px;
 ## Icons
 
 Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
+
+Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present, otherwise the Matrix OS style: light premium iOS/macOS skeuomorphic artwork, warm off-white or pale pastel background, forest/cream/ember/deep accents, one large tactile object, no text/logos/watermarks, no transparent or black dock backgrounds, no empty padding. The Matrix shell owns the final corner radius, so do not bake a visible frame into the artwork.
 
 Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 

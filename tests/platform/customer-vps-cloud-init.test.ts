@@ -49,6 +49,7 @@ describe('platform/customer-vps-cloud-init', () => {
     clerkUserId: 'user_123',
     handle: 'alice',
     runtimeSlot: 'staging',
+    developerTools: 'codex claude-code opencode pi',
     imageVersion: 'stable',
     updateChannel: 'stable',
     hostBundleUrl: 'https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
@@ -261,7 +262,7 @@ exit 99
     expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
@@ -277,13 +278,13 @@ exit 99
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
     expect(cloudInit).toContain('systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
     expect(cloudInit).toContain('messaging runtimes not installed; units installed but not enabled');
-    expect(cloudInit).toContain('for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
+    expect(cloudInit).toContain('for optional_bin in matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
@@ -345,6 +346,7 @@ exit 99
     expect(buildScript).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(buildScript).toContain('cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"');
     expect(toolPackInstaller).toContain('install_coding_agents()');
+    expect(toolPackInstaller).toContain('finish_agent_install()');
     expect(toolPackInstaller).toContain('install_code_server()');
     expect(toolPackInstaller).toContain('@anthropic-ai/claude-code@latest');
     expect(toolPackInstaller).toContain('@openai/codex@latest');
@@ -373,6 +375,9 @@ exit 99
     expect(toolPackInstaller).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(toolPackInstaller).toContain('runtime/code-server');
     expect(toolPackInstaller).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
+    expect(cloudInit).toContain("MATRIX_DEVELOPER_TOOLS='{{developerTools}}'");
+    expect(cloudInit).toContain('matrix-developer-tools.service');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-developer-tools.service');
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"');
     expect(cloudInit).toContain('export HOME="$MATRIX_HOME"');
@@ -594,7 +599,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

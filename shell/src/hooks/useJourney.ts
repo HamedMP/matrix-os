@@ -9,6 +9,7 @@ export type JourneyPhase =
   | "account_required"
   | "plan_required"
   | "payment_settling"
+  | "install_choices_required"
   | "provisioning"
   | "provisioning_failed"
   | "first_run"
@@ -17,6 +18,7 @@ export type JourneyPhase =
 export type JourneyActionKind =
   | "open_plans"
   | "wait"
+  | "choose_default_installs"
   | "start_provision"
   | "retry_provision"
   | "contact_support"

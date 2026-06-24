@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { DeveloperToolsSchema } from './developer-tools.js';
 
 export const CustomerVpsStatusSchema = z.enum([
   'provisioning',
@@ -30,6 +31,7 @@ export const ProvisionRequestSchema = z.object({
   handle: SafeHandleSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   serverType: HetznerServerTypeSchema.optional(),
+  developerTools: DeveloperToolsSchema.optional(),
 });
 
 export const RegisterRequestSchema = z.object({
