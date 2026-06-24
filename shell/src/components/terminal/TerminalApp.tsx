@@ -2598,9 +2598,9 @@ const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
 
 const TERMINAL_AGENT_LOGO_IMAGE_STYLE: CSSProperties = {
   display: "block",
-  height: 16,
+  height: 17,
   objectFit: "contain",
-  width: 16,
+  width: 17,
 };
 
 function isTerminalAgentId(value: unknown): value is TerminalAgentId {
@@ -3869,17 +3869,17 @@ function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; mut
       style={{
         ...TERMINAL_AGENT_LOGO_STYLE,
         background: option.color,
-        opacity: muted ? 0.74 : 1,
+        opacity: muted ? 0.86 : 1,
       }}
     >
       <Image
         alt=""
         data-testid={`terminal-agent-logo-image-${option.id}`}
         draggable={false}
-        height={16}
+        height={17}
         src={option.logoSrc}
         style={TERMINAL_AGENT_LOGO_IMAGE_STYLE}
-        width={16}
+        width={17}
       />
     </span>
   );
