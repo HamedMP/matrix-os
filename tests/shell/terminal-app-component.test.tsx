@@ -1477,6 +1477,29 @@ describe("TerminalApp", () => {
     expect(sidebarShell.style.width).toBe("440px");
   });
 
+  it("uses the terminal background for the sessions drawer terminal-facing divider", async () => {
+    terminalSettingsState.themeId = "dark";
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
+    const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
+
+    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(12, 12, 12)");
+    expect(resizeHandle.style.background).toContain("rgb(12, 12, 12)");
+    expect(resizeHandle.style.background).not.toContain("197, 196, 180");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
+
+    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(12, 12, 12)");
+  });
+
   it("stops terminal drawer resizing when the drag is canceled", async () => {
     render(<TerminalApp />);
 
