@@ -485,6 +485,30 @@ function getSessionIds(node: PaneNode): string[] {
   return [...getSessionIds(node.children[0]), ...getSessionIds(node.children[1])];
 }
 
+function getPaneIdsForSession(node: PaneNode, sessionId: string): string[] {
+  if (node.type === "pane") {
+    return node.sessionId === sessionId ? [node.id] : [];
+  }
+  return [
+    ...getPaneIdsForSession(node.children[0], sessionId),
+    ...getPaneIdsForSession(node.children[1], sessionId),
+  ];
+}
+
+function removeSessionFromPaneTree(node: PaneNode, sessionId: string): PaneNode | null {
+  if (node.type === "pane") {
+    return node.sessionId === sessionId ? null : node;
+  }
+  const left = removeSessionFromPaneTree(node.children[0], sessionId);
+  const right = removeSessionFromPaneTree(node.children[1], sessionId);
+  if (!left) return right;
+  if (!right) return left;
+  if (left === node.children[0] && right === node.children[1]) {
+    return node;
+  }
+  return { ...node, children: [left, right] };
+}
+
 function layoutUsesOnlyCanonicalShellSessions(layout: TerminalLayout): boolean {
   if (!Array.isArray(layout.tabs) || layout.tabs.length === 0) {
     return false;
@@ -898,6 +922,31 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     setFocusedPaneId(nextFocusedPaneId);
   };
 
+  const removeDeletedShellSessionFromLayout = (sessionId: string) => {
+    const paneIds = tabsRef.current.flatMap((tab) => getPaneIdsForSession(tab.paneTree, sessionId));
+    if (paneIds.length === 0) {
+      return;
+    }
+    markPanesClosing(paneIds);
+    setTabs((prev) => {
+      const next = prev
+        .map((tab) => {
+          const paneTree = removeSessionFromPaneTree(tab.paneTree, sessionId);
+          return paneTree ? { ...tab, paneTree } : null;
+        })
+        .filter((tab): tab is Tab => tab !== null);
+      tabsRef.current = next;
+      setActiveTabId((current) => next.some((tab) => tab.id === current) ? current : next[0]?.id ?? "");
+      setFocusedPaneId((current) => {
+        if (current && next.some((tab) => hasPaneId(tab.paneTree, current))) {
+          return current;
+        }
+        return next[0] ? getFirstPaneId(next[0].paneTree) : null;
+      });
+      return next;
+    });
+  };
+
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one-time mount bootstrap that loads the saved terminal layout from the gateway; the fetch is AbortSignal-guarded and every state write is gated behind a `cancelled` flag cleared in cleanup, so this is an intentional mount-driven load, not render data
   useEffect(() => {
     let cancelled = false;
@@ -1241,6 +1290,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       markTerminalLayoutDirty();
       return backgroundShellSession(...args);
     },
+    removeDeletedShellSessionFromLayout: (...args: Parameters<typeof removeDeletedShellSessionFromLayout>) => {
+      markTerminalLayoutDirty();
+      return removeDeletedShellSessionFromLayout(...args);
+    },
     closeTab: (...args: Parameters<typeof closeTab>) => {
       markTerminalLayoutDirty();
       return closeTab(...args);
@@ -1380,6 +1433,7 @@ interface TerminalAppContextType {
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
   createShellSessionTab: (label: string, cwd?: string) => Promise<string | null>;
   backgroundShellSession: (sessionId: string) => void;
+  removeDeletedShellSessionFromLayout: (sessionId: string) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   renameTab: (tabId: string, label: string) => void;
@@ -2929,6 +2983,7 @@ function LocalTerminalSidebar() {
         setShells((prev) => prev.some((shell) => shell.name === name) || !deletedShell ? prev : [...prev, deletedShell]);
         return;
       }
+      ctx.removeDeletedShellSessionFromLayout(name);
       await fetchShells({ silent: true });
     } catch (err: unknown) {
       console.warn("Failed to remove shell session:", err instanceof Error ? err.message : err);
