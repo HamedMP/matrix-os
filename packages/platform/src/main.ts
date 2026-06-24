@@ -2829,7 +2829,13 @@ export function createApp(deps: {
     if (!identity) {
       throw new CustomerVpsError(409, 'invalid_state', 'Handle unavailable');
     }
-    const provisioned = await deps.customerVpsService.provision({ handle: identity.handle, clerkUserId, runtimeSlot });
+    const existingMachine = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
+    const provisioned = await deps.customerVpsService.provision({
+      handle: identity.handle,
+      clerkUserId,
+      runtimeSlot,
+      ...(existingMachine?.status === 'failed' ? { developerTools: existingMachine.developerTools } : {}),
+    });
     await ensureProvisionedPlatformUser(db, {
       clerkUserId,
       handle: identity.handle,

@@ -116,22 +116,28 @@ describe("BootSequence", () => {
     expect(screen.getByText("Booting your computer")).toBeTruthy();
   });
 
-  it("omits developer tools when auto-starting provisioning so checkout selections are used", async () => {
+  it("shows default installs after payment and starts provisioning with selected tools", async () => {
     const fetchMock = mockJourney({
-      phase: "provisioning",
-      detail: "Building your Matrix computer…",
-      nextAction: { kind: "start_provision" },
-      progress: { stage: "creating_server", startedAt: "2026-06-11T12:00:00.000Z" },
+      phase: "install_choices_required",
+      detail: "Choose default installs before building your Matrix computer.",
+      nextAction: { kind: "choose_default_installs" },
     });
 
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    expect(await screen.findByText("Default installs")).toBeTruthy();
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
+    }
+    fireEvent.click(screen.getByRole("checkbox", { name: "OpenCode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/auth/provision-runtime",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({ developerTools: ["codex", "claude-code", "pi"] }),
         }),
       ),
     );

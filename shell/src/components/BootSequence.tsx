@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useAuth, RedirectToSignIn } from "@clerk/nextjs";
 import {
   AlertCircleIcon,
@@ -11,6 +11,10 @@ import {
   ServerIcon,
 } from "lucide-react";
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
+import {
+  DefaultInstallsStep,
+  type DeveloperToolId,
+} from "@/components/onboarding/DefaultInstallsStep";
 
 // Phases where the shell (Desktop) takes over — first-run UI is owned by Desktop,
 // ready is the running shell. BootSequence only renders the billing/build steps.
@@ -23,17 +27,19 @@ const STAGE_LABEL: Record<string, string> = {
   finalizing: "Finishing setup",
 };
 
-type BootStep = "account" | "billing" | "computer";
+type BootStep = "account" | "billing" | "installs" | "computer";
 
-const STEP_ORDER: BootStep[] = ["account", "billing", "computer"];
+const STEP_ORDER: BootStep[] = ["account", "billing", "installs", "computer"];
 const STEP_LABEL: Record<BootStep, string> = {
   account: "Account",
   billing: "Billing",
+  installs: "Installs",
   computer: "Computer",
 };
 const STEP_ICON: Record<BootStep, typeof CheckCircle2Icon> = {
   account: CheckCircle2Icon,
   billing: CircleDollarSignIcon,
+  installs: CheckCircle2Icon,
   computer: ServerIcon,
 };
 
@@ -67,7 +73,7 @@ function BootShell({
       className="flex min-h-screen flex-col items-center justify-center bg-page-bg px-6 py-10 text-center text-forest/80"
     >
       <section
-        className="flex w-full max-w-lg flex-col items-center gap-6 rounded-lg border border-forest/15 bg-white/85 p-6 shadow-[0_24px_80px_rgba(50,53,46,0.16)]"
+        className="flex w-full max-w-5xl flex-col items-center gap-6 rounded-lg border border-forest/15 bg-white/85 p-6 shadow-[0_24px_80px_rgba(50,53,46,0.16)]"
         aria-live="polite"
       >
         <div className="flex size-12 items-center justify-center rounded-md border border-forest/15 bg-cream/60">
@@ -135,42 +141,32 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { state, status, refreshJourney } = useJourney({ enabled: isLoaded && isSignedIn });
   const [working, setWorking] = useState(false);
-  const provisionStarted = useRef(false);
+  const [installError, setInstallError] = useState<string | null>(null);
 
-  const phase = state?.phase;
-
-  // Auto-start provisioning once, when entitled but no machine exists yet.
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- a deliberate one-time side effect (guarded by provisionStarted ref + disposed flag): when the journey reports an entitled user with no machine, kick off provisioning, then refreshJourney. This is an effect, not user-event-driven, because it must fire on the derived journey phase, not a click.
-  useEffect(() => {
-    if (status !== "ready" || phase !== "provisioning") return;
-    if (state?.nextAction.kind !== "start_provision" || provisionStarted.current) return;
-    provisionStarted.current = true;
-    let disposed = false;
-    void (async () => {
-      // react-doctor-disable-next-line react-doctor/async-defer-await -- the post-await `disposed` guard discards the result if the component unmounted during the request; it can only change during this await, so the await cannot be hoisted past it.
-      try {
-        const res = await fetch("/api/auth/provision-runtime", {
-          method: "POST",
-          credentials: "include",
-          headers: await authHeaders(getToken),
-          // Omit developerTools here so provisioning falls back to the
-          // checkout-attempt selection from the completed billing flow.
-          body: JSON.stringify({}),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!disposed && !res.ok && res.status !== 409) {
-          provisionStarted.current = false;
-        }
-      } catch (err: unknown) {
-        if (!disposed) provisionStarted.current = false;
-        console.warn("[boot] provision start failed", err instanceof Error ? err.name : typeof err);
+  async function startProvision(developerTools: DeveloperToolId[]): Promise<void> {
+    setWorking(true);
+    setInstallError(null);
+    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower this ordered try/catch/finally, but the shape is required: set a safe user error on failed provision starts and always clear the loading state.
+    try {
+      const res = await fetch("/api/auth/provision-runtime", {
+        method: "POST",
+        credentials: "include",
+        headers: await authHeaders(getToken),
+        body: JSON.stringify({ developerTools }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok && res.status !== 409) {
+        setInstallError("Matrix could not start building this VPS. Try again.");
+        return;
       }
-      if (!disposed) refreshJourney();
-    })();
-    return () => {
-      disposed = true;
-    };
-  }, [status, phase, state?.nextAction.kind, getToken, refreshJourney]);
+      refreshJourney();
+    } catch (err: unknown) {
+      setInstallError("Matrix could not start building this VPS. Try again.");
+      console.warn("[boot] provision start failed", err instanceof Error ? err.name : typeof err);
+    } finally {
+      setWorking(false);
+    }
+  }
 
   async function retryProvision(): Promise<void> {
     setWorking(true);
@@ -268,6 +264,18 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
           {state.settling?.delayed ? (
             <a href="mailto:support@matrix-os.com" className="text-sm underline">Contact support</a>
           ) : null}
+        </BootShell>
+      );
+    case "install_choices_required":
+      return (
+        <BootShell activeStep="installs">
+          <DefaultInstallsStep
+            loading={working}
+            error={installError}
+            onBuild={(tools) => {
+              void startProvision(tools);
+            }}
+          />
         </BootShell>
       );
     case "provisioning":

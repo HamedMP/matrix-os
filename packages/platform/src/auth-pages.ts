@@ -411,12 +411,91 @@ export function getAuthPage(
       );
     }
     function showNoRuntimeState() {
-      renderSessionState(
-        'No Matrix computer is attached',
-        'This account is signed in, but Matrix could not find an attached cloud computer yet.',
-        'Provision Matrix computer',
-        startProvisioningFromClerkSession
-      );
+      showDefaultInstallsState();
+    }
+    function showDefaultInstallsState() {
+      var el = document.getElementById('auth');
+      el.innerHTML = '';
+      var selectedTools = defaultDeveloperTools.slice();
+
+      var state = document.createElement('div');
+      state.className = 'session-state';
+
+      var heading = document.createElement('h2');
+      heading.textContent = 'Default installs';
+      state.appendChild(heading);
+
+      var detailText = document.createElement('p');
+      detailText.textContent = 'Choose command-line agents to preinstall on this VPS.';
+      state.appendChild(detailText);
+
+      var toolList = document.createElement('div');
+      toolList.className = 'session-actions';
+      defaultDeveloperTools.forEach(function(tool) {
+        var label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.alignItems = 'center';
+        label.style.justifyContent = 'space-between';
+        label.style.gap = '0.75rem';
+        label.style.width = '100%';
+        label.style.border = '1px solid rgba(92, 90, 79, 0.22)';
+        label.style.borderRadius = '0.875rem';
+        label.style.padding = '0.75rem';
+        label.style.cursor = 'pointer';
+        var text = document.createElement('span');
+        text.textContent = tool === 'claude-code' ? 'Claude Code' : tool === 'opencode' ? 'OpenCode' : tool === 'codex' ? 'Codex' : 'Pi';
+        var input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = true;
+        input.setAttribute('aria-label', text.textContent);
+        input.addEventListener('change', function() {
+          if (input.checked) {
+            if (selectedTools.indexOf(tool) === -1) selectedTools.push(tool);
+          } else {
+            selectedTools = selectedTools.filter(function(selected) { return selected !== tool; });
+          }
+        });
+        label.appendChild(text);
+        label.appendChild(input);
+        toolList.appendChild(label);
+      });
+      state.appendChild(toolList);
+
+      var actions = document.createElement('div');
+      actions.className = 'session-actions';
+      var buildButton = document.createElement('button');
+      buildButton.type = 'button';
+      buildButton.className = 'primary';
+      buildButton.textContent = 'Build VPS';
+      buildButton.addEventListener('click', function() {
+        startProvisioningFromClerkSession(selectedTools);
+      });
+      actions.appendChild(buildButton);
+
+      var signOutButton = document.createElement('button');
+      signOutButton.type = 'button';
+      signOutButton.textContent = 'Sign out';
+      signOutButton.addEventListener('click', function() {
+        signOutButton.disabled = true;
+        signOutButton.textContent = 'Signing out...';
+        fetch('/api/auth/app-session', {
+          method: 'DELETE',
+          credentials: 'same-origin'
+        })
+          .catch(function(err) {
+            console.error('[matrix] App session clear failed', err instanceof Error ? err.message : String(err));
+          })
+          .then(function() {
+            return clerkSignOutWithTimeout();
+          })
+          .then(function() {
+            window.location.replace(signOutTarget);
+          })
+          .catch(redirectAfterSignOutIssue);
+      });
+      actions.appendChild(signOutButton);
+      state.appendChild(actions);
+      el.appendChild(state);
     }
     function showBillingRequiredState() {
       showLoadingState('Opening Billing settings...');
@@ -512,8 +591,7 @@ export function getAuthPage(
           var checkoutBody = {
             planSlug: 'matrix_builder',
             interval: 'monthly',
-            regionSlug: 'region_fsn1',
-            developerTools: defaultDeveloperTools
+            regionSlug: 'region_fsn1'
           };
           if (deviceReturnTarget) checkoutBody.returnPath = redirectTarget;
           return fetch('/billing/checkout', {
@@ -560,7 +638,7 @@ export function getAuthPage(
       }
       window.setTimeout(continueWithClerkSession, 8000);
     }
-    function retryProvisioningAfterBillingDelay() {
+    function retryProvisioningAfterBillingDelay(developerTools) {
       billingConfirmationPolls += 1;
       if (billingConfirmationPolls > maxBillingConfirmationPolls) {
         provisionStarted = false;
@@ -570,10 +648,11 @@ export function getAuthPage(
       }
       provisionStarted = false;
       showLoadingState('Confirming billing...');
-      window.setTimeout(startProvisioningFromClerkSession, 8000);
+      window.setTimeout(function() { startProvisioningFromClerkSession(developerTools); }, 8000);
     }
-    function startProvisioningFromClerkSession() {
+    function startProvisioningFromClerkSession(selectedDeveloperTools) {
       if (provisionStarted) return;
+      var developerTools = Array.isArray(selectedDeveloperTools) ? selectedDeveloperTools : defaultDeveloperTools;
       provisionStarted = true;
       showLoadingState('Starting your Matrix computer...');
       if (!window.Clerk.session) {
@@ -596,9 +675,8 @@ export function getAuthPage(
               Authorization: 'Bearer ' + token,
               'Content-Type': 'application/json'
             },
-            // Omit developerTools here so the platform can recover the
-            // checkout-time selection from the settling checkout attempt.
             body: JSON.stringify({
+              developerTools: developerTools,
               runtime: requestedRuntime || undefined
             }),
             credentials: 'same-origin',
@@ -618,7 +696,7 @@ export function getAuthPage(
           }
           if (res.status === 402) {
             if (checkoutJustCompleted) {
-              retryProvisioningAfterBillingDelay();
+              retryProvisioningAfterBillingDelay(developerTools);
               return null;
             }
             provisionStarted = false;
@@ -684,7 +762,7 @@ export function getAuthPage(
               return null;
             }
             if (checkoutJustCompleted) {
-              startProvisioningFromClerkSession();
+              showDefaultInstallsState();
               return null;
             }
             showNoRuntimeState();

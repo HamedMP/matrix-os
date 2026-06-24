@@ -132,16 +132,16 @@ describe('platform/journey deriveJourneyPhase', () => {
     expect(s.phase).toBe('plan_required');
   });
 
-  it('active entitlement, no machine → provisioning start (no progress)', () => {
+  it('active entitlement, no machine → install choices required', () => {
     const s = derive({ entitlement: entitlement('active') });
-    expect(s.phase).toBe('provisioning');
-    expect(s.nextAction.kind).toBe('start_provision');
+    expect(s.phase).toBe('install_choices_required');
+    expect(s.nextAction.kind).toBe('choose_default_installs');
     expect(s.progress).toBeUndefined();
   });
 
   it('grace-period entitlement still grants access', () => {
     const s = derive({ entitlement: entitlement('past_due', { gracePeriodEndsAt: '2026-06-12T00:00:00.000Z' }) });
-    expect(s.phase).toBe('provisioning');
+    expect(s.phase).toBe('install_choices_required');
   });
 
   it('provisioning machine reports a stage derived from observable state', () => {
