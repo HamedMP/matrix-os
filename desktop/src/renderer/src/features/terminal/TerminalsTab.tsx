@@ -226,8 +226,10 @@ export default function TerminalsTab() {
     }
     renameTerminalSession(originalName, nextName);
     if (selectedRef.current === originalName) setSelectedName(nextName);
-    setRenamingName((current) => (current === originalName ? null : current));
-    if (renamingNameRef.current === originalName) setRenameError(null);
+    if (renamingNameRef.current === originalName) {
+      setRenameError(null);
+      setRenamingName((current) => (current === originalName ? null : current));
+    }
   };
 
   const confirmDelete = async () => {
