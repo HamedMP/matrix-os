@@ -10,8 +10,8 @@ export interface MobileTerminalSession {
   sessionId: string;
   cwd: string;
   state: "running" | "exited" | "destroyed" | string;
-  createdAt?: string;
-  lastAttachedAt?: string;
+  createdAt?: string | number;
+  lastAttachedAt?: string | number;
   attachedClients?: number;
   exitCode?: number | null;
 }
@@ -147,8 +147,12 @@ export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
       cwd: typeof candidate.cwd === "string" ? candidate.cwd : "~",
       state: typeof candidate.state === "string" ? candidate.state : "running",
     };
-    if (typeof candidate.createdAt === "string") session.createdAt = candidate.createdAt;
-    if (typeof candidate.lastAttachedAt === "string") session.lastAttachedAt = candidate.lastAttachedAt;
+    if (isTerminalTimestamp(candidate.createdAt)) {
+      session.createdAt = candidate.createdAt;
+    }
+    if (isTerminalTimestamp(candidate.lastAttachedAt)) {
+      session.lastAttachedAt = candidate.lastAttachedAt;
+    }
     if (typeof candidate.attachedClients === "number") session.attachedClients = candidate.attachedClients;
     if (typeof candidate.exitCode === "number" || candidate.exitCode === null) session.exitCode = candidate.exitCode;
     return [session];
@@ -200,6 +204,10 @@ function safeTerminalError(message: string): string {
   if (!trimmed || trimmed.length > 180) return "Terminal unavailable";
   if (/\/home\/|postgres|secret|token|provider/i.test(trimmed)) return "Terminal unavailable";
   return trimmed;
+}
+
+function isTerminalTimestamp(value: unknown): value is string | number {
+  return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 
 function clamp(value: number, min: number, max: number): number {

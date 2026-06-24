@@ -77,6 +77,7 @@ type ReactNativeWebSocketConstructor = new (
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+const TERMINAL_PTY_SESSIONS_PATH = "/api/terminal/pty-sessions";
 const SECURE_TOKEN_TRANSPORT_ERROR =
   "Gateway tokens require HTTPS/WSS unless connecting to localhost.";
 
@@ -448,14 +449,14 @@ export class GatewayClient {
 
   async getTerminalSessions(): Promise<MobileTerminalSession[]> {
     try {
-      const res = await this.fetchGateway("/api/terminal/sessions");
+      const res = await this.fetchGateway(TERMINAL_PTY_SESSIONS_PATH);
       if (!res.ok) {
-        console.warn("[mobile] /api/terminal/sessions unavailable", res.status);
+        console.warn("[mobile] /api/terminal/pty-sessions unavailable", res.status);
         return [];
       }
       return parseTerminalSessions(await res.json());
-    } catch {
-      console.warn("[mobile] /api/terminal/sessions unavailable");
+    } catch (err: unknown) {
+      console.warn("[mobile] /api/terminal/pty-sessions unavailable", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
@@ -464,14 +465,14 @@ export class GatewayClient {
     if (!isSafeSessionId(sessionId)) return false;
     try {
       const res = await this.fetchGateway(
-        `/api/terminal/sessions/${encodeURIComponent(sessionId)}`,
+        `${TERMINAL_PTY_SESSIONS_PATH}/${encodeURIComponent(sessionId)}`,
         { method: "DELETE" },
       );
       if (res.ok || res.status === 404) return true;
       console.warn("[mobile] terminal session delete unavailable", res.status);
       return false;
-    } catch {
-      console.warn("[mobile] terminal session delete unavailable");
+    } catch (err: unknown) {
+      console.warn("[mobile] terminal session delete unavailable", err instanceof Error ? err.message : String(err));
       return false;
     }
   }
