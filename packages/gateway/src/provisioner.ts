@@ -52,7 +52,7 @@ export function createProvisioner(config: ProvisionerConfig) {
 
     const batchEntries: BatchEntry[] = plan.apps.map((app, i) => ({
       taskId: taskIds[i],
-      message: `[BUILD] Create the app "${app.name}" at ~/apps/${nameToSlug(app.name)}/. Description: ${app.description}. Build a complete, working web app with index.html.`,
+      message: `[BUILD] Create the app "${app.name}" at ~/apps/${nameToSlug(app.name)}/. Description: ${app.description}. Build a complete, working Vite React app with matrix.json and dist/index.html. Inherit Matrix shell styling through injected --matrix-* CSS variables, use window.MatrixOS bridge APIs for data/integrations, do not load remote font or icon scripts, and keep the manifest icon key aligned with the app slug for gateway icon generation.`,
       onEvent: () => {},
     }));
 

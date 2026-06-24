@@ -11,11 +11,24 @@ describe("Theme Variable Injection (T2070)", () => {
       expect(THEME_VAR_MAP).toEqual({
         "--background": "--matrix-bg",
         "--foreground": "--matrix-fg",
-        "--primary": "--matrix-accent",
-        "--border": "--matrix-border",
-        "--card": "--matrix-card-bg",
+        "--card": "--matrix-card",
         "--card-foreground": "--matrix-card-fg",
-        "--input": "--matrix-input-bg",
+        "--secondary": "--matrix-secondary",
+        "--secondary-foreground": "--matrix-secondary-fg",
+        "--muted": "--matrix-muted",
+        "--muted-foreground": "--matrix-muted-fg",
+        "--primary": "--matrix-primary",
+        "--primary-foreground": "--matrix-primary-fg",
+        "--forest": "--matrix-brand-primary",
+        "--deep": "--matrix-brand-deep",
+        "--ember": "--matrix-accent",
+        "--ember-foreground": "--matrix-accent-fg",
+        "--destructive": "--matrix-destructive",
+        "--success": "--matrix-success",
+        "--warning": "--matrix-warning",
+        "--border": "--matrix-border",
+        "--input": "--matrix-input",
+        "--ring": "--matrix-ring",
         "--font-sans": "--matrix-font-sans",
         "--font-mono": "--matrix-font-mono",
         "--radius": "--matrix-radius",
@@ -28,13 +41,26 @@ describe("Theme Variable Injection (T2070)", () => {
       const mockStyle = {
         getPropertyValue: (prop: string) => {
           const vals: Record<string, string> = {
-            "--background": "#ece5f0",
-            "--foreground": "#1c1917",
-            "--primary": "#c2703a",
-            "--border": "#d8d0de",
-            "--card": "#ffffff",
-            "--card-foreground": "#1c1917",
-            "--input": "#d8d0de",
+            "--background": "#FAFAF9",
+            "--foreground": "#32352E",
+            "--card": "#FCFCF8",
+            "--card-foreground": "#32352E",
+            "--secondary": "#F1F0E3",
+            "--secondary-foreground": "#3E4339",
+            "--muted": "#E1E1D0",
+            "--muted-foreground": "#747668",
+            "--primary": "#434E3F",
+            "--primary-foreground": "#FAFAF5",
+            "--forest": "#434E3F",
+            "--deep": "#32352E",
+            "--ember": "#D06F25",
+            "--ember-foreground": "#FAFAF5",
+            "--destructive": "#D74A3A",
+            "--success": "#3A7D44",
+            "--warning": "#E0A12E",
+            "--border": "#D8D6C7",
+            "--input": "#D8D6C7",
+            "--ring": "#D06F25",
             "--font-sans": '"Inter", system-ui, sans-serif',
             "--font-mono": '"JetBrains Mono", monospace',
             "--radius": "0.75rem",
@@ -45,13 +71,26 @@ describe("Theme Variable Injection (T2070)", () => {
 
       const vars = getThemeVariables(mockStyle);
 
-      expect(vars["--matrix-bg"]).toBe("#ece5f0");
-      expect(vars["--matrix-fg"]).toBe("#1c1917");
-      expect(vars["--matrix-accent"]).toBe("#c2703a");
-      expect(vars["--matrix-border"]).toBe("#d8d0de");
-      expect(vars["--matrix-card-bg"]).toBe("#ffffff");
-      expect(vars["--matrix-card-fg"]).toBe("#1c1917");
-      expect(vars["--matrix-input-bg"]).toBe("#d8d0de");
+      expect(vars["--matrix-bg"]).toBe("#FAFAF9");
+      expect(vars["--matrix-fg"]).toBe("#32352E");
+      expect(vars["--matrix-card"]).toBe("#FCFCF8");
+      expect(vars["--matrix-card-fg"]).toBe("#32352E");
+      expect(vars["--matrix-secondary"]).toBe("#F1F0E3");
+      expect(vars["--matrix-secondary-fg"]).toBe("#3E4339");
+      expect(vars["--matrix-muted"]).toBe("#E1E1D0");
+      expect(vars["--matrix-muted-fg"]).toBe("#747668");
+      expect(vars["--matrix-primary"]).toBe("#434E3F");
+      expect(vars["--matrix-primary-fg"]).toBe("#FAFAF5");
+      expect(vars["--matrix-brand-primary"]).toBe("#434E3F");
+      expect(vars["--matrix-brand-deep"]).toBe("#32352E");
+      expect(vars["--matrix-accent"]).toBe("#D06F25");
+      expect(vars["--matrix-accent-fg"]).toBe("#FAFAF5");
+      expect(vars["--matrix-destructive"]).toBe("#D74A3A");
+      expect(vars["--matrix-success"]).toBe("#3A7D44");
+      expect(vars["--matrix-warning"]).toBe("#E0A12E");
+      expect(vars["--matrix-border"]).toBe("#D8D6C7");
+      expect(vars["--matrix-input"]).toBe("#D8D6C7");
+      expect(vars["--matrix-ring"]).toBe("#D06F25");
       expect(vars["--matrix-font-sans"]).toBe('"Inter", system-ui, sans-serif');
       expect(vars["--matrix-font-mono"]).toBe('"JetBrains Mono", monospace');
       expect(vars["--matrix-radius"]).toBe("0.75rem");
@@ -72,13 +111,16 @@ describe("Theme Variable Injection (T2070)", () => {
   describe("buildBridgeScript", () => {
     it("injects theme style tag into iframe head", () => {
       const themeVars = {
-        "--matrix-bg": "#ece5f0",
-        "--matrix-fg": "#1c1917",
-        "--matrix-accent": "#c2703a",
-        "--matrix-border": "#d8d0de",
-        "--matrix-card-bg": "#ffffff",
-        "--matrix-card-fg": "#1c1917",
-        "--matrix-input-bg": "#d8d0de",
+        "--matrix-bg": "#FAFAF9",
+        "--matrix-fg": "#32352E",
+        "--matrix-card": "#FCFCF8",
+        "--matrix-card-fg": "#32352E",
+        "--matrix-primary": "#434E3F",
+        "--matrix-primary-fg": "#FAFAF5",
+        "--matrix-accent": "#D06F25",
+        "--matrix-accent-fg": "#FAFAF5",
+        "--matrix-border": "#D8D6C7",
+        "--matrix-input": "#D8D6C7",
         "--matrix-font-sans": '"Inter", system-ui, sans-serif',
         "--matrix-font-mono": '"JetBrains Mono", monospace',
         "--matrix-radius": "0.75rem",
@@ -88,11 +130,14 @@ describe("Theme Variable Injection (T2070)", () => {
 
       expect(script).toContain("--matrix-bg");
       expect(script).toContain("--matrix-fg");
+      expect(script).toContain("--matrix-primary");
+      expect(script).toContain("--matrix-primary-fg");
       expect(script).toContain("--matrix-accent");
+      expect(script).toContain("--matrix-accent-fg");
       expect(script).toContain("--matrix-border");
-      expect(script).toContain("--matrix-card-bg");
+      expect(script).toContain("--matrix-card");
       expect(script).toContain("--matrix-card-fg");
-      expect(script).toContain("--matrix-input-bg");
+      expect(script).toContain("--matrix-input");
       expect(script).toContain("--matrix-font-sans");
       expect(script).toContain("--matrix-font-mono");
       expect(script).toContain("--matrix-radius");

@@ -25,14 +25,32 @@ export interface BridgeMessageValidation {
 export const THEME_VAR_MAP: Record<string, string> = {
   "--background": "--matrix-bg",
   "--foreground": "--matrix-fg",
-  "--primary": "--matrix-accent",
-  "--border": "--matrix-border",
-  "--card": "--matrix-card-bg",
+  "--card": "--matrix-card",
   "--card-foreground": "--matrix-card-fg",
-  "--input": "--matrix-input-bg",
+  "--secondary": "--matrix-secondary",
+  "--secondary-foreground": "--matrix-secondary-fg",
+  "--muted": "--matrix-muted",
+  "--muted-foreground": "--matrix-muted-fg",
+  "--primary": "--matrix-primary",
+  "--primary-foreground": "--matrix-primary-fg",
+  "--forest": "--matrix-brand-primary",
+  "--deep": "--matrix-brand-deep",
+  "--ember": "--matrix-accent",
+  "--ember-foreground": "--matrix-accent-fg",
+  "--destructive": "--matrix-destructive",
+  "--success": "--matrix-success",
+  "--warning": "--matrix-warning",
+  "--border": "--matrix-border",
+  "--input": "--matrix-input",
+  "--ring": "--matrix-ring",
   "--font-sans": "--matrix-font-sans",
   "--font-mono": "--matrix-font-mono",
   "--radius": "--matrix-radius",
+};
+
+const THEME_VAR_ALIASES: Record<string, string> = {
+  "--matrix-card": "--matrix-card-bg",
+  "--matrix-input": "--matrix-input-bg",
 };
 
 export type ThemeVars = Record<string, string>;
@@ -41,6 +59,9 @@ export function getThemeVariables(style: CSSStyleDeclaration): ThemeVars {
   const vars: ThemeVars = {};
   for (const [shellVar, matrixVar] of Object.entries(THEME_VAR_MAP)) {
     vars[matrixVar] = style.getPropertyValue(shellVar).trim();
+  }
+  for (const [sourceVar, aliasVar] of Object.entries(THEME_VAR_ALIASES)) {
+    vars[aliasVar] = vars[sourceVar] ?? "";
   }
   return vars;
 }

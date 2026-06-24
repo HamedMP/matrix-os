@@ -114,6 +114,8 @@ describe("POST /api/apps/:slug/icon", () => {
     const body = await res.json() as { prompt: string };
     expect(body.prompt).toContain("Light premium iOS/macOS skeuomorphic app icon artwork");
     expect(body.prompt).toContain("refined Apple-like product rendering");
+    expect(body.prompt).toContain("forest");
+    expect(body.prompt).toContain("ember");
     expect(body.prompt).toContain("timer");
   });
 

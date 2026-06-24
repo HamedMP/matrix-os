@@ -167,21 +167,22 @@ createRoot(document.getElementById("root")!).render(
 
   writeTextFile(
     join(modulePath, "src", "App.css"),
-    `@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
-
-:root {
-  --bg: #FAFAF5;
-  --fg: #32352E;
-  --primary: #434E3F;
-  --primary-fg: #FAFAF5;
-  --accent: #D06F25;
-  --accent-fg: #FFFFFF;
-  --secondary: #E0E1CA;
-  --muted: #F0EDE4;
-  --muted-fg: #7A7768;
-  --card: #FFFFFF;
-  --surface: #FFFFFF;
-  --border: #D6D3C8;
+    `:root {
+  --bg: var(--matrix-bg, #FAFAF9);
+  --fg: var(--matrix-fg, #32352E);
+  --primary: var(--matrix-primary, #434E3F);
+  --primary-fg: var(--matrix-primary-fg, #FAFAF5);
+  --accent: var(--matrix-accent, #D06F25);
+  --accent-fg: var(--matrix-accent-fg, #FAFAF5);
+  --secondary: var(--matrix-secondary, #F1F0E3);
+  --muted: var(--matrix-muted, #E1E1D0);
+  --muted-fg: var(--matrix-muted-fg, #747668);
+  --card: var(--matrix-card, #FCFCF8);
+  --surface: var(--matrix-card, #FCFCF8);
+  --border: var(--matrix-border, #D8D6C7);
+  --success: var(--matrix-success, #3A7D44);
+  --warning: var(--matrix-warning, #E0A12E);
+  --danger: var(--matrix-destructive, #D74A3A);
   --sand-light: #F7F1E7;
   --sand-mid: #F3EAE0;
   --sand-warm: #D6AB8B;
@@ -194,7 +195,7 @@ createRoot(document.getElementById("root")!).render(
 body {
   background: linear-gradient(170deg, var(--sand-light) 0%, var(--sand-mid) 30%, #F7F3ED 60%, var(--sand-light) 100%);
   color: var(--fg);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
   min-height: 100vh;
 }
 
@@ -205,12 +206,12 @@ body {
 }
 
 h1, h2 {
-  font-family: 'Orbitron', system-ui, sans-serif;
+  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
   color: var(--fg);
 }
 
 h3, h4, h5, h6 {
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
   font-weight: 600;
   color: var(--fg);
 }
@@ -224,7 +225,7 @@ button {
   padding: 10px 24px;
   border-radius: 50px;
   cursor: pointer;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
   font-size: 0.875rem;
   font-weight: 500;
   transition: all 0.2s;
@@ -241,7 +242,7 @@ input, textarea, select {
   border: 1.5px solid var(--border);
   padding: 12px 20px;
   border-radius: 50px;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
   width: 100%;
   outline: none;
   transition: all 0.2s;

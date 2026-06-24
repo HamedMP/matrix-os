@@ -18,4 +18,12 @@ describe("app generation security guidance", () => {
       expect(source, file).not.toContain("Iconify CDN");
     }
   });
+
+  it("does not instruct generated apps to load remote font stylesheets", async () => {
+    for (const file of APP_GENERATION_GUIDANCE_FILES) {
+      const source = await readFile(file, "utf8");
+      expect(source, file).not.toContain("fonts.googleapis.com");
+      expect(source, file).not.toContain("@import url('https://fonts.googleapis.com");
+    }
+  });
 });

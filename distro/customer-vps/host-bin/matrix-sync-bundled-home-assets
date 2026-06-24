@@ -106,6 +106,34 @@ function isIconPath(relPath) {
   return relPath.startsWith("system/icons/");
 }
 
+function appSlugForRelPath(relPath) {
+  const parts = relPath.split("/");
+  if (parts[0] !== "apps" || !parts[1]) return null;
+  return parts[1];
+}
+
+function isSystemOwnedFirstPartyManifest(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    value.author === "system" &&
+    value.listingTrust === "first_party"
+  );
+}
+
+function isSystemOwnedFirstPartyApp(slug) {
+  if (!slug) return false;
+  try {
+    const templateManifest = readJson(join(templateDir, "apps", slug, "matrix.json"));
+    const homeManifest = readJson(join(homeDir, "apps", slug, "matrix.json"));
+    return isSystemOwnedFirstPartyManifest(templateManifest) && isSystemOwnedFirstPartyManifest(homeManifest);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logLines.push(`[${now}] Unable to classify app ownership for ${slug}: ${message}`);
+    return false;
+  }
+}
+
 function copyTemplateFile(templatePath, homePath) {
   const sourceStat = statSync(templatePath);
   mkdirSync(dirname(homePath), { recursive: true });
@@ -183,6 +211,11 @@ if (!existsSync(templateManifestPath)) {
     if (installedHash === undefined) {
       if (userHash === templateHash) {
         installedManifest[relPath] = templateHash;
+      } else if (isSystemOwnedFirstPartyApp(appSlugForRelPath(relPath))) {
+        copyTemplateFile(templatePath, homePath);
+        installedManifest[relPath] = templateHash;
+        updated.push(relPath);
+        logLines.push(`[${now}] Updated: ${relPath}`);
       } else {
         logSkipped(relPath, "customized by user");
       }

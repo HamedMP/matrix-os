@@ -83,26 +83,19 @@ curl -fsS "$MATRIX_GATEWAY_URL/api/integrations/call" \
 
 ## In-App Bridge
 
-Inside a Matrix app iframe, prefer relative URLs with timeouts:
+Inside a Matrix app iframe, use the injected `window.MatrixOS` bridge. Apps run as sandboxed
+`srcdoc` iframes; direct `fetch()` calls to `/api/bridge/*` are blocked by the shell CORS/CSP
+boundary.
 
 ```ts
 async function listServices() {
-  const res = await fetch("/api/bridge/service", {
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error("Could not load connected services");
-  return res.json();
+  if (!window.MatrixOS?.integrations) throw new Error("Matrix integrations bridge is unavailable");
+  return window.MatrixOS.integrations();
 }
 
 async function callService(service: string, action: string, params: unknown) {
-  const res = await fetch("/api/bridge/service", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ service, action, params }),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error("Service request failed");
-  return res.json();
+  if (!window.MatrixOS?.service) throw new Error("Matrix service bridge is unavailable");
+  return window.MatrixOS.service(service, action, params);
 }
 ```
 
@@ -128,4 +121,4 @@ async function callService(service: string, action: string, params: unknown) {
 - `GET /api/integrations` returns services or an empty list, not a 404.
 - OAuth connect returns a URL.
 - Sync works after the user authorizes.
-- App code uses `/api/bridge/service` or Matrix integration APIs, not raw provider secrets.
+- App code uses `window.MatrixOS.integrations()` / `window.MatrixOS.service()`, not raw provider secrets or direct `/api/bridge/*` fetches.

@@ -27,7 +27,7 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always create or update `matrix.json`.
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
-- Use Matrix theme variables and iframe-safe sizing.
+- Use injected Matrix theme variables and iframe-safe sizing. Custom apps should inherit the shell theme by default; add explicit app branding only when the user asks for it or the app has a clear domain reason.
 - For UI, ALWAYS load and follow `matrix-design-system` and `matrix-app-ui-patterns`. Key rules: Forest/Cream/Ember/Deep palette, gradient backgrounds (sand washes not flat), Orbitron H1/H2 only, Inter for everything else, capsule buttons/inputs (50px radius), glass cards (22px radius), inline SVG or bundled local icons (never text characters or remote icon scripts), stable window-sized layouts, and stagger animations on mount. No exceptions.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
@@ -96,7 +96,8 @@ icon.** So always:
    light premium iOS/macOS skeuomorphic app icon artwork, refined Apple-like product rendering,
    bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy
    highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly
-   represents the app. Do not include text, logos, watermarks, transparent backgrounds, black/dark dock
+   represents the app. Keep the icon family aligned with Matrix OS forest, cream, ember, and deep accents.
+   Do not include text, logos, watermarks, transparent backgrounds, black/dark dock
    backgrounds, empty padding, or a separate visible icon frame; the Matrix shell owns the final corner
    radius. Keep lighting and material treatment consistent with the shipped default app PNGs in
    `~/system/icons/`.
@@ -119,6 +120,27 @@ injected bridge:
 - For external/third-party APIs use `window.MatrixOS.proxyFetch(url)` (allowlisted) — never a raw fetch.
 - Do NOT add a `localStorage` fallback that runs in the shell; it throws in the sandbox. A guarded
   `try/catch` localStorage path is acceptable only as a no-op for the unit-test environment.
+
+## Theme Inheritance
+
+The shell injects `--matrix-*` tokens into every bridged app iframe and updates them on theme changes. Build app CSS on those tokens first, with literal colors only as fallbacks:
+
+```css
+:root {
+  --app-bg: var(--matrix-bg, #FAFAF9);
+  --app-fg: var(--matrix-fg, #32352E);
+  --app-card: var(--matrix-card, #FCFCF8);
+  --app-primary: var(--matrix-primary, #434E3F);
+  --app-primary-fg: var(--matrix-primary-fg, #FAFAF5);
+  --app-accent: var(--matrix-accent, #D06F25);
+  --app-success: var(--matrix-success, #3A7D44);
+  --app-warning: var(--matrix-warning, #E0A12E);
+  --app-danger: var(--matrix-destructive, #D74A3A);
+  --app-border: var(--matrix-border, #D8D6C7);
+}
+```
+
+Use the inherited shell fonts (`var(--matrix-font-sans)`, `var(--matrix-font-mono)`) instead of loading remote font stylesheets. Do not use app-local blue, green, or purple palettes for default UI. If explicit app branding is needed, scope it to named brand tokens and keep system controls, focus states, status colors, and panels on the Matrix tokens.
 
 ### Persistence Rules
 

@@ -292,12 +292,13 @@ IMPORTANT: Always use http://localhost:4000/api/bridge/query (NOT /api/bridge/da
 
   // Design System (always injected — apps must follow the Matrix OS brand)
   sections.push(`\n## Design System (ALWAYS apply when building apps)\n
-Palette: Forest #434E3F (primary), Cream #E0E1CA (secondary), Ember #D06F25 (accent CTA — one per view), Deep #32352E (text). Sand shades: #F7F1E7, #F3EAE0, #D6AB8B.
+Apps must inherit the shell theme by default through injected --matrix-* CSS variables. Use literal Matrix colors only as fallbacks, and add explicit app branding only when the user asks for it or the app has a clear domain reason.
+Palette defaults: Forest #434E3F (primary), Cream #E0E1CA (secondary), Ember #D06F25 (accent CTA — one per view), Deep #32352E (text). Sand shades: #F7F1E7, #F3EAE0, #D6AB8B.
 Background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%) — NEVER flat colors.
-Typography: Orbitron for H1/H2 display only. Inter for everything else (subtitles, body, buttons, labels). JetBrains Mono for code.
+Typography: inherit shell fonts with var(--matrix-font-sans) and var(--matrix-font-mono). Do not load remote font stylesheets from generated apps. Inter is the fallback for UI text; JetBrains Mono is the fallback for code.
 Shapes: buttons/inputs border-radius: 50px (capsule). Cards: 22px. Glass cards: rgba(255,255,255,0.55) + backdrop-filter blur(12px).
 Icons: use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps. NEVER text characters (+, ×, →).
-Launcher app logos: set matrix.json "icon" to the app slug and create ~/system/icons/<slug>.png in the shipped Matrix OS style: light iOS/macOS skeuomorphic artwork, bright warm off-white or pale pastel background, glossy ceramic/glass 3D object, no text/logos, no transparency, no empty padding, and no separate icon frame.
+Launcher app logos: set matrix.json "icon" to the app slug and create ~/system/icons/<slug>.png in the shipped Matrix OS style: light iOS/macOS skeuomorphic artwork, bright warm off-white or pale pastel background, forest/cream/ember/deep accents, glossy ceramic/glass 3D object, no text/logos, no transparency, no empty padding, and no separate icon frame.
 Animation: stagger fade-up on mount (60ms between siblings). Hover lift on cards/buttons.
 Shadows: rgba(50,53,46,X) — never pure black. Never use #000000.
 Full reference: ~/agents/knowledge/matrix-design-system.md`);

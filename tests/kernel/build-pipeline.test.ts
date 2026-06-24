@@ -118,10 +118,14 @@ describe("T1320-T1323: Build pipeline", () => {
 
       const css = readFileSync(join(modulePath, "src", "App.css"), "utf-8");
       expect(css).toContain("--bg");
+      expect(css).toContain("var(--matrix-bg");
+      expect(css).toContain("var(--matrix-primary");
+      expect(css).toContain("var(--matrix-accent");
       expect(css).toContain("--fg");
       expect(css).toContain("--accent");
       expect(css).toContain("--surface");
       expect(css).toContain("--border");
+      expect(css).not.toContain("fonts.googleapis.com");
     });
   });
 
