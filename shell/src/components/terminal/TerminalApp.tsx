@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
+import Image from "next/image";
 import {
   BotIcon,
   CheckIcon,
@@ -2519,8 +2520,7 @@ interface TerminalAgentOption {
   id: TerminalAgentId;
   label: string;
   color: string;
-  logoText: string;
-  logoFontSize?: number;
+  logoSrc: string;
   shortcut?: string;
   launchCommand?: string;
   installPackage: string;
@@ -2539,8 +2539,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "claude",
     label: "Claude Code",
     color: "#D8792C",
-    logoText: "✦",
-    logoFontSize: 15,
+    logoSrc: "/agent-logos/claude-code.png",
     shortcut: "⌘⇧C",
     installPackage: "@anthropic-ai/claude-code@latest",
     claudeMode: true,
@@ -2550,7 +2549,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "codex",
     label: "Codex",
     color: "#465243",
-    logoText: "Cx",
+    logoSrc: "/agent-logos/codex.png",
     shortcut: "⌘⇧X",
     launchCommand: "codex",
     installPackage: "@openai/codex@latest",
@@ -2560,7 +2559,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "opencode",
     label: "OpenCode",
     color: "#111111",
-    logoText: "</>",
+    logoSrc: "/agent-logos/opencode.png",
     launchCommand: "opencode",
     installPackage: "opencode-ai@latest",
     fallbackInstalled: false,
@@ -2569,8 +2568,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     id: "pi",
     label: "Pi",
     color: "#1E2F5C",
-    logoText: "π",
-    logoFontSize: 15,
+    logoSrc: "/agent-logos/pi-coding-agent.png",
     launchCommand: "pi",
     installPackage: "@earendil-works/pi-coding-agent@latest",
     installFlags: ["--ignore-scripts"],
@@ -2598,10 +2596,11 @@ const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
   width: 26,
 };
 
-const TERMINAL_AGENT_LOGO_CODE_STYLE: CSSProperties = {
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
-  fontSize: 9,
-  fontWeight: 900,
+const TERMINAL_AGENT_LOGO_IMAGE_STYLE: CSSProperties = {
+  display: "block",
+  height: 16,
+  objectFit: "contain",
+  width: 16,
 };
 
 function isTerminalAgentId(value: unknown): value is TerminalAgentId {
@@ -3863,7 +3862,6 @@ function NewSessionMenu({
 }
 
 function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; muted: boolean }) {
-  const isCodeMark = option.id === "opencode" || option.id === "codex";
   return (
     <span
       aria-hidden="true"
@@ -3871,13 +3869,18 @@ function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; mut
       style={{
         ...TERMINAL_AGENT_LOGO_STYLE,
         background: option.color,
-        fontSize: option.logoFontSize ?? TERMINAL_AGENT_LOGO_STYLE.fontSize,
         opacity: muted ? 0.74 : 1,
       }}
     >
-      <span style={isCodeMark ? TERMINAL_AGENT_LOGO_CODE_STYLE : undefined}>
-        {option.logoText}
-      </span>
+      <Image
+        alt=""
+        data-testid={`terminal-agent-logo-image-${option.id}`}
+        draggable={false}
+        height={16}
+        src={option.logoSrc}
+        style={TERMINAL_AGENT_LOGO_IMAGE_STYLE}
+        width={16}
+      />
     </span>
   );
 }

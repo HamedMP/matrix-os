@@ -93,6 +93,10 @@ function expectedAgentInstallCommand(packageName: string, flags: string[] = []):
   ].join("; ");
 }
 
+function expectOptimizedImageSrc(element: HTMLElement, expectedPath: string): void {
+  expect(decodeURIComponent(element.getAttribute("src") ?? "")).toContain(expectedPath);
+}
+
 function createDragDataTransfer(): DataTransfer {
   const data = new Map<string, string>();
   return {
@@ -2629,6 +2633,10 @@ describe("TerminalApp", () => {
     expect(within(menu).getByTestId("terminal-agent-logo-codex")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-opencode")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-pi")).toBeTruthy();
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-claude"), "/agent-logos/claude-code.png");
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-codex"), "/agent-logos/codex.png");
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-opencode"), "/agent-logos/opencode.png");
+    expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-pi"), "/agent-logos/pi-coding-agent.png");
   });
 
   it("starts installed agents directly from the new-session menu", async () => {
