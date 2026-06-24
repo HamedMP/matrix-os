@@ -30,7 +30,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import { MATRIX_OS_APP_THEME_OPTIONS } from "@/lib/theme-presets";
-import { useTerminalSettings, type ShellThemeId, type TerminalAppThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
+import { DEFAULT_TERMINAL_APP_THEME_ID, useTerminalSettings, type ShellThemeId, type TerminalAppThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
@@ -296,7 +296,13 @@ const SHELL_THEME_OPTIONS: Array<{
 type TerminalAppThemeOption = (typeof MATRIX_OS_APP_THEME_OPTIONS)[number];
 
 function getTerminalAppThemeOption(appThemeId: TerminalAppThemeId): TerminalAppThemeOption {
-  return MATRIX_OS_APP_THEME_OPTIONS.find((option) => option.id === appThemeId) ?? MATRIX_OS_APP_THEME_OPTIONS[1]!;
+  const selected = MATRIX_OS_APP_THEME_OPTIONS.find((option) => option.id === appThemeId);
+  if (selected) return selected;
+
+  const fallback = MATRIX_OS_APP_THEME_OPTIONS.find((option) => option.id === DEFAULT_TERMINAL_APP_THEME_ID);
+  if (fallback) return fallback;
+
+  throw new Error("Default terminal app theme is not configured");
 }
 
 const TAB_ITEM_BASE_STYLE: CSSProperties = {
