@@ -12,6 +12,7 @@ class FakePty {
   writes: string[] = [];
   resizes: Array<{ cols: number; rows: number }> = [];
   killed = false;
+  detached = false;
   private dataListeners = new Set<(data: string) => void>();
   private exitListeners = new Set<(event: { exitCode: number; signal?: number }) => void>();
 
@@ -25,6 +26,11 @@ class FakePty {
 
   kill(): void {
     this.killed = true;
+    this.emitExit({ exitCode: 0 });
+  }
+
+  detach(): void {
+    this.detached = true;
     this.emitExit({ exitCode: 0 });
   }
 
@@ -65,7 +71,7 @@ function socket(): ShellWsSocket & { sent: unknown[]; closed: boolean } {
 }
 
 describe("zellij terminal WebSocket", () => {
-  it("attaches to a named session, replays from seq, forwards input, and cleans up", async () => {
+  it("attaches to a named session, replays from seq, forwards input, and soft-detaches on close", async () => {
     const pty = new FakePty();
     const ws = socket();
     const handler = createShellWsHandler({
@@ -94,6 +100,31 @@ describe("zellij terminal WebSocket", () => {
     expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: "hello" });
     expect(pty.writes).toEqual(["pwd\r"]);
     expect(pty.resizes).toEqual([{ cols: 100, rows: 30 }]);
+    expect(pty.detached).toBe(true);
+    expect(pty.killed).toBe(false);
+  });
+
+  it("falls back to killing attach processes that do not support soft detach", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => ({
+          write: pty.write.bind(pty),
+          resize: pty.resize.bind(pty),
+          kill: pty.kill.bind(pty),
+          onData: pty.onData.bind(pty),
+          onExit: pty.onExit.bind(pty),
+        })),
+      },
+    });
+
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    session.onClose();
+
     expect(pty.killed).toBe(true);
   });
 

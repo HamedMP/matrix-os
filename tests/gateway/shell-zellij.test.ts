@@ -232,6 +232,47 @@ describe("zellij adapter", () => {
     expect(pty.kill).toHaveBeenCalled();
   });
 
+  it("soft-detaches attach PTYs and clears the fallback when zellij exits", () => {
+    vi.useFakeTimers();
+    try {
+      const pty = ptyProcess();
+      const spawnPty = vi.fn(() => pty);
+      const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
+
+      const attached = adapter.attachSession("main");
+      attached.detach?.();
+
+      expect(pty.writes).toEqual(["\x0fd"]);
+      expect(pty.kill).not.toHaveBeenCalled();
+
+      pty.emitExit(0);
+      vi.advanceTimersByTime(1500);
+      expect(pty.kill).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("kills soft-detached attach PTYs when zellij does not exit", () => {
+    vi.useFakeTimers();
+    try {
+      const pty = ptyProcess();
+      const spawnPty = vi.fn(() => pty);
+      const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
+
+      const attached = adapter.attachSession("main");
+      attached.detach?.();
+
+      expect(pty.writes).toEqual(["\x0fd"]);
+      expect(pty.kill).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1500);
+      expect(pty.kill).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("attaches through a PTY so input, output, exit, and resize behave like a real terminal", () => {
     const pty = ptyProcess();
     const spawnPty = vi.fn(() => pty);

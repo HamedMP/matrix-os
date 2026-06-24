@@ -24,6 +24,7 @@ type PtyExitEvent = { exitCode: number; signal?: number };
 export interface ShellAttachProcess {
   write(data: string): void;
   resize(cols: number, rows: number): void;
+  detach?(): void;
   kill(): void;
   onData(listener: (data: string) => void): Disposable;
   onExit(listener: (event: PtyExitEvent) => void): Disposable;
@@ -462,10 +463,47 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         cwd,
         env: attachEnv(deps.env, zellijConfigPaths),
       });
-      const abort = () => {
+      let exited = false;
+      let detachFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+      const clearDetachFallbackTimer = () => {
+        if (detachFallbackTimer) {
+          clearTimeout(detachFallbackTimer);
+          detachFallbackTimer = null;
+        }
+      };
+      const killAttachClient = () => {
+        if (exited) {
+          return;
+        }
         pty.kill();
       };
+      const detachAttachClient = () => {
+        if (exited) {
+          return;
+        }
+        try {
+          // Zellij's default detach binding is Session mode (Ctrl-O), then `d`.
+          // This exits only the attached client, leaving the named session and
+          // its running panes alive for later reattach.
+          pty.write("\x0fd");
+        } catch (err: unknown) {
+          console.warn("[shell] zellij attach detach failed:", err instanceof Error ? err.message : String(err));
+          killAttachClient();
+          return;
+        }
+        clearDetachFallbackTimer();
+        detachFallbackTimer = setTimeout(() => {
+          detachFallbackTimer = null;
+          killAttachClient();
+        }, 1500);
+        detachFallbackTimer.unref?.();
+      };
+      const abort = () => {
+        killAttachClient();
+      };
       const exitDisposable = pty.onExit(() => {
+        exited = true;
+        clearDetachFallbackTimer();
         options.signal?.removeEventListener("abort", abort);
         exitDisposable.dispose();
       });
@@ -474,7 +512,14 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       } else {
         options.signal?.addEventListener("abort", abort, { once: true });
       }
-      return pty;
+      return {
+        write: pty.write.bind(pty),
+        resize: pty.resize.bind(pty),
+        kill: killAttachClient,
+        detach: detachAttachClient,
+        onData: pty.onData.bind(pty),
+        onExit: pty.onExit.bind(pty),
+      };
     },
     async listTabs(name) {
       const stdout = await run(["--session", name, "action", "query-tab-names"]);
