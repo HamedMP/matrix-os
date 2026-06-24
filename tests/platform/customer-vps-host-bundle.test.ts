@@ -523,6 +523,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('write_update_error "insufficient_disk_space"');
     expect(syncAgent).toContain('ERROR: insufficient disk space for update');
     expect(syncAgent).toContain('perform_update_repair()');
+    expect(syncAgent).toContain('df -Pk /tmp');
+    expect(syncAgent).toContain('WARN: /tmp and update staging are on different filesystems');
     expect(syncAgent).toContain("find /tmp -xdev -user matrix -type f -mtime +1 \\( -name '*.so' -o -path '/tmp/node-compile-cache/*' \\)");
     expect(syncAgent).toContain('sudo rm -f "$UPDATE_REPAIR_TRIGGER"');
     expect(syncAgent).toContain('Repair complete; retrying pending update');
@@ -539,6 +541,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('echo "$version" | sudo tee "$VERSION_FILE" >/dev/null');
     expect(syncAgent).toContain('sudo rm -f "$UPDATE_TRIGGER"');
     expect(syncAgent).toContain('prepare_triggered_update');
+    expect(syncAgent).toContain('restart_sync_agent_after_update');
+    expect(syncAgent).toContain('sudo systemctl restart --no-block matrix-sync-agent.service');
     expect(syncAgent).toContain('release_url_for_version');
     expect(syncAgent).toContain('release_url_for_channel');
     expect(syncAgent).toContain('default_update_channel');

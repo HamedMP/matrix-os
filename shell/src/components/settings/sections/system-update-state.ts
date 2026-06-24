@@ -135,6 +135,12 @@ function formatGbFromKb(kb: number): string {
   return `${(kb / 1024 / 1024).toFixed(1)} GB`;
 }
 
+function safeUpdateFailureMessage(message: string | undefined): string {
+  return message === "Not enough free disk space to install this update." || message === "Update failed."
+    ? message
+    : "Update failed.";
+}
+
 export function resolveUpdateFailureNotice(input: UpdateFailureInput | null | undefined): {
   tone: "warning" | "error";
   title: string;
@@ -158,7 +164,7 @@ export function resolveUpdateFailureNotice(input: UpdateFailureInput | null | un
   return {
     tone: "error",
     title: "Update failed",
-    detail: input.message && input.message.length <= 120 ? input.message : "Update failed.",
+    detail: safeUpdateFailureMessage(input.message),
     actionLabel: null,
   };
 }

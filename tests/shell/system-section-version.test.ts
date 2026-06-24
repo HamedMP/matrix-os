@@ -191,7 +191,7 @@ describe("SystemSection version helpers", () => {
   it("uses generic update failure copy for unknown failure markers", () => {
     expect(resolveUpdateFailureNotice({
       code: "unknown",
-      message: "Update failed.",
+      message: "postgres://internal.example/db failed while reading /opt/matrix/app",
       repairAvailable: false,
     })).toEqual({
       tone: "error",

@@ -334,6 +334,7 @@ apply_update() {
   fi
   rm -rf "$extract_dir" "$bundle_file"
   clean_staging || true
+  restart_sync_agent_after_update
 }
 
 # ── Rollback ─────────────────────────────────────────────────────────
@@ -461,6 +462,13 @@ ensure_update_headroom() {
 }
 
 clean_repairable_tmp_artifacts() {
+  local staging_device tmp_device
+  staging_device="$(df -Pk "$STAGING_DIR" 2>/dev/null | awk 'NR==2 {print $1}')"
+  tmp_device="$(df -Pk /tmp 2>/dev/null | awk 'NR==2 {print $1}')"
+  if [ -n "$staging_device" ] && [ -n "$tmp_device" ] && [ "$staging_device" != "$tmp_device" ]; then
+    log "WARN: /tmp and update staging are on different filesystems; temp cleanup may not free update staging space"
+  fi
+
   local count=0 path
   while IFS= read -r -d '' path; do
     [ -e "$path" ] || continue
@@ -472,6 +480,11 @@ clean_repairable_tmp_artifacts() {
     log "Cleaned $count stale Matrix-owned temp files"
   fi
   return 0
+}
+
+restart_sync_agent_after_update() {
+  log "Restarting sync agent to load updated agent code"
+  sudo systemctl restart --no-block matrix-sync-agent.service || log "WARN: failed to restart matrix-sync-agent.service"
 }
 
 perform_update_repair() {

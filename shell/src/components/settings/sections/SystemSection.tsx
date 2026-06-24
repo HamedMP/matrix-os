@@ -361,7 +361,12 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
       }
     } catch (err: unknown) {
       console.warn("[system-settings] update repair request interrupted:", err instanceof Error ? err.message : String(err));
-      setUpgradeMessage("Cleanup started. Waiting for the update to finish...");
+      setUpgradeError("Update cleanup could not start. Please try again.");
+      setUpgradeMessage(null);
+      setUpgrading(false);
+      setInstallingTarget(null);
+      setRepairingUpdate(false);
+      return;
     }
     setRepairingUpdate(false);
 
