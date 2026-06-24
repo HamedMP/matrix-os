@@ -478,9 +478,11 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(updater).toContain('touch /opt/matrix/app/.rollback-now');
     expect(updater).toContain('touch /opt/matrix/app/.update-repair-now');
     expect(updater).toContain('repair)');
+    expect(updater).toContain('matrix-update --no-tail repair');
+    expect(updater).toContain('if [ "$tail_logs" -eq 0 ]; then');
     expect(updater).toContain('stable|canary|beta|dev|v[0-9]*|main-[A-Za-z0-9]*');
     expect(updater).toContain('journalctl -u matrix-sync-agent -f --no-pager -n 20');
-    expect(updater).toContain('Usage: matrix-update [apply|rollback|repair|stable|canary|beta|dev|v<version>|main-<build>]');
+    expect(updater).toContain('Usage: matrix-update [--no-tail] [apply|rollback|repair|stable|canary|beta|dev|v<version>|main-<build>]');
   });
 
   it('sync agent installs bundled messaging systemd units during updates', () => {

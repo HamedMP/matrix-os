@@ -370,7 +370,7 @@ describe("system update start", () => {
       expect(result).toEqual({ ok: true, status: "started" });
       expect(spawnImpl).toHaveBeenCalledWith(
         "sudo",
-        ["-n", updateCommand, "repair"],
+        ["-n", updateCommand, "--no-tail", "repair"],
         expect.objectContaining({ detached: true, stdio: "ignore" }),
       );
     } finally {

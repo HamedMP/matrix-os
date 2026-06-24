@@ -437,7 +437,7 @@ export async function startSystemUpdateRepair(options: {
   }
 
   const spawnImpl = options.spawnImpl ?? spawn;
-  const child = spawnImpl("sudo", ["-n", updateCommand, "repair"], {
+  const child = spawnImpl("sudo", ["-n", updateCommand, "--no-tail", "repair"], {
     detached: true,
     stdio: "ignore",
     env: process.env,
