@@ -20,6 +20,43 @@ describe("mobile terminal state", () => {
     expect(state.activeSessionId).toBe("c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9");
     expect(state.cwd).toBe("~/projects/matrix-os");
     expect(state.output).toContain("$ pwd");
+    expect(state.lastSeq).toBeNull();
+  });
+
+  it("accumulates replay output and tracks the next replay cursor", () => {
+    const attached = terminalReducer(initialTerminalState, {
+      type: "terminal.attached",
+      sessionId: "c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9",
+      cwd: "/home/matrix/home/projects",
+    });
+    const withFirstReplayFrame = terminalReducer(attached, {
+      type: "terminal.output",
+      data: "first\n",
+      seq: 4,
+    });
+    const withSecondReplayFrame = terminalReducer(withFirstReplayFrame, {
+      type: "terminal.output",
+      data: "second\n",
+      seq: 5,
+    });
+    const replayComplete = terminalReducer(withSecondReplayFrame, {
+      type: "terminal.replayFinished",
+      toSeq: 6,
+    });
+
+    expect(replayComplete.output).toBe("first\nsecond\n");
+    expect(replayComplete.lastSeq).toBe(5);
+    expect(replayComplete.nextSeq).toBe(6);
+  });
+
+  it("records terminal exit codes from normalized gateway exit frames", () => {
+    const state = terminalReducer(initialTerminalState, {
+      type: "terminal.ended",
+      exitCode: 7,
+    });
+
+    expect(state.status).toBe("ended");
+    expect(state.exitCode).toBe(7);
   });
 
   it("caps terminal output and command input for mobile memory safety", () => {

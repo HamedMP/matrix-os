@@ -186,6 +186,79 @@ describe("TerminalScreen", () => {
     );
   });
 
+  it("reattaches to the active terminal session from the last replay cursor", async () => {
+    global.WebSocket = {
+      OPEN: 1,
+      CLOSED: 3,
+    } as typeof WebSocket;
+    const firstSocket = new MockTerminalSocket();
+    const secondSocket = new MockTerminalSocket();
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
+    const gatewayClient = {
+      getTerminalSessions: jest.fn().mockResolvedValue([
+        {
+          sessionId: SESSION_ID,
+          cwd: "/home/matrix/home/projects",
+          state: "running",
+        },
+      ]),
+      getWsToken: jest.fn().mockResolvedValue("ws-token"),
+      setWebSocketToken: jest.fn(),
+      openTerminalWebSocket: jest
+        .fn()
+        .mockReturnValueOnce(firstSocket as unknown as WebSocket)
+        .mockReturnValueOnce(secondSocket as unknown as WebSocket),
+      deleteTerminalSession: jest.fn().mockResolvedValue(true),
+    };
+    jest.mocked(useGateway).mockReturnValue({
+      client: gatewayClient as unknown as GatewayClient,
+      connectionState: "connected",
+      gateway: null,
+      setGateway: jest.fn(),
+      unreadCount: 0,
+      incrementUnread: jest.fn(),
+      clearUnread: jest.fn(),
+    });
+
+    render(<TerminalScreen />);
+
+    await waitFor(() => expect(screen.getByLabelText("Resume ~/projects")).toBeTruthy());
+    fireEvent.press(screen.getByLabelText("Resume ~/projects"));
+    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      firstSocket.onopen?.();
+      firstSocket.onmessage?.({
+        data: JSON.stringify({
+          type: "attached",
+          sessionId: SESSION_ID,
+          cwd: "/home/matrix/home/projects",
+        }),
+      });
+      firstSocket.onmessage?.({
+        data: JSON.stringify({ type: "output", data: "first\n", seq: 7 }),
+      });
+      firstSocket.onmessage?.({
+        data: JSON.stringify({ type: "replay-end", toSeq: 8 }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    fireEvent.press(screen.getByLabelText("Resume ~/projects"));
+    await waitFor(() => expect(gatewayClient.openTerminalWebSocket).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      secondSocket.onopen?.();
+      await Promise.resolve();
+    });
+
+    expect(secondSocket.sent.map((frame) => JSON.parse(frame))).toEqual(
+      expect.arrayContaining([{ type: "attach", sessionId: SESSION_ID, fromSeq: 8 }]),
+    );
+  });
+
   it("ignores duplicate connect actions while a terminal connection is pending", async () => {
     global.WebSocket = {
       OPEN: 1,
