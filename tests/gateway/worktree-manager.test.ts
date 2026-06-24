@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
 
 describe("worktree-manager", () => {
@@ -87,6 +88,29 @@ describe("worktree-manager", () => {
     expect(runCommand).toHaveBeenNthCalledWith(1, "git", ["rev-parse", "--verify", "--quiet", "refs/heads/symphony/mat-1"], expect.any(Object));
     expect(runCommand).toHaveBeenNthCalledWith(2, "git", ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/symphony/mat-1"], expect.any(Object));
     expect(runCommand).toHaveBeenNthCalledWith(3, "git", ["worktree", "add", "-b", "symphony/mat-1", "--track", "--", expect.any(String), "origin/symphony/mat-1"], expect.any(Object));
+  });
+
+  it("creates a new branch worktree immediately from a scratch project", async () => {
+    const projectManager = createProjectManager({ homePath, now: () => "2026-04-26T00:00:00.000Z" });
+    const createdProject = await projectManager.createProject({
+      mode: "scratch",
+      name: "Scratch Flow",
+      slug: "scratch-flow",
+    });
+    expect(createdProject.ok).toBe(true);
+
+    const worktreeManager = createWorktreeManager({ homePath, now: () => "2026-04-26T00:00:00.000Z" });
+    const createdWorktree = await worktreeManager.createWorktree({
+      projectSlug: "scratch-flow",
+      branch: "feature/first",
+      createBranch: true,
+    });
+
+    expect(createdWorktree.ok).toBe(true);
+    if (!createdWorktree.ok) return;
+    expect(createdWorktree.worktree.currentBranch).toBe("feature/first");
+    await expect(stat(createdWorktree.worktree.path)).resolves.toMatchObject({ isDirectory: expect.any(Function) });
+    await expect(readFile(join(createdWorktree.worktree.path, ".matrix", "worktree.json"), "utf-8")).resolves.toContain("feature/first");
   });
 
   it("serializes concurrent creation for the same worktree", async () => {
