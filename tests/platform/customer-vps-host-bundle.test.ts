@@ -705,6 +705,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(launcher).toContain('MATRIX_SKILL_TARGETS=matrix,claude,codex');
     expect(launcher).toContain('matrix-sync-bundled-home-assets');
     expect(launcher).toContain('MATRIX_SYNC_BUNDLED_HOME_ASSETS');
+    expect(launcher).toMatch(
+      /else\s+echo "matrix-gateway: bundled home sync script not executable: \$sync_script" >&2\s+return 1\s+fi/
+    );
     expect(launcher).toContain('cd "$APP_DIR"');
     expect(launcher).not.toContain('cp -a "$bundled_home/." "$MATRIX_HOME"');
     expect(launcher).not.toContain('rm -rf "$dst_app/$path"');

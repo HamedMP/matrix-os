@@ -52,6 +52,7 @@ sync_bundled_home_assets() {
     APP_DIR="$APP_DIR" MATRIX_HOME="$MATRIX_HOME" MATRIX_NODE_BIN="$NODE_BIN" "$sync_script"
   else
     echo "matrix-gateway: bundled home sync script not executable: $sync_script" >&2
+    return 1
   fi
 
   if [ -d "$MATRIX_HOME/apps" ] && id matrix >/dev/null 2>&1; then
