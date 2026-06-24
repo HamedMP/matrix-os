@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
+import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
@@ -27,7 +28,8 @@ describe("CommandPalette", () => {
     useUi.setState({ paletteOpen: true, createTaskOpen: false, createProjectOpen: false, composerOpen: false });
     useBoard.setState({ activeProjectSlug: null, projects: [], cardsByProject: {} });
     useSessions.setState({ sessions: [] });
-    useTabs.setState({ tabs: [], activeTabId: null });
+    useShellSessions.setState({ ...useShellSessions.getInitialState(), load: vi.fn().mockResolvedValue(undefined) }, true);
+    useTabs.setState({ tabs: [], activeTabId: null, openTab: vi.fn() });
     useConnection.setState({
       status: "signed-in",
       handle: "operator",
@@ -56,6 +58,28 @@ describe("CommandPalette", () => {
 
     await waitFor(() => {
       expect(load).toHaveBeenCalledWith(useConnection.getState().api, true);
+    });
+  });
+
+  it("opens terminal entries from canonical shell sessions, not workspace sessions", async () => {
+    const openTab = vi.fn();
+    useSessions.setState({
+      sessions: [{ name: "Workspace Only", attachName: "workspace-only", status: "active", source: "workspace" }],
+    });
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active" }],
+    });
+    useTabs.setState({ openTab });
+
+    render(<CommandPalette />);
+
+    expect(screen.queryByText("Workspace Only")).toBeNull();
+    fireEvent.click(screen.getByText("matrix-main"));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "terminal",
+      sessionName: "matrix-main",
+      title: "matrix-main",
     });
   });
 });

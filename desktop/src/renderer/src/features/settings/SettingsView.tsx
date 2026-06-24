@@ -1,6 +1,7 @@
 import {
   Blocks,
   Clock,
+  CreditCard,
   Cpu,
   MonitorCog,
   Palette,
@@ -13,6 +14,7 @@ import AccountSection from "./sections/AccountSection";
 import AppearanceSection from "./sections/AppearanceSection";
 import RuntimeSection from "./sections/RuntimeSection";
 import AgentSection from "./sections/AgentSection";
+import BillingSection from "./sections/BillingSection";
 import ChannelsSection from "./sections/ChannelsSection";
 import IntegrationsSection from "./sections/IntegrationsSection";
 import CronSection from "./sections/CronSection";
@@ -22,6 +24,7 @@ import { invoke } from "../../lib/operator";
 type SectionId =
   | "account"
   | "appearance"
+  | "billing"
   | "runtime"
   | "agent"
   | "channels"
@@ -31,6 +34,7 @@ type SectionId =
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: string }[] = [
   { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
+  { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
   { id: "agent", label: "Agent (Hermes)", icon: <Sparkles size={15} />, group: "Machine" },
   { id: "runtime", label: "Runtime", icon: <Server size={15} />, group: "Machine" },
@@ -108,6 +112,7 @@ export default function SettingsView() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[720px] px-8 py-8">
           {section === "account" ? <AccountSection /> : null}
+          {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agent" ? <AgentSection /> : null}

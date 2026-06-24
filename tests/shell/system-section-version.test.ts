@@ -5,6 +5,7 @@ import {
   normalizeMatrixReleaseTag,
   releaseActionLabel,
   resolveUpgradeInstallCopy,
+  resolveUpdateFailureNotice,
   resolveSystemUpdateState,
   severityBadgeStyle,
   formatReleaseBuildId,
@@ -169,6 +170,34 @@ describe("SystemSection version helpers", () => {
       title: "Installing update",
       detail: "Upgrade started. Waiting for services to come back...",
       statusLine: "Your workspace is getting the new version ready.",
+    });
+  });
+
+  it("builds actionable low-disk update failure copy", () => {
+    expect(resolveUpdateFailureNotice({
+      code: "insufficient_disk_space",
+      message: "Not enough free disk space to install this update.",
+      availableKb: 3584640,
+      requiredKb: 8232960,
+      repairAvailable: true,
+    })).toEqual({
+      tone: "warning",
+      title: "Not enough disk space",
+      detail: "Free about 4.4 GB before retrying the update.",
+      actionLabel: "Clean Up and Retry",
+    });
+  });
+
+  it("uses generic update failure copy for unknown failure markers", () => {
+    expect(resolveUpdateFailureNotice({
+      code: "unknown",
+      message: "postgres://internal.example/db failed while reading /opt/matrix/app",
+      repairAvailable: false,
+    })).toEqual({
+      tone: "error",
+      title: "Update failed",
+      detail: "Update failed.",
+      actionLabel: null,
     });
   });
 });

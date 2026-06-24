@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
+import { createRateLimiter } from "../../packages/gateway/src/security/rate-limiter.js";
 
 describe("gateway shell routes", () => {
   function appWithRegistry(registry: {
@@ -71,6 +72,42 @@ describe("gateway shell routes", () => {
     expect(res.status).toBe(201);
     await expect(res.json()).resolves.toEqual({ name: "main", created: true });
     expect(registry.create).toHaveBeenCalledWith({ name: "main", cwd: "~/projects" });
+  });
+
+  it("rate limits rapid shell session creation without imposing a live-session cap", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async (input: { name: string }) => ({ name: input.name })),
+      delete: vi.fn(),
+    };
+    const sessionCreateRateLimiter = createRateLimiter({
+      maxAttempts: 1,
+      windowMs: 60_000,
+      lockoutMs: 0,
+      maxKeys: 1,
+    });
+    const app = new Hono();
+    const deps = { registry, sessionCreateRateLimiter };
+    app.route("/api/terminal", createShellRoutes(deps));
+    app.route("/api", createShellRoutes(deps));
+
+    const first = await app.request("/api/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "main" }),
+    });
+    const second = await app.request("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "next" }),
+    });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(429);
+    await expect(second.json()).resolves.toEqual({
+      error: { code: "rate_limited", message: "Request failed" },
+    });
+    expect(registry.create).toHaveBeenCalledTimes(1);
   });
 
   it("runs non-interactive commands through a bounded JSON route", async () => {

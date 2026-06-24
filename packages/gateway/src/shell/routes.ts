@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js";
 import { toShellError } from "./errors.js";
 import {
   ShellPreferencesSchema,
@@ -61,7 +62,15 @@ export interface ShellRouteDeps {
   shellBackend?: ShellBackendHealthRoutes;
   shellThemeConfig?: ShellThemeConfigRoutes;
   commandRunner?: ShellCommandRunner;
+  sessionCreateRateLimiter?: RateLimiter;
 }
+
+export const SHELL_SESSION_CREATE_RATE_LIMIT = {
+  maxAttempts: 120,
+  windowMs: 60_000,
+  lockoutMs: 10_000,
+  maxKeys: 1,
+};
 
 const CreateSessionBodySchema = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/),
@@ -111,6 +120,8 @@ function safeCwdSchema() {
 
 export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
+  const sessionCreateRateLimiter =
+    deps.sessionCreateRateLimiter ?? createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
   const sessionRenameBodyLimit = bodyLimit({ maxSize: 1024 });
   const sessionOrderBodyLimit = bodyLimit({ maxSize: 8192 });
@@ -146,6 +157,13 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.post("/sessions", sessionBodyLimit, async (c) => {
     try {
       const body = CreateSessionBodySchema.parse(await c.req.json());
+      if (!sessionCreateRateLimiter.check("shell-session-create")) {
+        return c.json(
+          { error: { code: "rate_limited", message: "Request failed" } },
+          429,
+          { "Retry-After": String(Math.ceil(SHELL_SESSION_CREATE_RATE_LIMIT.lockoutMs / 1000)) },
+        );
+      }
       const session = await deps.registry.create(body);
       const name =
         typeof session === "object" && session !== null && "name" in session

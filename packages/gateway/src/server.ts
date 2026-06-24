@@ -47,6 +47,7 @@ import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
+import { createRateLimiter } from "./security/rate-limiter.js";
 import { timingSafeStringEquals } from "./security/timing-safe.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
 import { createTelegramStream } from "./channels/telegram-stream.js";
@@ -117,9 +118,11 @@ import {
   checkForSystemUpdate,
   listSystemReleases,
   parseInternalUpgradeTarget,
+  readSystemUpdateFailure,
   resolveInternalUpgradeStartTarget,
   resolveSystemUpdateChannel,
   startSystemUpdate,
+  startSystemUpdateRepair,
   writeInternalUpgradeTrigger,
 } from "./system-update.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
@@ -210,6 +213,7 @@ import {
 } from "./metrics.js";
 import {
   createShellRoutes,
+  SHELL_SESSION_CREATE_RATE_LIMIT,
   LayoutStore,
   ScrollbackStore,
   ShellPreferencesStore,
@@ -513,7 +517,6 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
-    maxSessions: 10,
     scrollbackStore: shellScrollbackStore,
     preferencesStore: shellPreferencesStore,
   });
@@ -1667,6 +1670,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
+  const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellRouteDeps = {
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
@@ -1675,6 +1679,7 @@ export async function createGateway(config: GatewayConfig) {
     shellBackend: zellijAdapter,
     shellThemeConfig: zellijAdapter,
     commandRunner: createShellCommandRunner({ homePath }),
+    sessionCreateRateLimiter: shellSessionCreateRateLimiter,
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();
   const systemActivityHistory = new ActivityHistoryStore({ homePath });
@@ -4017,7 +4022,8 @@ export async function createGateway(config: GatewayConfig) {
       platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
       channel,
     });
-    return c.json(result);
+    const installError = await readSystemUpdateFailure();
+    return c.json({ ...result, installError });
   });
 
   app.get("/api/system/releases", async (c) => {
@@ -4086,6 +4092,23 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);
+
+  app.post("/api/system/update/repair", upgradeBodyLimit, async (c) => {
+    const result = await startSystemUpdateRepair();
+    if (!result.ok) {
+      return c.json({ error: "Update repair not configured" }, 503);
+    }
+    void posthogErrorTracker.captureEvent("matrix_system_update_repair_requested", {
+      distinctId: ownerTelemetryDistinctId,
+      properties: {
+        handle: process.env.MATRIX_HANDLE,
+      },
+    }).catch((err: unknown) => {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[posthog] Failed to queue system update repair event: ${kind}`);
+    });
+    return c.json({ ok: true, status: result.status }, 202);
+  });
 
   app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
     return startUpdateFromRequest(c);

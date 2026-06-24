@@ -78,9 +78,20 @@ function uniq(values: Array<string | null>): string[] {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
+function isLocalDevRendererOrigin(origin: string): boolean {
+  const normalized = normalizedHttpOrigin(origin);
+  if (!normalized) return false;
+  const url = new URL(normalized);
+  return (
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]") &&
+    url.port === "5173"
+  );
+}
+
 export function buildRendererCsp(gatewayOrigin: string | null, rendererOrigin: string): string {
   const gatewayHttpOrigin = normalizedHttpOrigin(gatewayOrigin);
   const rendererHttpOrigin = rendererOrigin === "null" ? null : normalizedHttpOrigin(rendererOrigin);
+  const scriptSources = isLocalDevRendererOrigin(rendererOrigin) ? "'self' 'unsafe-inline'" : "'self'";
   const connectSources = uniq([
     "'self'",
     gatewayHttpOrigin,
@@ -91,7 +102,7 @@ export function buildRendererCsp(gatewayOrigin: string | null, rendererOrigin: s
 
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    `script-src ${scriptSources}`,
     "style-src 'self' 'unsafe-inline'",
     `connect-src ${connectSources}`,
     "worker-src 'self' blob:",
