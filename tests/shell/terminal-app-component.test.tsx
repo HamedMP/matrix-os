@@ -85,16 +85,14 @@ async function chooseNewSessionMenuItemAfterStatus(name: RegExp | string) {
   });
 }
 
-function expectedAgentInstallCommand(packageName: string, flags: string[] = []): string {
-  const extraFlags = flags.length > 0 ? `${flags.join(" ")} ` : "";
-  return [
-    'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
-    `npm install -g ${extraFlags}--prefix "$MATRIX_NODE_PREFIX" ${packageName}`,
-  ].join("; ");
-}
-
 function expectOptimizedImageSrc(element: HTMLElement, expectedPath: string): void {
   expect(decodeURIComponent(element.getAttribute("src") ?? "")).toContain(expectedPath);
+}
+
+function terminalSessionPostBodies(): string[] {
+  return vi.mocked(fetch).mock.calls
+    .filter(([input, init]) => String(input).includes("/api/terminal/sessions") && init?.method === "POST")
+    .map(([, init]) => String(init?.body ?? ""));
 }
 
 function createDragDataTransfer(): DataTransfer {
@@ -2664,6 +2662,13 @@ describe("TerminalApp", () => {
       if (url.includes("/api/terminal/layout")) {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name, created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     }));
 
@@ -2679,10 +2684,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItem(/Claude Code/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"claude-[a-z0-9-]+".*"cmd":"claude"/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: true,
-        startupCommand: undefined,
+        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
       },
     });
 
@@ -2690,10 +2695,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItem(/Codex/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"codex-[a-z0-9-]+".*"cmd":"codex"/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: false,
-        startupCommand: "codex",
+        sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
       },
     });
 
@@ -2701,10 +2706,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/^OpenCode$/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"opencode-[a-z0-9-]+".*"cmd":"opencode"/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: false,
-        startupCommand: "opencode",
+        sessionId: expect.stringMatching(/^opencode-[a-z0-9-]+$/),
       },
     });
 
@@ -2712,10 +2717,81 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/^Pi$/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"pi-[a-z0-9-]+".*"cmd":"pi"/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: false,
-        startupCommand: "pi",
+        sessionId: expect.stringMatching(/^pi-[a-z0-9-]+$/),
+      },
+    });
+  });
+
+  it("retries agent session creation from home when the selected cwd is missing", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: true, authState: "ok" },
+              { id: "codex", installed: true, authState: "ok" },
+              { id: "opencode", installed: true, authState: "ok" },
+              { id: "pi", installed: true, authState: "ok" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string; cwd?: string };
+        if (body.name?.startsWith("claude-") && body.cwd === "projects") {
+          return Promise.resolve({
+            ok: false,
+            status: 400,
+            json: async () => ({ error: { code: "invalid_cwd", message: "Invalid cwd" } }),
+            clone() {
+              return this;
+            },
+          } as Response);
+        }
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name, created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "main", status: "active" }] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await chooseNewSessionMenuItem(/Claude Code/);
+    });
+
+    const claudeBodies = terminalSessionPostBodies()
+      .map((body) => JSON.parse(body) as { name: string; cwd: string; cmd?: string })
+      .filter((body) => body.name.startsWith("claude-"));
+
+    expect(claudeBodies.map((body) => body.cwd)).toEqual(["projects", "~"]);
+    expect(claudeBodies.every((body) => body.cmd === "claude")).toBe(true);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: {
+        cwd: "~",
+        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
       },
     });
   });
@@ -2745,6 +2821,13 @@ describe("TerminalApp", () => {
       if (url.includes("/api/terminal/layout")) {
         return Promise.resolve({ ok: true, json: async () => ({}) });
       }
+      if (url.includes("/api/terminal/sessions") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { name?: string };
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ name: body.name, created: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     }));
 
@@ -2760,10 +2843,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/Claude Code.*Install/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"claude-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: false,
-        startupCommand: expectedAgentInstallCommand("@anthropic-ai/claude-code@latest"),
+        sessionId: expect.stringMatching(/^claude-[a-z0-9-]+$/),
       },
     });
 
@@ -2771,10 +2854,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/Codex.*Install/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"codex-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: false,
-        startupCommand: expectedAgentInstallCommand("@openai/codex@latest"),
+        sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
       },
     });
 
@@ -2782,10 +2865,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/OpenCode.*Install/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"opencode-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: false,
-        startupCommand: expectedAgentInstallCommand("opencode-ai@latest"),
+        sessionId: expect.stringMatching(/^opencode-[a-z0-9-]+$/),
       },
     });
 
@@ -2793,10 +2876,10 @@ describe("TerminalApp", () => {
       await chooseNewSessionMenuItemAfterStatus(/Pi.*Install/);
     });
 
+    expect(terminalSessionPostBodies().some((body) => /"name":"pi-[a-z0-9-]+".*"cmd":"sh -lc .*export MATRIX_NODE_PREFIX=.*--ignore-scripts/.test(body))).toBe(true);
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        claudeMode: false,
-        startupCommand: expectedAgentInstallCommand("@earendil-works/pi-coding-agent@latest", ["--ignore-scripts"]),
+        sessionId: expect.stringMatching(/^pi-[a-z0-9-]+$/),
       },
     });
   });

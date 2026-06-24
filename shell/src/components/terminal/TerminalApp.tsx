@@ -413,6 +413,29 @@ function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
 
+function terminalSessionName(prefix = "matrix") {
+  const safePrefix = prefix
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 22) || "matrix";
+  return `${safePrefix}-${genId()}`.slice(0, 31);
+}
+
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+async function readShellErrorCode(res: Response): Promise<string | null> {
+  try {
+    const data = await res.clone().json() as { error?: { code?: unknown } };
+    return typeof data.error?.code === "string" ? data.error.code : null;
+  } catch (err: unknown) {
+    console.warn("Failed to parse shell error response:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 function splitPaneInTree(node: PaneNode, paneId: string, dir: "horizontal" | "vertical"): PaneNode {
   if (node.type === "pane") {
     if (node.id === paneId) {
@@ -862,21 +885,33 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return id;
   };
 
-  const createShellSessionTab = async (label: string, cwd = DEFAULT_CWD) => {
+  const createShellSessionTab = async (
+    label: string,
+    cwd = DEFAULT_CWD,
+    options: { namePrefix?: string; cmd?: string } = {},
+  ) => {
+    let requestedCwd = cwd || "~";
+    let retriedHomeCwd = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const name = `matrix-${genId()}`;
+      const name = terminalSessionName(options.namePrefix);
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
         const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, cwd }),
+          body: JSON.stringify({ name, cwd: requestedCwd, ...(options.cmd ? { cmd: options.cmd } : {}) }),
           signal: AbortSignal.timeout(10_000),
         });
         if (res.status === 409) {
           continue;
         }
         if (!res.ok) {
+          if (!retriedHomeCwd && res.status === 400 && await readShellErrorCode(res) === "invalid_cwd") {
+            retriedHomeCwd = true;
+            requestedCwd = "~";
+            attempt -= 1;
+            continue;
+          }
           console.warn(`Failed to create shell session "${name}": ${res.status}`);
           return null;
         }
@@ -884,8 +919,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           destroyTerminalSessions([name]);
           return null;
         }
-        addSessionTab(label, name, cwd);
-        return name;
+        const data = await res.json() as { name?: unknown };
+        const sessionName = typeof data.name === "string" ? data.name : name;
+        addSessionTab(label, sessionName, requestedCwd);
+        return sessionName;
       } catch (err: unknown) {
         console.warn(
           "Failed to create shell session:",
@@ -1393,7 +1430,7 @@ interface TerminalAppContextType {
   windowControls?: TerminalWindowControls;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
-  createShellSessionTab: (label: string, cwd?: string) => Promise<string | null>;
+  createShellSessionTab: (label: string, cwd?: string, options?: { namePrefix?: string; cmd?: string }) => Promise<string | null>;
   backgroundShellSession: (sessionId: string) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
@@ -2630,6 +2667,11 @@ function terminalAgentInstallCommand(option: TerminalAgentOption): string {
   ].join("; ");
 }
 
+function terminalAgentVisibleInstallCommand(option: TerminalAgentOption): string {
+  const command = terminalAgentInstallCommand(option);
+  return `sh -lc ${shellQuote(`printf '%s\\n' ${shellQuote(command)}; ${command}; exec "\${SHELL:-sh}" -l`)}`;
+}
+
 function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSummary[]): boolean {
   return left.length === right.length && left.every((session, index) => {
     const next = right[index];
@@ -3431,14 +3473,33 @@ function LocalTerminalSidebar() {
     setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
   };
 
-  const createAgentSession = (option: TerminalAgentOption, installed: boolean) => {
+  const createAgentSession = async (option: TerminalAgentOption, installed: boolean) => {
+    if (creatingShellRef.current) return;
     setNewSessionMenuAnchor(null);
+    creatingShellRef.current = true;
+    setCreatingShell(true);
+    setShellsError(null);
     const cwd = ctx.sidebarSelectedPath ?? DEFAULT_CWD;
-    if (installed) {
-      ctx.addTab(cwd, option.label, option.claudeMode === true, option.launchCommand);
-    } else {
-      ctx.addTab(cwd, `Install ${option.label}`, false, terminalAgentInstallCommand(option));
+    try {
+      const label = installed ? option.label : `Install ${option.label}`;
+      const cmd = installed
+        ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
+        : terminalAgentVisibleInstallCommand(option);
+      const name = await ctx.createShellSessionTab(label, cwd, {
+        namePrefix: option.id,
+        cmd,
+      });
+      if (name) {
+        await fetchShells({ silent: true });
+      } else {
+        setShellsError("Failed to create agent session");
+      }
+    } catch (err: unknown) {
+      console.warn("Failed to create agent session:", err instanceof Error ? err.message : err);
+      setShellsError("Could not create agent session");
     }
+    creatingShellRef.current = false;
+    setCreatingShell(false);
     if (ctx.mobile) {
       ctx.setSidebarOpen(false);
     }
