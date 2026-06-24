@@ -62,6 +62,7 @@ export interface CanvasTerminalRegistry {
 }
 
 type TerminalSessionSnapshot = NonNullable<ReturnType<CanvasTerminalRegistry["getSession"]>>;
+type TerminalSessionSnapshotById = Record<string, TerminalSessionSnapshot>;
 
 export interface CanvasServiceOptions {
   terminalRegistry?: CanvasTerminalRegistry;
@@ -342,9 +343,9 @@ export class CanvasService {
     return record.nodes.filter((node) => JSON.stringify(node).toLowerCase().includes(needle));
   }
 
-  private reconcileRecord(record: CanvasRecord): { record: CanvasRecord; terminalSessionsById: Record<string, TerminalSessionSnapshot> } {
+  private reconcileRecord(record: CanvasRecord): { record: CanvasRecord; terminalSessionsById: TerminalSessionSnapshotById } {
     const terminalSessionIds = new Set<string>();
-    const terminalSessionsById: Record<string, TerminalSessionSnapshot> = {};
+    const terminalSessionsById: TerminalSessionSnapshotById = Object.create(null) as TerminalSessionSnapshotById;
     for (const node of record.nodes) {
       if (typeof node !== "object" || node === null) continue;
       const sourceRef = (node as { sourceRef?: { kind?: string; id?: string } | null }).sourceRef;
@@ -358,7 +359,7 @@ export class CanvasService {
     return { record: reconcileCanvasRecord(record, { terminalSessionIds }), terminalSessionsById };
   }
 
-  private resolveLinkedState(record: CanvasRecord, terminalSessionsById?: Record<string, TerminalSessionSnapshot>): CanvasDocumentResult["linkedState"] {
+  private resolveLinkedState(record: CanvasRecord, terminalSessionsById?: TerminalSessionSnapshotById): CanvasDocumentResult["linkedState"] {
     const terminalSessions: unknown[] = [];
     const pullRequests: unknown[] = [];
     const reviewLoops: unknown[] = [];
@@ -371,7 +372,7 @@ export class CanvasService {
         const session = sourceRef.id === "unattached"
           ? null
           : terminalSessionsById
-            ? terminalSessionsById[sourceRef.id] ?? null
+            ? Object.hasOwn(terminalSessionsById, sourceRef.id) ? terminalSessionsById[sourceRef.id] : null
             : this.terminalRegistry?.getSession(sourceRef.id);
         if (session) terminalSessions.push(session);
         else missingRefs.push({

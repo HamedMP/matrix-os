@@ -171,6 +171,38 @@ describe("CanvasService", () => {
     expect(terminalRegistry.create).not.toHaveBeenCalled();
   });
 
+  it("treats prototype-named terminal refs as missing instead of live sessions", async () => {
+    const terminalRegistry = {
+      create: vi.fn(),
+      getSession: vi.fn().mockReturnValue(null),
+      destroy: vi.fn(),
+    };
+    const service = new CanvasService(repository([record({
+      nodes: [{
+        id: "node_terminal",
+        type: "terminal",
+        sourceRef: { kind: "terminal_session", id: "toString" },
+        displayState: "normal",
+        metadata: {},
+      }],
+    })]), {
+      terminalRegistry,
+    });
+
+    const result = await service.getCanvas("user_a", "cnv_0123456789abcdef");
+
+    expect(result.linkedState.terminalSessions).toEqual([]);
+    expect(result.linkedState.missingRefs).toContainEqual({
+      kind: "terminal_session",
+      id: "toString",
+      state: "missing",
+      recoverable: true,
+    });
+    expect(terminalRegistry.getSession).toHaveBeenCalledTimes(1);
+    expect(terminalRegistry.getSession).toHaveBeenCalledWith("toString");
+    expect(terminalRegistry.create).not.toHaveBeenCalled();
+  });
+
   it("classifies stale terminal refs in canvas summaries without spawning sessions", async () => {
     const terminalRegistry = {
       create: vi.fn(),
