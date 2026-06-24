@@ -379,6 +379,39 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
+  app.get("/preferences", async (c) => {
+    try {
+      if (!deps.preferences) {
+        return c.json({ preferences: ShellPreferencesSchema.parse({}) });
+      }
+      return c.json({ preferences: await deps.preferences.loadGlobal() });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.put("/preferences", preferencesBodyLimit, async (c) => {
+    try {
+      if (!deps.preferences) {
+        return c.json(
+          { error: { code: "preferences_unavailable", message: "Request failed" } },
+          503,
+        );
+      }
+      const current = await deps.preferences.loadGlobal();
+      const preferences = await deps.preferences.saveGlobal({
+        ...current,
+        ...(await c.req.json()),
+      });
+      if (deps.shellThemeConfig) {
+        await deps.shellThemeConfig.setShellTheme(preferences.shellThemeId);
+      }
+      return c.json({ preferences });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
   app.put("/sessions/:name/preferences", preferencesBodyLimit, async (c) => {
     try {
       if (!deps.preferences) {

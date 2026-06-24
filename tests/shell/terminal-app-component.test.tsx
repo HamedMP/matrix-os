@@ -8,6 +8,7 @@ const paneGridSpy = vi.fn();
 const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
   saveThemeSpy: vi.fn(async () => {}),
   terminalSettingsState: {
+    appThemeId: "matrix-dark",
     themeId: "system",
     fontSize: 13,
     fontFamily: "JetBrains Mono",
@@ -15,6 +16,9 @@ const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
     cursorStyle: "block",
     smoothScroll: true,
     cursorBlink: true,
+    setAppThemeId: vi.fn((appThemeId: string) => {
+      terminalSettingsState.appThemeId = appThemeId;
+    }),
     setThemeId: vi.fn(),
     setFontSize: vi.fn(),
     setFontFamily: vi.fn(),
@@ -110,7 +114,10 @@ describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
     saveThemeSpy.mockClear();
+    terminalSettingsState.appThemeId = "matrix-dark";
     terminalSettingsState.themeId = "system";
+    terminalSettingsState.setAppThemeId.mockClear();
+    terminalSettingsState.setThemeId.mockClear();
     vi.useFakeTimers();
     vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -322,7 +329,7 @@ describe("TerminalApp", () => {
     expect(screen.queryByText("Zellij")).toBeNull();
   });
 
-  it("opens terminal-only theme preferences without global Matrix OS theme controls", async () => {
+  it("opens terminal-only app theme menu without Match system or global Matrix OS theme controls", async () => {
     const fetchMock = vi.mocked(fetch);
     render(<TerminalApp />);
 
@@ -345,22 +352,23 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions/main/preferences"),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(screen.getByRole("dialog", { name: "Shell theme" })).toBeTruthy();
-    expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
-    expect(screen.getByText("gruvbox-light")).toBeTruthy();
-    expect(screen.getByText("custom · green on black")).toBeTruthy();
-    expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
-    expect(screen.queryByText("Warm paper")).toBeNull();
-    expect(screen.queryByText("Warm dark")).toBeNull();
-    expect(screen.queryByText("Phosphor green")).toBeNull();
+    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    expect(screen.getByText("Warm paper")).toBeTruthy();
+    expect(screen.getByText("Warm dark")).toBeTruthy();
+    expect(screen.getByText("Phosphor green")).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Light Warm paper" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Matrix OS Dark Warm dark" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Matrix Phosphor green" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Change shell theme Advanced terminal colors" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Match system" })).toBeNull();
-    expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
+    expect(screen.queryByText("Match system")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Shell theme" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
     expect(saveThemeSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.anything(),
+    );
 
     fetchMock.mockClear();
     await act(async () => {
@@ -368,11 +376,36 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.queryByRole("dialog", { name: "Shell theme" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("saves terminal shell theme preferences to the session-scoped API", async () => {
+  it("updates terminal app theme without saving the global Matrix OS theme", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Light Warm paper" }));
+      await Promise.resolve();
+    });
+
+    expect(terminalSettingsState.setAppThemeId).toHaveBeenCalledWith("light");
+    expect(terminalSettingsState.appThemeId).toBe("light");
+    expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
+    expect(saveThemeSpy).not.toHaveBeenCalled();
+  });
+
+  it("opens advanced shell theme chooser and saves global terminal shell theme", async () => {
     const fetchMock = vi.mocked(fetch);
     render(<TerminalApp />);
 
@@ -388,10 +421,13 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions/main/preferences"),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    fetchMock.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Change shell theme Advanced terminal colors" }));
+      await Promise.resolve();
+    });
+
     expect(screen.getByRole("dialog", { name: "Shell theme" })).toBeTruthy();
     expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
@@ -399,6 +435,10 @@ describe("TerminalApp", () => {
     expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
     expect(saveThemeSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.anything(),
+    );
 
     fetchMock.mockClear();
     await act(async () => {
@@ -407,7 +447,7 @@ describe("TerminalApp", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.stringContaining("/api/terminal/preferences"),
       expect.objectContaining({
         method: "PUT",
         body: expect.stringContaining("\"shellThemeId\":\"light\""),
@@ -1477,8 +1517,9 @@ describe("TerminalApp", () => {
     expect(sidebarShell.style.width).toBe("440px");
   });
 
-  it("uses the terminal background for the sessions drawer terminal-facing divider", async () => {
+  it("uses the terminal app chrome background for the sessions drawer divider", async () => {
     terminalSettingsState.themeId = "dark";
+    terminalSettingsState.appThemeId = "matrix-dark";
 
     render(<TerminalApp />);
 
@@ -1491,14 +1532,14 @@ describe("TerminalApp", () => {
     const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
     const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
 
-    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(12, 12, 12)");
-    expect(resizeHandle.style.background).toBe("rgb(12, 12, 12)");
+    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(28, 32, 25)");
+    expect(resizeHandle.style.background).toBe("rgb(28, 32, 25)");
     expect(resizeHandle.style.background).not.toContain("transparent");
     expect(resizeHandle.style.background).not.toContain("197, 196, 180");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
-    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(12, 12, 12)");
+    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(28, 32, 25)");
   });
 
   it("stops terminal drawer resizing when the drag is canceled", async () => {

@@ -101,6 +101,28 @@ export class ShellPreferencesStore {
     return next;
   }
 
+  async loadGlobal(): Promise<ShellPreferences> {
+    try {
+      const raw = await readFile(this.globalPath(), "utf-8");
+      return ShellPreferencesSchema.parse(JSON.parse(raw));
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return ShellPreferencesSchema.parse({});
+      }
+      throw err;
+    }
+  }
+
+  async saveGlobal(input: unknown): Promise<ShellPreferences> {
+    const next = ShellPreferencesSchema.parse(input);
+    await writeUtf8FileAtomic(this.globalPath(), JSON.stringify(next, null, 2));
+    return next;
+  }
+
   async rename(fromName: string, toName: string): Promise<void> {
     const safeFromName = validateSessionName(fromName);
     const safeToName = validateSessionName(toName);
@@ -149,5 +171,9 @@ export class ShellPreferencesStore {
 
   private pathFor(name: string): string {
     return join(this.preferencesDir, `${name}.json`);
+  }
+
+  private globalPath(): string {
+    return join(this.preferencesDir, "terminal-global.json");
   }
 }

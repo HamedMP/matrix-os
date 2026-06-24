@@ -3,6 +3,7 @@
 import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
 import {
   BotIcon,
+  ChevronRightIcon,
   CheckIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
@@ -28,7 +29,8 @@ import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
-import { useTerminalSettings, type ShellThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
+import { MATRIX_OS_APP_THEME_OPTIONS } from "@/lib/theme-presets";
+import { useTerminalSettings, type ShellThemeId, type TerminalAppThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
@@ -160,6 +162,12 @@ const SHELL_THEME_OPTIONS: Array<{
     },
   },
 ];
+
+type TerminalAppThemeOption = (typeof MATRIX_OS_APP_THEME_OPTIONS)[number];
+
+function getTerminalAppThemeOption(appThemeId: TerminalAppThemeId): TerminalAppThemeOption {
+  return MATRIX_OS_APP_THEME_OPTIONS.find((option) => option.id === appThemeId) ?? MATRIX_OS_APP_THEME_OPTIONS[1]!;
+}
 
 const TAB_ITEM_BASE_STYLE: CSSProperties = {
   borderRadius: 6,
@@ -620,10 +628,6 @@ async function ensureInitialShellSession(): Promise<string | null> {
   return sessionReady ? DEFAULT_SHELL_SESSION_NAME : null;
 }
 
-function getSafePreferencesSessionName(value: string | null): string | null {
-  return value && /^[a-z0-9][a-z0-9-]{0,30}$/.test(value) ? value : null;
-}
-
 function mapTerminalThemeToShellTheme(themeId: TerminalThemeId | undefined): ShellThemeId {
   if (themeId === "dark" || themeId === "light" || themeId === "matrix") {
     return themeId;
@@ -634,11 +638,11 @@ function mapTerminalThemeToShellTheme(themeId: TerminalThemeId | undefined): She
   return "dark";
 }
 
-function loadShellThemePreference(sessionName: string | null, setThemeId: (themeId: TerminalThemeId) => void): void {
-  if (!sessionName || typeof fetch !== "function") {
+function loadGlobalShellThemePreference(setThemeId: (themeId: TerminalThemeId) => void): void {
+  if (typeof fetch !== "function") {
     return;
   }
-  void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+  void fetch(`${getGatewayUrl()}/api/terminal/preferences`, {
     signal: AbortSignal.timeout(10_000),
   })
     .then((res) => res.ok ? res.json() : null)
@@ -699,22 +703,20 @@ interface TerminalAppProps {
 export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
+  const appThemeId = useTerminalSettings((s) => s.appThemeId);
+  const appThemeOption = getTerminalAppThemeOption(appThemeId);
+  const appTheme = appThemeOption.theme;
 
-  // Keep shell-controlled terminal surfaces aligned with the active terminal
-  // theme. Falls back to the desktop theme when "Match OS" is selected.
+  // Keep terminal content aligned with the active shell theme. App chrome is
+  // intentionally terminal-scoped and uses the separate app theme below.
   const terminalPreset = themeId === "system" ? null : getTerminalThemePreset(themeId);
-  const terminalBackground =
+  const terminalContentBackground =
     themeId === "system"
       ? (theme.colors.background || "var(--background)")
       : terminalPreset?.background ?? "var(--background)";
-  const terminalForeground =
-    themeId === "system"
-      ? (theme.colors.foreground || "var(--foreground)")
-      : terminalPreset?.foreground ?? "var(--foreground)";
-  const terminalAccent =
-    themeId === "system"
-      ? (theme.colors.primary || "var(--primary)")
-      : terminalPreset?.cursor ?? "var(--primary)";
+  const terminalChromeBackground = appTheme.colors.background || "var(--background)";
+  const terminalChromeForeground = appTheme.colors.foreground || "var(--foreground)";
+  const terminalChromeAccent = appTheme.colors.primary || "var(--primary)";
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
@@ -1224,7 +1226,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarWidth, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
-    terminalBackground,
+    terminalBackground: terminalChromeBackground,
     addTab: (...args: Parameters<typeof addTab>) => {
       markTerminalLayoutDirty();
       return addTab(...args);
@@ -1285,7 +1287,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     <div
       ref={containerRef}
       className="flex flex-col h-full w-full"
-      style={{ background: "var(--background)" }}
+      style={{ background: terminalChromeBackground, color: terminalChromeForeground }}
       role="application"
       aria-label="Terminal"
       onKeyDown={handleKeyDown}
@@ -1301,7 +1303,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               className="flex-1 min-w-0 min-h-0 flex"
               style={{
                 padding: 0,
-                background: terminalBackground,
+                background: terminalContentBackground,
                 minHeight: mobile ? 0 : undefined,
               }}
             >
@@ -1321,21 +1323,21 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                   <>
                     <MobileTerminalActions
                       defaultCwd={DEFAULT_CWD}
-                      background={terminalBackground}
-                      foreground={terminalForeground}
-                      accent={terminalAccent}
+                      background={terminalChromeBackground}
+                      foreground={terminalChromeForeground}
+                      accent={terminalChromeAccent}
                     />
                     <MobileCommandComposer
                       onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
-                      background={terminalBackground}
-                      foreground={terminalForeground}
-                      accent={terminalAccent}
+                      background={terminalChromeBackground}
+                      foreground={terminalChromeForeground}
+                      accent={terminalChromeAccent}
                     />
                     <TerminalKeyBar
                       onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
-                      background={terminalBackground}
-                      foreground={terminalForeground}
-                      accent={terminalAccent}
+                      background={terminalChromeBackground}
+                      foreground={terminalChromeForeground}
+                      accent={terminalChromeAccent}
                     />
                   </>
                 )}
@@ -1492,22 +1494,17 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
 
 function ThemePickerButton() {
   const ctx = useTerminalAppContext();
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [shellThemeOpen, setShellThemeOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
-  const setTerminalThemeId = useTerminalSettings((s) => s.setThemeId);
-  const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
-  const focusedPaneId = ctx.focusedPaneId ?? (activeTab ? getFirstPaneId(activeTab.paneTree) : null);
-  const sessionName = activeTab && focusedPaneId
-    ? getSafePreferencesSessionName(getPaneSessionId(activeTab.paneTree, focusedPaneId))
-    : null;
 
   useEffect(() => {
-    if (!shellThemeOpen) return;
+    if (!themeMenuOpen) return;
     const onClick = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setShellThemeOpen(false);
+      if (!wrapRef.current?.contains(e.target as Node)) setThemeMenuOpen(false);
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setShellThemeOpen(false);
+      if (event.key === "Escape") setThemeMenuOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     document.addEventListener("keydown", onKeyDown);
@@ -1515,15 +1512,10 @@ function ThemePickerButton() {
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [shellThemeOpen]);
+  }, [themeMenuOpen]);
 
-  const openShellThemeChooser = () => {
-    if (shellThemeOpen) {
-      setShellThemeOpen(false);
-      return;
-    }
-    loadShellThemePreference(sessionName, setTerminalThemeId);
-    setShellThemeOpen(true);
+  const openThemeMenu = () => {
+    setThemeMenuOpen((open) => !open);
   };
 
   return (
@@ -1538,15 +1530,24 @@ function ThemePickerButton() {
         aria-label="Theme"
         title="Theme"
         style={PAPER_THEME_BUTTON_STYLE}
-        onClick={openShellThemeChooser}
+        onClick={openThemeMenu}
       >
         <span style={{ color: "#CF7835", fontSize: 17, fontWeight: 600, lineHeight: "22px" }}>☼</span>
         <span>Theme</span>
       </button>
+      {themeMenuOpen ? (
+        <TerminalAppThemeMenu
+          mobile={ctx.mobile}
+          onClose={() => setThemeMenuOpen(false)}
+          onOpenShellTheme={() => {
+            setThemeMenuOpen(false);
+            setShellThemeOpen(true);
+          }}
+        />
+      ) : null}
       {shellThemeOpen ? (
         <ShellThemeChooser
           mobile={ctx.mobile}
-          sessionName={sessionName}
           onClose={() => setShellThemeOpen(false)}
         />
       ) : null}
@@ -1554,13 +1555,284 @@ function ThemePickerButton() {
   );
 }
 
+function TerminalAppThemeMenu({
+  mobile,
+  onClose,
+  onOpenShellTheme,
+}: {
+  mobile: boolean;
+  onClose: () => void;
+  onOpenShellTheme: () => void;
+}) {
+  const appThemeId = useTerminalSettings((s) => s.appThemeId);
+  const setAppThemeId = useTerminalSettings((s) => s.setAppThemeId);
+
+  const chooseAppTheme = (next: TerminalAppThemeId) => {
+    setAppThemeId(next);
+    onClose();
+  };
+
+  if (mobile) {
+    return (
+      <dialog
+        aria-label="Theme"
+        aria-modal="true"
+        open
+        style={{
+          alignItems: "flex-end",
+          background: "rgba(2, 5, 2, 0.42)",
+          border: 0,
+          display: "flex",
+          height: "100dvh",
+          inset: 0,
+          justifyContent: "center",
+          margin: 0,
+          maxHeight: "none",
+          maxWidth: "none",
+          overflow: "hidden",
+          padding: 0,
+          position: "fixed",
+          width: "100vw",
+          zIndex: 94,
+        }}
+        onCancel={(event) => {
+          event.preventDefault();
+          onClose();
+        }}
+      >
+        <button
+          type="button"
+          aria-label="Dismiss theme menu"
+          tabIndex={-1}
+          onClick={onClose}
+          style={{ background: "transparent", border: 0, cursor: "default", inset: 0, padding: 0, position: "absolute" }}
+        />
+        <div
+          role="menu"
+          aria-label="Theme"
+          style={{
+            background: "#FFFDF7",
+            borderRadius: "26px 26px 0 0",
+            boxShadow: "0 -18px 50px rgba(0, 0, 0, 0.44)",
+            color: "#2A2E22",
+            display: "flex",
+            flexDirection: "column",
+            gap: 16,
+            padding: "10px 20px 17px",
+            position: "relative",
+            width: "min(390px, 100%)",
+            zIndex: 1,
+          }}
+        >
+          <div style={{ alignItems: "center", display: "flex", justifyContent: "center", paddingBottom: 4 }}>
+            <div style={{ background: "#D6D5C4", borderRadius: 999, height: 5, width: 42 }} />
+          </div>
+          <div style={{ color: "#2A2E22", fontFamily: "Inter, system-ui, sans-serif", fontSize: 19, fontWeight: 700, lineHeight: "24px" }}>
+            Theme
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {MATRIX_OS_APP_THEME_OPTIONS.map((option) => (
+              <TerminalAppThemeMenuItem
+                key={option.id}
+                mobile
+                option={option}
+                selected={option.id === appThemeId}
+                onClick={() => chooseAppTheme(option.id)}
+              />
+            ))}
+          </div>
+          <div style={{ background: "#E4E2D2", height: 1 }} />
+          <ChangeShellThemeMenuItem mobile onClick={onOpenShellTheme} />
+          <div style={{ alignItems: "center", display: "flex", justifyContent: "center", paddingBottom: 9, paddingTop: 8 }}>
+            <div style={{ background: "#1F221B", borderRadius: 999, height: 5, width: 140 }} />
+          </div>
+        </div>
+      </dialog>
+    );
+  }
+
+  return (
+    <div
+      role="menu"
+      aria-label="Theme"
+      style={{
+        background: "#20241C",
+        border: "1px solid #2D3127",
+        borderRadius: 14,
+        boxShadow: "0 18px 44px rgba(0, 0, 0, 0.42)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 2,
+        marginTop: 8,
+        padding: 6,
+        position: "absolute",
+        right: 0,
+        top: "100%",
+        width: 280,
+        zIndex: 90,
+      }}
+    >
+      <div style={{ padding: "8px 10px 4px" }}>
+        <div style={{ color: "#6F7167", fontFamily: "Inter, system-ui, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", lineHeight: "14px", textTransform: "uppercase" }}>
+          Theme
+        </div>
+      </div>
+      {MATRIX_OS_APP_THEME_OPTIONS.map((option) => (
+        <TerminalAppThemeMenuItem
+          key={option.id}
+          option={option}
+          selected={option.id === appThemeId}
+          onClick={() => chooseAppTheme(option.id)}
+        />
+      ))}
+      <div style={{ background: "#2A2E22", height: 1, margin: "4px 8px" }} />
+      <ChangeShellThemeMenuItem onClick={onOpenShellTheme} />
+    </div>
+  );
+}
+
+function TerminalAppThemeMenuItem({
+  mobile = false,
+  option,
+  selected,
+  onClick,
+}: {
+  mobile?: boolean;
+  option: TerminalAppThemeOption;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={selected}
+      aria-label={`${option.label} ${option.description}`}
+      onClick={onClick}
+      style={{
+        alignItems: "center",
+        background: selected ? (mobile ? "#F4F3E9" : "#2A2E22") : "transparent",
+        border: mobile ? `1px solid ${selected ? "#E4E2D2" : "transparent"}` : 0,
+        borderRadius: mobile ? 14 : 10,
+        color: mobile ? "#2A2E22" : "#F0EFE5",
+        cursor: "pointer",
+        display: "flex",
+        gap: mobile ? 14 : 12,
+        minHeight: mobile ? 64 : 51,
+        padding: mobile ? "12px 14px" : "8px 10px",
+        textAlign: "left",
+        width: "100%",
+      }}
+    >
+      <TerminalAppThemePreview option={option} mobile={mobile} />
+      <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <span style={{ color: mobile ? "#2A2E22" : "#F0EFE5", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 16 : 14, fontWeight: 600, lineHeight: mobile ? "20px" : "18px" }}>
+          {option.label}
+        </span>
+        <span style={{ color: mobile ? "#858578" : "#858578", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 13 : 12, lineHeight: "16px" }}>
+          {option.description}
+        </span>
+      </span>
+      {selected ? <CheckIcon size={mobile ? 20 : 18} strokeWidth={2.4} style={{ color: mobile ? "#4F8A55" : "#9CB77A", flexShrink: 0 }} /> : null}
+    </button>
+  );
+}
+
+function TerminalAppThemePreview({
+  option,
+  mobile,
+}: {
+  option: TerminalAppThemeOption;
+  mobile: boolean;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        background: option.preview.background,
+        border: `1px solid ${option.preview.border}`,
+        borderRadius: mobile ? 9 : 8,
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+        gap: mobile ? 5 : 4,
+        height: mobile ? 38 : 32,
+        justifyContent: "center",
+        padding: mobile ? 9 : 7,
+        width: mobile ? 48 : 40,
+      }}
+    >
+      <span style={{ background: option.preview.stripe, borderRadius: 2, display: "block", height: 3, width: mobile ? 22 : 18 }} />
+      <span style={{ display: "flex", gap: mobile ? 4 : 3 }}>
+        <span style={{ background: option.preview.dotA, borderRadius: 999, display: "block", height: mobile ? 7 : 6, width: mobile ? 7 : 6 }} />
+        <span style={{ background: option.preview.dotB, borderRadius: 999, display: "block", height: mobile ? 7 : 6, width: mobile ? 7 : 6 }} />
+      </span>
+    </span>
+  );
+}
+
+function ChangeShellThemeMenuItem({
+  mobile = false,
+  onClick,
+}: {
+  mobile?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      aria-label="Change shell theme Advanced terminal colors"
+      onClick={onClick}
+      style={{
+        alignItems: "center",
+        background: mobile ? "#F4F3E9" : "transparent",
+        border: mobile ? "1px solid #E4E2D2" : 0,
+        borderRadius: mobile ? 14 : 10,
+        cursor: "pointer",
+        display: "flex",
+        gap: mobile ? 14 : 12,
+        minHeight: mobile ? 64 : 48,
+        padding: mobile ? "12px 14px" : "8px 10px",
+        textAlign: "left",
+        width: "100%",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          alignItems: "center",
+          background: mobile ? "#15180F" : "#171A13",
+          border: mobile ? 0 : "1px solid #2D3127",
+          borderRadius: mobile ? 10 : 8,
+          color: mobile ? "#9CB77A" : "#6F7167",
+          display: "flex",
+          flexShrink: 0,
+          height: mobile ? 38 : 32,
+          justifyContent: "center",
+          width: mobile ? 38 : 40,
+        }}
+      >
+        <SquareTerminalIcon size={mobile ? 18 : 16} strokeWidth={2} />
+      </span>
+      <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 1, minWidth: 0 }}>
+        <span style={{ color: mobile ? "#5F6258" : "#858578", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 15 : 13, fontWeight: 600, lineHeight: mobile ? "18px" : "16px" }}>
+          Change shell theme
+        </span>
+        <span style={{ color: mobile ? "#A09F92" : "#5F6258", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
+          Advanced · terminal colors
+        </span>
+      </span>
+      <ChevronRightIcon size={mobile ? 18 : 16} strokeWidth={2} style={{ color: mobile ? "#A09F92" : "#5F6258", flexShrink: 0 }} />
+    </button>
+  );
+}
+
 function ShellThemeChooser({
   mobile,
-  sessionName,
   onClose,
 }: {
   mobile: boolean;
-  sessionName: string | null;
   onClose: () => void;
 }) {
   const themeId = useTerminalSettings((s) => s.themeId);
@@ -1570,6 +1842,10 @@ function ShellThemeChooser({
   const dialogNeedsOpenAttribute =
     typeof globalThis.HTMLDialogElement === "undefined" ||
     typeof globalThis.HTMLDialogElement.prototype.showModal !== "function";
+
+  useEffect(() => {
+    loadGlobalShellThemePreference(setThemeId);
+  }, [setThemeId]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -1588,11 +1864,11 @@ function ShellThemeChooser({
 
   const persistShellTheme = (next: ShellThemeId) => {
     setThemeId(next);
-    if (!sessionName || typeof fetch !== "function") {
+    if (typeof fetch !== "function") {
       return;
     }
     const state = useTerminalSettings.getState();
-    void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+    void fetch(`${getGatewayUrl()}/api/terminal/preferences`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

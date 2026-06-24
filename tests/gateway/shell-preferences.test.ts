@@ -140,6 +140,55 @@ describe("shell preferences", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("serves global terminal preferences separately from session preferences", async () => {
+    const root = await tempRoot();
+    const preferences = new ShellPreferencesStore({ homePath: root });
+    const setShellTheme = vi.fn(async () => {});
+    const app = new Hono();
+    app.route("/api", createShellRoutes({
+      registry: {
+        list: vi.fn(async () => []),
+        create: vi.fn(),
+        delete: vi.fn(),
+      },
+      preferences,
+      shellThemeConfig: { setShellTheme },
+    }));
+
+    const put = await app.request("/api/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shellThemeId: "matrix" }),
+    });
+    expect(put.status).toBe(200);
+    expect(setShellTheme).toHaveBeenCalledWith("matrix");
+
+    const globalGet = await app.request("/api/preferences");
+    expect(globalGet.status).toBe(200);
+    await expect(globalGet.json()).resolves.toMatchObject({
+      preferences: { shellThemeId: "matrix" },
+    });
+
+    const sessionGet = await app.request("/api/sessions/main/preferences");
+    expect(sessionGet.status).toBe(200);
+    await expect(sessionGet.json()).resolves.toMatchObject({
+      preferences: { shellThemeId: "dark" },
+    });
+
+    const terminalSessionPut = await app.request("/api/sessions/terminal/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ shellThemeId: "light" }),
+    });
+    expect(terminalSessionPut.status).toBe(200);
+
+    const globalAfterTerminalSession = await app.request("/api/preferences");
+    expect(globalAfterTerminalSession.status).toBe(200);
+    await expect(globalAfterTerminalSession.json()).resolves.toMatchObject({
+      preferences: { shellThemeId: "matrix" },
+    });
+  });
+
   it("serves PATCH session UI state with validation and body limits", async () => {
     const updateUiState = vi.fn(async () => ({
       name: "main",
