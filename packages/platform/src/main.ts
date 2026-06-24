@@ -2075,15 +2075,28 @@ export function createApp(deps: {
   }
 
   async function resolveBillingClerkUserId(c: Context): Promise<string | null> {
+    const authorization = c.req.header('authorization');
+    const cookie = c.req.header('cookie');
+    const token = clerkAuth?.extractToken(authorization, cookie) ?? (authorization?.startsWith('Bearer ') ? authorization.slice(7) : null);
+    if (!token) return null;
+
     try {
-      if (!clerkAuth) return null;
-      const token = clerkAuth.extractToken(c.req.header('authorization'), c.req.header('cookie'));
-      if (!token) return null;
-      const result = await clerkAuth.verify(token);
-      return result.authenticated && result.userId ? result.userId : null;
+      if (clerkAuth) {
+        const result = await clerkAuth.verify(token);
+        if (result.authenticated && result.userId) return result.userId;
+      }
     } catch (err: unknown) {
       const kind = err instanceof Error ? err.name : typeof err;
       console.warn(`[billing] Clerk verification failed: ${kind}`);
+    }
+
+    if (!platformJwtSecret) return null;
+    try {
+      const claims = await verifySyncJwt(token, { secret: platformJwtSecret });
+      return claims.sub;
+    } catch (err: unknown) {
+      const kind = err instanceof Error ? err.name : typeof err;
+      console.warn(`[billing] native token verification failed: ${kind}`);
       return null;
     }
   }
