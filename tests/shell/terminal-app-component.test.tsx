@@ -1492,7 +1492,8 @@ describe("TerminalApp", () => {
     const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
 
     expect(sidebarShell.style.borderRight).toBe("1px solid rgb(12, 12, 12)");
-    expect(resizeHandle.style.background).toContain("rgb(12, 12, 12)");
+    expect(resizeHandle.style.background).toBe("rgb(12, 12, 12)");
+    expect(resizeHandle.style.background).not.toContain("transparent");
     expect(resizeHandle.style.background).not.toContain("197, 196, 180");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));

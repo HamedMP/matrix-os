@@ -3579,7 +3579,7 @@ function LocalTerminalSidebar() {
           onPointerDown={startSidebarResize}
           onKeyDown={resizeSidebarWithKeyboard}
           style={{
-            background: `linear-gradient(to right, transparent 0 2px, ${terminalDividerColor} 2px 4px, transparent 4px 8px)`,
+            background: terminalDividerColor,
             border: 0,
             bottom: 0,
             cursor: "col-resize",
