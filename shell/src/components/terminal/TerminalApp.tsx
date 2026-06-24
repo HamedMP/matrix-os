@@ -4036,12 +4036,23 @@ function NewSessionMenuItem({
         ) : (
           <span
             style={{
-              color: "#A09F92",
-              fontFamily: "var(--font-mono, ui-monospace, monospace)",
-              fontSize: 12,
-              lineHeight: "16px",
-              minWidth: 46,
-              textAlign: "right",
+              alignItems: "center",
+              background: shortcut ? "#F0EFE5" : "transparent",
+              border: shortcut ? "1px solid #DAD8CC" : "1px solid transparent",
+              borderRadius: 6,
+              boxSizing: "border-box",
+              color: "#8C8B80",
+              display: "inline-flex",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 11,
+              fontWeight: 800,
+              height: 22,
+              justifyContent: "center",
+              letterSpacing: "0.02em",
+              lineHeight: "14px",
+              minWidth: shortcut ? 38 : 0,
+              padding: shortcut ? "0 6px" : 0,
+              textAlign: "center",
             }}
           >
             {shortcut ?? ""}
