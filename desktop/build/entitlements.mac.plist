@@ -7,6 +7,7 @@
   <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
   <true/>
+  <!-- Electron Framework.framework fails hardened-runtime library validation in packaged desktop builds. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>

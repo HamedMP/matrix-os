@@ -29,11 +29,14 @@ describe("desktop packaging", () => {
     const entitlements = readFileSync(join(root, "desktop/build/entitlements.mac.plist"), "utf8");
     const entitlementKeys = Array.from(entitlements.matchAll(/<key>([^<]+)<\/key>/g), (match) => match[1]);
 
-    expect(entitlementKeys).toEqual([
-      "com.apple.security.cs.allow-jit",
-      "com.apple.security.cs.allow-unsigned-executable-memory",
-      "com.apple.security.cs.disable-library-validation",
-    ]);
+    expect(entitlementKeys).toHaveLength(3);
+    expect(entitlementKeys).toEqual(
+      expect.arrayContaining([
+        "com.apple.security.cs.allow-jit",
+        "com.apple.security.cs.allow-unsigned-executable-memory",
+        "com.apple.security.cs.disable-library-validation",
+      ]),
+    );
     expect(entitlementKeys).not.toContain("com.apple.security.app-sandbox");
     expect(entitlementKeys).not.toContain("com.apple.security.network.client");
     expect(entitlementKeys).not.toContain("com.apple.security.files.user-selected.read-write");
