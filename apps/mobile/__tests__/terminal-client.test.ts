@@ -1,5 +1,6 @@
 import { GatewayClient } from "../lib/gateway-client";
 import {
+  MOBILE_TERMINAL_KEEPALIVE_MS,
   MobileTerminalClient,
   MobileTerminalConnection,
   buildTerminalWebSocketUrl,
@@ -34,6 +35,7 @@ describe("mobile terminal client", () => {
 
   afterEach(() => {
     global.WebSocket = OriginalWebSocket;
+    jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
@@ -173,4 +175,129 @@ describe("mobile terminal client", () => {
     expect((ws as unknown as MockWebSocket).closed).toBe(true);
     expect((ws as unknown as MockWebSocket).sent).toEqual([]);
   });
+
+  it("sends periodic terminal pings while attached", () => {
+    jest.useFakeTimers();
+    expect(MOBILE_TERMINAL_KEEPALIVE_MS).toBeLessThan(120_000);
+
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      cwd: "projects",
+      onMessage: jest.fn(),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS - 1);
+    expect(parseSentFrames(ws)).toEqual([{ type: "attach", cwd: "projects" }]);
+
+    jest.advanceTimersByTime(1);
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS);
+
+    expect(parseSentFrames(ws)).toEqual([
+      { type: "attach", cwd: "projects" },
+      { type: "ping" },
+      { type: "ping" },
+    ]);
+  });
+
+  it("stops terminal keepalive pings after detach", () => {
+    jest.useFakeTimers();
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      cwd: "projects",
+      onMessage: jest.fn(),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS);
+    connection.detach();
+    const sentAfterDetach = parseSentFrames(ws);
+
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS * 2);
+
+    expect(sentAfterDetach).toEqual([
+      { type: "attach", cwd: "projects" },
+      { type: "ping" },
+      { type: "detach" },
+    ]);
+    expect(parseSentFrames(ws)).toEqual(sentAfterDetach);
+  });
+
+  it("stops terminal keepalive pings after destroy", () => {
+    jest.useFakeTimers();
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      cwd: "projects",
+      onMessage: jest.fn(),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS);
+    connection.destroy();
+    const sentAfterDestroy = parseSentFrames(ws);
+
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS * 2);
+
+    expect(sentAfterDestroy).toEqual([
+      { type: "attach", cwd: "projects" },
+      { type: "ping" },
+      { type: "destroy" },
+    ]);
+    expect(parseSentFrames(ws)).toEqual(sentAfterDestroy);
+  });
+
+  it("stops terminal keepalive pings after socket close", () => {
+    jest.useFakeTimers();
+    const statuses: string[] = [];
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      cwd: "projects",
+      onMessage: jest.fn(),
+      onStatus: (status) => statuses.push(status),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS);
+    (ws as unknown as MockWebSocket).onclose?.();
+    const sentAfterClose = parseSentFrames(ws);
+
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS * 2);
+
+    expect(statuses).toEqual(["connecting", "open", "closed"]);
+    expect(sentAfterClose).toEqual([
+      { type: "attach", cwd: "projects" },
+      { type: "ping" },
+    ]);
+    expect(parseSentFrames(ws)).toEqual(sentAfterClose);
+  });
+
+  it("does not attach or start terminal keepalive pings after pre-open close", () => {
+    jest.useFakeTimers();
+    const statuses: string[] = [];
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    (ws as unknown as MockWebSocket).readyState = 0;
+    const connection = new MobileTerminalConnection(ws, {
+      cwd: "projects",
+      onMessage: jest.fn(),
+      onStatus: (status) => statuses.push(status),
+    });
+
+    connection.attach();
+    connection.close();
+    (ws as unknown as MockWebSocket).readyState = MockWebSocket.OPEN;
+    (ws as unknown as MockWebSocket).onopen?.();
+    jest.advanceTimersByTime(MOBILE_TERMINAL_KEEPALIVE_MS * 2);
+
+    expect(statuses).toEqual(["connecting"]);
+    expect((ws as unknown as MockWebSocket).closed).toBe(true);
+    expect(parseSentFrames(ws)).toEqual([]);
+  });
 });
+
+function parseSentFrames(ws: WebSocket): unknown[] {
+  return (ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame));
+}

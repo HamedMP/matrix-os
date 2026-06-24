@@ -4,11 +4,13 @@ export { isSafeSessionId, parseTerminalSessions } from "@/lib/terminal-state";
 
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
+export const MOBILE_TERMINAL_KEEPALIVE_MS = 30_000;
 
 export type TerminalClientFrame =
   | { type: "attach"; sessionId?: string; cwd?: string; fromSeq?: number }
   | { type: "input"; data: string }
   | { type: "resize"; cols: number; rows: number }
+  | { type: "ping" }
   | { type: "detach" }
   | { type: "destroy" };
 
@@ -53,7 +55,9 @@ export class MobileTerminalClient {
 
 export class MobileTerminalConnection {
   private readonly attachFrame: TerminalClientFrame;
+  private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private attached = false;
+  private closed = false;
 
   constructor(
     private readonly ws: WebSocket,
@@ -71,12 +75,14 @@ export class MobileTerminalConnection {
     this.options.onStatus?.("connecting");
 
     this.ws.onopen = () => {
+      if (this.closed) return;
       this.attached = true;
       this.options.onStatus?.("open");
       this.sendFrame(this.attachFrame);
       if (this.options.cols && this.options.rows) {
         this.resize(this.options.cols, this.options.rows);
       }
+      this.startKeepalive();
     };
 
     this.ws.onmessage = (event) => {
@@ -89,6 +95,9 @@ export class MobileTerminalConnection {
     };
 
     this.ws.onclose = () => {
+      this.attached = false;
+      this.closed = true;
+      this.stopKeepalive();
       this.options.onStatus?.("closed");
     };
   }
@@ -118,15 +127,32 @@ export class MobileTerminalConnection {
   }
 
   close(): void {
-    if (this.ws.readyState !== WS_CONNECTING && this.ws.readyState !== WS_OPEN) return;
+    if (this.closed) return;
+    this.closed = true;
     this.attached = false;
+    this.stopKeepalive();
+    if (this.ws.readyState !== WS_CONNECTING && this.ws.readyState !== WS_OPEN) return;
     this.ws.close();
   }
 
   private sendFrame(frame: TerminalClientFrame): boolean {
+    if (this.closed) return false;
     if (this.ws.readyState !== WS_OPEN) return false;
     this.ws.send(JSON.stringify(frame));
     return true;
+  }
+
+  private startKeepalive(): void {
+    this.stopKeepalive();
+    this.keepaliveTimer = setInterval(() => {
+      this.sendFrame({ type: "ping" });
+    }, MOBILE_TERMINAL_KEEPALIVE_MS);
+  }
+
+  private stopKeepalive(): void {
+    if (!this.keepaliveTimer) return;
+    clearInterval(this.keepaliveTimer);
+    this.keepaliveTimer = null;
   }
 }
 
