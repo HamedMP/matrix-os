@@ -54,6 +54,7 @@ vi.mock("@/stores/terminal-settings", () => {
   return {
     TERMINAL_FONT_FAMILIES: ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"],
     DEFAULT_TERMINAL_THEME_ID: "dark",
+    DEFAULT_TERMINAL_APP_THEME_ID: "matrix-dark",
     useTerminalSettings,
   };
 });
@@ -291,8 +292,8 @@ describe("TerminalApp", () => {
     expect(keyBar.style.position).toBe("sticky");
     expect(keyBar.style.bottom).toBe("var(--matrix-terminal-keybar-bottom)");
     expect(keyBar.style.getPropertyValue("--matrix-terminal-keybar-bottom")).toBe("env(keyboard-inset-height, 0px)");
-    expect(keyBar.style.background).toContain("28, 32, 25");
-    expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("240, 239, 229");
+    expect(keyBar.style.background).toContain("21, 24, 15");
+    expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("201, 199, 183");
     expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy();
   });
 
@@ -344,8 +345,8 @@ describe("TerminalApp", () => {
     expect(button.textContent?.replace(/\s+/g, "")).toBe("☼Theme");
     expect(button.style.height).toBe("34px");
     expect(button.style.borderRadius).toBe("9px");
-    expect(button.style.background).toBe("rgb(32, 36, 28)");
-    expect(button.style.borderColor).toBe("rgb(45, 49, 39)");
+    expect(button.style.background).toBe("var(--terminal-chrome-control-bg)");
+    expect(button.getAttribute("style")).toContain("border-color: var(--terminal-chrome-control-border)");
 
     await act(async () => {
       fireEvent.click(button);
@@ -401,6 +402,61 @@ describe("TerminalApp", () => {
 
     expect(terminalSettingsState.setAppThemeId).toHaveBeenCalledWith("light");
     expect(terminalSettingsState.appThemeId).toBe("light");
+    expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
+    expect(saveThemeSpy).not.toHaveBeenCalled();
+  });
+
+  it("applies terminal app theme to Terminal chrome without changing shell colors", async () => {
+    terminalSettingsState.themeId = "dark";
+    const view = render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let terminalApp = screen.getByRole("application", { name: "Terminal" });
+    const contentSurface = screen.getByTestId("terminal-content-surface");
+    expect(contentSurface.style.background).toBe("rgb(12, 12, 12)");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#15180F");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#20241C");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Light Warm paper" }));
+      await Promise.resolve();
+    });
+    view.rerender(<TerminalApp />);
+
+    terminalApp = screen.getByRole("application", { name: "Terminal" });
+    expect(terminalSettingsState.appThemeId).toBe("light");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#E9E9D8");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#FFFDF7");
+    expect(screen.getByTestId("terminal-sidebar-shell").style.background).toBe("var(--terminal-drawer-bg)");
+    expect(screen.getByTestId("terminal-session-card-main").style.background).toBe("var(--terminal-drawer-card-bg)");
+    expect(screen.getByTestId("terminal-content-surface").style.background).toBe("rgb(12, 12, 12)");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix Phosphor green" }));
+      await Promise.resolve();
+    });
+    view.rerender(<TerminalApp />);
+
+    terminalApp = screen.getByRole("application", { name: "Terminal" });
+    expect(terminalSettingsState.appThemeId).toBe("matrix");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#08110B");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#0F1A12");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-fg")).toBe("#9BFFB5");
+    expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-fg)");
+    expect(screen.getByTestId("terminal-content-surface").style.background).toBe("rgb(12, 12, 12)");
     expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
     expect(saveThemeSpy).not.toHaveBeenCalled();
   });
@@ -1517,7 +1573,7 @@ describe("TerminalApp", () => {
     expect(sidebarShell.style.width).toBe("440px");
   });
 
-  it("uses the terminal app chrome background for the sessions drawer divider", async () => {
+  it("uses the terminal app drawer border for the sessions drawer divider", async () => {
     terminalSettingsState.themeId = "dark";
     terminalSettingsState.appThemeId = "matrix-dark";
 
@@ -1532,14 +1588,14 @@ describe("TerminalApp", () => {
     const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
     const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
 
-    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(28, 32, 25)");
-    expect(resizeHandle.style.background).toBe("rgb(28, 32, 25)");
+    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(36, 39, 31)");
+    expect(resizeHandle.style.background).toBe("rgb(36, 39, 31)");
     expect(resizeHandle.style.background).not.toContain("transparent");
     expect(resizeHandle.style.background).not.toContain("197, 196, 180");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
-    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(28, 32, 25)");
+    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(36, 39, 31)");
   });
 
   it("stops terminal drawer resizing when the drag is canceled", async () => {
@@ -1751,7 +1807,7 @@ describe("TerminalApp", () => {
     expect(matrixRailDot.style.top).toBe("-3px");
     expect(matrixRailDot.style.right).toBe("-3px");
     expect(matrixRailDot.style.borderTopWidth).toBe("2px");
-    expect(matrixRailDot.style.borderTopColor).toBe("rgb(233, 233, 216)");
+    expect(matrixRailDot.getAttribute("style")).toContain("border-color: var(--terminal-drawer-bg)");
     expect(matrixRailDot.style.zIndex).toBe("1");
     const newSessionIcon = screen.getByTestId("terminal-collapsed-new-session-icon");
     expect(newSessionIcon.getAttribute("width")).toBe("18");

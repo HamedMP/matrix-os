@@ -48,10 +48,12 @@ const TOOLBAR_BTN_BASE_STYLE: CSSProperties = {
 
 const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
   alignItems: "center",
-  background: "#20241C",
-  border: "1px solid #2D3127",
+  background: "var(--terminal-chrome-control-bg)",
+  borderColor: "var(--terminal-chrome-control-border)",
   borderRadius: 9,
-  color: "#C9C7B7",
+  borderStyle: "solid",
+  borderWidth: 1,
+  color: "var(--terminal-chrome-control-fg)",
   cursor: "pointer",
   display: "flex",
   fontFamily: "Inter, system-ui, sans-serif",
@@ -196,11 +198,11 @@ function getChangeShellThemeIconStyle(mobile: boolean): CSSProperties {
 const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
   alignItems: "center",
   alignSelf: "center",
-  background: "#DDEDD6",
-  border: "1px solid #C9E1C2",
+  background: "var(--terminal-drawer-toggle-bg)",
+  border: "1px solid var(--terminal-drawer-toggle-border)",
   borderRadius: 999,
   boxSizing: "border-box",
-  color: "#24452A",
+  color: "var(--terminal-drawer-toggle-fg)",
   cursor: "pointer",
   display: "flex",
   flexShrink: 0,
@@ -217,11 +219,11 @@ const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
 const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
   alignItems: "center",
   alignSelf: "center",
-  background: "#D8D7C7",
-  border: "1px solid #C8C7B7",
+  background: "var(--terminal-drawer-toggle-off-bg)",
+  border: "1px solid var(--terminal-drawer-toggle-off-border)",
   borderRadius: 999,
   boxSizing: "border-box",
-  color: "#77786E",
+  color: "var(--terminal-drawer-toggle-off-fg)",
   cursor: "pointer",
   display: "flex",
   flexShrink: 0,
@@ -305,6 +307,294 @@ function getTerminalAppThemeOption(appThemeId: TerminalAppThemeId): TerminalAppT
   throw new Error("Default terminal app theme is not configured");
 }
 
+interface TerminalAppChromeTheme {
+  windowBackground: string;
+  windowBorder: string;
+  chromeBackground: string;
+  chromeBorder: string;
+  chromeForeground: string;
+  chromeActive: string;
+  chromeMuted: string;
+  chromeSubtle: string;
+  chromeControlBackground: string;
+  chromeControlBorder: string;
+  chromeControlForeground: string;
+  chromeBadgeBackground: string;
+  chromeBadgeBorder: string;
+  chromeAccent: string;
+  bodyBackground: string;
+  drawerBackground: string;
+  drawerBorder: string;
+  drawerForeground: string;
+  drawerMuted: string;
+  drawerSubtle: string;
+  drawerBrandBackground: string;
+  drawerBrandForeground: string;
+  drawerPrimaryButtonBackground: string;
+  drawerPrimaryButtonForeground: string;
+  drawerButtonBackground: string;
+  drawerButtonBorder: string;
+  drawerButtonForeground: string;
+  drawerSearchBackground: string;
+  drawerSearchBorder: string;
+  drawerSearchIcon: string;
+  drawerCardBackground: string;
+  drawerCardMutedBackground: string;
+  drawerCardBorder: string;
+  drawerCardMutedBorder: string;
+  drawerSelectedBorder: string;
+  drawerSelectedRing: string;
+  drawerSelectedStripe: string;
+  drawerCardShadow: string;
+  drawerCardMutedShadow: string;
+  drawerActionBackground: string;
+  drawerActionBorder: string;
+  drawerActionForeground: string;
+  drawerWarningBackground: string;
+  drawerWarningForeground: string;
+  drawerToggleBackground: string;
+  drawerToggleBorder: string;
+  drawerToggleForeground: string;
+  drawerToggleKnob: string;
+  drawerToggleOffBackground: string;
+  drawerToggleOffBorder: string;
+  drawerToggleOffForeground: string;
+  drawerToggleOffKnob: string;
+  drawerDropLine: string;
+}
+
+type TerminalAppChromeCssVars = CSSProperties & Record<`--${string}`, string>;
+
+const TERMINAL_APP_CHROME_THEMES: Record<TerminalAppThemeId, TerminalAppChromeTheme> = {
+  light: {
+    windowBackground: "#171A13",
+    windowBorder: "#32342E",
+    chromeBackground: "#15180F",
+    chromeBorder: "#24271F",
+    chromeForeground: "#C9C7B7",
+    chromeActive: "#F0EFE5",
+    chromeMuted: "#858578",
+    chromeSubtle: "#5F6258",
+    chromeControlBackground: "#20241C",
+    chromeControlBorder: "#2D3127",
+    chromeControlForeground: "#C9C7B7",
+    chromeBadgeBackground: "#20241C",
+    chromeBadgeBorder: "#24271F",
+    chromeAccent: "#CF7835",
+    bodyBackground: "#1C2019",
+    drawerBackground: "#E9E9D8",
+    drawerBorder: "#D6D5C4",
+    drawerForeground: "#31362D",
+    drawerMuted: "#858578",
+    drawerSubtle: "#A09F92",
+    drawerBrandBackground: "#465243",
+    drawerBrandForeground: "#F8F7EF",
+    drawerPrimaryButtonBackground: "#465243",
+    drawerPrimaryButtonForeground: "#F8F7EF",
+    drawerButtonBackground: "#FFFDF7",
+    drawerButtonBorder: "#D6D5C4",
+    drawerButtonForeground: "#6F7167",
+    drawerSearchBackground: "#FFFDF7",
+    drawerSearchBorder: "#D6D5C4",
+    drawerSearchIcon: "#A09F92",
+    drawerCardBackground: "#FFFDF7",
+    drawerCardMutedBackground: "#E2E2D0",
+    drawerCardBorder: "#D6D5C4",
+    drawerCardMutedBorder: "#D4D2C1",
+    drawerSelectedBorder: "#9CB77A",
+    drawerSelectedRing: "rgba(156,183,122,0.28)",
+    drawerSelectedStripe: "#465243",
+    drawerCardShadow: "rgba(39,40,34,0.13)",
+    drawerCardMutedShadow: "transparent",
+    drawerActionBackground: "#F0EFE5",
+    drawerActionBorder: "#E4E2D2",
+    drawerActionForeground: "#8A8B7C",
+    drawerWarningBackground: "#F6EAC9",
+    drawerWarningForeground: "#8F6712",
+    drawerToggleBackground: "#DDEDD6",
+    drawerToggleBorder: "#C9E1C2",
+    drawerToggleForeground: "#24452A",
+    drawerToggleKnob: "#4F8A55",
+    drawerToggleOffBackground: "#D8D7C7",
+    drawerToggleOffBorder: "#C8C7B7",
+    drawerToggleOffForeground: "#77786E",
+    drawerToggleOffKnob: "#F7F6EC",
+    drawerDropLine: "#D8792C",
+  },
+  "matrix-dark": {
+    windowBackground: "#171A13",
+    windowBorder: "#32342E",
+    chromeBackground: "#15180F",
+    chromeBorder: "#24271F",
+    chromeForeground: "#C9C7B7",
+    chromeActive: "#F0EFE5",
+    chromeMuted: "#858578",
+    chromeSubtle: "#5F6258",
+    chromeControlBackground: "#20241C",
+    chromeControlBorder: "#2D3127",
+    chromeControlForeground: "#C9C7B7",
+    chromeBadgeBackground: "#20241C",
+    chromeBadgeBorder: "#24271F",
+    chromeAccent: "#CF7835",
+    bodyBackground: "#1C2019",
+    drawerBackground: "#15180F",
+    drawerBorder: "#24271F",
+    drawerForeground: "#F0EFE5",
+    drawerMuted: "#858578",
+    drawerSubtle: "#6F7167",
+    drawerBrandBackground: "#465243",
+    drawerBrandForeground: "#F8F7EF",
+    drawerPrimaryButtonBackground: "#465243",
+    drawerPrimaryButtonForeground: "#F8F7EF",
+    drawerButtonBackground: "#20241C",
+    drawerButtonBorder: "#2D3127",
+    drawerButtonForeground: "#858578",
+    drawerSearchBackground: "#20241C",
+    drawerSearchBorder: "#2D3127",
+    drawerSearchIcon: "#6F7167",
+    drawerCardBackground: "#20241C",
+    drawerCardMutedBackground: "#171A13",
+    drawerCardBorder: "#2D3127",
+    drawerCardMutedBorder: "#24271F",
+    drawerSelectedBorder: "#2D3127",
+    drawerSelectedRing: "rgba(156,183,122,0.18)",
+    drawerSelectedStripe: "#465243",
+    drawerCardShadow: "rgba(0,0,0,0.22)",
+    drawerCardMutedShadow: "transparent",
+    drawerActionBackground: "#20241C",
+    drawerActionBorder: "#2D3127",
+    drawerActionForeground: "#858578",
+    drawerWarningBackground: "#2A2008",
+    drawerWarningForeground: "#E0A12E",
+    drawerToggleBackground: "#1F3325",
+    drawerToggleBorder: "#2E4A34",
+    drawerToggleForeground: "#9CB77A",
+    drawerToggleKnob: "#5FB85F",
+    drawerToggleOffBackground: "#20241C",
+    drawerToggleOffBorder: "#2D3127",
+    drawerToggleOffForeground: "#6F7167",
+    drawerToggleOffKnob: "#5A5D50",
+    drawerDropLine: "#CF7835",
+  },
+  matrix: {
+    windowBackground: "#07100A",
+    windowBorder: "#16271B",
+    chromeBackground: "#070D09",
+    chromeBorder: "#16271B",
+    chromeForeground: "#5BF08A",
+    chromeActive: "#5BF08A",
+    chromeMuted: "#4E8C61",
+    chromeSubtle: "#2E5B39",
+    chromeControlBackground: "#0E1810",
+    chromeControlBorder: "#1C3324",
+    chromeControlForeground: "#5BF08A",
+    chromeBadgeBackground: "#0E1810",
+    chromeBadgeBorder: "#1C3324",
+    chromeAccent: "#CF7835",
+    bodyBackground: "#1C2019",
+    drawerBackground: "#08110B",
+    drawerBorder: "#16271B",
+    drawerForeground: "#9BFFB5",
+    drawerMuted: "#4E8C61",
+    drawerSubtle: "#2F7A44",
+    drawerBrandBackground: "#0E3A1C",
+    drawerBrandForeground: "#5BF08A",
+    drawerPrimaryButtonBackground: "#0E3A1C",
+    drawerPrimaryButtonForeground: "#5BF08A",
+    drawerButtonBackground: "#0E1810",
+    drawerButtonBorder: "#1C3324",
+    drawerButtonForeground: "#4E8C61",
+    drawerSearchBackground: "#0C150E",
+    drawerSearchBorder: "#1C3324",
+    drawerSearchIcon: "#2F7A44",
+    drawerCardBackground: "#0F1A12",
+    drawerCardMutedBackground: "#0B130D",
+    drawerCardBorder: "#1C3324",
+    drawerCardMutedBorder: "#16271B",
+    drawerSelectedBorder: "#1C3324",
+    drawerSelectedRing: "rgba(57,255,106,0.18)",
+    drawerSelectedStripe: "#39FF6A",
+    drawerCardShadow: "rgba(0,0,0,0.22)",
+    drawerCardMutedShadow: "transparent",
+    drawerActionBackground: "#0E1810",
+    drawerActionBorder: "#1C3324",
+    drawerActionForeground: "#4E8C61",
+    drawerWarningBackground: "#2A2008",
+    drawerWarningForeground: "#E0A12E",
+    drawerToggleBackground: "#0F3A1E",
+    drawerToggleBorder: "#1F5A30",
+    drawerToggleForeground: "#9BFFB5",
+    drawerToggleKnob: "#39FF6A",
+    drawerToggleOffBackground: "#0E1810",
+    drawerToggleOffBorder: "#1C3324",
+    drawerToggleOffForeground: "#4E8C61",
+    drawerToggleOffKnob: "#244E2D",
+    drawerDropLine: "#39FF6A",
+  },
+};
+
+function getTerminalAppChromeTheme(appThemeId: TerminalAppThemeId): TerminalAppChromeTheme {
+  return TERMINAL_APP_CHROME_THEMES[appThemeId] ?? TERMINAL_APP_CHROME_THEMES[DEFAULT_TERMINAL_APP_THEME_ID];
+}
+
+function getTerminalAppChromeCssVars(theme: TerminalAppChromeTheme): TerminalAppChromeCssVars {
+  return {
+    "--terminal-app-window-bg": theme.windowBackground,
+    "--terminal-app-window-border": theme.windowBorder,
+    "--terminal-chrome-bg": theme.chromeBackground,
+    "--terminal-chrome-border": theme.chromeBorder,
+    "--terminal-chrome-fg": theme.chromeForeground,
+    "--terminal-chrome-active": theme.chromeActive,
+    "--terminal-chrome-muted": theme.chromeMuted,
+    "--terminal-chrome-subtle": theme.chromeSubtle,
+    "--terminal-chrome-control-bg": theme.chromeControlBackground,
+    "--terminal-chrome-control-border": theme.chromeControlBorder,
+    "--terminal-chrome-control-fg": theme.chromeControlForeground,
+    "--terminal-chrome-badge-bg": theme.chromeBadgeBackground,
+    "--terminal-chrome-badge-border": theme.chromeBadgeBorder,
+    "--terminal-chrome-accent": theme.chromeAccent,
+    "--terminal-app-body-bg": theme.bodyBackground,
+    "--terminal-drawer-bg": theme.drawerBackground,
+    "--terminal-drawer-border": theme.drawerBorder,
+    "--terminal-drawer-fg": theme.drawerForeground,
+    "--terminal-drawer-muted": theme.drawerMuted,
+    "--terminal-drawer-subtle": theme.drawerSubtle,
+    "--terminal-drawer-brand-bg": theme.drawerBrandBackground,
+    "--terminal-drawer-brand-fg": theme.drawerBrandForeground,
+    "--terminal-drawer-primary-button-bg": theme.drawerPrimaryButtonBackground,
+    "--terminal-drawer-primary-button-fg": theme.drawerPrimaryButtonForeground,
+    "--terminal-drawer-button-bg": theme.drawerButtonBackground,
+    "--terminal-drawer-button-border": theme.drawerButtonBorder,
+    "--terminal-drawer-button-fg": theme.drawerButtonForeground,
+    "--terminal-drawer-search-bg": theme.drawerSearchBackground,
+    "--terminal-drawer-search-border": theme.drawerSearchBorder,
+    "--terminal-drawer-search-icon": theme.drawerSearchIcon,
+    "--terminal-drawer-card-bg": theme.drawerCardBackground,
+    "--terminal-drawer-card-muted-bg": theme.drawerCardMutedBackground,
+    "--terminal-drawer-card-border": theme.drawerCardBorder,
+    "--terminal-drawer-card-muted-border": theme.drawerCardMutedBorder,
+    "--terminal-drawer-selected-border": theme.drawerSelectedBorder,
+    "--terminal-drawer-selected-ring": theme.drawerSelectedRing,
+    "--terminal-drawer-selected-stripe": theme.drawerSelectedStripe,
+    "--terminal-drawer-card-shadow": theme.drawerCardShadow,
+    "--terminal-drawer-card-muted-shadow": theme.drawerCardMutedShadow,
+    "--terminal-drawer-action-bg": theme.drawerActionBackground,
+    "--terminal-drawer-action-border": theme.drawerActionBorder,
+    "--terminal-drawer-action-fg": theme.drawerActionForeground,
+    "--terminal-drawer-warning-bg": theme.drawerWarningBackground,
+    "--terminal-drawer-warning-fg": theme.drawerWarningForeground,
+    "--terminal-drawer-toggle-bg": theme.drawerToggleBackground,
+    "--terminal-drawer-toggle-border": theme.drawerToggleBorder,
+    "--terminal-drawer-toggle-fg": theme.drawerToggleForeground,
+    "--terminal-drawer-toggle-knob": theme.drawerToggleKnob,
+    "--terminal-drawer-toggle-off-bg": theme.drawerToggleOffBackground,
+    "--terminal-drawer-toggle-off-border": theme.drawerToggleOffBorder,
+    "--terminal-drawer-toggle-off-fg": theme.drawerToggleOffForeground,
+    "--terminal-drawer-toggle-off-knob": theme.drawerToggleOffKnob,
+    "--terminal-drawer-drop-line": theme.drawerDropLine,
+  };
+}
+
 const TAB_ITEM_BASE_STYLE: CSSProperties = {
   borderRadius: 6,
   fontSize: 12,
@@ -376,10 +666,10 @@ const SESSION_ACTIONS_STYLE: CSSProperties = {
   width: 58,
 };
 const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
-  background: "#F0EFE5",
-  border: "1px solid #E4E2D2",
+  background: "var(--terminal-drawer-action-bg)",
+  border: "1px solid var(--terminal-drawer-action-border)",
   borderRadius: 6,
-  color: "#8A8B7C",
+  color: "var(--terminal-drawer-action-fg)",
   flexShrink: 0,
   height: 22,
   pointerEvents: "auto",
@@ -387,8 +677,8 @@ const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
   width: 22,
 };
 const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
-  background: "#F0EFE5",
-  border: "1px solid #E4E2D2",
+  background: "var(--terminal-drawer-action-bg)",
+  border: "1px solid var(--terminal-drawer-action-border)",
   borderRadius: 6,
   cursor: "pointer",
   flexShrink: 0,
@@ -402,10 +692,10 @@ const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
   width: 24,
 };
 const SESSION_CLOSE_BUTTON_STYLE: CSSProperties = {
-  background: "#F0EFE5",
-  border: "1px solid #E4E2D2",
+  background: "var(--terminal-drawer-action-bg)",
+  border: "1px solid var(--terminal-drawer-action-border)",
   borderRadius: 6,
-  color: "#77786E",
+  color: "var(--terminal-drawer-action-fg)",
   fontSize: 15,
   height: 24,
   lineHeight: "20px",
@@ -841,7 +1131,8 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const themeId = useTerminalSettings((s) => s.themeId);
   const appThemeId = useTerminalSettings((s) => s.appThemeId);
   const appThemeOption = getTerminalAppThemeOption(appThemeId);
-  const appTheme = appThemeOption.theme;
+  const appChromeTheme = getTerminalAppChromeTheme(appThemeOption.id);
+  const appChromeCssVars = getTerminalAppChromeCssVars(appChromeTheme);
 
   // Keep terminal content aligned with the active shell theme. App chrome is
   // intentionally terminal-scoped and uses the separate app theme below.
@@ -850,9 +1141,9 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     themeId === "system"
       ? (theme.colors.background || "var(--background)")
       : terminalPreset?.background ?? "var(--background)";
-  const terminalChromeBackground = appTheme.colors.background || "var(--background)";
-  const terminalChromeForeground = appTheme.colors.foreground || "var(--foreground)";
-  const terminalChromeAccent = appTheme.colors.primary || "var(--primary)";
+  const terminalChromeBackground = appChromeTheme.chromeBackground;
+  const terminalChromeForeground = appChromeTheme.chromeForeground;
+  const terminalChromeAccent = appChromeTheme.chromeAccent;
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
@@ -1362,7 +1653,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarWidth, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
-    terminalBackground: terminalChromeBackground,
+    terminalBackground: appChromeTheme.drawerBorder,
     addTab: (...args: Parameters<typeof addTab>) => {
       markTerminalLayoutDirty();
       return addTab(...args);
@@ -1423,7 +1714,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     <div
       ref={containerRef}
       className="flex flex-col h-full w-full"
-      style={{ background: terminalChromeBackground, color: terminalChromeForeground }}
+      style={{
+        ...appChromeCssVars,
+        background: "var(--terminal-app-window-bg)",
+        color: "var(--terminal-chrome-fg)",
+      }}
       role="application"
       aria-label="Terminal"
       onKeyDown={handleKeyDown}
@@ -1431,7 +1726,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       <style>{SHELL_STATUS_DOT_CSS}</style>
       <TerminalAppContext.Provider value={storeApi}>
         <TerminalWorkspaceChrome />
-        <div className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}>
+        <div
+          className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
+          style={{ background: "var(--terminal-app-body-bg)" }}
+        >
           <LocalTerminalSidebar />
           {activeTab ? (
             <div
@@ -2194,9 +2492,9 @@ function TerminalWorkspaceChrome() {
       onDoubleClick={handleDragDoubleClick}
       style={{
         alignItems: "center",
-        background: "#15180F",
-        borderBottom: "1px solid #24271F",
-        color: "#C9C7B7",
+        background: "var(--terminal-chrome-bg)",
+        borderBottom: "1px solid var(--terminal-chrome-border)",
+        color: "var(--terminal-chrome-fg)",
         display: "flex",
         height: ctx.mobile ? 52 : 54,
         justifyContent: "space-between",
@@ -2226,7 +2524,7 @@ function TerminalWorkspaceChrome() {
                 onClick={ctx.windowControls?.toggleFullscreen}
               />
             </div>
-            <span style={{ background: "#2D3127", height: 22, width: 1 }} />
+            <span style={{ background: "var(--terminal-chrome-control-border)", height: 22, width: 1 }} />
           </>
         )}
         {ctx.mobile ? (
@@ -2238,7 +2536,7 @@ function TerminalWorkspaceChrome() {
               alignItems: "center",
               background: "transparent",
               border: 0,
-              color: "#C9C7B7",
+              color: "var(--terminal-chrome-fg)",
               cursor: "pointer",
               display: "flex",
               height: 40,
@@ -2250,20 +2548,20 @@ function TerminalWorkspaceChrome() {
           </button>
         ) : null}
         <div className="flex min-w-0 items-center" style={{ gap: 10, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
-          <span style={{ color: "#858578", fontSize: 15, lineHeight: "20px" }}>matrix-os</span>
-          {!ctx.mobile && <span style={{ color: "#5F6258", fontSize: 15 }}>/</span>}
-          <span className="truncate" style={{ color: "#F0EFE5", fontSize: 15, fontWeight: 700, lineHeight: "20px" }}>
+          <span style={{ color: "var(--terminal-chrome-muted)", fontSize: 15, lineHeight: "20px" }}>matrix-os</span>
+          {!ctx.mobile && <span style={{ color: "var(--terminal-chrome-subtle)", fontSize: 15 }}>/</span>}
+          <span className="truncate" style={{ color: "var(--terminal-chrome-active)", fontSize: 15, fontWeight: 700, lineHeight: "20px" }}>
             {activeName}
           </span>
           {!ctx.mobile && (
             <span
               className="inline-flex shrink-0 items-center"
               style={{
-                background: "#20241C",
-                border: "1px solid #24271F",
+                background: "var(--terminal-chrome-badge-bg)",
+                border: "1px solid var(--terminal-chrome-badge-border)",
                 borderRadius: 8,
                 boxSizing: "border-box",
-                color: "#858578",
+                color: "var(--terminal-chrome-muted)",
                 fontSize: 11,
                 gap: 5,
                 height: 22,
@@ -2292,7 +2590,7 @@ function TerminalWorkspaceChrome() {
             >
               <IconSplitV />
             </ChromeIconButton>
-            <span style={{ background: "#2D3127", height: 22, margin: "0 4px", width: 1 }} />
+            <span style={{ background: "var(--terminal-chrome-control-border)", height: 22, margin: "0 4px", width: 1 }} />
           </>
         )}
         <ThemePickerButton />
@@ -2353,10 +2651,10 @@ function ChromeIconButton({
       onMouseDown={(event) => event.stopPropagation()}
       className="flex items-center justify-center"
       style={{
-        background: "#20241C",
-        border: "1px solid #2D3127",
+        background: "var(--terminal-chrome-control-bg)",
+        border: "1px solid var(--terminal-chrome-control-border)",
         borderRadius: 9,
-        color: "#C9C7B7",
+        color: "var(--terminal-chrome-control-fg)",
         cursor: "pointer",
         height: 32,
         width: 32,
@@ -3675,10 +3973,10 @@ function LocalTerminalSidebar() {
         data-testid="terminal-sidebar-shell"
         className="shrink-0 overflow-hidden"
         style={{
-          background: "#E9E9D8",
+          background: "var(--terminal-drawer-bg)",
           borderRight: ctx.mobile ? "none" : `1px solid ${terminalDividerColor}`,
-          borderBottom: ctx.mobile ? "1px solid #D6D5C4" : "none",
-          color: "#31362D",
+          borderBottom: ctx.mobile ? "1px solid var(--terminal-drawer-border)" : "none",
+          color: "var(--terminal-drawer-fg)",
           display: "flex",
           flexDirection: "column",
           maxHeight: ctx.mobile ? "52%" : undefined,
@@ -3693,7 +3991,8 @@ function LocalTerminalSidebar() {
       <div
         className="shrink-0"
         style={{
-          borderBottom: "1px solid #D6D5C4",
+          background: "var(--terminal-drawer-bg)",
+          borderBottom: "1px solid var(--terminal-drawer-border)",
           display: "flex",
           flexDirection: "column",
           gap: 18,
@@ -3705,9 +4004,9 @@ function LocalTerminalSidebar() {
             <div
               className="flex shrink-0 items-center justify-center"
               style={{
-                background: "#465243",
+                background: "var(--terminal-drawer-brand-bg)",
                 borderRadius: ctx.mobile ? 12 : 9,
-                color: "#F8F7EF",
+                color: "var(--terminal-drawer-brand-fg)",
                 fontFamily: "Orbitron, system-ui, sans-serif",
                 fontSize: ctx.mobile ? 17 : 15,
                 fontWeight: 800,
@@ -3718,11 +4017,11 @@ function LocalTerminalSidebar() {
               M
             </div>
             <div className="min-w-0">
-              <div style={{ color: "#3E4339", fontFamily: "Orbitron, system-ui, sans-serif", fontSize: 20, fontWeight: 800, lineHeight: "24px" }}>
+              <div style={{ color: "var(--terminal-drawer-fg)", fontFamily: "Orbitron, system-ui, sans-serif", fontSize: 20, fontWeight: 800, lineHeight: "24px" }}>
                 matrixos
               </div>
               {!ctx.mobile ? (
-                <div className="truncate" style={{ color: "#858578", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
+                <div className="truncate" style={{ color: "var(--terminal-drawer-muted)", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
                   {ctx.sidebarSelectedPath ? formatCwd(ctx.sidebarSelectedPath) : "~/projects"}
                 </div>
               ) : null}
@@ -3739,10 +4038,10 @@ function LocalTerminalSidebar() {
                 disabled={creatingShell}
                 className="flex items-center justify-center"
                 style={{
-                  background: "#465243",
+                  background: "var(--terminal-drawer-primary-button-bg)",
                   border: 0,
                   borderRadius: ctx.mobile ? 13 : 10,
-                  color: "#F8F7EF",
+                  color: "var(--terminal-drawer-primary-button-fg)",
                   cursor: creatingShell ? "not-allowed" : "pointer",
                   fontSize: 25,
                   height: ctx.mobile ? 44 : 40,
@@ -3772,10 +4071,10 @@ function LocalTerminalSidebar() {
                   disabled={shellsLoading}
                   className="flex items-center justify-center"
                   style={{
-                    background: "#FFFDF7",
-                    border: "1px solid #D6D5C4",
+                    background: "var(--terminal-drawer-button-bg)",
+                    border: "1px solid var(--terminal-drawer-button-border)",
                     borderRadius: 10,
-                    color: "#6F7167",
+                    color: "var(--terminal-drawer-button-fg)",
                     cursor: shellsLoading ? "not-allowed" : "pointer",
                     height: 40,
                     opacity: shellsLoading ? 0.72 : 1,
@@ -3795,10 +4094,10 @@ function LocalTerminalSidebar() {
                   onClick={() => ctx.setSidebarOpen(false)}
                   className="flex items-center justify-center"
                   style={{
-                    background: "#FFFDF7",
-                    border: "1px solid #D6D5C4",
+                    background: "var(--terminal-drawer-button-bg)",
+                    border: "1px solid var(--terminal-drawer-button-border)",
                     borderRadius: 10,
-                    color: "#6F7167",
+                    color: "var(--terminal-drawer-button-fg)",
                     cursor: "pointer",
                     height: 40,
                     width: 40,
@@ -3813,15 +4112,15 @@ function LocalTerminalSidebar() {
         <div
           className="flex items-center"
           style={{
-            background: "#FFFDF7",
-            border: "1px solid #D6D5C4",
+            background: "var(--terminal-drawer-search-bg)",
+            border: "1px solid var(--terminal-drawer-search-border)",
             borderRadius: ctx.mobile ? 14 : 10,
             gap: 10,
             height: ctx.mobile ? 48 : 40,
             padding: "0 14px",
           }}
         >
-          <SearchIcon size={18} strokeWidth={1.9} color="#A09F92" />
+          <SearchIcon size={18} strokeWidth={1.9} color="var(--terminal-drawer-search-icon)" />
           <input
             aria-label="Search sessions"
             value={filter}
@@ -3830,7 +4129,7 @@ function LocalTerminalSidebar() {
             style={{
               background: "transparent",
               border: 0,
-              color: "#31362D",
+              color: "var(--terminal-drawer-fg)",
               flex: 1,
               fontSize: ctx.mobile ? 16 : 15,
               minWidth: 0,
@@ -3841,13 +4140,13 @@ function LocalTerminalSidebar() {
 
       <div className="min-h-0 flex-1 overflow-y-auto" style={{ display: "flex", flexDirection: "column", gap: 18, padding: ctx.mobile ? 20 : 18 }}>
         {shellsLoading && (
-          <div style={{ color: "#858578", fontSize: 12, padding: "24px 0", textAlign: "center" }}>Loading sessions...</div>
+          <div style={{ color: "var(--terminal-drawer-muted)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>Loading sessions...</div>
         )}
         {!shellsLoading && shellsError && (
           <div style={{ color: "#8F6712", fontSize: 12, padding: "24px 0", textAlign: "center" }}>{shellsError}</div>
         )}
         {!shellsLoading && !shellsError && !creatingShell && renderedShells.length === 0 && (
-          <div style={{ color: "#858578", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
+          <div style={{ color: "var(--terminal-drawer-muted)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
             {filter ? "No sessions match" : "No sessions yet"}
           </div>
         )}
@@ -3966,10 +4265,10 @@ function NewSessionMenu({
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
       style={{
-        background: "#FFFDF7",
-        border: "1px solid #D6D5C4",
+        background: "var(--terminal-drawer-card-bg)",
+        border: "1px solid var(--terminal-drawer-card-border)",
         borderRadius: 10,
-        boxShadow: "0 20px 45px rgba(39, 40, 34, 0.18)",
+        boxShadow: "0 20px 45px var(--terminal-drawer-card-shadow)",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
@@ -3986,7 +4285,7 @@ function NewSessionMenu({
       <div style={{ paddingBottom: 2 }}>
         <div
           style={{
-            color: "#A09F92",
+            color: "var(--terminal-drawer-subtle)",
             fontFamily: "Inter, system-ui, sans-serif",
             fontSize: 12,
             fontWeight: 800,
@@ -4007,7 +4306,7 @@ function NewSessionMenu({
             aria-hidden="true"
             size={20}
             strokeWidth={2.1}
-            style={{ color: "#465243", flexShrink: 0 }}
+            style={{ color: "var(--terminal-drawer-selected-stripe)", flexShrink: 0 }}
           />
         )}
         onClick={onCreateShell}
@@ -4021,7 +4320,7 @@ function NewSessionMenu({
       <NewSessionMenuItem
         label="Codex"
         shortcut="⌘⇧X"
-        icon={<span aria-hidden="true" style={{ background: "#465243", borderRadius: 5, flexShrink: 0, height: 18, width: 18 }} />}
+        icon={<span aria-hidden="true" style={{ background: "var(--terminal-drawer-selected-stripe)", borderRadius: 5, flexShrink: 0, height: 18, width: 18 }} />}
         onClick={onCreateCodex}
       />
     </div>
@@ -4048,11 +4347,11 @@ function NewSessionMenuItem({
       onClick={onClick}
       style={{
         alignItems: "center",
-        background: active ? "#F0EFE5" : "transparent",
+        background: active ? "var(--terminal-drawer-action-bg)" : "transparent",
         border: 0,
         borderRadius: active ? 8 : 6,
         boxSizing: "border-box",
-        color: "#31362D",
+        color: "var(--terminal-drawer-fg)",
         cursor: "pointer",
         display: "flex",
         flexShrink: 0,
@@ -4062,10 +4361,10 @@ function NewSessionMenuItem({
         textAlign: "left",
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = "#F0EFE5";
+        event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = active ? "#F0EFE5" : "transparent";
+        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : "transparent";
       }}
     >
       {icon}
@@ -4083,7 +4382,7 @@ function NewSessionMenuItem({
       </span>
       <span
         style={{
-          color: "#A09F92",
+          color: "var(--terminal-drawer-subtle)",
           flex: "0 0 46px",
           fontFamily: "var(--font-mono, ui-monospace, monospace)",
           fontSize: 12,
@@ -4481,9 +4780,9 @@ function CollapsedSessionsRail({
       className="shrink-0"
       style={{
         alignItems: "center",
-        background: "#E9E9D8",
+        background: "var(--terminal-drawer-bg)",
         borderRight: `1px solid ${terminalDividerColor}`,
-        color: "#31362D",
+        color: "var(--terminal-drawer-fg)",
         display: "flex",
         flexDirection: "column",
         gap: 12,
@@ -4495,9 +4794,9 @@ function CollapsedSessionsRail({
         data-testid="terminal-collapsed-brand"
         className="flex items-center justify-center"
         style={{
-          background: "#465243",
+          background: "var(--terminal-drawer-brand-bg)",
           borderRadius: 11,
-          color: "#F8F7EF",
+          color: "var(--terminal-drawer-brand-fg)",
           flexShrink: 0,
           fontFamily: "Orbitron, system-ui, sans-serif",
           fontSize: 15,
@@ -4526,11 +4825,11 @@ function CollapsedSessionsRail({
           />
         ) : null}
       </div>
-      <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
+      <div style={{ background: "var(--terminal-drawer-border)", height: 1, width: 34 }} />
       <CollapsedRailGroup shells={activeShells} selectedShellName={selectedShellName} onOpen={onOpen} />
       {backgroundShells.length > 0 && (
         <>
-          <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
+          <div style={{ background: "var(--terminal-drawer-border)", height: 1, width: 34 }} />
           <CollapsedRailGroup shells={backgroundShells} selectedShellName={selectedShellName} onOpen={onOpen} muted />
         </>
       )}
@@ -4566,11 +4865,11 @@ function CollapsedRailGroup({
             onClick={() => onOpen(shell)}
             className="relative flex items-center justify-center"
             style={{
-              background: selected ? "#FFFDF7" : muted ? "#E2E2D0" : "#FFFDF7",
-              border: `1px solid ${selected ? "#9CB77A" : muted ? "#D4D2C1" : "#D6D5C4"}`,
+              background: selected ? "var(--terminal-drawer-card-bg)" : muted ? "var(--terminal-drawer-card-muted-bg)" : "var(--terminal-drawer-card-bg)",
+              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : muted ? "var(--terminal-drawer-card-muted-border)" : "var(--terminal-drawer-card-border)"}`,
               borderRadius: 11,
-              boxShadow: selected ? "0 0 0 5px rgba(156,183,122,0.30), 0 8px 18px rgba(39,40,34,0.16)" : "none",
-              color: muted ? "#858578" : "#31362D",
+              boxShadow: selected ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
+              color: muted ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
               cursor: "pointer",
               flexShrink: 0,
               fontFamily: "var(--font-mono, ui-monospace, monospace)",
@@ -4590,7 +4889,9 @@ function CollapsedRailGroup({
               data-testid={`terminal-session-status-${shell.name}`}
               style={{
                 ...getShellStatusDotStyle(shell),
-                border: "2px solid #E9E9D8",
+                borderColor: "var(--terminal-drawer-bg)",
+                borderStyle: "solid",
+                borderWidth: 2,
                 borderRadius: 999,
                 boxSizing: "border-box",
                 height: 12,
@@ -4634,10 +4935,10 @@ function CollapsedRailButton({
       disabled={disabled}
       className="flex items-center justify-center"
       style={{
-        background: strong ? "#465243" : "#FFFDF7",
-        border: strong ? "1px solid #465243" : "1px solid #D6D5C4",
+        background: strong ? "var(--terminal-drawer-primary-button-bg)" : "var(--terminal-drawer-button-bg)",
+        border: strong ? "1px solid var(--terminal-drawer-primary-button-bg)" : "1px solid var(--terminal-drawer-button-border)",
         borderRadius: strong ? 11 : 10,
-        color: strong ? "#F8F7EF" : "#6F7167",
+        color: strong ? "var(--terminal-drawer-primary-button-fg)" : "var(--terminal-drawer-button-fg)",
         cursor: disabled ? "not-allowed" : "pointer",
         flexShrink: 0,
         fontSize: strong ? 24 : 14,
@@ -4692,10 +4993,10 @@ function ShellSessionGroup({
 }) {
   return (
     <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div className="flex items-center justify-between" style={{ color: "#858578", minHeight: 22 }}>
+      <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
         <div className="flex items-center" style={{ gap: 7 }}>
           {label === "Background" && (
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#858578" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--terminal-drawer-muted)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="m6 9 6 6 6-6" />
             </svg>
           )}
@@ -4709,7 +5010,7 @@ function ShellSessionGroup({
       </div>
       {pending ? <ShellPendingCard /> : null}
       {shells.length === 0 && !pending ? (
-        <div style={{ color: "#A09F92", fontSize: 12, padding: "8px 0 6px" }}>
+        <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 12, padding: "8px 0 6px" }}>
           {foreground ? "No active sessions" : "Nothing running in background"}
         </div>
       ) : shells.map((shell) => (
@@ -4742,11 +5043,11 @@ function ShellPendingCard() {
       data-testid="terminal-session-pending-row"
       style={{
         alignItems: "center",
-        background: "#FFFDF7",
-        border: "1px solid #D6D5C4",
+        background: "var(--terminal-drawer-card-bg)",
+        border: "1px solid var(--terminal-drawer-card-border)",
         borderRadius: 10,
-        boxShadow: "0 9px 22px rgba(39,40,34,0.10)",
-        color: "#858578",
+        boxShadow: "0 9px 22px var(--terminal-drawer-card-shadow)",
+        color: "var(--terminal-drawer-muted)",
         display: "grid",
         gap: 10,
         gridTemplateColumns: "12px 8px minmax(0, 1fr) 58px 46px",
@@ -4760,8 +5061,8 @@ function ShellPendingCard() {
         aria-hidden="true"
         className="terminal-refresh-icon--loading"
         style={{
-          border: "2px solid #D6D5C4",
-          borderTopColor: "#465243",
+          border: "2px solid var(--terminal-drawer-card-border)",
+          borderTopColor: "var(--terminal-drawer-selected-stripe)",
           borderRadius: "50%",
           height: 8,
           width: 8,
@@ -4781,10 +5082,10 @@ function ShellPendingCard() {
       <span />
       <span
         style={{
-          background: "#F0EFE5",
-          border: "1px solid #E4E2D2",
+          background: "var(--terminal-drawer-action-bg)",
+          border: "1px solid var(--terminal-drawer-action-border)",
           borderRadius: 999,
-          color: "#858578",
+          color: "var(--terminal-drawer-action-fg)",
           fontSize: 12,
           fontWeight: 800,
           lineHeight: "18px",
@@ -4969,14 +5270,14 @@ function ShellCard({
         }
       }}
       style={{
-        background: selected ? "#FFFDF7" : foreground ? "#FFFDF7" : "#E2E2D0",
-        border: `1px solid ${selected ? "#9CB77A" : foreground ? "#D6D5C4" : "#D4D2C1"}`,
+        background: selected ? "var(--terminal-drawer-card-bg)" : foreground ? "var(--terminal-drawer-card-bg)" : "var(--terminal-drawer-card-muted-bg)",
+        border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : foreground ? "var(--terminal-drawer-card-border)" : "var(--terminal-drawer-card-muted-border)"}`,
         borderRadius: 10,
         boxShadow: dragging
-          ? "0 18px 34px rgba(39,40,34,0.22)"
+          ? "0 18px 34px var(--terminal-drawer-card-shadow)"
           : selected
-            ? "0 0 0 5px rgba(156,183,122,0.28), 0 14px 30px rgba(39,40,34,0.18)"
-            : foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
+            ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 14px 30px var(--terminal-drawer-card-shadow)"
+            : foreground ? "0 9px 22px var(--terminal-drawer-card-shadow)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
         alignItems: "center",
         display: "grid",
@@ -4995,7 +5296,7 @@ function ShellCard({
           aria-hidden="true"
           data-testid={`terminal-session-drop-line-${shell.name}`}
           style={{
-            background: "#D8792C",
+            background: "var(--terminal-drawer-drop-line)",
             borderRadius: 999,
             height: 3,
             left: 12,
@@ -5010,7 +5311,7 @@ function ShellCard({
         <span
           aria-hidden="true"
           style={{
-            background: "#465243",
+            background: "var(--terminal-drawer-selected-stripe)",
             borderRadius: 999,
             bottom: 12,
             left: -1,
@@ -5074,7 +5375,7 @@ function ShellCard({
           style={{
             background: "transparent",
             border: 0,
-            color: "#A09F92",
+            color: "var(--terminal-drawer-subtle)",
             cursor: showDragHandle ? "grab" : "default",
             flexShrink: 0,
             height: 18,
@@ -5131,10 +5432,10 @@ function ShellCard({
                 }
               }}
               style={{
-                background: "#FFFDF7",
-                border: "1px solid #D6D5C4",
+                background: "var(--terminal-drawer-card-bg)",
+                border: "1px solid var(--terminal-drawer-card-border)",
                 borderRadius: 6,
-                color: "#31362D",
+                color: "var(--terminal-drawer-fg)",
                 flex: "1 1 auto",
                 fontFamily: "var(--font-mono, ui-monospace, monospace)",
                 fontSize: 14,
@@ -5160,7 +5461,7 @@ function ShellCard({
               }}
               style={{
                 ...SESSION_NAME_BUTTON_BASE_STYLE,
-                color: foreground ? "#31362D" : "#5F6258",
+                color: foreground ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
               }}
             >
               {displayName}
@@ -5215,7 +5516,7 @@ function ShellCard({
                 className="flex items-center justify-center"
                 style={{
                   ...SESSION_COPY_BUTTON_STYLE,
-                  color: copyFeedback === "copied" ? "#465243" : "#8A8B7C",
+                  color: copyFeedback === "copied" ? "var(--terminal-drawer-selected-stripe)" : "var(--terminal-drawer-action-fg)",
                 }}
               >
                 {copyFeedback === "copied" ? (
@@ -5264,11 +5565,11 @@ function ShellCard({
         onMouseDown={(event) => event.stopPropagation()}
         style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
       >
-        {foreground && <span style={{ background: "#4F8A55", borderRadius: 999, height: 12, width: 12 }} />}
+        {foreground && <span style={{ background: "var(--terminal-drawer-toggle-knob)", borderRadius: 999, height: 12, width: 12 }} />}
         <span style={{ flex: "1 1 auto", fontSize: 10, fontWeight: 800, lineHeight: "10px", textAlign: "center" }}>
           {foreground ? "ON" : "BG"}
         </span>
-        {!foreground && <span style={{ background: "#F7F6EC", border: "1px solid #D6D5C4", borderRadius: 999, height: 12, width: 12 }} />}
+        {!foreground && <span style={{ background: "var(--terminal-drawer-toggle-off-knob)", border: "1px solid var(--terminal-drawer-toggle-off-border)", borderRadius: 999, height: 12, width: 12 }} />}
       </button>
     </div>
   );
