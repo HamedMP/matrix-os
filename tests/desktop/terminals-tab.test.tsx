@@ -7,17 +7,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalsTab from "../../desktop/src/renderer/src/features/terminal/TerminalsTab";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
+import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
 vi.mock("../../desktop/src/renderer/src/features/terminal/TerminalView", () => ({
   default: ({ sessionName }: { sessionName: string }) => <div>Terminal {sessionName}</div>,
 }));
 
+function renderTab() {
+  return render(
+    <Tooltip.Provider>
+      <TerminalsTab />
+    </Tooltip.Provider>,
+  );
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 describe("TerminalsTab", () => {
@@ -30,12 +42,24 @@ describe("TerminalsTab", () => {
       api: {} as never,
     });
     useSessions.setState({
-      sessions: [],
-      error: null,
-      creating: false,
+      sessions: [
+        { name: "Workspace Only", attachName: "workspace-only", status: "active", source: "workspace" },
+      ],
+      create: vi.fn().mockResolvedValue(null),
+    });
+    useShellSessions.setState({
+      ...useShellSessions.getInitialState(),
       load: vi.fn().mockResolvedValue(undefined),
-      kill: vi.fn().mockResolvedValue(true),
-      restart: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ name: "matrix-created", status: "active" }),
+      deleteSession: vi.fn().mockResolvedValue(true),
+      rename: vi.fn().mockResolvedValue(true),
+      reorder: vi.fn().mockResolvedValue(true),
+      patchUiState: vi.fn().mockResolvedValue(true),
+    });
+    useTabs.setState({
+      tabs: [],
+      activeTabId: null,
+      openTab: vi.fn(),
     });
   });
 
@@ -44,202 +68,360 @@ describe("TerminalsTab", () => {
     vi.restoreAllMocks();
   });
 
-  it("prevents duplicate session creates while one is in flight", async () => {
-    let resolveCreate: ((value: { attachName: string; name: string; status: "active" }) => void) | null = null;
-    const create = vi.fn(
-      () =>
-        new Promise<{ attachName: string; name: string; status: "active" }>((resolve) => {
-          useSessions.setState({ creating: true });
-          resolveCreate = (value) => {
-            useSessions.setState({ creating: false });
-            resolve(value);
-          };
-        }),
-    );
-    useSessions.setState({ create });
-
-    render(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
-    );
-
-    const button = screen.getAllByRole("button", { name: /new session/i })[0]!;
-    fireEvent.click(button);
-    const starting = screen.getByRole("button", { name: /starting/i }) as HTMLButtonElement;
-    expect(starting.disabled).toBe(true);
-    fireEvent.click(starting);
-
-    expect(create).toHaveBeenCalledOnce();
-
-    await act(async () => {
-      resolveCreate?.({ attachName: "main", name: "main", status: "active" });
-      await Promise.resolve();
-    });
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button", { name: /new session/i }) as HTMLButtonElement[];
-      expect(buttons.some((nextButton) => !nextButton.disabled)).toBe(true);
-    });
-  });
-
-  it("shows loading and load errors instead of the empty session state", async () => {
-    useSessions.setState({ loading: true, error: null, sessions: [] });
-
-    const { rerender } = render(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
-    );
-
-    expect(screen.getByText("Loading sessions...")).toBeTruthy();
-    expect(screen.queryByText("No sessions on your computer yet.")).toBeNull();
-
-    act(() => {
-      useSessions.setState({ loading: false, error: "offline", sessions: [] });
-    });
-    rerender(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
-    );
-
-    expect(screen.getByText("Can't reach Matrix OS. Check your connection.")).toBeTruthy();
-    expect(screen.queryByText("No sessions on your computer yet.")).toBeNull();
-  });
-
-  it("surfaces session creation failures", async () => {
-    const create = vi.fn(async () => {
-      useSessions.setState({ error: "server" });
-      return null;
-    });
-    useSessions.setState({ create });
-
-    render(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
-    );
-
-    fireEvent.click(screen.getAllByRole("button", { name: /new session/i })[0]!);
-
-    expect(await screen.findByText("Something went wrong. Please try again.")).toBeTruthy();
-  });
-
-  it("deletes a shell workspace session when start returns no attach name", async () => {
-    const del = vi.fn().mockResolvedValue({ ok: true });
-    const create = vi.fn().mockResolvedValue({ sessionId: "sess_orphan", attachName: null });
-    useConnection.setState({
-      status: "signed-in",
-      handle: "operator",
-      platformHost: "https://platform.test",
-      runtimeSlot: "primary",
-      api: { delete: del } as never,
-    });
-    useSessions.setState({ create });
-
-    render(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
-    );
-
-    fireEvent.click(screen.getAllByRole("button", { name: /new session/i })[0]!);
-
-    await screen.findByText(/start failed/i);
-    expect(del).toHaveBeenCalledWith("/api/sessions/sess_orphan");
-  });
-
-  it("selects a remaining session when the selected session disappears", async () => {
-    useSessions.setState({
+  it("renders Active and Background groups from shell placement with open-tab fallback", () => {
+    useShellSessions.setState({
       sessions: [
-        { attachName: "main", name: "main", status: "active", source: "workspace" },
-        { attachName: "next", name: "next", status: "active", source: "workspace" },
+        { name: "matrix-active", status: "active", placement: "active" },
+        { name: "matrix-bg", status: "active", placement: "background" },
+        { name: "matrix-open", status: "active" },
       ],
     });
+    useTabs.setState({
+      tabs: [{ id: "tab-open", kind: "terminal", title: "Open", sessionName: "matrix-open", closable: true }],
+      activeTabId: "tab-open",
+    });
 
-    render(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
+    renderTab();
+
+    const activeGroup = screen.getByTestId("shell-group-active");
+    const backgroundGroup = screen.getByTestId("shell-group-background");
+    expect(activeGroup.textContent).toContain("matrix-active");
+    expect(activeGroup.textContent).toContain("matrix-open");
+    expect(backgroundGroup.textContent).toContain("matrix-bg");
+    expect(screen.queryByText("Workspace Only")).toBeNull();
+  });
+
+  it("creates shell sessions from the shell store, not workspace sessions", async () => {
+    const createShell = vi.fn().mockResolvedValue({ name: "matrix-created", status: "active" });
+    const createWorkspace = vi.fn().mockResolvedValue(null);
+    useShellSessions.setState({ create: createShell, sessions: [{ name: "matrix-main", status: "active" }] });
+    useSessions.setState({ create: createWorkspace });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "New shell" }));
+
+    await waitFor(() => expect(createShell).toHaveBeenCalledWith(useConnection.getState().api));
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("validates rename input and calls shell rename", async () => {
+    const rename = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      rename,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "Bad Name" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText(/use lowercase letters, numbers, and hyphens/i)).toBeTruthy();
+    expect(rename).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(rename).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", "matrix-dev"));
+  });
+
+  it("keeps a newer shell selection when rename finishes after the user changes selection", async () => {
+    const renameResult = deferred<boolean>();
+    const rename = vi.fn().mockReturnValue(renameResult.promise);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-main", status: "active", placement: "active" },
+        { name: "matrix-other", status: "active", placement: "active" },
+      ],
+      rename,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByText("matrix-other"));
+
+    await act(async () => {
+      renameResult.resolve(true);
+      await renameResult.promise;
+    });
+
+    await waitFor(() => expect(screen.getByText("Terminal matrix-other")).toBeTruthy());
+  });
+
+  it("updates already-open terminal tabs after shell rename", async () => {
+    const rename = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      rename,
+    });
+    useTabs.setState({
+      tabs: [{ id: "tab-main", kind: "terminal", title: "matrix-main", sessionName: "matrix-main", closable: true }],
+      activeTabId: "tab-main",
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(rename).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", "matrix-dev"));
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      title: "matrix-dev",
+      sessionName: "matrix-dev",
+    });
+  });
+
+  it("keeps the optimistically renamed row busy while rename is pending", async () => {
+    const renameResult = deferred<boolean>();
+    const rename = vi.fn((_api, _name: string, nextName: string) => {
+      useShellSessions.setState({
+        sessions: [{ name: nextName, status: "active", placement: "active" }],
+      });
+      return renameResult.promise;
+    });
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      rename,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(screen.getByTestId("shell-card-matrix-dev")).toBeTruthy());
+    expect((screen.getByRole("button", { name: /open matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /move matrix-dev to background/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /rename matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /delete matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => {
+      renameResult.resolve(true);
+      await renameResult.promise;
+    });
+  });
+
+  it("keeps a newer rename editor open when another shell rename finishes", async () => {
+    const renameResult = deferred<boolean>();
+    const rename = vi.fn().mockReturnValue(renameResult.promise);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-main", status: "active", placement: "active" },
+        { name: "matrix-other", status: "active", placement: "active" },
+      ],
+      rename,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-other/i }));
+
+    await act(async () => {
+      renameResult.resolve(true);
+      await renameResult.promise;
+    });
+
+    await waitFor(() => {
+      expect((screen.getByRole("textbox", { name: /shell name/i }) as HTMLInputElement).value).toBe("matrix-other");
+    });
+  });
+
+  it("requires confirmation before deleting a shell", async () => {
+    const deleteSession = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      deleteSession,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /delete matrix-main/i }));
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(screen.getByText("Delete matrix-main?")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main"));
+  });
+
+  it("keeps a newer shell selection when delete finishes after the user changes selection", async () => {
+    const deleteResult = deferred<boolean>();
+    const deleteSession = vi.fn().mockReturnValue(deleteResult.promise);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-main", status: "active", placement: "active" },
+        { name: "matrix-other", status: "active", placement: "active" },
+        { name: "matrix-third", status: "active", placement: "active" },
+      ],
+      deleteSession,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /delete matrix-main/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    fireEvent.click(screen.getByText("matrix-third"));
+
+    await act(async () => {
+      deleteResult.resolve(true);
+      await deleteResult.promise;
+    });
+
+    await waitFor(() => expect(screen.getByText("Terminal matrix-third")).toBeTruthy());
+  });
+
+  it("drag-reorders shell cards within the same group", async () => {
+    const reorder = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-one", status: "active", placement: "active" },
+        { name: "matrix-two", status: "active", placement: "active" },
+      ],
+      reorder,
+    });
+
+    renderTab();
+
+    fireEvent.dragStart(screen.getByLabelText("Drag matrix-one"));
+    fireEvent.dragEnter(screen.getByTestId("shell-card-matrix-two"));
+    fireEvent.drop(screen.getByTestId("shell-card-matrix-two"));
+
+    await waitFor(() => expect(reorder).toHaveBeenCalledWith(useConnection.getState().api, "matrix-one", "matrix-two"));
+  });
+
+  it("never renders workspace-only records as terminal rows", () => {
+    useShellSessions.setState({ sessions: [], loading: false, error: null });
+    useSessions.setState({
+      sessions: [{ name: "Workspace Only", attachName: "workspace-only", status: "active", source: "workspace" }],
+    });
+
+    renderTab();
+
+    expect(screen.queryByText("Workspace Only")).toBeNull();
+    expect(screen.getByText("No shell sessions yet")).toBeTruthy();
+  });
+
+  it("opens selected shell sessions in a native terminal tab", async () => {
+    const openTab = vi.fn();
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+    });
+    useTabs.setState({ openTab });
+
+    renderTab();
+
+    await screen.findByText("Terminal matrix-main");
+    fireEvent.click(screen.getByRole("button", { name: /open matrix-main/i }));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "terminal",
+      sessionName: "matrix-main",
+      title: "matrix-main",
+    });
+  });
+
+  it("moves shells between active and background via ui-state patches", async () => {
+    const patchUiState = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active", latestSeq: 8 }],
+      patchUiState,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /move matrix-main to background/i }));
+
+    await waitFor(() =>
+      expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", {
+        placement: "background",
+      }),
     );
 
-    await screen.findByText("Terminal main");
-
     act(() => {
-      useSessions.setState({
-        sessions: [{ attachName: "next", name: "next", status: "active", source: "workspace" }],
+      useShellSessions.setState({
+        sessions: [{ name: "matrix-main", status: "active", placement: "background", latestSeq: 8 }],
       });
     });
 
-    await screen.findByText("Terminal next");
-    expect(screen.queryByText("Terminal main")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /make matrix-main active/i }));
+
+    await waitFor(() =>
+      expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", {
+        placement: "active",
+        lastSeenSeq: 8,
+      }),
+    );
+    expect(patchUiState).toHaveBeenCalledTimes(2);
   });
 
-  it("disables restart while a kill operation is in flight", async () => {
-    const killed = deferred<boolean>();
-    const kill = vi.fn(() => killed.promise);
-    const restart = vi.fn().mockResolvedValue({ attachName: "main", name: "main", status: "active" });
-    useSessions.setState({
-      sessions: [{ attachName: "main", name: "main", status: "exited", source: "workspace" }],
-      kill,
-      restart,
+  it("allows other shell actions while one shell operation is busy", async () => {
+    const firstMove = deferred<boolean>();
+    const patchUiState = vi.fn((_api, name: string) => (name === "matrix-one" ? firstMove.promise : Promise.resolve(true)));
+    const deleteSession = vi.fn().mockResolvedValue(true);
+    useShellSessions.setState({
+      sessions: [
+        { name: "matrix-one", status: "active", placement: "active" },
+        { name: "matrix-two", status: "active", placement: "active" },
+        { name: "matrix-three", status: "active", placement: "active" },
+      ],
+      patchUiState,
+      deleteSession,
     });
 
-    render(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /move matrix-one to background/i }));
+    fireEvent.click(screen.getByRole("button", { name: /move matrix-two to background/i }));
+    fireEvent.click(screen.getByRole("button", { name: /delete matrix-three/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() =>
+      expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-two", {
+        placement: "background",
+      }),
     );
-
-    fireEvent.click(screen.getByRole("button", { name: /kill session/i }));
-
-    const restartButton = await screen.findByRole("button", { name: /restart session/i });
-    expect((restartButton as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(restartButton);
-    expect(restart).not.toHaveBeenCalled();
+    await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(useConnection.getState().api, "matrix-three"));
 
     await act(async () => {
-      killed.resolve(true);
-      await Promise.resolve();
+      firstMove.resolve(true);
+      await firstMove.promise;
     });
   });
 
-  it("disables kill while a session is being created or restarted", () => {
-    const kill = vi.fn().mockResolvedValue(true);
-    useSessions.setState({
-      sessions: [{ attachName: "main", name: "main", status: "active" }],
-      creating: true,
-      kill,
+  it("does not open a native terminal tab when making a shell active fails", async () => {
+    const openTab = vi.fn();
+    const patchUiState = vi.fn().mockResolvedValue(false);
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "background", latestSeq: 8 }],
+      patchUiState,
     });
+    useTabs.setState({ openTab });
 
-    render(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /make matrix-main active/i }));
+
+    await waitFor(() =>
+      expect(patchUiState).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", {
+        placement: "active",
+        lastSeenSeq: 8,
+      }),
     );
-
-    const killButton = screen.getByRole("button", { name: /kill session/i }) as HTMLButtonElement;
-    expect(killButton.disabled).toBe(true);
-    fireEvent.click(killButton);
-    expect(kill).not.toHaveBeenCalled();
-  });
-
-  it("surfaces restart failures", async () => {
-    const restart = vi.fn().mockResolvedValue(null);
-    useSessions.setState({
-      sessions: [{ attachName: "main", name: "main", status: "exited" }],
-      restart,
-    });
-
-    render(
-      <Tooltip.Provider>
-        <TerminalsTab />
-      </Tooltip.Provider>,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: /restart session/i }));
-
-    await screen.findByText(/restart failed/i);
-    expect(restart).toHaveBeenCalledWith(expect.any(Object), "main");
+    expect(openTab).not.toHaveBeenCalled();
+    expect(await screen.findByText("Could not update shell")).toBeTruthy();
   });
 });
