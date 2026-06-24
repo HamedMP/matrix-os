@@ -182,6 +182,28 @@ describe("gateway shell routes", () => {
     expect(registry.delete).toHaveBeenCalledWith("main", { force: true });
   });
 
+  it("deletes legacy matrix session names with force query support under both mounts", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry);
+    const name = "matrix-sess_run_8162a7cca11891c0";
+
+    const terminalRes = await app.request(`/api/terminal/sessions/${name}?force=1`, {
+      method: "DELETE",
+    });
+    const legacyMountRes = await app.request(`/api/sessions/${name}?force=1`, {
+      method: "DELETE",
+    });
+
+    expect(terminalRes.status).toBe(200);
+    expect(legacyMountRes.status).toBe(200);
+    expect(registry.delete).toHaveBeenNthCalledWith(1, name, { force: true });
+    expect(registry.delete).toHaveBeenNthCalledWith(2, name, { force: true });
+  });
+
   it("persists session order through a bounded JSON route under both mounts", async () => {
     const registry = {
       list: vi.fn(async () => []),
@@ -291,6 +313,25 @@ describe("gateway shell routes", () => {
       },
     });
     expect(registry.rename).toHaveBeenCalledWith("main", "review-main");
+  });
+
+  it("keeps rename target names aligned with session creation names", async () => {
+    const registry = {
+      list: vi.fn(async () => []),
+      create: vi.fn(),
+      delete: vi.fn(),
+      rename: vi.fn(),
+    };
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions/matrix-sess_run_8162a7cca11891c0/rename", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "review_main" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(registry.rename).not.toHaveBeenCalled();
   });
 
   it("validates session rename params and body before dispatch", async () => {
