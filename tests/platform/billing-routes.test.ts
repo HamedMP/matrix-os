@@ -281,6 +281,42 @@ describe('platform billing routes', () => {
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
+  it('rejects unknown developer tool ids with a generic validation error', async () => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        developerTools: ['codex', 'cursor'],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized checkout bodies before parsing developer tool selections', async () => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        developerTools: ['codex'],
+        padding: 'x'.repeat(20 * 1024),
+      }),
+    });
+
+    expect(res.status).toBe(413);
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['checkout', 'POST', JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly' })],
     ['portal', 'POST', undefined],

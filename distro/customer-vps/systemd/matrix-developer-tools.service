@@ -1,0 +1,20 @@
+[Unit]
+Description=Matrix OS optional developer tools
+After=network-online.target matrix-restore.service
+Wants=network-online.target
+Requires=matrix-restore.service
+ConditionPathExists=/opt/matrix/bin/matrix-install-developer-tools
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/opt/matrix/env/host.env
+ExecStart=/opt/matrix/bin/matrix-install-developer-tools
+StateDirectory=matrix-developer-tools
+TimeoutStartSec=3600
+Restart=on-failure
+RestartSec=120
+
+[Install]
+WantedBy=multi-user.target

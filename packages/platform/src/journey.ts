@@ -27,6 +27,7 @@ export type JourneyPhase =
   | 'account_required'
   | 'plan_required'
   | 'payment_settling'
+  | 'install_choices_required'
   | 'provisioning'
   | 'provisioning_failed'
   | 'first_run'
@@ -35,6 +36,7 @@ export type JourneyPhase =
 export type JourneyActionKind =
   | 'open_plans'
   | 'wait'
+  | 'choose_default_installs'
   | 'start_provision'
   | 'retry_provision'
   | 'contact_support'
@@ -140,9 +142,9 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
   // Entitled branch.
   if (!liveMachine) {
     return {
-      phase: 'provisioning',
-      detail: 'Ready to build your Matrix computer.',
-      nextAction: { kind: 'start_provision' },
+      phase: 'install_choices_required',
+      detail: 'Choose default installs before building your Matrix computer.',
+      nextAction: { kind: 'choose_default_installs' },
     };
   }
 

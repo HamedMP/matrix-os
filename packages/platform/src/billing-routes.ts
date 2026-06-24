@@ -31,6 +31,7 @@ import {
   type MatrixBillingInterval,
   type StripeSubscriptionProjection,
 } from './billing.js';
+import { DeveloperToolsWithDefaultSchema } from './developer-tools.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -45,6 +46,7 @@ const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.enum(['monthly', 'annual']).default('monthly'),
   regionSlug: z.enum(['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil']).default('region_fsn1'),
+  developerTools: DeveloperToolsWithDefaultSchema,
   returnPath: z.string().min(1).max(2048).optional().refine(
     // Safe iff it is already a same-origin allowlisted path (origins.ts is the
     // single source of truth for redirect-target validation).
@@ -169,6 +171,7 @@ export function createBillingRoutes(options: {
           clerkUserId,
           stripeSessionId: session.id,
           createdAt: now().toISOString(),
+          developerTools: parsed.data.developerTools,
         });
       } catch (err: unknown) {
         console.error('[billing] checkout attempt record failed:', err instanceof Error ? err.message : String(err));

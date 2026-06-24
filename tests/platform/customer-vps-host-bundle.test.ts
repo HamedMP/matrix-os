@@ -95,6 +95,7 @@ describe('customer VPS host bundle', () => {
     expect(script).not.toContain('tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE"');
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
     expect(installer).toContain('install_coding_agents()');
+    expect(installer).toContain('install_developer_tool()');
     expect(installer).toContain('install_code_server()');
     expect(installer).toContain('install_hermes()');
     expect(installer).toContain('@anthropic-ai/claude-code@latest');
@@ -106,6 +107,11 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
     expect(installer).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors');
     expect(installer).toContain('sync-matrix-agent-skills.sh');
+    expect(installer).toContain('codex|claude-code|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
+    expect(installer).toContain('install_developer_tool codex');
+    expect(installer).toContain('install_developer_tool claude-code');
+    expect(installer).toContain('install_developer_tool opencode');
+    expect(installer).toContain('install_developer_tool pi');
     expect(installer).toContain('coding-agents|code-server|hermes|linux-tools|all');
     expect(installer).toContain('return 75');
     expect(installer).not.toContain('exit 0');
@@ -137,6 +143,23 @@ describe('customer VPS host bundle', () => {
       expect(launcher).toContain('if declare -F matrix_reconcile_owner_home >/dev/null 2>&1; then');
       expect(launcher).toContain('matrix_reconcile_owner_home "${MATRIX_RUNTIME_USER:-matrix}" "${MATRIX_RUNTIME_GROUP:-${MATRIX_RUNTIME_USER:-matrix}}"');
     }
+  });
+
+  it('packages an asynchronous developer tools first-boot service', () => {
+    const root = process.cwd();
+    const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-developer-tools.service'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
+
+    expect(unit).toContain('Description=Matrix OS optional developer tools');
+    expect(unit).toContain('After=network-online.target matrix-restore.service');
+    expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
+    expect(unit).toContain('Restart=on-failure');
+    expect(installer).toContain('is_tool_installed()');
+    expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
+    expect(installer).toContain('optional developer tool ${tool} already installed; skipping');
+    expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
+    expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
   });
 
   it('owner env canonicalizes Hermes home and migrates legacy Hermes data', () => {

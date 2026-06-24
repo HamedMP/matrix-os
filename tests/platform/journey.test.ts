@@ -46,12 +46,21 @@ function entitlement(status: BillingEntitlementStatus, overrides: Partial<Billin
 }
 
 function attempt(status: BillingCheckoutAttemptRecord['status'], createdAt: string): BillingCheckoutAttemptRecord {
-  return { id: 'a1', clerkUserId: 'user_123', stripeSessionId: 'cs_1', status, createdAt, resolvedAt: null };
+  return {
+    id: 'a1',
+    clerkUserId: 'user_123',
+    stripeSessionId: 'cs_1',
+    status,
+    developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
+    createdAt,
+    resolvedAt: null,
+  };
 }
 
 function machine(status: string, overrides: Partial<UserMachineRecord> = {}): UserMachineRecord {
   return {
     machineId: 'm1', clerkUserId: 'user_123', handle: 'alice', runtimeSlot: 'primary',
+    developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
     hetznerServerId: null, publicIPv4: null, publicIPv6: null, status,
     imageVersion: 'stable', serverType: 'cpx32', registrationTokenHash: null,
     registrationTokenExpiresAt: null, provisionedAt: '2026-06-11T11:59:00.000Z',
@@ -123,16 +132,16 @@ describe('platform/journey deriveJourneyPhase', () => {
     expect(s.phase).toBe('plan_required');
   });
 
-  it('active entitlement, no machine → provisioning start (no progress)', () => {
+  it('active entitlement, no machine → install choices required', () => {
     const s = derive({ entitlement: entitlement('active') });
-    expect(s.phase).toBe('provisioning');
-    expect(s.nextAction.kind).toBe('start_provision');
+    expect(s.phase).toBe('install_choices_required');
+    expect(s.nextAction.kind).toBe('choose_default_installs');
     expect(s.progress).toBeUndefined();
   });
 
   it('grace-period entitlement still grants access', () => {
     const s = derive({ entitlement: entitlement('past_due', { gracePeriodEndsAt: '2026-06-12T00:00:00.000Z' }) });
-    expect(s.phase).toBe('provisioning');
+    expect(s.phase).toBe('install_choices_required');
   });
 
   it('provisioning machine reports a stage derived from observable state', () => {

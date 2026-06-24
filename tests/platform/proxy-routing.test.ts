@@ -8,6 +8,7 @@ import {
   getContainer,
   getPlatformUserByClerkId,
   insertContainer,
+  insertCheckoutAttempt,
   insertUserMachine,
   updateContainerStatus,
   upsertBillingEntitlement,
@@ -2062,6 +2063,120 @@ describe("platform proxy routing", () => {
     });
   });
 
+  it("passes directly selected developer tools to hosted runtime provisioning", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "newuser",
+        first_name: "New",
+        last_name: "User",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_new_tools" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ developerTools: ["opencode", "pi"] }),
+    });
+
+    expect(provision.status).toBe(202);
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "newuser",
+      clerkUserId: "user_new_tools",
+      runtimeSlot: "primary",
+      developerTools: ["opencode", "pi"],
+    });
+  });
+
+  it("falls back to settling checkout-attempt developer tools when provisioning after payment", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await deleteContainer(db, "alice");
+    await insertCheckoutAttempt(db, {
+      id: "attempt_tools",
+      clerkUserId: "user_paid_tools",
+      stripeSessionId: "cs_paid_tools",
+      status: "paid",
+      createdAt: "2026-06-23T12:00:00.000Z",
+      developerTools: ["claude-code"],
+    });
+    await insertCheckoutAttempt(db, {
+      id: "attempt_tools_newer_open",
+      clerkUserId: "user_paid_tools",
+      stripeSessionId: "cs_open_tools",
+      status: "open",
+      createdAt: "2026-06-23T12:05:00.000Z",
+      developerTools: ["opencode", "pi"],
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        username: "newuser",
+        first_name: "New",
+        last_name: "User",
+        primary_email_address_id: "email_1",
+        email_addresses: [{ id: "email_1", email_address: "new@example.com" }],
+      }),
+    );
+    const customerVpsService = {
+      provision: vi.fn().mockResolvedValue({
+        machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff150",
+        status: "provisioning",
+        etaSeconds: 90,
+      }),
+    };
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_paid_tools" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: customerVpsService as unknown as CustomerVpsService,
+      env: { ...process.env, CLERK_SECRET_KEY: "sk_test_matrix" },
+    });
+
+    const provision = await app.request("/api/auth/provision-runtime", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(provision.status).toBe(202);
+    expect(customerVpsService.provision).toHaveBeenCalledWith({
+      handle: "newuser",
+      clerkUserId: "user_paid_tools",
+      runtimeSlot: "primary",
+      developerTools: ["claude-code"],
+    });
+  });
+
   it("does not block hosted runtime provisioning when Clerk returns an empty avatar URL", async () => {
     process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
     await deleteContainer(db, "alice");
@@ -2656,7 +2771,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("Checkout unavailable");
     expect(html).toContain("showCheckoutUnavailableState();");
     expect(html).toContain("Opening secure checkout");
-    expect(html).toContain("retryProvisioningAfterBillingDelay()");
+    expect(html).toContain("retryProvisioningAfterBillingDelay(developerTools)");
     expect(html).toContain("Confirming billing");
     expect(html).toContain("provisioning_conflict");
     expect(html).toContain("if (body && body.code === 'provisioning_conflict') {\n                billingConfirmationPolls = 0;\n                provisioningPolls = 0;");

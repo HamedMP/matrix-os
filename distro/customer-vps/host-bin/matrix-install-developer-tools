@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -r /opt/matrix/env/host.env ]; then
+  source /opt/matrix/env/host.env
+fi
+
+TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"
+STATE_DIR="${MATRIX_DEVELOPER_TOOLS_STATE_DIR:-/var/lib/matrix-developer-tools}"
+FAILED_FILE="$STATE_DIR/failed-tools"
+INSTALLED_FILE="$STATE_DIR/installed-tools"
+
+log() {
+  printf 'matrix-install-developer-tools: %s\n' "$*"
+}
+
+link_tool() {
+  local tool="$1"
+  local bin_name
+  bin_name="$(tool_bin_name "$tool")"
+  if [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]; then
+    ln -sf "/opt/matrix/runtime/node/bin/${bin_name}" "/usr/local/bin/${bin_name}"
+  fi
+}
+
+tool_bin_name() {
+  local tool="$1"
+  if [ "$tool" = "claude-code" ]; then
+    printf 'claude\n'
+    return
+  fi
+  printf '%s\n' "$tool"
+}
+
+is_tool_installed() {
+  local tool="$1"
+  local bin_name
+  bin_name="$(tool_bin_name "$tool")"
+  grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]
+}
+
+mkdir -p "$STATE_DIR"
+: > "$FAILED_FILE"
+touch "$INSTALLED_FILE"
+
+failed=0
+for tool in $TOOLS; do
+  case "$tool" in
+    codex|claude-code|opencode|pi) ;;
+    *)
+      log "skipping unknown developer tool id"
+      continue
+      ;;
+  esac
+
+  if is_tool_installed "$tool"; then
+    log "optional developer tool ${tool} already installed; skipping"
+    continue
+  fi
+
+  log "installing optional developer tool ${tool}"
+  if /opt/matrix/bin/matrix-install-tool-pack "$tool" >>"$STATE_DIR/${tool}.log" 2>&1; then
+    link_tool "$tool"
+    grep -vxF "$tool" "$FAILED_FILE" >"$FAILED_FILE.tmp" || true
+    mv "$FAILED_FILE.tmp" "$FAILED_FILE"
+    if ! grep -qxF "$tool" "$INSTALLED_FILE"; then
+      printf '%s\n' "$tool" >>"$INSTALLED_FILE"
+    fi
+    log "installed optional developer tool ${tool}"
+  else
+    failed=1
+    if ! grep -qxF "$tool" "$FAILED_FILE"; then
+      printf '%s\n' "$tool" >>"$FAILED_FILE"
+    fi
+    log "optional developer tool ${tool} failed; systemd will retry"
+  fi
+done
+
+if [ "$failed" -ne 0 ]; then
+  exit 1
+fi
