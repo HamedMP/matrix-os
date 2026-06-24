@@ -2347,6 +2347,83 @@ describe("TerminalApp", () => {
     expect(screen.queryByText("matrix-main")).toBeNull();
   });
 
+  it("removes open panes for a managed shell after deleting that shell", async () => {
+    let benchDeleted = false;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      if (url.includes("/api/terminal/sessions/bench") && init?.method === "DELETE") {
+        benchDeleted = true;
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              {
+                name: "main",
+                status: "active",
+                attachedClients: 0,
+                tabs: [{ idx: 0, name: "main", focused: true }],
+              },
+              ...(benchDeleted ? [] : [{
+                name: "bench",
+                status: "active",
+                attachedClients: 0,
+                tabs: [{ idx: 0, name: "work", focused: true }],
+              }]),
+            ],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /open bench/i }));
+      await Promise.resolve();
+    });
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: { sessionId: "bench" },
+    });
+
+    revealSessionActions("bench");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /close bench/i }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole("dialog", { name: "Close this session?" })).getByRole("button", { name: "Delete" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions/bench?force=1") && init?.method === "DELETE"
+    ))).toHaveLength(1);
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: expect.not.objectContaining({ sessionId: "bench" }),
+    });
+  });
+
   it("keeps the Shells sidebar synchronized after manual refresh", async () => {
     let revealBench = false;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
