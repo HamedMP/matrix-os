@@ -179,6 +179,38 @@ describe("TerminalsTab", () => {
     });
   });
 
+  it("keeps the optimistically renamed row busy while rename is pending", async () => {
+    const renameResult = deferred<boolean>();
+    const rename = vi.fn((_api, _name: string, nextName: string) => {
+      useShellSessions.setState({
+        sessions: [{ name: nextName, status: "active", placement: "active" }],
+      });
+      return renameResult.promise;
+    });
+    useShellSessions.setState({
+      sessions: [{ name: "matrix-main", status: "active", placement: "active" }],
+      rename,
+    });
+
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /rename matrix-main/i }));
+    const input = screen.getByRole("textbox", { name: /shell name/i });
+    fireEvent.change(input, { target: { value: "matrix-dev" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(screen.getByTestId("shell-card-matrix-dev")).toBeTruthy());
+    expect((screen.getByRole("button", { name: /open matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /move matrix-dev to background/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /rename matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /delete matrix-dev/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => {
+      renameResult.resolve(true);
+      await renameResult.promise;
+    });
+  });
+
   it("keeps a newer rename editor open when another shell rename finishes", async () => {
     const renameResult = deferred<boolean>();
     const rename = vi.fn().mockReturnValue(renameResult.promise);

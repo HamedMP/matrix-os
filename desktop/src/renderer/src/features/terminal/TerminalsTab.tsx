@@ -59,6 +59,10 @@ function placementFor(shell: ShellSessionSummary, openShellNames: Set<string>): 
   return shell.placement ?? (openShellNames.has(shell.name) ? "active" : "background");
 }
 
+function normalizeBusyNames(names: string[]): string[] {
+  return names.filter((name, index) => name.length > 0 && names.indexOf(name) === index);
+}
+
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- TerminalsTab is the cohesive shell-session workspace: network load/create, selection, rename, delete confirmation, search, and drag refs are independent UI concerns. A reducer would couple unrelated state transitions without reducing render risk; extracting subcomponents below keeps the row/empty states isolated.
 export default function TerminalsTab() {
   const api = useConnection((s) => s.api);
@@ -133,15 +137,24 @@ export default function TerminalsTab() {
 
   const isShellBusy = (name: string) => busyNames.includes(name);
 
-  const markShellBusy = (name: string): boolean => {
-    if (busyNamesRef.current.includes(name)) return false;
-    setBusyNames((current) => (current.includes(name) ? current : [...current, name]));
+  const markShellsBusy = (names: string[]): boolean => {
+    const namesToMark = normalizeBusyNames(names);
+    if (namesToMark.some((name) => busyNamesRef.current.includes(name))) return false;
+    setBusyNames((current) => [
+      ...current,
+      ...namesToMark.filter((name) => !current.includes(name)),
+    ]);
     return true;
   };
 
-  const clearShellBusy = (name: string) => {
-    setBusyNames((current) => current.filter((busyName) => busyName !== name));
+  const markShellBusy = (name: string): boolean => markShellsBusy([name]);
+
+  const clearShellsBusy = (names: string[]) => {
+    const namesToClear = normalizeBusyNames(names);
+    setBusyNames((current) => current.filter((busyName) => !namesToClear.includes(busyName)));
   };
+
+  const clearShellBusy = (name: string) => clearShellsBusy([name]);
 
   const createShell = async () => {
     if (!api || creating) return;
@@ -203,9 +216,10 @@ export default function TerminalsTab() {
       setRenameError(RENAME_HELP);
       return;
     }
-    if (!markShellBusy(originalName)) return;
+    const renameBusyNames = [originalName, nextName];
+    if (!markShellsBusy(renameBusyNames)) return;
     const ok = await rename(api, originalName, nextName);
-    clearShellBusy(originalName);
+    clearShellsBusy(renameBusyNames);
     if (!ok) {
       if (renamingNameRef.current === originalName) setRenameError("Could not rename shell");
       return;
