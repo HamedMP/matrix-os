@@ -358,9 +358,10 @@ export function registerShellAndWorkspaceRoutes(
     workspaceRoutes: Parameters<typeof createWorkspaceRoutes>[0];
   },
 ): void {
-  app.route("/api/terminal", createShellRoutes(options.shellRoutes));
+  const shellRouter = createShellRoutes(options.shellRoutes);
+  app.route("/api/terminal", shellRouter);
   app.route("/", createWorkspaceRoutes(options.workspaceRoutes));
-  app.route("/api", createShellRoutes(options.shellRoutes));
+  app.route("/api", shellRouter);
 }
 
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {

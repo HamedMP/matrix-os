@@ -9,6 +9,9 @@ import {
 import type { ShellRouteDeps } from "../../packages/gateway/src/shell/routes.js";
 import type { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
 
+type WorkspaceRouteOptions = Parameters<typeof createWorkspaceRoutes>[0];
+type WorkspaceSessionOrchestrator = NonNullable<WorkspaceRouteOptions["sessionOrchestrator"]>;
+
 const roots: string[] = [];
 
 async function tempRoot() {
@@ -45,17 +48,18 @@ describe("gateway workspace and shell route order", () => {
         dumpLayout: vi.fn(async () => ({ kdl: "layout {}" })),
       },
     };
-    const sessionOrchestrator = {
+    const sessionOrchestrator: WorkspaceSessionOrchestrator = {
       startSession: vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession })),
       listSessions: vi.fn(async () => ({ ok: true, sessions: [workspaceSession], nextCursor: null })),
       getSession: vi.fn(async () => ({ ok: true, session: workspaceSession })),
       sendInput: vi.fn(async () => ({ ok: true, session: workspaceSession })),
       attachSession: vi.fn(async () => ({ ok: true, terminalSessionId: "term_workspace" })),
       stopSession: vi.fn(async () => ({ ok: true, session: workspaceSession })),
+      recoverSessions: vi.fn(async () => ({ ok: true, sessions: [workspaceSession], nextCursor: null })),
     };
-    const workspaceRoutes: Parameters<typeof createWorkspaceRoutes>[0] = {
+    const workspaceRoutes: WorkspaceRouteOptions = {
       homePath,
-      sessionOrchestrator: sessionOrchestrator as never,
+      sessionOrchestrator,
       getOwnerScope: () => ({ type: "user", id: "user_workspace" }),
     };
 
