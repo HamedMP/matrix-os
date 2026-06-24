@@ -108,8 +108,8 @@ export type PtyServerMessage =
 export interface SessionHandle {
   readonly sessionId: string;
   subscribe(cb: (msg: PtyServerMessage) => void): void;
-  send(msg: ClientMessage): void;
-  replay(fromSeq: number): void;
+  send(msg: ClientMessage): boolean;
+  replay(fromSeq: number): boolean;
   detach(): void;
 }
 
@@ -502,11 +502,11 @@ export class SessionRegistry {
       },
 
       send(msg: ClientMessage) {
-        if (subscriberPruned) return;
+        if (detached || subscriberPruned) return false;
         if (subscriberFn && !session.touchSubscriber(subscriberFn, nowFn())) {
           subscriberFn = null;
           subscriberPruned = true;
-          return;
+          return false;
         }
         switch (msg.type) {
           case "input":
@@ -516,15 +516,16 @@ export class SessionRegistry {
             session.resize(msg.cols, msg.rows);
             break;
         }
+        return true;
       },
 
       replay(fromSeq: number) {
-        if (subscriberPruned) return;
-        if (!subscriberFn) return;
+        if (detached || subscriberPruned) return false;
+        if (!subscriberFn) return false;
         if (!session.touchSubscriber(subscriberFn, nowFn())) {
           subscriberFn = null;
           subscriberPruned = true;
-          return;
+          return false;
         }
         const chunks = session.buffer.getSince(fromSeq);
         subscriberFn({ type: "replay-start", fromSeq });
@@ -532,6 +533,7 @@ export class SessionRegistry {
           subscriberFn({ type: "output", data: chunk.data, seq: chunk.seq });
         }
         subscriberFn({ type: "replay-end", toSeq: session.buffer.nextSeq });
+        return true;
       },
 
       detach() {

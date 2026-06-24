@@ -460,7 +460,7 @@ describe("SessionRegistry", () => {
       const handle = registry.attach(id)!;
       const received: PtyServerMessage[] = [];
       handle.subscribe((msg) => received.push(msg));
-      handle.replay(0);
+      expect(handle.replay(0)).toBe(true);
 
       expect(received[0]).toEqual({ type: "replay-start", fromSeq: 0 });
       expect(received[1]).toEqual({ type: "output", data: "line1\r\n", seq: 0 });
@@ -483,7 +483,7 @@ describe("SessionRegistry", () => {
       const handle = registry.attach(id)!;
       const received: PtyServerMessage[] = [];
       handle.subscribe((msg) => received.push(msg));
-      handle.replay(2);
+      expect(handle.replay(2)).toBe(true);
 
       expect(received[0]).toEqual({ type: "replay-start", fromSeq: 2 });
       expect(received[1]).toEqual({ type: "output", data: "c", seq: 2 });
@@ -497,7 +497,7 @@ describe("SessionRegistry", () => {
       const handle = registry.attach(id)!;
       const received: PtyServerMessage[] = [];
       handle.subscribe((msg) => received.push(msg));
-      handle.replay(0);
+      expect(handle.replay(0)).toBe(true);
 
       expect(received).toHaveLength(2);
       expect(received[0]).toEqual({ type: "replay-start", fromSeq: 0 });
@@ -512,7 +512,7 @@ describe("SessionRegistry", () => {
       handle.subscribe(() => {});
 
       clock.advance(90);
-      handle.replay(0);
+      expect(handle.replay(0)).toBe(true);
       clock.advance(90);
 
       expect(registry.getSession(id)!.attachedClients).toBe(1);
@@ -530,7 +530,7 @@ describe("SessionRegistry", () => {
       const id = registry.create("/home");
       const handle = registry.attach(id)!;
 
-      handle.send({ type: "input", data: "hello" });
+      expect(handle.send({ type: "input", data: "hello" })).toBe(true);
       expect(mockPty.write).toHaveBeenCalledWith("hello");
     });
 
@@ -541,7 +541,7 @@ describe("SessionRegistry", () => {
       const id = registry.create("/home");
       const handle = registry.attach(id)!;
 
-      handle.send({ type: "resize", cols: 120, rows: 40 });
+      expect(handle.send({ type: "resize", cols: 120, rows: 40 })).toBe(true);
       expect(mockPty.resize).toHaveBeenCalledWith(120, 40);
     });
 
@@ -553,11 +553,11 @@ describe("SessionRegistry", () => {
       handle.subscribe(() => {});
 
       clock.advance(90);
-      handle.send({ type: "input", data: "hello" });
+      expect(handle.send({ type: "input", data: "hello" })).toBe(true);
       clock.advance(90);
-      handle.send({ type: "resize", cols: 80, rows: 24 });
+      expect(handle.send({ type: "resize", cols: 80, rows: 24 })).toBe(true);
       clock.advance(90);
-      handle.send({ type: "ping" });
+      expect(handle.send({ type: "ping" })).toBe(true);
       clock.advance(90);
 
       expect(registry.getSession(id)!.attachedClients).toBe(1);
@@ -577,10 +577,24 @@ describe("SessionRegistry", () => {
 
       clock.advance(101);
       expect(registry.getSession(id)!.attachedClients).toBe(0);
-      handle.send({ type: "input", data: "stale" });
-      handle.send({ type: "input", data: "still-stale" });
+      expect(handle.send({ type: "input", data: "stale" })).toBe(false);
+      expect(handle.send({ type: "input", data: "still-stale" })).toBe(false);
 
       expect(mockPty.write).not.toHaveBeenCalled();
+    });
+
+    it("reports failure for stale pruned ping and replay handles", () => {
+      const clock = createClock();
+      const registry = createRegistry({ subscriberTtlMs: 100, now: clock.now });
+      const id = registry.create("/home");
+      const handle = registry.attach(id)!;
+      handle.subscribe(() => {});
+
+      clock.advance(101);
+      expect(registry.getSession(id)!.attachedClients).toBe(0);
+
+      expect(handle.send({ type: "ping" })).toBe(false);
+      expect(handle.replay(0)).toBe(false);
     });
   });
 
