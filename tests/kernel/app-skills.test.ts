@@ -70,6 +70,7 @@ describe("T1440-T1445: AI skills for app building", () => {
       expect(content).toContain("--matrix-primary");
       expect(content).toContain("inherit the shell theme");
       expect(content).toContain("explicit app branding");
+      expect(content).not.toContain("Orbitron H1/H2 only");
     });
 
     it("links companion skills through agent metadata", () => {

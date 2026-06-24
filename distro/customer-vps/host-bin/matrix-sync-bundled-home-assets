@@ -32,6 +32,7 @@ const updated = [];
 const skipped = [];
 const logLines = [`[${now}] Template sync started`];
 const logMaxBytes = parsePositiveInt(process.env.TEMPLATE_SYNC_LOG_MAX_BYTES, 256 * 1024);
+const systemOwnedFirstPartyAppCache = new Map();
 
 const userOwnedFiles = new Set([
   "system/activity.log",
@@ -123,13 +124,18 @@ function isSystemOwnedFirstPartyManifest(value) {
 
 function isSystemOwnedFirstPartyApp(slug) {
   if (!slug) return false;
+  if (systemOwnedFirstPartyAppCache.has(slug)) return systemOwnedFirstPartyAppCache.get(slug);
   try {
     const templateManifest = readJson(join(templateDir, "apps", slug, "matrix.json"));
     const homeManifest = readJson(join(homeDir, "apps", slug, "matrix.json"));
-    return isSystemOwnedFirstPartyManifest(templateManifest) && isSystemOwnedFirstPartyManifest(homeManifest);
+    const isSystemOwned =
+      isSystemOwnedFirstPartyManifest(templateManifest) && isSystemOwnedFirstPartyManifest(homeManifest);
+    systemOwnedFirstPartyAppCache.set(slug, isSystemOwned);
+    return isSystemOwned;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logLines.push(`[${now}] Unable to classify app ownership for ${slug}: ${message}`);
+    systemOwnedFirstPartyAppCache.set(slug, false);
     return false;
   }
 }

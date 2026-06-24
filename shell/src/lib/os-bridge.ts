@@ -27,6 +27,8 @@ export const THEME_VAR_MAP: Record<string, string> = {
   "--foreground": "--matrix-fg",
   "--card": "--matrix-card",
   "--card-foreground": "--matrix-card-fg",
+  "--popover": "--matrix-popover",
+  "--popover-foreground": "--matrix-popover-fg",
   "--secondary": "--matrix-secondary",
   "--secondary-foreground": "--matrix-secondary-fg",
   "--muted": "--matrix-muted",

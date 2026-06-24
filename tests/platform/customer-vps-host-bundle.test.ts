@@ -281,6 +281,17 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     }
   });
 
+  it('bundled home sync caches first-party app ownership by slug', () => {
+    const script = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets'),
+      'utf8',
+    );
+
+    expect(script).toContain('systemOwnedFirstPartyAppCache');
+    expect(script).toContain('systemOwnedFirstPartyAppCache.has(slug)');
+    expect(script).toContain('systemOwnedFirstPartyAppCache.set(slug');
+  });
+
   it('bundled home sync recovers from a corrupt installed manifest', () => {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-corrupt-'));

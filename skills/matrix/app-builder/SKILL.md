@@ -28,7 +28,7 @@ Use this when the user asks to build, create, fix, redesign, or publish a Matrix
 - Always run `pnpm install` when dependencies changed and `pnpm build` before saying the app works.
 - Verify `dist/index.html` exists.
 - Use injected Matrix theme variables and iframe-safe sizing. Custom apps should inherit the shell theme by default; add explicit app branding only when the user asks for it or the app has a clear domain reason.
-- For UI, ALWAYS load and follow `matrix-design-system` and `matrix-app-ui-patterns`. Key rules: Forest/Cream/Ember/Deep palette, gradient backgrounds (sand washes not flat), Orbitron H1/H2 only, Inter for everything else, capsule buttons/inputs (50px radius), glass cards (22px radius), inline SVG or bundled local icons (never text characters or remote icon scripts), stable window-sized layouts, and stagger animations on mount. No exceptions.
+- For UI, ALWAYS load and follow `matrix-design-system` and `matrix-app-ui-patterns`. Key rules: inherit shell fonts through `--matrix-font-sans`/`--matrix-font-mono`, use Forest/Cream/Ember/Deep only as fallback palette values, gradient backgrounds (sand washes not flat), capsule buttons/inputs (50px radius), glass cards (22px radius), inline SVG or bundled local icons (never text characters or remote icon scripts), stable window-sized layouts, and stagger animations on mount. No exceptions.
 - Store structured app data through Matrix/Postgres bridge APIs, not ad hoc local databases.
 - Never put provider secrets, API keys, or OAuth tokens inside the app directory.
 - Do not use browser `localStorage` as app persistence in the Matrix shell. Sandboxed iframes can throw `SecurityError`; use `window.MatrixOS.db` and keep local fallback paths test-only/no-op.

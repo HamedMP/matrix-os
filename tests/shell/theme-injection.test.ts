@@ -13,6 +13,8 @@ describe("Theme Variable Injection (T2070)", () => {
         "--foreground": "--matrix-fg",
         "--card": "--matrix-card",
         "--card-foreground": "--matrix-card-fg",
+        "--popover": "--matrix-popover",
+        "--popover-foreground": "--matrix-popover-fg",
         "--secondary": "--matrix-secondary",
         "--secondary-foreground": "--matrix-secondary-fg",
         "--muted": "--matrix-muted",
@@ -45,6 +47,8 @@ describe("Theme Variable Injection (T2070)", () => {
             "--foreground": "#32352E",
             "--card": "#FCFCF8",
             "--card-foreground": "#32352E",
+            "--popover": "#FCFCF8",
+            "--popover-foreground": "#32352E",
             "--secondary": "#F1F0E3",
             "--secondary-foreground": "#3E4339",
             "--muted": "#E1E1D0",
@@ -75,6 +79,8 @@ describe("Theme Variable Injection (T2070)", () => {
       expect(vars["--matrix-fg"]).toBe("#32352E");
       expect(vars["--matrix-card"]).toBe("#FCFCF8");
       expect(vars["--matrix-card-fg"]).toBe("#32352E");
+      expect(vars["--matrix-popover"]).toBe("#FCFCF8");
+      expect(vars["--matrix-popover-fg"]).toBe("#32352E");
       expect(vars["--matrix-secondary"]).toBe("#F1F0E3");
       expect(vars["--matrix-secondary-fg"]).toBe("#3E4339");
       expect(vars["--matrix-muted"]).toBe("#E1E1D0");
