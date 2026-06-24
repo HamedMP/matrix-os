@@ -281,6 +281,22 @@ const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
   pointerEvents: "auto",
   textAlign: "left",
 };
+const SESSION_RENAME_INPUT_STYLE: CSSProperties = {
+  background: "#FFFDF7",
+  border: "1px solid #D6D5C4",
+  borderRadius: 6,
+  color: "#31362D",
+  flex: "1 1 auto",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontSize: 14,
+  fontWeight: 700,
+  height: 24,
+  lineHeight: "18px",
+  minWidth: 0,
+  outline: "none",
+  padding: "0 6px",
+  pointerEvents: "auto",
+};
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
@@ -2505,7 +2521,8 @@ interface TerminalAgentOption {
   color: string;
   shortcut?: string;
   launchCommand?: string;
-  installTarget: string;
+  installPackage: string;
+  installFlags?: string[];
   claudeMode?: boolean;
   fallbackInstalled: boolean;
 }
@@ -2521,7 +2538,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     label: "Claude Code",
     color: "#D8792C",
     shortcut: "⌘⇧C",
-    installTarget: "claude-code",
+    installPackage: "@anthropic-ai/claude-code@latest",
     claudeMode: true,
     fallbackInstalled: true,
   },
@@ -2531,7 +2548,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     color: "#465243",
     shortcut: "⌘⇧X",
     launchCommand: "codex",
-    installTarget: "codex",
+    installPackage: "@openai/codex@latest",
     fallbackInstalled: true,
   },
   {
@@ -2539,7 +2556,7 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     label: "OpenCode",
     color: "#111111",
     launchCommand: "opencode",
-    installTarget: "opencode",
+    installPackage: "opencode-ai@latest",
     fallbackInstalled: false,
   },
   {
@@ -2547,7 +2564,8 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
     label: "Pi",
     color: "#1E2F5C",
     launchCommand: "pi",
-    installTarget: "pi",
+    installPackage: "@earendil-works/pi-coding-agent@latest",
+    installFlags: ["--ignore-scripts"],
     fallbackInstalled: false,
   },
 ];
@@ -2570,24 +2588,12 @@ function parseTerminalAgentStatuses(value: unknown): TerminalAgentStatus[] {
     .map((agent) => ({ id: agent.id, installed: agent.installed }));
 }
 
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\"'\"'")}'`;
-}
-
 function terminalAgentInstallCommand(option: TerminalAgentOption): string {
-  const target = shellSingleQuote(option.installTarget);
+  const flags = option.installFlags?.join(" ") ?? "";
+  const extraFlags = flags ? `${flags} ` : "";
   return [
-    'tool="${MATRIX_INSTALL_TOOL_PACK:-}"',
-    'if [ -n "$tool" ] && [ -x "$tool" ]; then',
-    `  "$tool" ${target}`,
-    "elif command -v matrix-install-tool-pack >/dev/null 2>&1; then",
-    `  matrix-install-tool-pack ${target}`,
-    "elif [ -x /opt/matrix/bin/matrix-install-tool-pack ]; then",
-    `  /opt/matrix/bin/matrix-install-tool-pack ${target}`,
-    "else",
-    "  printf '%s\\n' 'Matrix installer helper was not found. Update Matrix OS and try again.' >&2",
-    "  exit 127",
-    "fi",
+    'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
+    `npm install -g ${extraFlags}--prefix "$MATRIX_NODE_PREFIX" ${option.installPackage}`,
   ].join("; ");
 }
 
@@ -4955,22 +4961,7 @@ function ShellCard({
                   cancelRename();
                 }
               }}
-              style={{
-                background: "#FFFDF7",
-                border: "1px solid #D6D5C4",
-                borderRadius: 6,
-                color: "#31362D",
-                flex: "1 1 auto",
-                fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                fontSize: 14,
-                fontWeight: 700,
-                height: 24,
-                lineHeight: "18px",
-                minWidth: 0,
-                outline: "none",
-                padding: "0 6px",
-                pointerEvents: "auto",
-              }}
+              style={SESSION_RENAME_INPUT_STYLE}
             />
           ) : (
             <button
