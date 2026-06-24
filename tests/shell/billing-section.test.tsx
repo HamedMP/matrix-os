@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
-  userId: "user_123",
+  isSignedIn: true,
+  userId: "user_123" as string | null,
   activePlan: null as string | null,
 }));
 
@@ -14,7 +15,7 @@ function installClerkMock() {
   vi.doMock("@clerk/nextjs", () => ({
     useAuth: () => ({
       isLoaded: clerkState.isLoaded,
-      isSignedIn: true,
+      isSignedIn: clerkState.isSignedIn,
       userId: clerkState.userId,
       has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
     }),
@@ -36,6 +37,10 @@ describe("BillingSection", () => {
       "../../shell/src/hooks/useMatrixBillingAccess.js"
     );
     resetMatrixBillingAccessCacheForTests();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.userId = "user_123";
+    clerkState.activePlan = null;
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
         status: 200,
@@ -76,6 +81,32 @@ describe("BillingSection", () => {
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByText("Developer tools")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("checks cookie-backed billing status when Clerk is signed out", async () => {
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.userId = null;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/status",
+      expect.objectContaining({
+        credentials: "include",
+        method: "GET",
+      }),
+    ));
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
   });
 
   it("keeps billing status unknown and retries after transient status failures", async () => {
