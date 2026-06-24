@@ -481,16 +481,11 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
         if (exited) {
           return;
         }
-        try {
-          // Zellij's default detach binding is Session mode (Ctrl-O), then `d`.
-          // This exits only the attached client, leaving the named session and
-          // its running panes alive for later reattach.
-          pty.write("\x0fd");
-        } catch (err: unknown) {
-          console.warn("[shell] zellij attach detach failed:", err instanceof Error ? err.message : String(err));
-          killAttachClient();
-          return;
-        }
+        void run(["--session", name, "action", "detach"], 1500)
+          .catch((err: unknown) => {
+            console.warn("[shell] zellij attach detach failed:", err instanceof Error ? err.message : String(err));
+            killAttachClient();
+          });
         clearDetachFallbackTimer();
         detachFallbackTimer = setTimeout(() => {
           detachFallbackTimer = null;
