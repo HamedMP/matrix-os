@@ -3528,6 +3528,9 @@ function LocalTerminalSidebar() {
 
   const openNewSessionMenu = (anchor: NewSessionMenuAnchor) => {
     if (creatingShell) return;
+    if (newSessionMenuAnchor !== anchor) {
+      void fetchAgentStatuses();
+    }
     setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
   };
 
@@ -3590,7 +3593,7 @@ function LocalTerminalSidebar() {
             display: "flex",
             minHeight: 0,
             opacity: 1,
-            overflow: "hidden",
+            overflow: "visible",
             transform: "translateX(0)",
             transition: TERMINAL_SIDEBAR_TRANSITION,
             width: 76,
@@ -3635,6 +3638,7 @@ function LocalTerminalSidebar() {
           maxHeight: ctx.mobile ? "52%" : undefined,
           minHeight: ctx.mobile ? 360 : undefined,
           opacity: 1,
+          overflow: "visible",
           position: "relative",
           transform: "translateX(0)",
           transition: ctx.mobile ? undefined : TERMINAL_SIDEBAR_TRANSITION,
@@ -4072,18 +4076,21 @@ function NewSessionMenuItem({
       >
         {install ? (
           <span
+            data-testid="terminal-agent-install-pill"
             style={{
               alignItems: "center",
-              background: "#D8792C",
-              borderRadius: 6,
-              color: "#FFFDF7",
+              background: "rgba(75, 78, 70, 0.1)",
+              border: "1px solid rgba(75, 78, 70, 0.14)",
+              borderRadius: 999,
+              boxSizing: "border-box",
+              color: "#696D63",
               display: "flex",
               fontFamily: "Inter, system-ui, sans-serif",
-              fontSize: 12,
-              fontWeight: 800,
-              height: 22,
+              fontSize: 11,
+              fontWeight: 700,
+              height: 21,
               lineHeight: "14px",
-              padding: "0 8px",
+              padding: "0 7px",
             }}
           >
             Install

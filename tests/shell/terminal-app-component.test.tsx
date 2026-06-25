@@ -1331,6 +1331,23 @@ describe("TerminalApp", () => {
     ))).toBe(false);
   });
 
+  it("keeps the new-session menu visible outside a resized drawer", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    expect(screen.getByRole("menu", { name: "New session menu" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-sidebar-shell").style.overflow).toBe("visible");
+  });
+
   it("opens Matrix-named shell sessions from the new-session menu", async () => {
     render(<TerminalApp />);
 
@@ -2761,6 +2778,9 @@ describe("TerminalApp", () => {
     expect(within(menu).getByRole("menuitem", { name: /Pi.*Install/ })).toBeTruthy();
     expect(within(menu).queryByText("Ready")).toBeNull();
     expect(within(menu).getAllByText("Install")).toHaveLength(2);
+    const installPill = within(menu).getAllByTestId("terminal-agent-install-pill")[0];
+    expect(installPill.style.background).toBe("rgba(75, 78, 70, 0.1)");
+    expect(installPill.style.color).toBe("rgb(105, 109, 99)");
     expect(within(menu).getByTestId("terminal-agent-logo-claude")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-codex")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-opencode")).toBeTruthy();
@@ -2769,6 +2789,58 @@ describe("TerminalApp", () => {
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-codex"), "/agent-logos/codex.png");
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-opencode"), "/agent-logos/opencode-white.png");
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-pi"), "/agent-logos/pi-coding-agent.png");
+  });
+
+  it("refreshes agent install state when opening the new-session menu", async () => {
+    let agentStatusCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        agentStatusCalls += 1;
+        const installed = agentStatusCalls > 1;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: true, authState: "ok" },
+              { id: "codex", installed: true, authState: "ok" },
+              { id: "opencode", installed, authState: installed ? "ok" : "unknown", errorCode: installed ? null : "agent_missing" },
+              { id: "pi", installed, authState: installed ? "ok" : "unknown", errorCode: installed ? null : "agent_missing" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+    await vi.waitFor(() => {
+      expect(within(menu).queryByRole("menuitem", { name: /OpenCode.*Install/ })).toBeNull();
+      expect(within(menu).queryByRole("menuitem", { name: /Pi.*Install/ })).toBeNull();
+    });
+    expect(within(menu).getByRole("menuitem", { name: /^OpenCode$/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /^Pi$/ })).toBeTruthy();
   });
 
   it("starts installed agents directly from the new-session menu", async () => {
