@@ -493,8 +493,12 @@ describe("TerminalApp", () => {
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
     expect(screen.getByText("custom · green on black")).toBeTruthy();
     expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
+    expect(screen.getByText("RECOMMENDED").style.fontSize).toBe("8px");
+    expect(screen.getByText("RECOMMENDED").parentElement?.style.justifyContent).toBe("flex-end");
+    expect(screen.getByText("RECOMMENDED").parentElement?.style.minWidth).toBe("132px");
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
     expect(saveThemeSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalledWith(
       expect.stringContaining("/api/terminal/sessions/main/preferences"),
       expect.anything(),

@@ -1088,10 +1088,16 @@ function mapTerminalThemeToShellTheme(themeId: TerminalThemeId | undefined): She
   return "dark";
 }
 
+let globalShellThemePreferenceLoadStarted = false;
+
 function loadGlobalShellThemePreference(setThemeId: (themeId: TerminalThemeId) => void): void {
   if (typeof fetch !== "function") {
     return;
   }
+  if (globalShellThemePreferenceLoadStarted) {
+    return;
+  }
+  globalShellThemePreferenceLoadStarted = true;
   void fetch(`${getGatewayUrl()}/api/terminal/preferences`, {
     signal: AbortSignal.timeout(10_000),
   })
@@ -1106,6 +1112,7 @@ function loadGlobalShellThemePreference(setThemeId: (themeId: TerminalThemeId) =
       }
     })
     .catch((err: unknown) => {
+      globalShellThemePreferenceLoadStarted = false;
       console.warn("Failed to load shell theme preferences:", err instanceof Error ? err.message : err);
     });
 }
@@ -1153,6 +1160,7 @@ interface TerminalAppProps {
 export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
+  const setThemeId = useTerminalSettings((s) => s.setThemeId);
   const appThemeId = useTerminalSettings((s) => s.appThemeId);
   const appThemeOption = getTerminalAppThemeOption(appThemeId);
   const appChromeTheme = getTerminalAppChromeTheme(appThemeOption.id);
@@ -1255,6 +1263,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    loadGlobalShellThemePreference(setThemeId);
+  }, [setThemeId]);
 
   const addTab = (cwd: string, label?: string, claude?: boolean, startupCommand?: string, sessionId?: string) => {
     const id = genId();
@@ -2216,10 +2228,6 @@ function ShellThemeChooser({
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
   const selectedShellThemeId = mapTerminalThemeToShellTheme(themeId);
 
-  useEffect(() => {
-    loadGlobalShellThemePreference(setThemeId);
-  }, [setThemeId]);
-
   const persistShellTheme = (next: ShellThemeId) => {
     setThemeId(next);
     if (typeof fetch !== "function") {
@@ -2329,23 +2337,7 @@ function ShellThemeChooserContent({
         >
           <ChevronLeftIcon size={mobile ? 19 : 17} strokeWidth={2.2} />
         </button>
-        <span
-          aria-hidden="true"
-          style={{
-            alignItems: "center",
-            background: mobile ? "#15180F" : "var(--terminal-drawer-card-bg)",
-            border: `1px solid ${mobile ? "#15180F" : "var(--terminal-drawer-card-border)"}`,
-            borderRadius: 8,
-            color: mobile ? "#9CB77A" : "var(--terminal-chrome-active)",
-            display: "flex",
-            flexShrink: 0,
-            height: mobile ? 38 : 32,
-            justifyContent: "center",
-            width: mobile ? 38 : 32,
-          }}
-        >
-          <SquareTerminalIcon size={mobile ? 19 : 17} strokeWidth={2} />
-        </span>
+        <ShellThemeHeaderIcon mobile={mobile} />
         <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 3, minWidth: 0 }}>
           <span style={{ color: mobile ? "#20241C" : "var(--terminal-chrome-fg)", fontSize: mobile ? 17 : 14, fontWeight: 800, lineHeight: mobile ? "22px" : "18px" }}>
             Shell theme
@@ -2373,25 +2365,27 @@ function ShellThemeChooserContent({
             >
               <ShellThemePreviewIcon option={option} mobile={mobile} />
               <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 2, minWidth: 0 }}>
-                <span style={{ alignItems: "center", display: "flex", gap: 8, minWidth: 0 }}>
-                  <span style={{ color: mobile ? "#20241C" : "var(--terminal-chrome-fg)", fontSize: mobile ? 14 : 13, fontWeight: 800, lineHeight: "18px" }}>
-                    {option.label}
-                  </span>
-                  <span style={getShellThemeBadgeStyle(option.badgeTone, mobile)}>
-                    {option.badge}
-                  </span>
+                <span style={{ color: mobile ? "#20241C" : "var(--terminal-chrome-fg)", fontSize: mobile ? 14 : 13, fontWeight: 800, lineHeight: "18px" }}>
+                  {option.label}
                 </span>
                 <span style={{ color: mobile ? "#77786C" : "var(--terminal-chrome-muted)", fontSize: mobile ? 11 : 10, lineHeight: mobile ? "15px" : "13px" }}>
                   {option.description}
                 </span>
               </span>
-              {selected ? (
-                <CheckIcon
-                  size={mobile ? 17 : 15}
-                  strokeWidth={2.4}
-                  style={{ color: mobile ? "#4F8A55" : "var(--terminal-chrome-active)", flexShrink: 0 }}
-                />
-              ) : null}
+              <span style={getShellThemeOptionTrailingStyle(mobile)}>
+                <span style={getShellThemeBadgeStyle(option.badgeTone, mobile)}>
+                  {option.badge}
+                </span>
+                {selected ? (
+                  <CheckIcon
+                    size={mobile ? 18 : 16}
+                    strokeWidth={2.5}
+                    style={{ color: mobile ? "#4F8A55" : "var(--terminal-chrome-active)", flexShrink: 0 }}
+                  />
+                ) : (
+                  <span aria-hidden="true" style={{ flexShrink: 0, height: mobile ? 18 : 16, width: mobile ? 18 : 16 }} />
+                )}
+              </span>
             </button>
           );
         })}
@@ -2435,17 +2429,28 @@ function getShellThemeOptionStyle(mobile: boolean, selected: boolean): CSSProper
 
   return {
     alignItems: "center",
-    background: selected ? "var(--terminal-drawer-card-bg)" : "rgba(255, 255, 255, 0.02)",
+    background: selected ? "rgba(57, 255, 106, 0.08)" : "rgba(255, 255, 255, 0.02)",
     border: `1px solid ${selected ? "var(--terminal-chrome-active)" : "var(--terminal-chrome-control-border)"}`,
     borderRadius: 10,
     color: "var(--terminal-chrome-fg)",
     cursor: "pointer",
     display: "flex",
-    gap: 11,
-    minHeight: 52,
-    padding: "9px 10px",
+    gap: 12,
+    minHeight: 58,
+    padding: "10px 12px",
     textAlign: "left",
     width: "100%",
+  };
+}
+
+function getShellThemeOptionTrailingStyle(mobile: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    display: "flex",
+    flexShrink: 0,
+    gap: mobile ? 9 : 10,
+    justifyContent: "flex-end",
+    minWidth: mobile ? 116 : 132,
   };
 }
 
@@ -2453,13 +2458,13 @@ function getShellThemeBadgeStyle(badgeTone: "recommended" | "warning", mobile: b
   const recommended = badgeTone === "recommended";
   return {
     background: recommended ? (mobile ? "#DDEBCE" : "rgba(156, 183, 122, 0.2)") : (mobile ? "#F4E4A8" : "rgba(210, 162, 60, 0.2)"),
-    borderRadius: 4,
+    borderRadius: 6,
     color: recommended ? (mobile ? "#4F8A55" : "#A8D27C") : (mobile ? "#A06F1D" : "#E2BC62"),
-    fontSize: mobile ? 7 : 6,
+    fontSize: mobile ? 9 : 8,
     fontWeight: 800,
-    letterSpacing: "0.02em",
-    lineHeight: "10px",
-    padding: "1px 4px",
+    letterSpacing: "0.01em",
+    lineHeight: mobile ? "14px" : "13px",
+    padding: mobile ? "2px 7px" : "2px 6px",
     whiteSpace: "nowrap",
   };
 }
@@ -2476,6 +2481,34 @@ function getShellThemeWarningStyle(mobile: boolean): CSSProperties {
     lineHeight: mobile ? "14px" : "16px",
     padding: mobile ? "10px 12px" : "11px 12px",
   };
+}
+
+function ShellThemeHeaderIcon({ mobile }: { mobile: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        alignItems: "center",
+        background: "#050A06",
+        border: "1px solid rgba(57, 255, 106, 0.48)",
+        borderRadius: mobile ? 11 : 9,
+        boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 18px rgba(57, 255, 106, 0.14)",
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+        gap: mobile ? 5 : 4,
+        height: mobile ? 40 : 34,
+        justifyContent: "center",
+        width: mobile ? 40 : 34,
+      }}
+    >
+      <span style={{ background: "#39FF6A", borderRadius: 999, display: "block", height: 3, width: mobile ? 21 : 18 }} />
+      <span style={{ display: "flex", gap: 4 }}>
+        <span style={{ background: "#27E9A4", borderRadius: 999, display: "block", height: mobile ? 6 : 5, width: mobile ? 6 : 5 }} />
+        <span style={{ background: "#E6E678", borderRadius: 999, display: "block", height: mobile ? 6 : 5, width: mobile ? 6 : 5 }} />
+      </span>
+    </span>
+  );
 }
 
 function ShellThemePreviewIcon({
