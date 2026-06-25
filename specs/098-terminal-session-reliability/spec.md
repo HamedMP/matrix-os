@@ -2,8 +2,20 @@
 
 **Feature Branch**: `fix-shell-sticky-waiting-status`  
 **Created**: 2026-06-25  
-**Status**: Draft  
+**Status**: Ready for Planning
 **Input**: User description: "List all shell terminal and gateway session-management code-quality findings in a new spec, then work on them one by one."
+
+## Scope Boundary
+
+This spec owns terminal runtime/session reliability: the truth model for live terminal sessions, saved shell metadata, terminal pane references, terminal WebSocket reattach, terminal close/delete behavior, and terminal-specific diagnostics.
+
+Related spec `specs/099-shell-connection-resilience/` owns browser-shell live connection resilience: reconnect banners, browser live-event replay, credential refresh, queued outbound shell actions, public route health, and shell-wide connection diagnostics.
+
+When implementation touches both specs, use this boundary:
+
+- If the user-visible problem is a terminal process/session appearing stuck, lost, duplicated, killed, detached, or not reattached, plan it under this spec.
+- If the user-visible problem is the browser shell losing live updates, showing disruptive reconnect state, failing credential refresh, or missing shell-wide event replay, plan it under `099-shell-connection-resilience`.
+- Shared diagnostics and reconnect contracts may be introduced in `099`, but terminal-specific status, liveness, and pane/session reconciliation remain acceptance criteria for `098`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -125,12 +137,21 @@ Engineers can change terminal behavior without editing a giant UI component that
 
 ### One-by-One Work Order
 
-1. **Slice 1: Fix sticky visual status** - Covers F-001 and F-010 for upgraded persisted state where old waiting/running metadata survives into a newer bundle.
-2. **Slice 2: Prove process lifecycle across tab changes** - Covers F-003 and F-011 by proving focus, backgrounding, refresh, and reconnect do not kill or duplicate terminal processes.
-3. **Slice 3: Define one session truth model** - Covers F-002, F-006, and F-009 by documenting and enforcing precedence between runtime sessions, saved metadata, pane references, workspace aliases, and legacy identifiers.
-4. **Slice 4: Make stale refresh visible and recoverable** - Covers F-004, F-005, and F-008 by labeling stale data, preserving usable last-known state, and keeping optimistic rollbacks scoped.
-5. **Slice 5: Extract terminal state seams** - Covers F-007 by isolating shell/session refresh behavior from unrelated file, project, and agent-menu state.
-6. **Slice 6: Add non-SSH operational diagnostics** - Covers F-012 by adding a supported status path for customer runtime/session health when direct VPS SSH is unavailable.
+1. **Slice 1: Fix sticky visual status** - Covers F-001 and F-010. Deliver a failing regression test first for upgraded persisted state where old waiting/running metadata survives into a newer bundle, then make current runtime/activity evidence override stale visual metadata.
+2. **Slice 2: Prove process lifecycle across tab changes** - Covers F-003 and F-011. Deliver a lifecycle regression proving focus, backgrounding, refresh, and reconnect do not kill, duplicate, or permanently detach terminal processes.
+3. **Slice 3: Define one session truth model** - Covers F-002, F-006, and F-009. Deliver the documented precedence model and gateway/shell reconciliation behavior for runtime sessions, saved metadata, pane references, workspace aliases, and legacy identifiers.
+4. **Slice 4: Make stale refresh visible and recoverable** - Covers F-004, F-005, and F-008. Deliver stale-state UX and field-scoped optimistic rollback behavior for terminal session list refresh, delete, rename, reorder, placement, and seen-state operations.
+5. **Slice 5: Extract terminal state seams** - Covers F-007. Deliver testable terminal session state helpers or stores that isolate shell/session refresh behavior from unrelated file, project, and agent-menu state.
+6. **Slice 6: Add non-SSH operational diagnostics** - Covers F-012. Deliver a supported status path for customer runtime/session health when direct VPS SSH is unavailable, using coarse metadata only.
+
+### Planning Readiness Review
+
+- **MVP slice**: Slice 1 is the correct first task group because it targets the reported "visually stuck" symptom with the smallest blast radius.
+- **Implementation shape**: Plan each slice as an independently reviewable PR. Do not combine the state-architecture extraction with the sticky-status fix.
+- **TDD requirement**: Every slice must start with failing tests. The first slice needs upgraded persisted-state tests before implementation.
+- **Frontend evidence**: Any slice that changes terminal visible status, stale labels, recovery actions, or sidebar behavior needs screenshot or screen-recording evidence.
+- **Public docs**: Implementation planning must include a docs update if user-visible terminal recovery language or operator diagnostic workflow changes.
+- **Spec Kit pointer**: `.specify/feature.json` is intentionally not part of this PR's durable diff. For local planning, point Spec Kit at `specs/098-terminal-session-reliability` before running plan/tasks commands.
 
 ### Functional Requirements
 
