@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
+import Image from "next/image";
 import {
   BotIcon,
   ChevronLeftIcon,
@@ -808,6 +809,22 @@ const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
   pointerEvents: "auto",
   textAlign: "left",
 };
+const SESSION_RENAME_INPUT_STYLE: CSSProperties = {
+  background: "var(--terminal-drawer-card-bg)",
+  border: "1px solid var(--terminal-drawer-card-border)",
+  borderRadius: 6,
+  color: "var(--terminal-drawer-fg)",
+  flex: "1 1 auto",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  fontSize: 14,
+  fontWeight: 700,
+  height: 24,
+  lineHeight: "18px",
+  minWidth: 0,
+  outline: "none",
+  padding: "0 6px",
+  pointerEvents: "auto",
+};
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
@@ -923,6 +940,29 @@ function genId() {
   return Math.random().toString(36).slice(2, 9);
 }
 
+function terminalSessionName(prefix = "matrix") {
+  const safePrefix = prefix
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 22) || "matrix";
+  return `${safePrefix}-${genId()}`.slice(0, 31);
+}
+
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+async function readShellErrorCode(res: Response): Promise<string | null> {
+  try {
+    const data = await res.clone().json() as { error?: { code?: unknown } };
+    return typeof data.error?.code === "string" ? data.error.code : null;
+  } catch (err: unknown) {
+    console.warn("Failed to parse shell error response:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 function splitPaneInTree(node: PaneNode, paneId: string, dir: "horizontal" | "vertical"): PaneNode {
   if (node.type === "pane") {
     if (node.id === paneId) {
@@ -1010,6 +1050,30 @@ function getSessionIds(node: PaneNode): string[] {
     return node.sessionId ? [node.sessionId] : [];
   }
   return [...getSessionIds(node.children[0]), ...getSessionIds(node.children[1])];
+}
+
+function getPaneIdsForSession(node: PaneNode, sessionId: string): string[] {
+  if (node.type === "pane") {
+    return node.sessionId === sessionId ? [node.id] : [];
+  }
+  return [
+    ...getPaneIdsForSession(node.children[0], sessionId),
+    ...getPaneIdsForSession(node.children[1], sessionId),
+  ];
+}
+
+function removeSessionFromPaneTree(node: PaneNode, sessionId: string): PaneNode | null {
+  if (node.type === "pane") {
+    return node.sessionId === sessionId ? null : node;
+  }
+  const left = removeSessionFromPaneTree(node.children[0], sessionId);
+  const right = removeSessionFromPaneTree(node.children[1], sessionId);
+  if (!left) return right;
+  if (!right) return left;
+  if (left === node.children[0] && right === node.children[1]) {
+    return node;
+  }
+  return { ...node, children: [left, right] };
 }
 
 function layoutUsesOnlyCanonicalShellSessions(layout: TerminalLayout): boolean {
@@ -1378,21 +1442,33 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     return id;
   };
 
-  const createShellSessionTab = async (label: string, cwd = DEFAULT_CWD) => {
+  const createShellSessionTab = async (
+    label: string,
+    cwd = DEFAULT_CWD,
+    options: { namePrefix?: string; cmd?: string } = {},
+  ) => {
+    let requestedCwd = cwd || "~";
+    let retriedHomeCwd = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const name = `matrix-${genId()}`;
+      const name = terminalSessionName(options.namePrefix);
       try {
         // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design retry loop: each attempt only runs if the prior one failed with a 409 name collision or abort; parallelizing would create multiple sessions
         const res = await fetch(`${getGatewayUrl()}/api/terminal/sessions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, cwd }),
+          body: JSON.stringify({ name, cwd: requestedCwd, ...(options.cmd ? { cmd: options.cmd } : {}) }),
           signal: AbortSignal.timeout(10_000),
         });
         if (res.status === 409) {
           continue;
         }
         if (!res.ok) {
+          if (!retriedHomeCwd && res.status === 400 && await readShellErrorCode(res) === "invalid_cwd") {
+            retriedHomeCwd = true;
+            requestedCwd = "~";
+            attempt -= 1;
+            continue;
+          }
           console.warn(`Failed to create shell session "${name}": ${res.status}`);
           return null;
         }
@@ -1400,8 +1476,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
           destroyTerminalSessions([name]);
           return null;
         }
-        addSessionTab(label, name, cwd);
-        return name;
+        const data = await res.json() as { name?: unknown };
+        const sessionName = typeof data.name === "string" ? data.name : name;
+        addSessionTab(label, sessionName, requestedCwd);
+        return sessionName;
       } catch (err: unknown) {
         console.warn(
           "Failed to create shell session:",
@@ -1430,6 +1508,31 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     setTabs(next);
     setActiveTabId(nextActiveTabId);
     setFocusedPaneId(nextFocusedPaneId);
+  };
+
+  const removeDeletedShellSessionFromLayout = (sessionId: string) => {
+    const paneIds = tabsRef.current.flatMap((tab) => getPaneIdsForSession(tab.paneTree, sessionId));
+    if (paneIds.length === 0) {
+      return;
+    }
+    markPanesClosing(paneIds);
+    setTabs((prev) => {
+      const next = prev
+        .map((tab) => {
+          const paneTree = removeSessionFromPaneTree(tab.paneTree, sessionId);
+          return paneTree ? { ...tab, paneTree } : null;
+        })
+        .filter((tab): tab is Tab => tab !== null);
+      tabsRef.current = next;
+      setActiveTabId((current) => next.some((tab) => tab.id === current) ? current : next[0]?.id ?? "");
+      setFocusedPaneId((current) => {
+        if (current && next.some((tab) => hasPaneId(tab.paneTree, current))) {
+          return current;
+        }
+        return next[0] ? getFirstPaneId(next[0].paneTree) : null;
+      });
+      return next;
+    });
   };
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- one-time mount bootstrap that loads the saved terminal layout from the gateway; the fetch is AbortSignal-guarded and every state write is gated behind a `cancelled` flag cleared in cleanup, so this is an intentional mount-driven load, not render data
@@ -1775,6 +1878,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       markTerminalLayoutDirty();
       return backgroundShellSession(...args);
     },
+    removeDeletedShellSessionFromLayout: (...args: Parameters<typeof removeDeletedShellSessionFromLayout>) => {
+      markTerminalLayoutDirty();
+      return removeDeletedShellSessionFromLayout(...args);
+    },
     closeTab: (...args: Parameters<typeof closeTab>) => {
       markTerminalLayoutDirty();
       return closeTab(...args);
@@ -1919,8 +2026,9 @@ interface TerminalAppContextType {
   terminalBackground: string;
   addTab: (cwd: string, label?: string, claude?: boolean, startupCommand?: string) => string;
   addSessionTab: (label: string, sessionId: string, cwd?: string) => string;
-  createShellSessionTab: (label: string, cwd?: string) => Promise<string | null>;
+  createShellSessionTab: (label: string, cwd?: string, options?: { namePrefix?: string; cmd?: string }) => Promise<string | null>;
   backgroundShellSession: (sessionId: string) => void;
+  removeDeletedShellSessionFromLayout: (sessionId: string) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   renameTab: (tabId: string, label: string) => void;
@@ -3317,6 +3425,127 @@ interface WorkspaceSessionSummary {
   transcriptPath?: string;
 }
 
+type TerminalAgentId = "claude" | "codex" | "opencode" | "pi";
+
+interface TerminalAgentOption {
+  id: TerminalAgentId;
+  label: string;
+  color: string;
+  logoSrc: string;
+  shortcut?: string;
+  launchCommand?: string;
+  installPackage: string;
+  installFlags?: string[];
+  claudeMode?: boolean;
+  fallbackInstalled: boolean;
+}
+
+interface TerminalAgentStatus {
+  id: TerminalAgentId;
+  installed: boolean;
+}
+
+const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
+  {
+    id: "claude",
+    label: "Claude Code",
+    color: "#D8792C",
+    logoSrc: "/agent-logos/claude-code.png",
+    shortcut: "⌘⇧C",
+    installPackage: "@anthropic-ai/claude-code@latest",
+    claudeMode: true,
+    fallbackInstalled: true,
+  },
+  {
+    id: "codex",
+    label: "Codex",
+    color: "#465243",
+    logoSrc: "/agent-logos/codex.png",
+    shortcut: "⌘⇧X",
+    launchCommand: "codex",
+    installPackage: "@openai/codex@latest",
+    fallbackInstalled: true,
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    color: "#111111",
+    logoSrc: "/agent-logos/opencode-white.png",
+    launchCommand: "opencode",
+    installPackage: "opencode-ai@latest",
+    fallbackInstalled: false,
+  },
+  {
+    id: "pi",
+    label: "Pi",
+    color: "#1E2F5C",
+    logoSrc: "/agent-logos/pi-coding-agent.png",
+    launchCommand: "pi",
+    installPackage: "@earendil-works/pi-coding-agent@latest",
+    installFlags: ["--ignore-scripts"],
+    fallbackInstalled: false,
+  },
+];
+
+const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
+  alignItems: "center",
+  border: "1px solid rgba(255, 255, 255, 0.56)",
+  borderRadius: 8,
+  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 5px 12px rgba(49, 54, 45, 0.16)",
+  boxSizing: "border-box",
+  color: "#FFFDF7",
+  display: "flex",
+  flex: "0 0 26px",
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 11,
+  fontWeight: 900,
+  height: 26,
+  justifyContent: "center",
+  letterSpacing: 0,
+  lineHeight: "26px",
+  overflow: "hidden",
+  width: 26,
+};
+
+const TERMINAL_AGENT_LOGO_IMAGE_STYLE: CSSProperties = {
+  display: "block",
+  height: 17,
+  objectFit: "contain",
+  width: 17,
+};
+
+function isTerminalAgentId(value: unknown): value is TerminalAgentId {
+  return value === "claude" || value === "codex" || value === "opencode" || value === "pi";
+}
+
+function parseTerminalAgentStatuses(value: unknown): TerminalAgentStatus[] {
+  if (!value || typeof value !== "object" || !("agents" in value) || !Array.isArray(value.agents)) {
+    return [];
+  }
+  return value.agents
+    .filter((agent): agent is { id: TerminalAgentId; installed: boolean } => (
+      Boolean(agent) &&
+      typeof agent === "object" &&
+      isTerminalAgentId((agent as { id?: unknown }).id) &&
+      typeof (agent as { installed?: unknown }).installed === "boolean"
+    ))
+    .map((agent) => ({ id: agent.id, installed: agent.installed }));
+}
+
+function terminalAgentInstallCommand(option: TerminalAgentOption): string {
+  const flags = option.installFlags?.join(" ") ?? "";
+  const extraFlags = flags ? `${flags} ` : "";
+  return [
+    'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
+    `npm install -g ${extraFlags}--prefix "$MATRIX_NODE_PREFIX" ${option.installPackage}`,
+  ].join("; ");
+}
+
+function terminalAgentVisibleInstallCommand(option: TerminalAgentOption): string {
+  const command = terminalAgentInstallCommand(option);
+  return `sh -lc ${shellQuote(`printf '%s\\n' ${shellQuote(command)}; ${command}; exec "\${SHELL:-sh}" -l`)}`;
+}
+
 function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSummary[]): boolean {
   return left.length === right.length && left.every((session, index) => {
     const next = right[index];
@@ -3506,7 +3735,7 @@ function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: Workspac
   });
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 15 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal sidebar component; extraction tracked separately. prefer-useReducer: the 16 useState fields are several independent clusters, not one related cluster: projects/shells/sessions/files each carry their own data+loading+error triplet with separate fetch lifecycles, plus orthogonal tab/filter/rootPath/tree/agent-status UI state; collapsing them into one reducer would obscure the independent update sites and would not be a mechanical, behavior-identical change.
 function LocalTerminalSidebar() {
   const ctx = useTerminalAppContext();
   const [tab, setTab] = useState<SidebarTab>("shells");
@@ -3531,6 +3760,7 @@ function LocalTerminalSidebar() {
   const [sessions, setSessions] = useState<WorkspaceSessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [agentStatuses, setAgentStatuses] = useState<Record<TerminalAgentId, boolean> | null>(null);
   const [rootPath, setRootPath] = useState("projects");
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [filter, setFilter] = useState("");
@@ -3570,6 +3800,31 @@ function LocalTerminalSidebar() {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-event-handler -- async network load of the projects list when the Projects tab becomes active; `tab` is live derived state that can change from many sources (restore, programmatic nav, deep link), not a single DOM click handler, so the fetch belongs in the effect and cannot be hoisted to one parent handler
     if (tab === "projects") void fetchProjects();
   }, [tab, fetchProjects]);
+
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for mount-time agent status loading and explicit refresh from the new-session menu lifecycle.
+  const fetchAgentStatuses = useCallback(async () => {
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/agents`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        console.warn(`Failed to load terminal agent status: ${res.status}`);
+        return;
+      }
+      const parsed = parseTerminalAgentStatuses(await res.json());
+      if (parsed.length === 0) return;
+      setAgentStatuses(Object.fromEntries(
+        parsed.map((agent) => [agent.id, agent.installed]),
+      ) as Record<TerminalAgentId, boolean>);
+    } catch (err: unknown) {
+      console.warn("Failed to load terminal agent status:", err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-fetch-in-effect -- owner-scoped local gateway status probe; it is timeout-guarded and falls back to the Paper default menu state if unavailable.
+    void fetchAgentStatuses();
+  }, [fetchAgentStatuses]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shells-tab load useEffect below and command handlers.
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal; preserveOrderDuringReorder?: boolean } = {}) => {
@@ -3747,6 +4002,7 @@ function LocalTerminalSidebar() {
         setShells((prev) => prev.some((shell) => shell.name === name) || !deletedShell ? prev : [...prev, deletedShell]);
         return;
       }
+      ctx.removeDeletedShellSessionFromLayout(name);
       await fetchShells({ silent: true });
     } catch (err: unknown) {
       console.warn("Failed to remove shell session:", err instanceof Error ? err.message : err);
@@ -4090,20 +4346,39 @@ function LocalTerminalSidebar() {
 
   const openNewSessionMenu = (anchor: NewSessionMenuAnchor) => {
     if (creatingShell) return;
+    if (newSessionMenuAnchor !== anchor) {
+      void fetchAgentStatuses();
+    }
     setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
   };
 
-  const createClaudeCodeSession = () => {
+  const createAgentSession = async (option: TerminalAgentOption, installed: boolean) => {
+    if (creatingShellRef.current) return;
     setNewSessionMenuAnchor(null);
-    ctx.addTab(ctx.sidebarSelectedPath ?? DEFAULT_CWD, "Claude Code", true);
-    if (ctx.mobile) {
-      ctx.setSidebarOpen(false);
+    creatingShellRef.current = true;
+    setCreatingShell(true);
+    setShellsError(null);
+    const cwd = ctx.sidebarSelectedPath ?? DEFAULT_CWD;
+    try {
+      const label = installed ? option.label : `Install ${option.label}`;
+      const cmd = installed
+        ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
+        : terminalAgentVisibleInstallCommand(option);
+      const name = await ctx.createShellSessionTab(label, cwd, {
+        namePrefix: option.id,
+        cmd,
+      });
+      if (name) {
+        await fetchShells({ silent: true });
+      } else {
+        setShellsError("Failed to create agent session");
+      }
+    } catch (err: unknown) {
+      console.warn("Failed to create agent session:", err instanceof Error ? err.message : err);
+      setShellsError("Could not create agent session");
     }
-  };
-
-  const createCodexSession = () => {
-    setNewSessionMenuAnchor(null);
-    ctx.addTab(ctx.sidebarSelectedPath ?? DEFAULT_CWD, "Codex", false, "codex");
+    creatingShellRef.current = false;
+    setCreatingShell(false);
     if (ctx.mobile) {
       ctx.setSidebarOpen(false);
     }
@@ -4136,7 +4411,7 @@ function LocalTerminalSidebar() {
             display: "flex",
             minHeight: 0,
             opacity: 1,
-            overflow: "hidden",
+            overflow: "visible",
             transform: "translateX(0)",
             transition: TERMINAL_SIDEBAR_TRANSITION,
             width: 76,
@@ -4152,8 +4427,8 @@ function LocalTerminalSidebar() {
             onNew={() => openNewSessionMenu("rail")}
             onNewMenuClose={() => setNewSessionMenuAnchor(null)}
             onCreateShell={() => void createManagedShell()}
-            onCreateClaude={createClaudeCodeSession}
-            onCreateCodex={createCodexSession}
+            onCreateAgent={createAgentSession}
+            agentStatuses={agentStatuses}
             onOpen={makeShellActive}
           />
         </div>
@@ -4181,6 +4456,7 @@ function LocalTerminalSidebar() {
           maxHeight: ctx.mobile ? "52%" : undefined,
           minHeight: ctx.mobile ? 360 : undefined,
           opacity: 1,
+          overflow: "visible",
           position: "relative",
           transform: "translateX(0)",
           transition: ctx.mobile ? undefined : TERMINAL_SIDEBAR_TRANSITION,
@@ -4256,8 +4532,8 @@ function LocalTerminalSidebar() {
                   align="right"
                   onClose={() => setNewSessionMenuAnchor(null)}
                   onCreateShell={() => void createManagedShell()}
-                  onCreateClaude={createClaudeCodeSession}
-                  onCreateCodex={createCodexSession}
+                  onCreateAgent={createAgentSession}
+                  agentStatuses={agentStatuses}
                 />
               ) : null}
             </div>
@@ -4429,16 +4705,17 @@ function NewSessionMenu({
   align,
   onClose,
   onCreateShell,
-  onCreateClaude,
-  onCreateCodex,
+  onCreateAgent,
+  agentStatuses,
 }: {
   align: "left" | "right";
   onClose: () => void;
   onCreateShell: () => void;
-  onCreateClaude: () => void;
-  onCreateCodex: () => void;
+  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
+  agentStatuses: Record<TerminalAgentId, boolean> | null;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -4472,12 +4749,12 @@ function NewSessionMenu({
         display: "flex",
         flexDirection: "column",
         gap: 6,
-        padding: 10,
+        padding: 12,
         position: "absolute",
         ...(align === "right"
-          ? { right: -4, top: "calc(100% + 8px)" }
+          ? { right: -48, top: "calc(100% + 8px)" }
           : { left: "calc(100% + 8px)", top: 0 }),
-        width: 248,
+        width: 300,
         zIndex: 70,
       }}
     >
@@ -4510,19 +4787,44 @@ function NewSessionMenu({
         )}
         onClick={onCreateShell}
       />
-      <NewSessionMenuItem
-        label="Claude Code"
-        shortcut="⌘⇧C"
-        icon={<span aria-hidden="true" style={{ background: "#D8792C", borderRadius: 5, flexShrink: 0, height: 18, width: 18 }} />}
-        onClick={onCreateClaude}
-      />
-      <NewSessionMenuItem
-        label="Codex"
-        shortcut="⌘⇧X"
-        icon={<span aria-hidden="true" style={{ background: "var(--terminal-drawer-selected-stripe)", borderRadius: 5, flexShrink: 0, height: 18, width: 18 }} />}
-        onClick={onCreateCodex}
-      />
+      {TERMINAL_AGENT_OPTIONS.map((option) => {
+        const installed = agentStatuses?.[option.id] ?? option.fallbackInstalled;
+        return (
+          <NewSessionMenuItem
+            key={option.id}
+            label={option.label}
+            shortcut={installed ? option.shortcut : undefined}
+            install={!installed}
+            icon={<TerminalAgentLogo muted={!installed} option={option} />}
+            onClick={() => onCreateAgent(option, installed)}
+          />
+        );
+      })}
     </div>
+  );
+}
+
+function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; muted: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-testid={`terminal-agent-logo-${option.id}`}
+      style={{
+        ...TERMINAL_AGENT_LOGO_STYLE,
+        background: option.color,
+        opacity: muted ? 0.86 : 1,
+      }}
+    >
+      <Image
+        alt=""
+        data-testid={`terminal-agent-logo-image-${option.id}`}
+        draggable={false}
+        height={17}
+        src={option.logoSrc}
+        style={TERMINAL_AGENT_LOGO_IMAGE_STYLE}
+        width={17}
+      />
+    </span>
   );
 }
 
@@ -4531,12 +4833,14 @@ function NewSessionMenuItem({
   shortcut,
   icon,
   active = false,
+  install = false,
   onClick,
 }: {
   label: string;
-  shortcut: string;
+  shortcut?: string;
   icon: React.ReactNode;
   active?: boolean;
+  install?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -4546,24 +4850,24 @@ function NewSessionMenuItem({
       onClick={onClick}
       style={{
         alignItems: "center",
-        background: active ? "var(--terminal-drawer-action-bg)" : "transparent",
+        background: active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent",
         border: 0,
-        borderRadius: active ? 8 : 6,
+        borderRadius: active ? 7 : 7,
         boxSizing: "border-box",
         color: "var(--terminal-drawer-fg)",
         cursor: "pointer",
         display: "flex",
         flexShrink: 0,
-        gap: 10,
-        height: active ? 36 : 34,
-        padding: "0 10px",
+        gap: 12,
+        height: active ? 38 : 36,
+        padding: "0 12px",
         textAlign: "left",
       }}
       onMouseEnter={(event) => {
         event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : "transparent";
+        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent";
       }}
     >
       {icon}
@@ -4575,6 +4879,7 @@ function NewSessionMenuItem({
           fontWeight: active ? 700 : 600,
           lineHeight: "20px",
           minWidth: 0,
+          color: install ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
         }}
       >
         {label}
@@ -4582,14 +4887,59 @@ function NewSessionMenuItem({
       <span
         style={{
           color: "var(--terminal-drawer-subtle)",
-          flex: "0 0 46px",
-          fontFamily: "var(--font-mono, ui-monospace, monospace)",
-          fontSize: 12,
-          lineHeight: "16px",
-          textAlign: "right",
+          alignItems: "center",
+          display: "flex",
+          flex: "0 0 62px",
+          justifyContent: "flex-end",
+          minWidth: 62,
         }}
       >
-        {shortcut}
+        {install ? (
+          <span
+            data-testid="terminal-agent-install-pill"
+            style={{
+              alignItems: "center",
+              background: "var(--terminal-drawer-action-bg)",
+              border: "1px solid var(--terminal-drawer-action-border)",
+              borderRadius: 999,
+              boxSizing: "border-box",
+              color: "var(--terminal-drawer-action-fg)",
+              display: "flex",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 12,
+              fontWeight: 700,
+              height: 21,
+              lineHeight: "14px",
+              padding: "0 7px",
+            }}
+          >
+            Install
+          </span>
+        ) : (
+          <span
+            style={{
+              alignItems: "center",
+              background: shortcut ? "var(--terminal-drawer-action-bg)" : "transparent",
+              border: shortcut ? "1px solid var(--terminal-drawer-action-border)" : "1px solid transparent",
+              borderRadius: 6,
+              boxSizing: "border-box",
+              color: "var(--terminal-drawer-action-fg)",
+              display: "inline-flex",
+              fontFamily: "Inter, system-ui, sans-serif",
+              fontSize: 11,
+              fontWeight: 800,
+              height: 22,
+              justifyContent: "center",
+              letterSpacing: "0.02em",
+              lineHeight: "14px",
+              minWidth: shortcut ? 38 : 0,
+              padding: shortcut ? "0 6px" : 0,
+              textAlign: "center",
+            }}
+          >
+            {shortcut ?? ""}
+          </span>
+        )}
       </span>
     </button>
   );
@@ -4868,7 +5218,7 @@ function ShellCloseConfirmation({
                 color: "#F8F7EF",
                 cursor: deleting ? "not-allowed" : "pointer",
                 fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 gap: 6,
                 height: 30,
@@ -4954,8 +5304,8 @@ function CollapsedSessionsRail({
   onNew,
   onNewMenuClose,
   onCreateShell,
-  onCreateClaude,
-  onCreateCodex,
+  onCreateAgent,
+  agentStatuses,
   onOpen,
 }: {
   shells: ShellSessionSummary[];
@@ -4967,8 +5317,8 @@ function CollapsedSessionsRail({
   onNew: () => void;
   onNewMenuClose: () => void;
   onCreateShell: () => void;
-  onCreateClaude: () => void;
-  onCreateCodex: () => void;
+  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
+  agentStatuses: Record<TerminalAgentId, boolean> | null;
   onOpen: (shell: ShellSessionSummary) => void;
 }) {
   const activeShells = shells.filter((shell) => shell.placement !== "background");
@@ -5019,8 +5369,8 @@ function CollapsedSessionsRail({
             align="left"
             onClose={onNewMenuClose}
             onCreateShell={onCreateShell}
-            onCreateClaude={onCreateClaude}
-            onCreateCodex={onCreateCodex}
+            onCreateAgent={onCreateAgent}
+            agentStatuses={agentStatuses}
           />
         ) : null}
       </div>
@@ -5630,22 +5980,7 @@ function ShellCard({
                   cancelRename();
                 }
               }}
-              style={{
-                background: "var(--terminal-drawer-card-bg)",
-                border: "1px solid var(--terminal-drawer-card-border)",
-                borderRadius: 6,
-                color: "var(--terminal-drawer-fg)",
-                flex: "1 1 auto",
-                fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                fontSize: 14,
-                fontWeight: 700,
-                height: 24,
-                lineHeight: "18px",
-                minWidth: 0,
-                outline: "none",
-                padding: "0 6px",
-                pointerEvents: "auto",
-              }}
+              style={SESSION_RENAME_INPUT_STYLE}
             />
           ) : (
             <button

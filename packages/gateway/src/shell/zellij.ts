@@ -105,6 +105,12 @@ const SAFE_ATTACH_ENV_KEYS = new Set([
   "HOME",
   "LANG",
   "LOGNAME",
+  "MATRIX_APP_DIR",
+  "MATRIX_INSTALL_TOOL_PACK",
+  "MATRIX_NODE_PREFIX",
+  "MATRIX_RUNTIME_DIR",
+  "MATRIX_RUNTIME_HOME",
+  "MATRIX_RUNTIME_USER",
   "PATH",
   "SHELL",
   "TMPDIR",
@@ -589,13 +595,6 @@ function initialCommandLayout(command: string, cwd?: string): string {
     ? `      args ${args.map(kdlString).join(" ")}\n`
     : "";
   return `layout {
-  default_tab_template {
-    children
-    pane size=1 borderless=true {
-      plugin location="zellij:compact-bar"
-    }
-  }
-
   tab name="main" {
     pane ${paneAttrs} {
 ${argLine}    }

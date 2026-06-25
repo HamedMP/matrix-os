@@ -2083,7 +2083,8 @@ export function createApp(deps: {
     const cookie = c.req.header('cookie');
     const clerkToken = clerkAuth?.extractToken(authorization, cookie);
     const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : null;
-    if (!clerkToken && !bearerToken) return null;
+    const appSessionToken = readCookie(cookie, APP_SESSION_COOKIE);
+    if (!clerkToken && !bearerToken && !appSessionToken) return null;
 
     try {
       if (clerkAuth && clerkToken) {
@@ -2096,13 +2097,15 @@ export function createApp(deps: {
       console.warn(`[billing] Clerk verification failed: ${kind}`);
     }
 
-    if (!platformJwtSecret || !bearerToken) return null;
+    const syncJwtToken = bearerToken ?? appSessionToken;
+    if (!platformJwtSecret || !syncJwtToken) return null;
     try {
-      const claims = await verifySyncJwt(bearerToken, { secret: platformJwtSecret });
+      const claims = await verifySyncJwt(syncJwtToken, { secret: platformJwtSecret });
       return claims.sub;
     } catch (err: unknown) {
       const kind = err instanceof Error ? err.name : typeof err;
-      console.warn(`[billing] native token verification failed: ${kind}`);
+      const source = bearerToken ? 'native token' : 'app session token';
+      console.warn(`[billing] ${source} verification failed: ${kind}`);
       return null;
     }
   }

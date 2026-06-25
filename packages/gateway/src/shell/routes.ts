@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js";
 import { toShellError } from "./errors.js";
+import { SESSION_NAME_PATTERN } from "./names.js";
 import {
   ShellPreferencesSchema,
   type ShellThemeId,
@@ -72,14 +73,15 @@ export const SHELL_SESSION_CREATE_RATE_LIMIT = {
   maxKeys: 1,
 };
 
+const NewSessionNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/);
 const CreateSessionBodySchema = z.object({
-  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/),
+  name: NewSessionNameSchema,
   cwd: safeCwdSchema().optional(),
   layout: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
   cmd: z.string().min(1).max(4096).optional(),
 });
 const SafeNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
-const SafeSessionNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/);
+const SafeSessionNameSchema = z.string().regex(SESSION_NAME_PATTERN);
 const SafeLayoutNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const SafeCwdSchema = safeCwdSchema();
 const TabBodySchema = z.object({
@@ -106,7 +108,7 @@ const SessionUiStateBodySchema = z.object({
   visualStatus: z.enum(["running", "finished", "idle", "waiting"]).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0);
 const SessionRenameBodySchema = z.object({
-  name: SafeSessionNameSchema,
+  name: NewSessionNameSchema,
 }).strict();
 const SessionOrderBodySchema = z.object({
   order: z.array(SafeSessionNameSchema).max(100),

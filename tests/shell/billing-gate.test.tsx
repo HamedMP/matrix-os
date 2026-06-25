@@ -122,6 +122,79 @@ describe("BillingGate", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("renders the shell for app-session billing access without Clerk client auth", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ access: { runtimeProxyAllowed: true, reason: "active" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/status",
+      expect.objectContaining({
+        credentials: "include",
+        method: "GET",
+      }),
+    );
+  });
+
+  it("revalidates app-session billing instead of reusing a signed-out active cache", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access: { runtimeProxyAllowed: true, reason: "active" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    cleanup();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Opening Matrix OS sign in")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("bypasses billing only for explicit test screenshot runs", async () => {
     vi.stubEnv("NEXT_PUBLIC_E2E_TEST_BYPASS", "1");
     clerkState.isLoaded = true;
@@ -533,7 +606,7 @@ describe("BillingGate", () => {
     );
 
     expect(screen.queryByText("Matrix workspace")).toBeNull();
-    expect(screen.getByText("Opening Matrix OS sign in")).toBeTruthy();
+    expect(await screen.findByText("Opening Matrix OS sign in")).toBeTruthy();
     expect(screen.queryByTestId("sign-in-component")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });

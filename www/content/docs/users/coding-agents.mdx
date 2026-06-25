@@ -29,6 +29,12 @@ matrix run -it --session setup -- hermes
 
 ## Start an agent from the web shell
 
+Open Terminal, click the new-session `+` menu, and choose `Claude Code`, `Codex`, `OpenCode`, or `Pi`. Matrix opens a new shell tab for every choice.
+
+If the selected agent is already installed, the new tab starts the agent command. If it is missing, the row shows `Install`; clicking it opens a new shell tab and runs the installer there so you can watch the install complete.
+
+You can also start an installed agent manually:
+
 ```bash
 cd ~/projects/repo
 codex

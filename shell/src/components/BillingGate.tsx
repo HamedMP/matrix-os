@@ -283,14 +283,14 @@ export function BillingGate({
 
 function BillingGateInner({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
-  const { active: billingActive } = useMatrixBillingAccess();
+  const { active: billingActive, checking: billingAccessChecking } = useMatrixBillingAccess();
   const router = useRouter();
   const searchParams = useSearchParams();
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const deviceReturnPath = normalizeDeviceReturnPath(searchParams.get("device_return"));
   const billingCheckoutReturnPath = getBillingCheckoutReturnPath(deviceReturnPath);
-  const hasBillingAccess = isSignedIn ? billingActive === true : false;
-  const billingChecking = isSignedIn && billingActive === null;
+  const hasBillingAccess = billingActive === true;
+  const billingChecking = billingAccessChecking;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
   const [deviceSetupStatus, setDeviceSetupStatus] = useState<"idle" | "preparing" | "failed">("idle");
@@ -424,11 +424,11 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    if (!isLoaded) return;
-    const state = !isSignedIn
-      ? "signed_out"
-      : hasBillingAccess
-        ? "billing_active"
+    if (!isLoaded || billingChecking) return;
+    const state = hasBillingAccess
+      ? "billing_active"
+      : !isSignedIn
+        ? "signed_out"
         : checkoutReturnRequested
           ? "checkout_return_pending"
           : "billing_required";
@@ -446,7 +446,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
       access_state: state,
       checkout_return_requested: checkoutReturnRequested,
     });
-  }, [checkoutReturnRequested, hasBillingAccess, isLoaded, isSignedIn]);
+  }, [billingChecking, checkoutReturnRequested, hasBillingAccess, isLoaded, isSignedIn]);
 
   if (e2eBillingBypass) {
     return <>{children}</>;
@@ -456,7 +456,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
     return <BillingStatusLoading />;
   }
 
-  if (!isSignedIn) {
+  if (!isSignedIn && !hasBillingAccess) {
     return <SignInRedirecting />;
   }
 

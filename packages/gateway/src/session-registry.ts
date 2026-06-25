@@ -605,6 +605,12 @@ export class SessionRegistry {
         ...(process.env.MATRIX_HANDLE ? { MATRIX_HANDLE: process.env.MATRIX_HANDLE } : {}),
         ...(process.env.MATRIX_DISPLAY_NAME ? { MATRIX_DISPLAY_NAME: process.env.MATRIX_DISPLAY_NAME } : {}),
         ...(process.env.MATRIX_HOME ? { MATRIX_HOME: process.env.MATRIX_HOME } : {}),
+        ...(process.env.MATRIX_APP_DIR ? { MATRIX_APP_DIR: process.env.MATRIX_APP_DIR } : {}),
+        ...(process.env.MATRIX_INSTALL_TOOL_PACK ? { MATRIX_INSTALL_TOOL_PACK: process.env.MATRIX_INSTALL_TOOL_PACK } : {}),
+        ...(process.env.MATRIX_NODE_PREFIX ? { MATRIX_NODE_PREFIX: process.env.MATRIX_NODE_PREFIX } : {}),
+        ...(process.env.MATRIX_RUNTIME_DIR ? { MATRIX_RUNTIME_DIR: process.env.MATRIX_RUNTIME_DIR } : {}),
+        ...(process.env.MATRIX_RUNTIME_HOME ? { MATRIX_RUNTIME_HOME: process.env.MATRIX_RUNTIME_HOME } : {}),
+        ...(process.env.MATRIX_RUNTIME_USER ? { MATRIX_RUNTIME_USER: process.env.MATRIX_RUNTIME_USER } : {}),
       },
     };
   }
