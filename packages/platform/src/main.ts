@@ -3583,7 +3583,9 @@ export function createApp(deps: {
         return c.json({ error: 'Unauthorized' }, 401);
       }
 
-      const record = await getContainer(db, handle);
+      const record =
+        (await getRunningUserMachineByHandle(db, handle)) ??
+        (await getContainer(db, handle));
       if (!record?.clerkUserId) {
         return c.json({ error: 'Unknown handle' }, 404);
       }
