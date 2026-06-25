@@ -23,6 +23,7 @@
     "dev:www": "pnpm --filter '@matrix-os/observability' build && bun run --filter www dev",
     "dev:desktop": "pnpm --filter desktop dev",
     "build:desktop": "pnpm --filter desktop build",
+    "build:shell:production": "pnpm --filter './shell' build",
     "dev:proxy": "pnpm --filter '@matrix-os/observability' build && bun run --filter '@matrix-os/proxy' dev",
     "dev:platform": "pnpm --filter '@matrix-os/observability' build && bun run --filter '@matrix-os/platform' dev",
     "docker": "docker compose -f docker-compose.dev.yml up",

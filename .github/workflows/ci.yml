@@ -116,9 +116,50 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         run: bun run typecheck
 
+  shell-production-build:
+    name: Shell Production Build
+    needs: [changes, typecheck]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Skip expensive CI for docs-only changes
+        if: needs.changes.outputs.should_run != 'true'
+        run: echo "No CI-relevant source changes detected; skipping shell production build."
+
+      - uses: actions/checkout@v6
+        if: needs.changes.outputs.should_run == 'true'
+
+      - uses: oven-sh/setup-bun@v2
+        if: needs.changes.outputs.should_run == 'true'
+
+      - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.should_run == 'true'
+
+      - uses: actions/setup-node@v6
+        if: needs.changes.outputs.should_run == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.should_run == 'true'
+
+      - name: Build shell production bundle
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2ktc2FmZS5leGFtcGxlLmNvbSQ=
+          NEXT_PUBLIC_CLERK_SIGN_IN_URL: /sign-in
+          NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
+          NEXT_PUBLIC_POSTHOG_KEY: phc_ci_shell_build
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: phc_ci_shell_build
+          NEXT_PUBLIC_POSTHOG_HOST: https://eu.i.posthog.com
+          NEXT_PUBLIC_POSTHOG_API_HOST: /relay
+        run: bun run build:shell:production
+
   patterns:
     name: Pattern Scan
-    needs: changes
+    needs: [changes, shell-production-build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -345,7 +386,7 @@ jobs:
 
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, patterns, react-doctor, sync-client, unit, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -355,6 +396,7 @@ jobs:
           SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          SHELL_PRODUCTION_BUILD_RESULT: ${{ needs.shell-production-build.result }}
           PATTERNS_RESULT: ${{ needs.patterns.result }}
           REACT_DOCTOR_RESULT: ${{ needs.react-doctor.result }}
           SYNC_CLIENT_RESULT: ${{ needs.sync-client.result }}
@@ -374,6 +416,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Detect CI-relevant changes | $CHANGES_RESULT |"
             echo "| Type Check | $TYPECHECK_RESULT |"
+            echo "| Shell Production Build | $SHELL_PRODUCTION_BUILD_RESULT |"
             echo "| Pattern Scan | $PATTERNS_RESULT |"
             echo "| React Doctor | $REACT_DOCTOR_RESULT |"
             echo "| Sync Client Package (Node 20) | $SYNC_CLIENT_RESULT |"
@@ -382,7 +425,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$PATTERNS_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
