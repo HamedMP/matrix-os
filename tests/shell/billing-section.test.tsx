@@ -95,7 +95,7 @@ describe("BillingSection", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
         status: 401,
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-auth-failure": "app-session-stale" },
       }),
     );
 
@@ -124,7 +124,7 @@ describe("BillingSection", () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 401,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-auth-failure": "app-session-stale" },
         }),
       )
       .mockResolvedValueOnce(
@@ -143,6 +143,27 @@ describe("BillingSection", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5_000 });
     await waitFor(() => expect(screen.getAllByText("Active").length).toBeGreaterThanOrEqual(1));
+  });
+
+  it("shows payment setup instead of reconnecting for a plain signed-out billing 401", async () => {
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.userId = null;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    expect(screen.queryByText("Reconnecting billing session")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
 
   it("keeps billing status unknown and retries after transient status failures", async () => {

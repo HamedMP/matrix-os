@@ -8,6 +8,7 @@ const BILLING_STATUS_TIMEOUT_MS = 10_000;
 const BILLING_STATUS_CACHE_TTL_MS = 30_000;
 const BILLING_STATUS_RETRY_MS = 3_000;
 const PLATFORM_SESSION_BILLING_CACHE_KEY = "platform-session";
+const APP_SESSION_STALE_AUTH_FAILURE = "app-session-stale";
 
 type BillingStatusSnapshot = {
   cacheKey: string;
@@ -184,6 +185,9 @@ function readRemoteBillingStatus(
         throw new Error("billing_status_retryable");
       }
       if (response.status === 401 || response.status === 403) {
+        if (response.headers.get("x-auth-failure") !== APP_SESSION_STALE_AUTH_FAILURE) {
+          return { active: false, entitlement: null, accessReason: null, accessIssue: null };
+        }
         return {
           active: null,
           entitlement: null,

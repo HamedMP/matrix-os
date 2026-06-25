@@ -170,7 +170,7 @@ describe("BillingGate", () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 401,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-auth-failure": "app-session-stale" },
         }),
       );
     vi.resetModules();
@@ -207,7 +207,7 @@ describe("BillingGate", () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 401,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-auth-failure": "app-session-stale" },
         }),
       )
       .mockResolvedValueOnce(
@@ -233,6 +233,32 @@ describe("BillingGate", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5_000 });
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+  });
+
+  it("redirects signed-out users instead of reconnecting on a plain billing 401", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Opening Matrix OS sign in")).toBeTruthy();
+    expect(screen.queryByText("Loading billing status")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue to pay" })).toBeNull();
   });
 
   it("bypasses billing only for explicit test screenshot runs", async () => {

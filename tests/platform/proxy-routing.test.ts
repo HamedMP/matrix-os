@@ -494,6 +494,7 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBeNull();
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
@@ -516,6 +517,7 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBe("app-session-stale");
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
@@ -546,6 +548,7 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBe("app-session-stale");
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 

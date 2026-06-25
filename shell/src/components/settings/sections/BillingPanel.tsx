@@ -393,7 +393,11 @@ function ActiveBillingPanel({
 function BillingSessionRefreshingPanel() {
   return (
     <div className="flex min-h-48 items-center justify-center rounded-xl border border-sky-500/20 bg-sky-500/5 p-4">
-      <output className="flex max-w-md flex-col items-center gap-3 text-center text-sm text-sky-900">
+      <div
+        aria-busy="true"
+        aria-live="polite"
+        className="flex max-w-md flex-col items-center gap-3 text-center text-sm text-sky-900"
+      >
         <span className="flex size-10 items-center justify-center rounded-lg border border-sky-500/20 bg-white">
           <Loader2Icon className="size-4 animate-spin text-sky-700" aria-hidden="true" />
         </span>
@@ -401,7 +405,7 @@ function BillingSessionRefreshingPanel() {
         <span className="leading-6 text-sky-900/70">
           Matrix is refreshing your desktop session before checking billing.
         </span>
-      </output>
+      </div>
     </div>
   );
 }

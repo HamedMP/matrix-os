@@ -297,7 +297,7 @@ export class EmbedService {
           err instanceof Error ? err.message : String(err),
         );
         if (this.hostedShellRefreshGatewayOrigin === gatewayOrigin) {
-          this.armHostedShellRefreshTimer(gatewayOrigin, delayMs ?? HOSTED_SHELL_SESSION_REFRESH_RETRY_MS);
+          this.armHostedShellRefreshTimer(gatewayOrigin, HOSTED_SHELL_SESSION_REFRESH_RETRY_MS);
         }
       });
   }
