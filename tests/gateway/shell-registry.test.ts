@@ -331,6 +331,108 @@ describe("shell registry", () => {
     ]);
   });
 
+  it("derives running from current activity when persisted waiting metadata is stale", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T12:00:00.000Z"));
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-24T12:00:00.000Z",
+            updatedAt: "2026-06-24T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+            lastSeenSeq: 11,
+            visualStatus: "waiting",
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const scrollbackStore = {
+      latestSeq: vi.fn(async () => 12),
+      latestActivity: vi.fn(async () => ({
+        latestSeq: 12,
+        latestOutputAt: "2026-06-25T11:59:59.000Z",
+        commandRunning: true,
+        latestCommandMark: { code: "B", kind: "command-start" },
+      })),
+      cleanup: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({
+      homePath: root,
+      adapter,
+      scrollbackStore: scrollbackStore as never,
+    });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "main", latestSeq: 12, lastSeenSeq: 11, unread: true, visualStatus: "running" },
+    ]);
+  });
+
+  it("expires stale persisted waiting metadata for quiet live sessions without deleting it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T12:00:30.000Z"));
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-24T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+            lastSeenSeq: 8,
+            visualStatus: "waiting",
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const scrollbackStore = {
+      latestSeq: vi.fn(async () => 8),
+      latestActivity: vi.fn(async () => ({
+        latestSeq: 8,
+        latestOutputAt: null,
+        commandRunning: null,
+        latestCommandMark: null,
+      })),
+      cleanup: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({
+      homePath: root,
+      adapter,
+      scrollbackStore: scrollbackStore as never,
+    });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "main", latestSeq: 8, lastSeenSeq: 8, unread: false, visualStatus: "idle" },
+    ]);
+    const raw = await readFile(persistPath, "utf-8");
+    expect(JSON.parse(raw).sessions.main.visualStatus).toBe("waiting");
+  });
+
   it("rejects UI state updates for sessions absent from metadata and live sessions", async () => {
     const root = await tempRoot();
     const adapter = {

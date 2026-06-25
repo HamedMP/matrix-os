@@ -9,6 +9,7 @@ import type { ScrollbackActivity, ScrollbackStore } from "./scrollback-store.js"
 const ShellPlacementSchema = z.enum(["active", "background"]);
 const ShellVisualStatusSchema = z.enum(["running", "finished", "idle", "waiting"]);
 const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
+const SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS = 12_000;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
@@ -414,9 +415,6 @@ export class ShellRegistry {
     unread: boolean,
     activity?: ScrollbackActivity,
   ): ShellVisualStatus {
-    if (session.visualStatus === "waiting") {
-      return "waiting";
-    }
     if (session.status !== "active") {
       return unread ? "finished" : "idle";
     }
@@ -428,6 +426,12 @@ export class ShellRegistry {
     }
     if (activity?.latestOutputAt && isRecentShellOutput(activity.latestOutputAt)) {
       return "running";
+    }
+    if (
+      session.visualStatus === "waiting" &&
+      isRecentShellTimestamp(session.updatedAt, SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS)
+    ) {
+      return "waiting";
     }
     return unread ? "finished" : "idle";
   }
@@ -544,9 +548,13 @@ export class ShellRegistry {
 }
 
 function isRecentShellOutput(value: string): boolean {
+  return isRecentShellTimestamp(value, SHELL_RUNNING_FALLBACK_WINDOW_MS);
+}
+
+function isRecentShellTimestamp(value: string, windowMs: number): boolean {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
     return false;
   }
-  return Date.now() - timestamp <= SHELL_RUNNING_FALLBACK_WINDOW_MS;
+  return Date.now() - timestamp <= windowMs;
 }
