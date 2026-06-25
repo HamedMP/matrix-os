@@ -35,6 +35,7 @@ const ShellSessionSchema = z.object({
   placement: ShellPlacementSchema.default("active"),
   lastSeenSeq: z.number().int().nonnegative().nullable().default(null),
   visualStatus: ShellVisualStatusSchema.optional(),
+  visualStatusUpdatedAt: z.string().optional(),
 });
 
 const RegistryFileSchema = z.object({
@@ -218,12 +219,17 @@ export class ShellRegistry {
         }
         existing = this.adoptSession(safeName, now);
       }
+      const existingVisualStatusUpdatedAt =
+        existing.visualStatusUpdatedAt ?? (existing.visualStatus ? existing.updatedAt : undefined);
+      const visualStatusChanged = patch.visualStatus !== undefined && patch.visualStatus !== existing.visualStatus;
       const next: PersistedShellSession = {
         ...existing,
         updatedAt: now,
+        ...(existingVisualStatusUpdatedAt ? { visualStatusUpdatedAt: existingVisualStatusUpdatedAt } : {}),
         ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
         ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
         ...(patch.visualStatus !== undefined ? { visualStatus: patch.visualStatus } : {}),
+        ...(visualStatusChanged ? { visualStatusUpdatedAt: now } : {}),
       };
       file.sessions[safeName] = next;
       await this.write(file);
@@ -429,7 +435,10 @@ export class ShellRegistry {
     }
     if (
       session.visualStatus === "waiting" &&
-      isRecentShellTimestamp(session.updatedAt, SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS)
+      isRecentShellTimestamp(
+        session.visualStatusUpdatedAt ?? session.updatedAt,
+        SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS,
+      )
     ) {
       return "waiting";
     }

@@ -433,6 +433,48 @@ describe("shell registry", () => {
     expect(JSON.parse(raw).sessions.main.visualStatus).toBe("waiting");
   });
 
+  it("does not extend waiting metadata when unrelated UI state is written", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T12:00:00.000Z"));
+    const root = await tempRoot();
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const scrollbackStore = {
+      latestSeq: vi.fn(async () => 1),
+      latestActivity: vi.fn(async () => ({
+        latestSeq: 1,
+        latestOutputAt: null,
+        commandRunning: null,
+        latestCommandMark: null,
+      })),
+      cleanup: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({
+      homePath: root,
+      adapter,
+      scrollbackStore: scrollbackStore as never,
+    });
+
+    await registry.updateUiState("main", { visualStatus: "waiting" });
+    vi.setSystemTime(new Date("2026-06-25T12:00:11.900Z"));
+    await registry.updateUiState("main", { lastSeenSeq: 1 });
+    vi.setSystemTime(new Date("2026-06-25T12:00:12.100Z"));
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "main", latestSeq: 1, lastSeenSeq: 1, unread: false, visualStatus: "idle" },
+    ]);
+
+    const raw = await readFile(join(root, "system", "shell-sessions.json"), "utf-8");
+    expect(JSON.parse(raw).sessions.main).toMatchObject({
+      visualStatus: "waiting",
+      visualStatusUpdatedAt: "2026-06-25T12:00:00.000Z",
+      updatedAt: "2026-06-25T12:00:11.900Z",
+    });
+  });
+
   it("rejects UI state updates for sessions absent from metadata and live sessions", async () => {
     const root = await tempRoot();
     const adapter = {
