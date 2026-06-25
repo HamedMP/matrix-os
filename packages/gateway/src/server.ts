@@ -351,6 +351,19 @@ export type ServerMessage =
   | { type: "sync:share-invite"; shareId: string; ownerHandle: string; path: string; role: string }
   | { type: "sync:access-revoked"; shareId: string; ownerHandle: string; path: string };
 
+export function registerShellAndWorkspaceRoutes(
+  app: Hono,
+  options: {
+    shellRoutes: Parameters<typeof createShellRoutes>[0];
+    workspaceRoutes: Parameters<typeof createWorkspaceRoutes>[0];
+  },
+): void {
+  const shellRouter = createShellRoutes(options.shellRoutes);
+  app.route("/api/terminal", shellRouter);
+  app.route("/", createWorkspaceRoutes(options.workspaceRoutes));
+  app.route("/api", shellRouter);
+}
+
 function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
   switch (event.type) {
     case "init":
@@ -1703,8 +1716,15 @@ export async function createGateway(config: GatewayConfig) {
     savePolicy: (policy) => systemActivityPolicy.save(policy),
     readHistory: (query) => systemActivityHistory.list(query),
   }));
-  app.route("/api/terminal", createShellRoutes(shellRouteDeps));
-  app.route("/api", createShellRoutes(shellRouteDeps));
+  registerShellAndWorkspaceRoutes(app, {
+    shellRoutes: shellRouteDeps,
+    workspaceRoutes: {
+      homePath,
+      zellijRuntime: workspaceZellijRuntime,
+      sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+      getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+    },
+  });
 
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
@@ -2917,12 +2937,6 @@ export async function createGateway(config: GatewayConfig) {
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
   const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
-  app.route("/", createWorkspaceRoutes({
-    homePath,
-    zellijRuntime: workspaceZellijRuntime,
-    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
-    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-  }));
   app.route("/api/symphony", createElixirSymphonyProxyRoutes({
     upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
   }));
