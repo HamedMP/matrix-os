@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
@@ -112,6 +112,7 @@ describe("shell CLI command", () => {
       "ls",
       "new",
       "pane",
+      "paste-file",
       "rm",
       "tab",
     ]);
@@ -132,7 +133,7 @@ describe("shell CLI command", () => {
 
     await shellCommand.run?.({ args: {} } as never);
 
-    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|paste-file|rm|tab|pane|layout"]);
   });
 
   it("prints usage for the bare shell command with valued root flags", async () => {
@@ -146,7 +147,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|paste-file|rm|tab|pane|layout"]);
   });
 
   it("prints usage when a root flag value matches a shell subcommand", async () => {
@@ -160,7 +161,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|paste-file|rm|tab|pane|layout"]);
   });
 
   it("does not print usage after subcommands run", async () => {
@@ -337,6 +338,62 @@ describe("shell CLI command", () => {
       { v: 1, ok: true, data: { name: "main", created: true } },
       { v: 1, ok: true, data: { ok: true } },
     ]);
+  });
+
+  it("caps paste-file terminal input to the shell input limit", async () => {
+    const root = process.env.HOME ?? await tempHome();
+    const localPath = join(root, "paste.txt");
+    await writeFile(localPath, "paste me");
+    const sentInputs: string[] = [];
+    const longRemotePath = `data/terminal-paste/${"x".repeat(70_000)}.txt`;
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes("/api/files/blob")) {
+        return new Response(JSON.stringify({ path: longRemotePath, size: 8 }));
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    class InputWebSocket {
+      constructor(_url: string, _options?: unknown) {}
+      send(data: string) {
+        const message = JSON.parse(data);
+        if (message.type === "input") {
+          sentInputs.push(message.data);
+        }
+      }
+      close() {}
+      on(event: "open" | "message", listener: (...args: unknown[]) => void) {
+        if (event === "open") {
+          queueMicrotask(() => listener());
+        }
+        if (event === "message") {
+          queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+        }
+        return this;
+      }
+      off() {
+        return this;
+      }
+    }
+
+    await shellCommand.subCommands!["paste-file"].run!({
+      args: {
+        session: "main",
+        local: localPath,
+        remote: longRemotePath,
+        dev: true,
+        token: "tok",
+        force: true,
+        WebSocketImpl: InputWebSocket,
+      },
+    } as never);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(sentInputs).toHaveLength(1);
+    expect(sentInputs[0]!.length).toBeLessThanOrEqual(65_536);
+    expect(sentInputs[0]!.startsWith("\x1b[200~")).toBe(true);
+    expect(sentInputs[0]!.endsWith("\x1b[201~")).toBe(true);
   });
 
   it.each(["connect", "attach"])("keeps stdout JSON-only for shell %s --json", async (verb) => {
