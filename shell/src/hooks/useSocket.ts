@@ -5,7 +5,7 @@ import { getGatewayWs } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import { createSocketHealth, MessageQueue, reconnectDelay } from "@/lib/socket-health";
 import { capturePostHogEvent } from "@/lib/posthog-client";
-import { useConnectionHealth } from "./useConnectionHealth";
+import { RECONNECT_QUIET_WINDOW_MS, setConnectionHealthState } from "./useConnectionHealth";
 import type { ConnectionState } from "./useConnectionHealth";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
@@ -32,10 +32,13 @@ type MessageHandler = (msg: ServerMessage) => void;
 const PING_INTERVAL = 30_000;
 const PONG_TIMEOUT = 5_000;
 const MAX_RECONNECT_ATTEMPTS = 60;
+const RECONNECT_USABLE_WINDOW_MS = RECONNECT_QUIET_WINDOW_MS;
 
 let globalSocket: WebSocket | null = null;
 let handlers = new Set<MessageHandler>();
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectUsableTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectRemainsUsable = false;
 let reconnectAttempt = 0;
 let connectionState: ConnectionState = "initializing";
 let hasOpenedSocket = false;
@@ -56,11 +59,44 @@ const heartbeat = createSocketHealth({
   },
 });
 
+function notifyStateListeners() {
+  for (const listener of stateListeners) listener();
+}
+
+function clearReconnectUsableTimer() {
+  if (reconnectUsableTimer) {
+    clearTimeout(reconnectUsableTimer);
+    reconnectUsableTimer = null;
+  }
+}
+
+function startReconnectUsableWindow() {
+  reconnectRemainsUsable = true;
+  clearReconnectUsableTimer();
+  reconnectUsableTimer = setTimeout(() => {
+    reconnectUsableTimer = null;
+    if (connectionState === "reconnecting") {
+      reconnectRemainsUsable = false;
+      notifyStateListeners();
+    }
+  }, RECONNECT_USABLE_WINDOW_MS);
+}
+
+function isConnectionUsable() {
+  return connectionState === "connected" || (connectionState === "reconnecting" && reconnectRemainsUsable);
+}
+
 function setConnectionState(state: typeof connectionState) {
   if (connectionState === state) return;
   connectionState = state;
-  useConnectionHealth.setState({ state });
-  for (const listener of stateListeners) listener();
+  if (state === "reconnecting" && hasOpenedSocket) {
+    startReconnectUsableWindow();
+  } else {
+    reconnectRemainsUsable = false;
+    clearReconnectUsableTimer();
+  }
+  setConnectionHealthState(state);
+  notifyStateListeners();
 }
 
 function drainQueue() {
@@ -242,11 +278,11 @@ export function useSocket() {
     ensureConnected();
 
     const unsubState = subscribeConnectionState(() => {
-      setConnected(connectionState === "connected");
+      setConnected(isConnectionUsable());
     });
     // react-doctor-disable-next-line react-doctor/no-initialize-state -- cannot be a lazy useState initializer: connectionState is a mutable module-level store shared across all useSocket consumers, so reading it during render would be impure; syncing here after subscribe is what closes the gap between initial render and subscription
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- external-store sync: re-reads the module-level connectionState immediately after subscribing to catch any transition that landed between the initial render and this effect running, preventing a missed-update race
-    setConnected(connectionState === "connected");
+    setConnected(isConnectionUsable());
 
     return () => {
       unsubState();
