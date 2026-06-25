@@ -8,7 +8,14 @@ import { net, session, type BaseWindow } from "electron";
 import { randomUUID } from "node:crypto";
 import { EmbedManager, type Bounds } from "./embed-manager";
 import { LaunchTokenCache } from "./launch-token-cache";
-import { handoffWithRetry, type CookieJarLike, type ParsedCookie } from "./app-session";
+import {
+  HOSTED_SHELL_SESSION_REFRESH_RETRY_MS,
+  computeHostedShellSessionRefreshDelay,
+  handoffWithRetry,
+  type CookieJarLike,
+  type HandoffResult,
+  type ParsedCookie,
+} from "./app-session";
 import { resolveLaunchUrl } from "./origin-policy";
 import { createWebContentsView } from "./web-contents-view";
 
@@ -35,6 +42,7 @@ interface OpenResult {
 
 const MAX_PENDING_HOSTED_SHELLS = 12;
 const MAX_PENDING_APPS = 12;
+const HOSTED_SHELL_PARTITION = "persist:hosted-shell";
 
 interface PendingAppEmbed {
   slug: string;
@@ -49,6 +57,9 @@ export class EmbedService {
   private readonly pendingApps = new Map<string, PendingAppEmbed>();
   private readonly pendingActive = new Map<string, boolean>();
   private readonly hostedShellIds = new Set<string>();
+  private hostedShellRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private hostedShellRefreshInFlight = false;
+  private hostedShellRefreshGatewayOrigin: string | null = null;
 
   constructor(deps: EmbedServiceDeps) {
     this.deps = deps;
@@ -85,6 +96,9 @@ export class EmbedService {
     if (pending) {
       this.pendingActive.set(embedId, active);
     }
+    if (active && this.hostedShellIds.has(embedId)) {
+      this.scheduleHostedShellSessionRefresh(this.deps.getGatewayOrigin());
+    }
     return this.manager.setActive(embedId, active) || pending;
   }
 
@@ -93,6 +107,9 @@ export class EmbedService {
     const wasPendingApp = this.pendingApps.delete(embedId);
     this.pendingActive.delete(embedId);
     this.hostedShellIds.delete(embedId);
+    if (this.hostedShellIds.size === 0) {
+      this.clearHostedShellRefreshTimer();
+    }
     return this.manager.close(embedId) || wasPending || wasPendingApp;
   }
 
@@ -101,6 +118,7 @@ export class EmbedService {
     this.pendingApps.clear();
     this.pendingActive.clear();
     this.hostedShellIds.clear();
+    this.clearHostedShellRefreshTimer();
     this.tokenCache.clear();
     this.manager.closeAll();
   }
@@ -112,7 +130,7 @@ export class EmbedService {
       const bounds = this.pendingHostedShells.get(embedId)!;
       const gatewayOrigin = this.deps.getGatewayOrigin();
       const handoff = await this.performHostedShellHandoff(gatewayOrigin);
-      if (!handoff) {
+      if (!handoff.ok) {
         if (this.pendingHostedShells.has(embedId)) {
           this.deps.emitState(embedId, "auth-required");
         }
@@ -124,6 +142,7 @@ export class EmbedService {
       this.pendingHostedShells.delete(embedId);
       this.pendingActive.delete(embedId);
       this.hostedShellIds.add(embedId);
+      this.scheduleHostedShellSessionRefresh(gatewayOrigin);
       this.deps.emitState(embedId, "loading");
       return true;
     }
@@ -149,10 +168,11 @@ export class EmbedService {
     if (!this.manager.has(embedId)) return false;
     if (this.hostedShellIds.has(embedId)) {
       const handoff = await this.performHostedShellHandoff(this.deps.getGatewayOrigin());
-      if (!handoff) {
+      if (!handoff.ok) {
         this.deps.emitState(embedId, "auth-required");
         return false;
       }
+      this.scheduleHostedShellSessionRefresh(this.deps.getGatewayOrigin());
       return this.manager.reload(embedId);
     }
     return this.manager.focus(embedId);
@@ -163,7 +183,12 @@ export class EmbedService {
     return {
       get: async () => {
         const cookies = await jar.get({});
-        return cookies.map((c) => ({ name: c.name, domain: c.domain, path: c.path }));
+        return cookies.map((c) => ({
+          name: c.name,
+          domain: c.domain,
+          path: c.path,
+          ...(typeof c.expirationDate === "number" ? { expires: c.expirationDate * 1000 } : {}),
+        }));
       },
       set: async (cookie: ParsedCookie & { url: string }) => {
         await jar.set({
@@ -191,6 +216,7 @@ export class EmbedService {
       return { embedId, state: "auth-required" };
     }
     this.hostedShellIds.add(embedId);
+    this.scheduleHostedShellSessionRefresh(gatewayOrigin);
     return { embedId, state: "loading" };
   }
 
@@ -212,7 +238,7 @@ export class EmbedService {
     active: boolean,
   ): Promise<boolean> {
     const handoff = await this.performHostedShellHandoff(gatewayOrigin);
-    if (!handoff) return false;
+    if (!handoff.ok) return false;
     this.attachHostedShellEmbed(gatewayOrigin, bounds, embedId, active);
     return true;
   }
@@ -231,16 +257,90 @@ export class EmbedService {
     });
   }
 
-  private async performHostedShellHandoff(gatewayOrigin: string): Promise<boolean> {
-    const handoff = await handoffWithRetry(
+  private async performHostedShellHandoff(gatewayOrigin: string): Promise<HandoffResult> {
+    return handoffWithRetry(
       {
         gatewayOrigin,
-        cookieJar: this.cookieJarFor("persist:hosted-shell"),
+        cookieJar: this.cookieJarFor(HOSTED_SHELL_PARTITION),
         request: (url, init) => this.gatewayRequest(url, init),
       },
       "/",
     );
-    return handoff.ok;
+  }
+
+  private clearHostedShellRefreshTimer(): void {
+    if (this.hostedShellRefreshTimer) clearTimeout(this.hostedShellRefreshTimer);
+    this.hostedShellRefreshTimer = null;
+    this.hostedShellRefreshGatewayOrigin = null;
+  }
+
+  private scheduleHostedShellSessionRefresh(gatewayOrigin: string, delayMs?: number): void {
+    this.hostedShellRefreshGatewayOrigin = gatewayOrigin;
+    if (this.hostedShellRefreshTimer) clearTimeout(this.hostedShellRefreshTimer);
+    this.hostedShellRefreshTimer = null;
+    if (this.hostedShellIds.size === 0) return;
+
+    if (delayMs !== undefined) {
+      this.armHostedShellRefreshTimer(gatewayOrigin, delayMs);
+      return;
+    }
+
+    void this.readHostedShellRefreshDelay()
+      .then((delay) => {
+        if (this.hostedShellRefreshGatewayOrigin === gatewayOrigin) {
+          this.armHostedShellRefreshTimer(gatewayOrigin, delay);
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn(
+          "[embed-service] unable to read hosted-shell session expiry:",
+          err instanceof Error ? err.message : String(err),
+        );
+        if (this.hostedShellRefreshGatewayOrigin === gatewayOrigin) {
+          this.armHostedShellRefreshTimer(gatewayOrigin, delayMs ?? HOSTED_SHELL_SESSION_REFRESH_RETRY_MS);
+        }
+      });
+  }
+
+  private armHostedShellRefreshTimer(gatewayOrigin: string, delayMs: number): void {
+    if (this.hostedShellRefreshTimer) clearTimeout(this.hostedShellRefreshTimer);
+    this.hostedShellRefreshTimer = setTimeout(() => {
+      void this.refreshHostedShellSession(gatewayOrigin);
+    }, Math.max(0, delayMs));
+  }
+
+  private async readHostedShellRefreshDelay(): Promise<number> {
+    const cookies = await this.cookieJarFor(HOSTED_SHELL_PARTITION).get({});
+    return computeHostedShellSessionRefreshDelay(cookies);
+  }
+
+  private emitHostedShellAuthRequired(): void {
+    for (const embedId of this.hostedShellIds) {
+      this.deps.emitState(embedId, "auth-required");
+    }
+  }
+
+  private async refreshHostedShellSession(gatewayOrigin: string): Promise<HandoffResult> {
+    if (this.hostedShellRefreshInFlight) return { ok: false, reason: "unavailable" };
+    if (this.hostedShellIds.size === 0) {
+      this.clearHostedShellRefreshTimer();
+      return { ok: false, reason: "unavailable" };
+    }
+    this.hostedShellRefreshInFlight = true;
+    try {
+      const result = await this.performHostedShellHandoff(gatewayOrigin);
+      if (result.ok) {
+        this.scheduleHostedShellSessionRefresh(gatewayOrigin);
+      } else if (result.reason === "unavailable") {
+        this.scheduleHostedShellSessionRefresh(gatewayOrigin, HOSTED_SHELL_SESSION_REFRESH_RETRY_MS);
+      } else {
+        this.clearHostedShellRefreshTimer();
+        this.emitHostedShellAuthRequired();
+      }
+      return result;
+    } finally {
+      this.hostedShellRefreshInFlight = false;
+    }
   }
 
   private async openApp(gatewayOrigin: string, slug: string, bounds: Bounds, active: boolean): Promise<OpenResult> {

@@ -519,6 +519,36 @@ describe("platform proxy routing", () => {
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
+  it("returns generic unauthorized for expired app-shell session cookies on billing routes", async () => {
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+      expiresInSec: -120,
+    });
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: `matrix_app_session=${encodeURIComponent(issued.token)}`,
+      },
+    });
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
   it("uses the raw bearer sync JWT for native billing fallback when a stale Clerk cookie is present", async () => {
     await upsertBillingEntitlement(db, {
       clerkUserId: "user_alice",

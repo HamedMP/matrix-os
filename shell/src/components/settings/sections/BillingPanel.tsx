@@ -26,7 +26,10 @@ import {
   MATRIX_BILLING_REGIONS,
   MATRIX_BILLING_SERVER_PROFILES,
 } from "@/lib/billing";
-import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
+import type {
+  BillingAccessIssue,
+  BillingEntitlementSummary,
+} from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 
 export type BillingPanelMode = "settings" | "provisioning" | "device-setup";
@@ -387,6 +390,22 @@ function ActiveBillingPanel({
   );
 }
 
+function BillingSessionRefreshingPanel() {
+  return (
+    <div className="flex min-h-48 items-center justify-center rounded-xl border border-sky-500/20 bg-sky-500/5 p-4">
+      <output className="flex max-w-md flex-col items-center gap-3 text-center text-sm text-sky-900">
+        <span className="flex size-10 items-center justify-center rounded-lg border border-sky-500/20 bg-white">
+          <Loader2Icon className="size-4 animate-spin text-sky-700" aria-hidden="true" />
+        </span>
+        <span className="font-semibold">Reconnecting billing session</span>
+        <span className="leading-6 text-sky-900/70">
+          Matrix is refreshing your desktop session before checking billing.
+        </span>
+      </output>
+    </div>
+  );
+}
+
 function BillingMetric({
   label,
   value,
@@ -725,6 +744,7 @@ export function BillingPanel({
   active,
   entitlement,
   accessReason,
+  accessIssue,
   mode = "settings",
   onCheckoutIntent,
   checkoutReturnPath,
@@ -732,6 +752,7 @@ export function BillingPanel({
   active: boolean | null;
   entitlement?: BillingEntitlementSummary | null;
   accessReason?: string | null;
+  accessIssue?: BillingAccessIssue;
   mode?: BillingPanelMode;
   onCheckoutIntent?: () => void;
   checkoutReturnPath?: string;
@@ -822,6 +843,10 @@ export function BillingPanel({
 
   if (active === true) {
     return <ActiveBillingPanel entitlement={entitlement ?? null} accessReason={accessReason ?? null} />;
+  }
+
+  if (accessIssue === "auth") {
+    return <BillingSessionRefreshingPanel />;
   }
 
   if (active === null) {
