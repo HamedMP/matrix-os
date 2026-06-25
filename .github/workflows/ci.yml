@@ -159,7 +159,7 @@ jobs:
 
   patterns:
     name: Pattern Scan
-    needs: [changes, shell-production-build]
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
