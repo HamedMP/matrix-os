@@ -4079,11 +4079,11 @@ function NewSessionMenuItem({
             data-testid="terminal-agent-install-pill"
             style={{
               alignItems: "center",
-              background: "rgba(216, 121, 44, 0.12)",
-              border: "1px solid rgba(216, 121, 44, 0.18)",
+              background: "rgba(75, 78, 70, 0.1)",
+              border: "1px solid rgba(75, 78, 70, 0.14)",
               borderRadius: 999,
               boxSizing: "border-box",
-              color: "#84542B",
+              color: "#696D63",
               display: "flex",
               fontFamily: "Inter, system-ui, sans-serif",
               fontSize: 11,

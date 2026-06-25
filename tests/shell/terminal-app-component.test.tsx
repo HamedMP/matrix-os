@@ -2779,8 +2779,8 @@ describe("TerminalApp", () => {
     expect(within(menu).queryByText("Ready")).toBeNull();
     expect(within(menu).getAllByText("Install")).toHaveLength(2);
     const installPill = within(menu).getAllByTestId("terminal-agent-install-pill")[0];
-    expect(installPill.style.background).toBe("rgba(216, 121, 44, 0.12)");
-    expect(installPill.style.color).toBe("rgb(132, 84, 43)");
+    expect(installPill.style.background).toBe("rgba(75, 78, 70, 0.1)");
+    expect(installPill.style.color).toBe("rgb(105, 109, 99)");
     expect(within(menu).getByTestId("terminal-agent-logo-claude")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-codex")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-opencode")).toBeTruthy();
