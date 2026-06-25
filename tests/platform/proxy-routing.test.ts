@@ -2855,6 +2855,15 @@ describe("platform proxy routing", () => {
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).toContain("signal: controller.signal");
     expect(html).toContain("window.clearTimeout(timeoutId);");
+    expect(html).toContain(".auth-card.default-installs-card");
+    expect(html).toContain("setDefaultInstallsCard(true);");
+    expect(html).toContain("state.className = 'session-state default-installs-state';");
+    expect(html).toContain("kicker.textContent = 'Default installs';");
+    expect(html).toContain("heading.textContent = 'Choose what Matrix installs first';");
+    expect(html).toContain("toolsHeading.textContent = 'Developer tools';");
+    expect(html).toContain("label.className = 'developer-tool-option selected';");
+    expect(html).toContain("logo.textContent = tool === 'claude-code' ? 'AI'");
+    expect(html).toContain("footerText.textContent = 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';");
     expect(html).toContain("matrix.billing.checkoutAttemptAt");
     expect(html).toContain("hasTrustedCheckoutReturn()");
     expect(html).toContain("stripCheckoutReturnParams()");

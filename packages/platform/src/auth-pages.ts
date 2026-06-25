@@ -182,6 +182,10 @@ export function getAuthPage(
       padding: 32px;
       backdrop-filter: blur(14px);
     }
+    .auth-card.default-installs-card {
+      max-width: 860px;
+      align-items: stretch;
+    }
     #auth { width: 100%; min-height: 400px; display: flex; align-items: center; justify-content: center; }
     .loading { color: #7A7768; font-size: 14px; }
     .session-state {
@@ -225,11 +229,181 @@ export function getAuthPage(
       background: #D06F25;
       color: #fffdf6;
     }
+    .default-installs-state {
+      gap: 16px;
+      max-width: 100%;
+    }
+    .install-hero {
+      border: 1px solid rgba(67,78,63,0.15);
+      border-radius: 22px;
+      background: #fbf7ed;
+      box-shadow: 0 24px 80px rgba(50,53,46,0.12);
+      padding: 20px 22px;
+    }
+    .install-kicker {
+      margin: 0 0 8px;
+      color: rgba(67,78,63,0.6);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+    .install-title {
+      margin: 0;
+      color: #32352E;
+      font-size: 30px;
+      line-height: 1.08;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+    .install-detail {
+      margin: 10px 0 0;
+      max-width: 560px;
+      color: rgba(67,78,63,0.7);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .developer-tools-panel {
+      border: 1px solid rgba(67,78,63,0.12);
+      border-radius: 22px;
+      background: rgba(255,255,255,0.86);
+      padding: 14px;
+    }
+    .developer-tools-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+      padding: 0 4px;
+    }
+    .developer-tools-header h3 {
+      margin: 0;
+      color: #32352E;
+      font-size: 14px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+    .developer-tools-header p {
+      margin: 0;
+      color: rgba(67,78,63,0.45);
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: right;
+    }
+    .developer-tool-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .developer-tool-option {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid rgba(67,78,63,0.1);
+      border-radius: 14px;
+      background: #fff;
+      color: #32352E;
+      cursor: pointer;
+      padding: 10px 12px;
+      transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+    }
+    .developer-tool-option.selected {
+      border-color: #D06F25;
+      background: #fff7ec;
+      box-shadow: 0 10px 24px rgba(83,68,48,0.10);
+    }
+    .developer-tool-copy {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .developer-tool-logo {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      flex: none;
+      border: 1px solid rgba(67,78,63,0.1);
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(50,53,46,0.12);
+      color: #32352E;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .developer-tool-name {
+      overflow: hidden;
+      color: #32352E;
+      font-size: 14px;
+      font-weight: 650;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .developer-tool-option input {
+      width: 16px;
+      height: 16px;
+      flex: none;
+      accent-color: #D06F25;
+    }
+    .default-installs-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .default-installs-footer p {
+      margin: 0;
+      color: rgba(67,78,63,0.55);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .default-installs-actions {
+      display: flex;
+      flex: none;
+      align-items: center;
+      gap: 10px;
+    }
+    .default-installs-actions button {
+      min-height: 44px;
+      border: 1px solid #C9C4B8;
+      border-radius: 14px;
+      background: rgba(250,250,245,0.76);
+      color: #32352E;
+      cursor: pointer;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 650;
+      padding: 0 18px;
+    }
+    .default-installs-actions button.primary {
+      border-color: #434E3F;
+      background: #434E3F;
+      color: #fffdf6;
+      box-shadow: 0 14px 30px rgba(63,74,58,0.18);
+    }
     @media (max-width: 860px) {
       .page { grid-template-columns: 1fr; }
       .story { min-height: 42vh; border-right: 0; border-bottom: 1px solid #D6D3C8; padding: 40px 24px; }
       .auth-panel { padding: 28px 20px 44px; }
       .auth-card { max-width: 440px; padding: 24px; }
+      .auth-card.default-installs-card { max-width: 860px; }
+      .developer-tools-header { align-items: flex-start; flex-direction: column; gap: 4px; }
+      .developer-tools-header p { text-align: left; }
+      .developer-tool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .default-installs-footer { align-items: stretch; flex-direction: column; }
+      .default-installs-actions { justify-content: flex-end; }
+    }
+    @media (max-width: 520px) {
+      .install-title { font-size: 26px; }
+      .developer-tool-grid { grid-template-columns: 1fr; }
+      .default-installs-actions { flex-direction: column; }
+      .default-installs-actions button { width: 100%; }
     }
   </style>
 </head>
@@ -345,6 +519,7 @@ export function getAuthPage(
     }
     function renderSessionState(title, detail, primaryLabel, primaryHandler) {
       var el = document.getElementById('auth');
+      setDefaultInstallsCard(false);
       el.innerHTML = '';
 
       var state = document.createElement('div');
@@ -396,6 +571,7 @@ export function getAuthPage(
     }
     function showLoadingState(message) {
       var el = document.getElementById('auth');
+      setDefaultInstallsCard(false);
       el.innerHTML = '';
       var loading = document.createElement('span');
       loading.className = 'loading';
@@ -415,35 +591,58 @@ export function getAuthPage(
     }
     function showDefaultInstallsState() {
       var el = document.getElementById('auth');
+      setDefaultInstallsCard(true);
       el.innerHTML = '';
       var selectedTools = defaultDeveloperTools.slice();
 
       var state = document.createElement('div');
-      state.className = 'session-state';
+      state.className = 'session-state default-installs-state';
 
+      var hero = document.createElement('section');
+      hero.className = 'install-hero';
+      var kicker = document.createElement('p');
+      kicker.className = 'install-kicker';
+      kicker.textContent = 'Default installs';
+      hero.appendChild(kicker);
       var heading = document.createElement('h2');
-      heading.textContent = 'Default installs';
-      state.appendChild(heading);
+      heading.className = 'install-title';
+      heading.textContent = 'Choose what Matrix installs first';
+      hero.appendChild(heading);
 
       var detailText = document.createElement('p');
+      detailText.className = 'install-detail';
       detailText.textContent = 'Choose command-line agents to preinstall on this VPS.';
-      state.appendChild(detailText);
+      hero.appendChild(detailText);
+      state.appendChild(hero);
+
+      var toolsPanel = document.createElement('section');
+      toolsPanel.className = 'developer-tools-panel';
+      var toolsHeader = document.createElement('div');
+      toolsHeader.className = 'developer-tools-header';
+      var toolsHeading = document.createElement('h3');
+      toolsHeading.textContent = 'Developer tools';
+      toolsHeader.appendChild(toolsHeading);
+      var toolsDetail = document.createElement('p');
+      toolsDetail.textContent = 'Choose command-line agents to preinstall on this VPS.';
+      toolsHeader.appendChild(toolsDetail);
+      toolsPanel.appendChild(toolsHeader);
 
       var toolList = document.createElement('div');
-      toolList.className = 'session-actions';
+      toolList.className = 'developer-tool-grid';
       defaultDeveloperTools.forEach(function(tool) {
         var label = document.createElement('label');
-        label.style.display = 'flex';
-        label.style.alignItems = 'center';
-        label.style.justifyContent = 'space-between';
-        label.style.gap = '0.75rem';
-        label.style.width = '100%';
-        label.style.border = '1px solid rgba(92, 90, 79, 0.22)';
-        label.style.borderRadius = '0.875rem';
-        label.style.padding = '0.75rem';
-        label.style.cursor = 'pointer';
+        label.className = 'developer-tool-option selected';
+        var copy = document.createElement('span');
+        copy.className = 'developer-tool-copy';
+        var logo = document.createElement('span');
+        logo.className = 'developer-tool-logo';
+        logo.setAttribute('aria-hidden', 'true');
+        logo.textContent = tool === 'claude-code' ? 'AI' : tool === 'opencode' ? 'O' : tool === 'codex' ? 'C' : 'Pi';
         var text = document.createElement('span');
+        text.className = 'developer-tool-name';
         text.textContent = tool === 'claude-code' ? 'Claude Code' : tool === 'opencode' ? 'OpenCode' : tool === 'codex' ? 'Codex' : 'Pi';
+        copy.appendChild(logo);
+        copy.appendChild(text);
         var input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = true;
@@ -451,18 +650,26 @@ export function getAuthPage(
         input.addEventListener('change', function() {
           if (input.checked) {
             if (selectedTools.indexOf(tool) === -1) selectedTools.push(tool);
+            label.classList.add('selected');
           } else {
             selectedTools = selectedTools.filter(function(selected) { return selected !== tool; });
+            label.classList.remove('selected');
           }
         });
-        label.appendChild(text);
+        label.appendChild(copy);
         label.appendChild(input);
         toolList.appendChild(label);
       });
-      state.appendChild(toolList);
+      toolsPanel.appendChild(toolList);
+      state.appendChild(toolsPanel);
 
+      var footer = document.createElement('div');
+      footer.className = 'default-installs-footer';
+      var footerText = document.createElement('p');
+      footerText.textContent = 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';
+      footer.appendChild(footerText);
       var actions = document.createElement('div');
-      actions.className = 'session-actions';
+      actions.className = 'default-installs-actions';
       var buildButton = document.createElement('button');
       buildButton.type = 'button';
       buildButton.className = 'primary';
@@ -494,8 +701,19 @@ export function getAuthPage(
           .catch(redirectAfterSignOutIssue);
       });
       actions.appendChild(signOutButton);
-      state.appendChild(actions);
+      footer.appendChild(actions);
+      state.appendChild(footer);
       el.appendChild(state);
+    }
+    function setDefaultInstallsCard(active) {
+      var el = document.getElementById('auth');
+      var card = el ? el.closest('.auth-card') : null;
+      if (!card) return;
+      if (active) {
+        card.classList.add('default-installs-card');
+      } else {
+        card.classList.remove('default-installs-card');
+      }
     }
     function showBillingRequiredState() {
       showLoadingState('Opening Billing settings...');
