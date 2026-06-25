@@ -3,6 +3,7 @@
 import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
 import {
   BotIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
   CheckIcon,
   ChevronsLeftIcon,
@@ -121,6 +122,29 @@ const TERMINAL_THEME_MENU_DISMISS_STYLE: CSSProperties = {
   inset: 0,
   padding: 0,
   position: "absolute",
+};
+
+const TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE: CSSProperties = {
+  ...TERMINAL_THEME_DESKTOP_MENU_STYLE,
+  background: "var(--terminal-chrome-bg)",
+  border: "1px solid var(--terminal-chrome-control-border)",
+  boxShadow: "0 18px 44px rgba(0, 0, 0, 0.44)",
+  gap: 10,
+  padding: 10,
+  width: 386,
+};
+
+const TERMINAL_SHELL_THEME_DESKTOP_HEADER_STYLE: CSSProperties = {
+  alignItems: "center",
+  display: "flex",
+  gap: 10,
+  padding: "2px 2px 0",
+};
+
+const TERMINAL_SHELL_THEME_MOBILE_HEADER_STYLE: CSSProperties = {
+  alignItems: "center",
+  display: "flex",
+  gap: 12,
 };
 
 const TERMINAL_THEME_MENU_ITEM_TEXT_STYLE: CSSProperties = {
@@ -1929,16 +1953,21 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
 function ThemePickerButton() {
   const ctx = useTerminalAppContext();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
-  const [shellThemeOpen, setShellThemeOpen] = useState(false);
+  const [themeMenuView, setThemeMenuView] = useState<"app" | "shell">("app");
   const wrapRef = useRef<HTMLDivElement>(null);
+  const closeThemeMenu = () => {
+    setThemeMenuOpen(false);
+    setThemeMenuView("app");
+  };
+  const closeThemeMenuEvent = useEffectEvent(closeThemeMenu);
 
   useEffect(() => {
     if (!themeMenuOpen) return;
     const onClick = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setThemeMenuOpen(false);
+      if (!wrapRef.current?.contains(e.target as Node)) closeThemeMenuEvent();
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setThemeMenuOpen(false);
+      if (event.key === "Escape") closeThemeMenuEvent();
     };
     document.addEventListener("mousedown", onClick);
     document.addEventListener("keydown", onKeyDown);
@@ -1949,7 +1978,12 @@ function ThemePickerButton() {
   }, [themeMenuOpen]);
 
   const openThemeMenu = () => {
-    setThemeMenuOpen((open) => !open);
+    if (themeMenuOpen) {
+      closeThemeMenu();
+      return;
+    }
+    setThemeMenuView("app");
+    setThemeMenuOpen(true);
   };
 
   return (
@@ -1969,20 +2003,18 @@ function ThemePickerButton() {
         <span style={{ color: "#CF7835", fontSize: 17, fontWeight: 600, lineHeight: "22px" }}>☼</span>
         <span>Theme</span>
       </button>
-      {themeMenuOpen ? (
+      {themeMenuOpen && themeMenuView === "app" ? (
         <TerminalAppThemeMenu
           mobile={ctx.mobile}
-          onClose={() => setThemeMenuOpen(false)}
-          onOpenShellTheme={() => {
-            setThemeMenuOpen(false);
-            setShellThemeOpen(true);
-          }}
+          onClose={closeThemeMenu}
+          onOpenShellTheme={() => setThemeMenuView("shell")}
         />
       ) : null}
-      {shellThemeOpen ? (
+      {themeMenuOpen && themeMenuView === "shell" ? (
         <ShellThemeChooser
           mobile={ctx.mobile}
-          onClose={() => setShellThemeOpen(false)}
+          onBack={() => setThemeMenuView("app")}
+          onClose={closeThemeMenu}
         />
       ) : null}
     </div>
@@ -2173,37 +2205,20 @@ function ChangeShellThemeMenuItem({
 
 function ShellThemeChooser({
   mobile,
+  onBack,
   onClose,
 }: {
   mobile: boolean;
+  onBack: () => void;
   onClose: () => void;
 }) {
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
   const selectedShellThemeId = mapTerminalThemeToShellTheme(themeId);
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const dialogNeedsOpenAttribute =
-    typeof globalThis.HTMLDialogElement === "undefined" ||
-    typeof globalThis.HTMLDialogElement.prototype.showModal !== "function";
 
   useEffect(() => {
     loadGlobalShellThemePreference(setThemeId);
   }, [setThemeId]);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog || dialogNeedsOpenAttribute || typeof dialog.showModal !== "function") {
-      return;
-    }
-    if (!dialog.open) {
-      dialog.showModal();
-    }
-    return () => {
-      if (dialog.open) {
-        dialog.close();
-      }
-    };
-  }, [dialogNeedsOpenAttribute]);
 
   const persistShellTheme = (next: ShellThemeId) => {
     setThemeId(next);
@@ -2227,203 +2242,240 @@ function ShellThemeChooser({
     });
   };
 
-  const cardStyle: CSSProperties = mobile
-    ? {
-        background: "#FFFDF7",
-        border: "1px solid #E4E2D2",
-        borderBottom: 0,
-        borderRadius: "26px 26px 0 0",
-        boxShadow: "0 -18px 50px rgba(0, 0, 0, 0.44)",
-        color: "#2F332C",
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-        padding: "10px 20px 16px",
-        width: "min(390px, 100%)",
-      }
-    : {
-        background: "#FFFDF7",
-        border: "1px solid #E4E2D2",
-        borderRadius: 18,
-        boxShadow: "0 30px 70px rgba(0, 0, 0, 0.37)",
-        color: "#2F332C",
-        display: "flex",
-        flexDirection: "column",
-        gap: 18,
-        padding: 26,
-        width: 460,
-      };
+  const content = (
+    <ShellThemeChooserContent
+      mobile={mobile}
+      onBack={onBack}
+      onSelectTheme={persistShellTheme}
+      selectedShellThemeId={selectedShellThemeId}
+    />
+  );
+
+  if (mobile) {
+    return (
+      <dialog
+        aria-label="Theme"
+        aria-modal="true"
+        open
+        style={TERMINAL_THEME_MOBILE_DIALOG_STYLE}
+        onCancel={(event) => {
+          event.preventDefault();
+          onClose();
+        }}
+      >
+        <button
+          type="button"
+          aria-label="Dismiss theme menu"
+          tabIndex={-1}
+          onClick={onClose}
+          style={TERMINAL_THEME_MENU_DISMISS_STYLE}
+        />
+        <section
+          aria-label="Shell theme"
+          data-testid="terminal-shell-theme-panel"
+          style={TERMINAL_THEME_MOBILE_SHEET_STYLE}
+        >
+          {content}
+        </section>
+      </dialog>
+    );
+  }
 
   return (
-    <dialog
-      ref={dialogRef}
+    <section
       aria-label="Shell theme"
-      aria-modal="true"
-      open={dialogNeedsOpenAttribute ? true : undefined}
-      style={{
-        alignItems: mobile ? "flex-end" : "center",
-        background: "rgba(2, 5, 2, 0.58)",
-        border: 0,
-        display: "flex",
-        height: "100dvh",
-        inset: 0,
-        justifyContent: "center",
-        margin: 0,
-        maxHeight: "none",
-        maxWidth: "none",
-        overflow: "hidden",
-        padding: mobile ? 0 : 24,
-        position: "fixed",
-        width: "100vw",
-        zIndex: 95,
-      }}
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
+      data-testid="terminal-shell-theme-panel"
+      style={TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE}
     >
-      <button
-        type="button"
-        aria-label="Dismiss shell theme chooser"
-        tabIndex={-1}
-        onClick={onClose}
-        style={{
-          background: "transparent",
-          border: 0,
-          cursor: "default",
-          inset: 0,
-          padding: 0,
-          position: "absolute",
-        }}
-      />
-      <div
-        style={{ ...cardStyle, position: "relative", zIndex: 1 }}
-      >
-        {mobile ? (
-          <div style={{ alignSelf: "center", background: "#D4D4C4", borderRadius: 999, height: 5, width: 42 }} />
-        ) : null}
-        <div style={{ alignItems: "center", display: "flex", gap: 14 }}>
-          <span
-            aria-hidden="true"
-            style={{
-              alignItems: "center",
-              background: "#15180F",
-              borderRadius: 8,
-              color: "#9CB77A",
-              display: "flex",
-              flexShrink: 0,
-              height: mobile ? 42 : 38,
-              justifyContent: "center",
-              width: mobile ? 42 : 38,
-            }}
-          >
-            <SquareTerminalIcon size={mobile ? 20 : 18} strokeWidth={2} />
-          </span>
-          <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-            <span style={{ color: "#20241C", fontSize: mobile ? 17 : 15, fontWeight: 800, lineHeight: mobile ? "22px" : "19px" }}>
-              Shell theme
-            </span>
-            <span style={{ color: "#77786C", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "15px" }}>
-              {mobile
-                ? "Terminal colors. We recommend Dark."
-                : "Colors for the terminal itself. We recommend Dark — agent output, diffs and status read best."}
-            </span>
-          </span>
-        </div>
+      {content}
+    </section>
+  );
+}
 
-        <div role="radiogroup" aria-label="Shell theme options" style={{ display: "flex", flexDirection: "column", gap: mobile ? 9 : 8 }}>
-          {SHELL_THEME_OPTIONS.map((option) => {
-            const selected = option.id === selectedShellThemeId;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                aria-label={`${option.label} ${option.description}`}
-                onClick={() => persistShellTheme(option.id)}
-                style={{
-                  alignItems: "center",
-                  background: selected ? "#F4F3E9" : "#FFFDF7",
-                  border: `1px solid ${selected ? "#D6D5C4" : "#E9E6D8"}`,
-                  borderRadius: mobile ? 14 : 13,
-                  color: "#2F332C",
-                  cursor: "pointer",
-                  display: "flex",
-                  gap: mobile ? 13 : 12,
-                  minHeight: mobile ? 58 : 56,
-                  padding: mobile ? "10px 12px" : "10px 13px",
-                  textAlign: "left",
-                  width: "100%",
-                }}
-              >
-                <ShellThemePreviewIcon option={option} mobile={mobile} />
-                <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 2, minWidth: 0 }}>
-                  <span style={{ alignItems: "center", display: "flex", gap: 8, minWidth: 0 }}>
-                    <span style={{ color: "#20241C", fontSize: mobile ? 14 : 13, fontWeight: 800, lineHeight: "18px" }}>
-                      {option.label}
-                    </span>
-                    <span
-                      style={{
-                        background: option.badgeTone === "recommended" ? "#DDEBCE" : "#F4E4A8",
-                        borderRadius: 4,
-                        color: option.badgeTone === "recommended" ? "#4F8A55" : "#A06F1D",
-                        fontSize: mobile ? 7 : 6,
-                        fontWeight: 800,
-                        letterSpacing: "0.02em",
-                        lineHeight: "10px",
-                        padding: "1px 4px",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {option.badge}
-                    </span>
-                  </span>
-                  <span style={{ color: "#77786C", fontSize: mobile ? 11 : 10, lineHeight: mobile ? "15px" : "13px" }}>
-                    {option.description}
-                  </span>
-                </span>
-                {selected ? (
-                  <CheckIcon
-                    size={mobile ? 17 : 15}
-                    strokeWidth={2.4}
-                    style={{ color: "#4F8A55", flexShrink: 0 }}
-                  />
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-
-        <div
+function ShellThemeChooserContent({
+  mobile,
+  onBack,
+  onSelectTheme,
+  selectedShellThemeId,
+}: {
+  mobile: boolean;
+  onBack: () => void;
+  onSelectTheme: (next: ShellThemeId) => void;
+  selectedShellThemeId: ShellThemeId;
+}) {
+  return (
+    <>
+      {mobile ? (
+        <div style={{ alignSelf: "center", background: "#D4D4C4", borderRadius: 999, height: 5, width: 42 }} />
+      ) : null}
+      <div style={mobile ? TERMINAL_SHELL_THEME_MOBILE_HEADER_STYLE : TERMINAL_SHELL_THEME_DESKTOP_HEADER_STYLE}>
+        <button
+          type="button"
+          aria-label="Back to theme menu"
+          onClick={onBack}
           style={{
-            background: "#F7F1E2",
-            border: "1px solid #ECE2C6",
-            borderRadius: 9,
-            color: "#8A7B52",
+            alignItems: "center",
+            background: mobile ? "#F4F3E9" : "var(--terminal-chrome-control-bg)",
+            border: `1px solid ${mobile ? "#E4E2D2" : "var(--terminal-chrome-control-border)"}`,
+            borderRadius: mobile ? 10 : 8,
+            color: mobile ? "#5F6258" : "var(--terminal-chrome-control-fg)",
+            cursor: "pointer",
             display: "flex",
-            fontSize: mobile ? 10 : 11,
-            gap: 10,
-            lineHeight: mobile ? "14px" : "16px",
-            padding: mobile ? "10px 12px" : "12px 14px",
+            flexShrink: 0,
+            height: mobile ? 38 : 32,
+            justifyContent: "center",
+            width: mobile ? 38 : 32,
           }}
         >
-          <span aria-hidden="true" style={{ background: "#D2B35F", borderRadius: 999, flexShrink: 0, width: 3 }} />
-          <span>
-            {mobile
-              ? "Light & Matrix aren't fully tuned — some colors lose contrast. Switch back to Dark if output looks off."
-              : "Light and Matrix aren't fully tuned — some terminal colors lose contrast. Switch back to Dark if output looks off."}
+          <ChevronLeftIcon size={mobile ? 19 : 17} strokeWidth={2.2} />
+        </button>
+        <span
+          aria-hidden="true"
+          style={{
+            alignItems: "center",
+            background: mobile ? "#15180F" : "var(--terminal-drawer-card-bg)",
+            border: `1px solid ${mobile ? "#15180F" : "var(--terminal-drawer-card-border)"}`,
+            borderRadius: 8,
+            color: mobile ? "#9CB77A" : "var(--terminal-chrome-active)",
+            display: "flex",
+            flexShrink: 0,
+            height: mobile ? 38 : 32,
+            justifyContent: "center",
+            width: mobile ? 38 : 32,
+          }}
+        >
+          <SquareTerminalIcon size={mobile ? 19 : 17} strokeWidth={2} />
+        </span>
+        <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 3, minWidth: 0 }}>
+          <span style={{ color: mobile ? "#20241C" : "var(--terminal-chrome-fg)", fontSize: mobile ? 17 : 14, fontWeight: 800, lineHeight: mobile ? "22px" : "18px" }}>
+            Shell theme
           </span>
-        </div>
-
-        {mobile ? (
-          <div style={{ alignItems: "center", display: "flex", height: 18, justifyContent: "center" }}>
-            <div style={{ background: "#000000", borderRadius: 999, height: 5, width: 140 }} />
-          </div>
-        ) : null}
+          <span style={{ color: mobile ? "#77786C" : "var(--terminal-chrome-muted)", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
+            {mobile
+              ? "Terminal colors. We recommend Dark."
+              : "Terminal colors. Dark reads best for agent output, diffs, and status."}
+          </span>
+        </span>
       </div>
-    </dialog>
+
+      <div role="radiogroup" aria-label="Shell theme options" style={{ display: "flex", flexDirection: "column", gap: mobile ? 9 : 7 }}>
+        {SHELL_THEME_OPTIONS.map((option) => {
+          const selected = option.id === selectedShellThemeId;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-label={`${option.label} ${option.description}`}
+              onClick={() => onSelectTheme(option.id)}
+              style={getShellThemeOptionStyle(mobile, selected)}
+            >
+              <ShellThemePreviewIcon option={option} mobile={mobile} />
+              <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 2, minWidth: 0 }}>
+                <span style={{ alignItems: "center", display: "flex", gap: 8, minWidth: 0 }}>
+                  <span style={{ color: mobile ? "#20241C" : "var(--terminal-chrome-fg)", fontSize: mobile ? 14 : 13, fontWeight: 800, lineHeight: "18px" }}>
+                    {option.label}
+                  </span>
+                  <span style={getShellThemeBadgeStyle(option.badgeTone, mobile)}>
+                    {option.badge}
+                  </span>
+                </span>
+                <span style={{ color: mobile ? "#77786C" : "var(--terminal-chrome-muted)", fontSize: mobile ? 11 : 10, lineHeight: mobile ? "15px" : "13px" }}>
+                  {option.description}
+                </span>
+              </span>
+              {selected ? (
+                <CheckIcon
+                  size={mobile ? 17 : 15}
+                  strokeWidth={2.4}
+                  style={{ color: mobile ? "#4F8A55" : "var(--terminal-chrome-active)", flexShrink: 0 }}
+                />
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={getShellThemeWarningStyle(mobile)}>
+        <span aria-hidden="true" style={{ background: mobile ? "#D2B35F" : "#D2A23C", borderRadius: 999, flexShrink: 0, width: 3 }} />
+        <span>
+          {mobile
+            ? "Light & Matrix aren't fully tuned — some colors lose contrast. Switch back to Dark if output looks off."
+            : "Light and Matrix aren't fully tuned — some terminal colors lose contrast. Switch back to Dark if output looks off."}
+        </span>
+      </div>
+
+      {mobile ? (
+        <div style={{ alignItems: "center", display: "flex", height: 18, justifyContent: "center" }}>
+          <div style={{ background: "#000000", borderRadius: 999, height: 5, width: 140 }} />
+        </div>
+      ) : null}
+    </>
   );
+}
+
+function getShellThemeOptionStyle(mobile: boolean, selected: boolean): CSSProperties {
+  if (mobile) {
+    return {
+      alignItems: "center",
+      background: selected ? "#F4F3E9" : "#FFFDF7",
+      border: `1px solid ${selected ? "#D6D5C4" : "#E9E6D8"}`,
+      borderRadius: 14,
+      color: "#2F332C",
+      cursor: "pointer",
+      display: "flex",
+      gap: 13,
+      minHeight: 58,
+      padding: "10px 12px",
+      textAlign: "left",
+      width: "100%",
+    };
+  }
+
+  return {
+    alignItems: "center",
+    background: selected ? "var(--terminal-drawer-card-bg)" : "rgba(255, 255, 255, 0.02)",
+    border: `1px solid ${selected ? "var(--terminal-chrome-active)" : "var(--terminal-chrome-control-border)"}`,
+    borderRadius: 10,
+    color: "var(--terminal-chrome-fg)",
+    cursor: "pointer",
+    display: "flex",
+    gap: 11,
+    minHeight: 52,
+    padding: "9px 10px",
+    textAlign: "left",
+    width: "100%",
+  };
+}
+
+function getShellThemeBadgeStyle(badgeTone: "recommended" | "warning", mobile: boolean): CSSProperties {
+  const recommended = badgeTone === "recommended";
+  return {
+    background: recommended ? (mobile ? "#DDEBCE" : "rgba(156, 183, 122, 0.2)") : (mobile ? "#F4E4A8" : "rgba(210, 162, 60, 0.2)"),
+    borderRadius: 4,
+    color: recommended ? (mobile ? "#4F8A55" : "#A8D27C") : (mobile ? "#A06F1D" : "#E2BC62"),
+    fontSize: mobile ? 7 : 6,
+    fontWeight: 800,
+    letterSpacing: "0.02em",
+    lineHeight: "10px",
+    padding: "1px 4px",
+    whiteSpace: "nowrap",
+  };
+}
+
+function getShellThemeWarningStyle(mobile: boolean): CSSProperties {
+  return {
+    background: mobile ? "#F7F1E2" : "rgba(210, 162, 60, 0.12)",
+    border: `1px solid ${mobile ? "#ECE2C6" : "rgba(210, 162, 60, 0.28)"}`,
+    borderRadius: mobile ? 9 : 10,
+    color: mobile ? "#8A7B52" : "#D4B570",
+    display: "flex",
+    fontSize: mobile ? 10 : 11,
+    gap: 10,
+    lineHeight: mobile ? "14px" : "16px",
+    padding: mobile ? "10px 12px" : "11px 12px",
+  };
 }
 
 function ShellThemePreviewIcon({

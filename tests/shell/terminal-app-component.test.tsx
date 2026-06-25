@@ -484,7 +484,11 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("dialog", { name: "Shell theme" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Shell theme" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Shell theme" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-shell-theme-panel")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to theme menu" })).toBeTruthy();
     expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
     expect(screen.getByText("custom · green on black")).toBeTruthy();
@@ -495,6 +499,19 @@ describe("TerminalApp", () => {
       expect.stringContaining("/api/terminal/sessions/main/preferences"),
       expect.anything(),
     );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Back to theme menu" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Shell theme" })).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Change shell theme Advanced terminal colors" }));
+      await Promise.resolve();
+    });
 
     fetchMock.mockClear();
     await act(async () => {
