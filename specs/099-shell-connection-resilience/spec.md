@@ -2,8 +2,20 @@
 
 **Feature Branch**: `099-shell-connection-resilience`  
 **Created**: 2026-06-25  
-**Status**: Draft  
+**Status**: Ready for Planning
 **Input**: User description: "Make the shell browser disconnect banner and backend connection more resilient and stable. This should almost never happen; if it happens it should not affect the user experience. Cover gateway shell, auth, and browser network behavior."
+
+## Scope Boundary
+
+This spec owns browser-shell live connection resilience: reconnect/degraded-state UX, browser live-event replay, credential refresh, queued outbound shell actions, public route health, platform/runtime route classification, and shell-wide connection diagnostics.
+
+Related spec `specs/098-terminal-session-reliability/` owns terminal runtime/session reliability: terminal process liveness, terminal session truth, saved shell metadata, terminal pane references, terminal WebSocket reattach, terminal close/delete behavior, and terminal-specific diagnostics.
+
+When implementation touches both specs, use this boundary:
+
+- If the user-visible problem is a disruptive browser reconnect banner, missed live events, credential refresh churn, public route failure, queued action delivery, or shell-wide connection health, plan it under this spec.
+- If the user-visible problem is a terminal process/session appearing stuck, lost, duplicated, killed, detached, or not reattached, plan it under `098-terminal-session-reliability`.
+- Shared connection contracts may serve terminal flows, but terminal liveness, session reconciliation, and stale terminal metadata remain acceptance criteria for `098`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -123,6 +135,24 @@ As an operator, I can see whether shell connection failures are caused by browse
 - **FR-019**: The shell MUST handle browser sleep, background-tab timer throttling, network changes, and multi-tab reconnect storms without treating the first missed heartbeat as user-visible failure.
 - **FR-020**: The feature MUST provide regression coverage for short network blips, longer outages, credential refresh failure, public-route failure, active run replay, queued outbound actions, and deploy/restart recovery.
 
+### One-by-One Work Order
+
+1. **Slice 1: Suppress short disruptive reconnect states** - Covers User Story 1 and FR-001 through FR-006. Deliver failing browser-shell tests for brief live-connection interruptions, then keep local work usable and avoid disruptive banners during the quiet recovery window.
+2. **Slice 2: Preserve outbound actions and acknowledgments** - Covers User Story 2 and FR-003, FR-004, and FR-010. Deliver queued-action and at-most-once delivery tests for messages, approvals, aborts, and other user-visible live actions.
+3. **Slice 3: Replay active agent runs after reconnect** - Covers User Story 3 and FR-008 through FR-009. Deliver run-resume cursor and replay ordering tests for missed text, tool status, approval prompts, completion, and generated change notifications.
+4. **Slice 4: Repair auth and routing recovery** - Covers User Story 4 and FR-011 through FR-014, FR-017, and FR-019. Deliver credential-refresh and route-classification tests that prevent guaranteed-failing reconnect loops.
+5. **Slice 5: Add metadata-only operator diagnostics** - Covers User Story 5 and FR-015 through FR-016. Deliver diagnostics that classify browser/network, credential, public-route, platform-route, runtime, deploy/restart, and unknown failures without exposing private content.
+6. **Slice 6: Prove deploy/restart recovery and harden resource cleanup** - Covers FR-018, FR-020, failure modes, and resource-management requirements. Deliver controlled restart/deploy validation plus cleanup tests for timers, subscribers, replay buffers, and diagnostic windows.
+
+### Planning Readiness Review
+
+- **MVP slice**: Slice 1 is the correct first task group because it directly targets the disruptive browser disconnect banner and keeps scope away from deeper replay infrastructure.
+- **Implementation shape**: Plan each slice as an independently reviewable PR. Do not combine user-visible reconnect UX with operator diagnostics unless a shared contract is required.
+- **TDD requirement**: Every slice must start with failing tests. Browser-shell changes need regression tests that cover the no-banner/quiet-window behavior before implementation.
+- **Frontend evidence**: Any slice that changes connection banners, degraded-state copy, disabled/enabled controls, or queued-action indicators needs screenshot or screen-recording evidence.
+- **Public docs**: Implementation planning must include a docs update if user-visible reconnect/degraded-state behavior or operator diagnostic workflow changes.
+- **Spec Kit pointer**: `.specify/feature.json` is intentionally not part of this PR's durable diff. For local planning, point Spec Kit at `specs/099-shell-connection-resilience` before running plan/tasks commands.
+
 ### Key Entities *(include if feature involves data)*
 
 - **Live Connection Session**: A browser shell's current live update channel, including connection state, last confirmed event, credential status, reconnect attempts, and visible degradation state.
@@ -240,4 +270,4 @@ As an operator, I can see whether shell connection failures are caused by browse
 - Users should be told about connection state only when work is delayed, at risk, or requires their action.
 - Existing open app surfaces can remain useful while live shell updates reconnect, even if fresh backend data may be delayed.
 - Metadata-only diagnostics are acceptable for support and operations, but private user content is not.
-- This feature covers the browser shell's live gateway connection and related auth/routing/recovery behavior; terminal-specific socket UX may reuse patterns but is not the primary scope unless it affects shared shell status.
+- This feature covers the browser shell's live gateway connection and related auth/routing/recovery behavior; terminal-specific runtime/session truth belongs to `specs/098-terminal-session-reliability/`.
