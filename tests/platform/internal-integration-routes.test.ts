@@ -106,4 +106,27 @@ describe("platform/internal-integration-routes", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ clerkUserId: "user_bob" });
   });
+
+  it("rejects handles whose VPS machine and legacy container owners differ", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-alice-mismatch",
+      clerkUserId: "user_other",
+      handle: "alice",
+      hetznerServerId: 789,
+      publicIPv4: "203.0.113.13",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-05-06T00:00:00.000Z",
+    });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/alice/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toEqual({ error: "Handle owner mismatch" });
+  });
 });
