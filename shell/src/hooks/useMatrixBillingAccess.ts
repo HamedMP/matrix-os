@@ -180,7 +180,7 @@ function readRemoteBillingStatus(
     cache: "no-store",
     signal: controller.signal,
   })
-    .then(async (response) => {
+    .then(async (response): Promise<BillingAccessRemoteState> => {
       if (response.status >= 500 || response.status === 429) {
         throw new Error("billing_status_retryable");
       }
