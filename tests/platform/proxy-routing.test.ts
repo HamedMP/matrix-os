@@ -2862,7 +2862,12 @@ describe("platform proxy routing", () => {
     expect(html).toContain("heading.textContent = 'Choose what Matrix installs first';");
     expect(html).toContain("toolsHeading.textContent = 'Developer tools';");
     expect(html).toContain("label.className = 'developer-tool-option selected';");
-    expect(html).toContain("logo.textContent = tool === 'claude-code' ? 'AI'");
+    expect(html).toContain("var developerToolLogos = {");
+    expect(html).toContain("<title>OpenAI</title>");
+    expect(html).toContain("<title>Anthropic</title>");
+    expect(html).toContain("<title id=\"opencode-title\">OpenCode</title>");
+    expect(html).toContain("<title>Pi</title>");
+    expect(html).toContain("logo.innerHTML = developerToolLogos[tool] || '';");
     expect(html).toContain("footerText.textContent = 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';");
     expect(html).toContain("matrix.billing.checkoutAttemptAt");
     expect(html).toContain("hasTrustedCheckoutReturn()");
