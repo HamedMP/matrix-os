@@ -124,6 +124,75 @@ const TERMINAL_THEME_MENU_DISMISS_STYLE: CSSProperties = {
   position: "absolute",
 };
 
+const TERMINAL_SHELL_THEME_MOTION_CSS = `
+@keyframes terminalShellThemePanelIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0) scale(0.975);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes terminalShellThemeMobilePanelIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes terminalShellThemeRowIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes terminalShellThemeBadgeIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(8px, 0, 0) scale(0.9);
+  }
+  68% {
+    opacity: 1;
+    transform: translate3d(-1px, 0, 0) scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes terminalShellThemeCheckIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-terminal-shell-theme-motion] {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+`;
+
 const TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE: CSSProperties = {
   ...TERMINAL_THEME_DESKTOP_MENU_STYLE,
   background: "var(--terminal-chrome-bg)",
@@ -2271,6 +2340,7 @@ function ShellThemeChooser({
           onClose();
         }}
       >
+        <style>{TERMINAL_SHELL_THEME_MOTION_CSS}</style>
         <button
           type="button"
           aria-label="Dismiss theme menu"
@@ -2280,8 +2350,12 @@ function ShellThemeChooser({
         />
         <section
           aria-label="Shell theme"
+          data-terminal-shell-theme-motion
           data-testid="terminal-shell-theme-panel"
-          style={TERMINAL_THEME_MOBILE_SHEET_STYLE}
+          style={{
+            ...TERMINAL_THEME_MOBILE_SHEET_STYLE,
+            ...getShellThemePanelMotionStyle(true),
+          }}
         >
           {content}
         </section>
@@ -2290,13 +2364,20 @@ function ShellThemeChooser({
   }
 
   return (
-    <section
-      aria-label="Shell theme"
-      data-testid="terminal-shell-theme-panel"
-      style={TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE}
-    >
-      {content}
-    </section>
+    <>
+      <style>{TERMINAL_SHELL_THEME_MOTION_CSS}</style>
+      <section
+        aria-label="Shell theme"
+        data-terminal-shell-theme-motion
+        data-testid="terminal-shell-theme-panel"
+        style={{
+          ...TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE,
+          ...getShellThemePanelMotionStyle(false),
+        }}
+      >
+        {content}
+      </section>
+    </>
   );
 }
 
@@ -2351,7 +2432,7 @@ function ShellThemeChooserContent({
       </div>
 
       <div role="radiogroup" aria-label="Shell theme options" style={{ display: "flex", flexDirection: "column", gap: mobile ? 9 : 7 }}>
-        {SHELL_THEME_OPTIONS.map((option) => {
+        {SHELL_THEME_OPTIONS.map((option, index) => {
           const selected = option.id === selectedShellThemeId;
           return (
             <button
@@ -2360,8 +2441,12 @@ function ShellThemeChooserContent({
               role="radio"
               aria-checked={selected}
               aria-label={`${option.label} ${option.description}`}
+              data-terminal-shell-theme-motion
               onClick={() => onSelectTheme(option.id)}
-              style={getShellThemeOptionStyle(mobile, selected)}
+              style={{
+                ...getShellThemeOptionStyle(mobile, selected),
+                ...getShellThemeOptionMotionStyle(index),
+              }}
             >
               <ShellThemePreviewIcon option={option} mobile={mobile} />
               <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 2, minWidth: 0 }}>
@@ -2373,15 +2458,17 @@ function ShellThemeChooserContent({
                 </span>
               </span>
               <span style={getShellThemeOptionTrailingStyle(mobile)}>
-                <span style={getShellThemeBadgeStyle(option.badgeTone, mobile)}>
+                <span data-terminal-shell-theme-motion style={getShellThemeBadgeStyle(option.badgeTone, mobile, index)}>
                   {option.badge}
                 </span>
                 {selected ? (
-                  <CheckIcon
-                    size={mobile ? 18 : 16}
-                    strokeWidth={2.5}
-                    style={{ color: mobile ? "#4F8A55" : "var(--terminal-chrome-active)", flexShrink: 0 }}
-                  />
+                  <span data-terminal-shell-theme-motion style={getShellThemeCheckStyle(mobile, index)}>
+                    <CheckIcon
+                      size={mobile ? 18 : 16}
+                      strokeWidth={2.5}
+                      style={{ color: mobile ? "#4F8A55" : "var(--terminal-chrome-active)", display: "block" }}
+                    />
+                  </span>
                 ) : (
                   <span aria-hidden="true" style={{ flexShrink: 0, height: mobile ? 18 : 16, width: mobile ? 18 : 16 }} />
                 )}
@@ -2407,6 +2494,19 @@ function ShellThemeChooserContent({
       ) : null}
     </>
   );
+}
+
+function getShellThemePanelMotionStyle(mobile: boolean): CSSProperties {
+  return {
+    animation: `${mobile ? "terminalShellThemeMobilePanelIn" : "terminalShellThemePanelIn"} 180ms cubic-bezier(0.16, 1, 0.3, 1) both`,
+    transformOrigin: mobile ? "bottom center" : "top right",
+  };
+}
+
+function getShellThemeOptionMotionStyle(index: number): CSSProperties {
+  return {
+    animation: `terminalShellThemeRowIn 220ms cubic-bezier(0.16, 1, 0.3, 1) ${45 + index * 35}ms both`,
+  };
 }
 
 function getShellThemeOptionStyle(mobile: boolean, selected: boolean): CSSProperties {
@@ -2454,9 +2554,10 @@ function getShellThemeOptionTrailingStyle(mobile: boolean): CSSProperties {
   };
 }
 
-function getShellThemeBadgeStyle(badgeTone: "recommended" | "warning", mobile: boolean): CSSProperties {
+function getShellThemeBadgeStyle(badgeTone: "recommended" | "warning", mobile: boolean, index: number): CSSProperties {
   const recommended = badgeTone === "recommended";
   return {
+    animation: `terminalShellThemeBadgeIn 300ms cubic-bezier(0.19, 1, 0.22, 1) ${95 + index * 45}ms both`,
     background: recommended ? (mobile ? "#DDEBCE" : "rgba(156, 183, 122, 0.2)") : (mobile ? "#F4E4A8" : "rgba(210, 162, 60, 0.2)"),
     borderRadius: 6,
     color: recommended ? (mobile ? "#4F8A55" : "#A8D27C") : (mobile ? "#A06F1D" : "#E2BC62"),
@@ -2465,7 +2566,20 @@ function getShellThemeBadgeStyle(badgeTone: "recommended" | "warning", mobile: b
     letterSpacing: "0.01em",
     lineHeight: mobile ? "14px" : "13px",
     padding: mobile ? "2px 7px" : "2px 6px",
+    transformOrigin: "center right",
     whiteSpace: "nowrap",
+  };
+}
+
+function getShellThemeCheckStyle(mobile: boolean, index: number): CSSProperties {
+  return {
+    alignItems: "center",
+    animation: `terminalShellThemeCheckIn 180ms cubic-bezier(0.16, 1, 0.3, 1) ${145 + index * 45}ms both`,
+    display: "flex",
+    flexShrink: 0,
+    height: mobile ? 18 : 16,
+    justifyContent: "center",
+    width: mobile ? 18 : 16,
   };
 }
 
