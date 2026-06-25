@@ -8,6 +8,7 @@ const BILLING_STATUS_TIMEOUT_MS = 10_000;
 const BILLING_STATUS_CACHE_TTL_MS = 30_000;
 const BILLING_STATUS_RETRY_MS = 3_000;
 const PLATFORM_SESSION_BILLING_CACHE_KEY = "platform-session";
+const APP_SESSION_STALE_AUTH_FAILURE = "app-session-stale";
 
 type BillingStatusSnapshot = {
   cacheKey: string;
@@ -23,7 +24,10 @@ type BillingAccessState = {
   checking: boolean;
   entitlement: BillingEntitlementSummary | null;
   accessReason: string | null;
+  accessIssue: BillingAccessIssue;
 };
+
+export type BillingAccessIssue = "auth" | null;
 
 export type BillingEntitlementSummary = {
   source: "stripe" | "override";
@@ -43,9 +47,10 @@ export type BillingEntitlementSummary = {
 };
 
 type BillingAccessRemoteState = {
-  active: boolean;
+  active: boolean | null;
   entitlement: BillingEntitlementSummary | null;
   accessReason: string | null;
+  accessIssue: BillingAccessIssue;
 };
 
 export function useMatrixBillingAccess(): BillingAccessState {
@@ -68,7 +73,7 @@ export function useMatrixBillingAccess(): BillingAccessState {
       return;
     }
     if (isSignedIn && !userId) {
-      setRemoteState({ active: false, entitlement: null, accessReason: null });
+      setRemoteState({ active: false, entitlement: null, accessReason: null, accessIssue: null });
       setRemoteChecked(true);
       return;
     }
@@ -94,7 +99,7 @@ export function useMatrixBillingAccess(): BillingAccessState {
         if (disposed) return;
         setRemoteState(state);
         setRemoteChecked(true);
-        if (checkoutReturnRequested && !state.active) {
+        if (state.accessIssue === "auth" || (checkoutReturnRequested && state.active === false)) {
           retryTimeoutId = window.setTimeout(() => {
             setRetryTick((current) => current + 1);
           }, BILLING_STATUS_RETRY_MS);
@@ -115,14 +120,32 @@ export function useMatrixBillingAccess(): BillingAccessState {
     };
   }, [isLoaded, isSignedIn, legacyActive, retryTick, userId]);
 
-  if (!isLoaded) return { active: null, checking: true, entitlement: null, accessReason: null };
-  if (legacyActive) return { active: true, checking: false, entitlement: null, accessReason: "legacy_clerk_plan" };
-  if (!remoteChecked) return { active: null, checking: true, entitlement: null, accessReason: null };
+  if (!isLoaded) return { active: null, checking: true, entitlement: null, accessReason: null, accessIssue: null };
+  if (legacyActive) {
+    return {
+      active: true,
+      checking: false,
+      entitlement: null,
+      accessReason: "legacy_clerk_plan",
+      accessIssue: null,
+    };
+  }
+  if (remoteState?.accessIssue === "auth") {
+    return {
+      active: null,
+      checking: true,
+      entitlement: null,
+      accessReason: remoteState.accessReason,
+      accessIssue: "auth",
+    };
+  }
+  if (!remoteChecked) return { active: null, checking: true, entitlement: null, accessReason: null, accessIssue: null };
   return {
     active: remoteState?.active === true,
     checking: false,
     entitlement: remoteState?.entitlement ?? null,
     accessReason: remoteState?.accessReason ?? null,
+    accessIssue: null,
   };
 }
 
@@ -161,7 +184,20 @@ function readRemoteBillingStatus(
       if (response.status >= 500 || response.status === 429) {
         throw new Error("billing_status_retryable");
       }
-      if (!response.ok) return { active: false, entitlement: null, accessReason: null };
+      if (response.status === 401 || response.status === 403) {
+        if (response.headers.get("x-auth-failure") !== APP_SESSION_STALE_AUTH_FAILURE) {
+          return { active: false, entitlement: null, accessReason: null, accessIssue: null };
+        }
+        return {
+          active: null,
+          entitlement: null,
+          accessReason: "auth_session_refreshing",
+          accessIssue: "auth",
+        };
+      }
+      if (!response.ok) {
+        return { active: false, entitlement: null, accessReason: null, accessIssue: null };
+      }
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
         entitlement?: BillingEntitlementSummary | null;
@@ -170,10 +206,11 @@ function readRemoteBillingStatus(
         active: body.access?.runtimeProxyAllowed === true,
         entitlement: body.entitlement ?? null,
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
+        accessIssue: null,
       };
     })
     .then((state) => {
-      if (!options.skipCache && (state.active || !options.skipInactiveCache)) {
+      if (!options.skipCache && state.accessIssue === null && (state.active || !options.skipInactiveCache)) {
         billingStatusSnapshot = { cacheKey, state, checkedAt: Date.now() };
       }
       return state;

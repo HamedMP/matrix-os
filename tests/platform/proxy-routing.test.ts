@@ -494,6 +494,7 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBeNull();
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
@@ -516,6 +517,38 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBe("app-session-stale");
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
+  it("returns generic unauthorized for expired app-shell session cookies on billing routes", async () => {
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+      expiresInSec: -120,
+    });
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: `matrix_app_session=${encodeURIComponent(issued.token)}`,
+      },
+    });
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBe("app-session-stale");
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
