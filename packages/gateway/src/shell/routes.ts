@@ -61,6 +61,11 @@ interface ShellSessionDiagnosticSummary {
   exited: number;
 }
 
+interface ShellSessionDiagnosticFailure {
+  ok: false;
+  code: "session_list_unavailable";
+}
+
 interface ShellThemeConfigRoutes {
   setShellTheme(themeId: ShellThemeId): Promise<void>;
 }
@@ -167,14 +172,13 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
           );
           return c.json({
             shell: {
-              ok: false,
-              code: "session_list_unavailable",
+              ...health,
               sessions: {
                 ok: false,
                 code: "session_list_unavailable",
-              },
+              } satisfies ShellSessionDiagnosticFailure,
             },
-          }, 503);
+          }, health.ok ? 200 : 503);
         }
       }
       return c.json({ shell: health }, health.ok ? 200 : 503);

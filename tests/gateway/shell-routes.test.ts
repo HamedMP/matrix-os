@@ -542,7 +542,7 @@ describe("gateway shell routes", () => {
     expect(registry.delete).not.toHaveBeenCalled();
   });
 
-  it("keeps terminal health diagnostics coarse when session listing fails", async () => {
+  it("keeps shell health healthy when only session diagnostics fail", async () => {
     const app = appWithRegistry({
       list: vi.fn(async () => {
         throw new Error("/home/matrix/home/system/shell-sessions.json unavailable");
@@ -556,11 +556,11 @@ describe("gateway shell routes", () => {
     const res = await app.request("/api/terminal/health?include=sessions");
     const bodyText = await res.text();
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(200);
     expect(JSON.parse(bodyText)).toEqual({
       shell: {
-        ok: false,
-        code: "session_list_unavailable",
+        ok: true,
+        code: "ok",
         sessions: {
           ok: false,
           code: "session_list_unavailable",

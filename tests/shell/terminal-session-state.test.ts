@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyShellRefreshFailure,
+  applyShellRefreshSilentFailure,
   applyShellRefreshSuccess,
   applyShellUiStatePatch,
   rollbackShellUiStatePatch,
@@ -74,6 +75,22 @@ describe("terminal session state helpers", () => {
       shells: [nextShell],
       authoritative: true,
       stale: false,
+      error: null,
+    });
+  });
+
+  it("marks silent refresh failures stale through the committed refresh state without surfacing an error", () => {
+    const state: ShellRefreshState = {
+      shells: [mainShell],
+      authoritative: true,
+      stale: false,
+      error: null,
+    };
+
+    expect(applyShellRefreshSilentFailure(state)).toEqual({
+      shells: [mainShell],
+      authoritative: true,
+      stale: true,
       error: null,
     });
   });

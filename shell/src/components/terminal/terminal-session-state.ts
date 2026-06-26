@@ -163,3 +163,10 @@ export function applyShellRefreshFailure(
     error,
   };
 }
+
+export function applyShellRefreshSilentFailure(state: ShellRefreshState): ShellRefreshState {
+  return {
+    ...state,
+    stale: state.shells.length > 0,
+  };
+}

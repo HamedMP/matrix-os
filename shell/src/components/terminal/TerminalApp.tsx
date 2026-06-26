@@ -36,6 +36,7 @@ import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-sess
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import {
   applyShellRefreshFailure,
+  applyShellRefreshSilentFailure,
   applyShellRefreshSuccess,
   applyShellUiStatePatch,
   rollbackShellUiStatePatch,
@@ -113,6 +114,18 @@ const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
   position: "relative",
   width: 44,
   zIndex: 1,
+};
+
+const SHELL_ROW_DRAG_HANDLE_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  color: "#A09F92",
+  flexShrink: 0,
+  height: 18,
+  padding: 0,
+  pointerEvents: "auto",
+  transition: "opacity 120ms ease",
+  width: 12,
 };
 
 const SHELL_THEME_OPTIONS: Array<{
@@ -2811,6 +2824,7 @@ function LocalTerminalSidebar() {
     stale: false,
     error: null,
   });
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for `fetchShells` and shell-tab refresh effect dependencies in compiled and test/runtime surfaces.
   const commitShellRefreshState = useCallback((nextState: ShellRefreshState) => {
     shellRefreshStateRef.current = nextState;
     setShells(nextState.shells);
@@ -2917,8 +2931,8 @@ function LocalTerminalSidebar() {
         signal: options.signal ?? AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        if (silent && shellRefreshStateRef.current.shells.length > 0) {
-          setShellsStale(true);
+        if (silent) {
+          commitShellRefreshState(applyShellRefreshSilentFailure(shellRefreshStateRef.current));
         }
         if (!silent) {
           commitShellRefreshState(applyShellRefreshFailure(
@@ -2942,9 +2956,7 @@ function LocalTerminalSidebar() {
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       if (silent) {
-        if (shellRefreshStateRef.current.shells.length > 0) {
-          setShellsStale(true);
-        }
+        commitShellRefreshState(applyShellRefreshSilentFailure(shellRefreshStateRef.current));
         return;
       }
       console.warn("Failed to load shell sessions:", err instanceof Error ? err.message : err);
@@ -5024,17 +5036,9 @@ function ShellCard({
           }}
           className="flex items-center justify-center"
           style={{
-            background: "transparent",
-            border: 0,
-            color: "#A09F92",
+            ...SHELL_ROW_DRAG_HANDLE_STYLE,
             cursor: showDragHandle ? "grab" : "default",
-            flexShrink: 0,
-            height: 18,
             opacity: showDragHandle ? 1 : 0,
-            padding: 0,
-            pointerEvents: "auto",
-            transition: "opacity 120ms ease",
-            width: 12,
           }}
         >
           <GripVerticalIcon size={12} strokeWidth={2.1} />
