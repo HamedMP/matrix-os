@@ -184,4 +184,41 @@ describe("ConversationRunRegistry", () => {
     registry.publish("sess-1", { type: "kernel:text", text: "after-detach" });
     expect(streamed).toEqual([{ type: "kernel:text", text: "live" }]);
   });
+
+  it("replays buffered approval requests with kernel run events", () => {
+    const registry = new ConversationRunRegistry({
+      maxRuns: 1,
+      maxEventsPerRun: 10,
+    });
+
+    registry.begin("sess-1");
+    registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
+    registry.publish("sess-1", {
+      type: "approval:request",
+      id: "approval-1",
+      toolName: "Bash",
+      args: { command: "pnpm test" },
+      timeout: 30_000,
+      requestId: "req-1",
+      eventId: "sess-1:req-1:1",
+    });
+
+    const received: ConversationRunMessage[] = [];
+    registry.attach("sess-1", (msg) => {
+      received.push(msg);
+    });
+
+    expect(received).toEqual([
+      { type: "kernel:init", sessionId: "sess-1" },
+      {
+        type: "approval:request",
+        id: "approval-1",
+        toolName: "Bash",
+        args: { command: "pnpm test" },
+        timeout: 30_000,
+        requestId: "req-1",
+        eventId: "sess-1:req-1:1",
+      },
+    ]);
+  });
 });

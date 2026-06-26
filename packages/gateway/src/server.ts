@@ -22,6 +22,11 @@ import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
+import {
+  clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
+  scheduleReconnectAbortTimersForSession,
+  type ReconnectableAbortEntry,
+} from "./conversation-reconnect-aborts.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import {
@@ -617,11 +622,7 @@ export async function createGateway(config: GatewayConfig) {
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
-  const reconnectableAbortControllers = new Map<string, {
-    controller: AbortController;
-    sessionId?: string;
-    abortTimer: ReturnType<typeof setTimeout> | null;
-  }>();
+  const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
   const toolPackRepository = new InMemoryToolPackRepository();
@@ -2104,13 +2105,7 @@ export async function createGateway(config: GatewayConfig) {
       const abortControllers = new Map<string, AbortController>();
 
       const clearReconnectAbortTimersForSession = (sessionId: string | undefined) => {
-        if (!sessionId) return;
-        for (const entry of reconnectableAbortControllers.values()) {
-          if (entry.sessionId === sessionId && entry.abortTimer) {
-            clearTimeout(entry.abortTimer);
-            entry.abortTimer = null;
-          }
-        }
+        clearReconnectAbortTimers(reconnectableAbortControllers, sessionId);
       };
 
       const clearConversationRunAttachment = () => {
@@ -2175,7 +2170,10 @@ export async function createGateway(config: GatewayConfig) {
             active_clients: clients.size,
           });
           approvalBridge = createApprovalBridge({
-            send: (msg) => send(ws, msg),
+            send: (msg) => {
+              send(ws, msg);
+              publishConversationRunMessage(activeSessionId, msg);
+            },
             timeout: approvalPolicy.timeout,
           });
 
@@ -2418,9 +2416,24 @@ export async function createGateway(config: GatewayConfig) {
           // Abort any in-flight runs for this client so the kernel doesn't
           // keep burning tokens forever, while still allowing short browser
           // reconnects to replay and reattach active runs.
+          scheduleReconnectAbortTimersForSession(
+            reconnectableAbortControllers,
+            activeSessionId,
+            {
+              graceMs: CONVERSATION_RECONNECT_GRACE_MS,
+              hasActiveSessionConnection: (sessionId) =>
+                conversationRuns.hasActiveSubscribers(sessionId),
+            },
+          );
           for (const [requestId, controller] of abortControllers) {
             const reconnectable = reconnectableAbortControllers.get(requestId);
             if (!reconnectable || reconnectable.abortTimer) continue;
+            if (
+              reconnectable.sessionId
+              && conversationRuns.hasActiveSubscribers(reconnectable.sessionId)
+            ) {
+              continue;
+            }
             reconnectable.abortTimer = setTimeout(() => {
               controller.abort();
               reconnectableAbortControllers.delete(requestId);

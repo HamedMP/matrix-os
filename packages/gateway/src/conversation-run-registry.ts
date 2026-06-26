@@ -5,7 +5,16 @@ export type ConversationRunMessage =
   | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }
   | { type: "kernel:result"; data: unknown; requestId?: string; eventId?: string }
   | { type: "kernel:error"; message: string; requestId?: string; eventId?: string }
-  | { type: "kernel:aborted"; requestId?: string; eventId?: string };
+  | { type: "kernel:aborted"; requestId?: string; eventId?: string }
+  | {
+      type: "approval:request";
+      id: string;
+      toolName: string;
+      args: unknown;
+      timeout: number;
+      requestId?: string;
+      eventId?: string;
+    };
 
 export interface ConversationRunRegistryOptions {
   maxRuns?: number;
@@ -84,6 +93,11 @@ export class ConversationRunRegistry {
     }
 
     return [...run.messages];
+  }
+
+  hasActiveSubscribers(sessionId: string): boolean {
+    const run = this.runs.get(sessionId);
+    return Boolean(run && run.completedAt === null && run.subscribers.size > 0);
   }
 
   attachWithBufferedSnapshot(
