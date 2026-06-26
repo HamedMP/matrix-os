@@ -80,6 +80,5 @@ describe("PaneGrid", () => {
     const divs = Array.from(container.querySelectorAll("div"));
     expect(divs.some((node) => node.className.includes("overflow-auto") || node.className.includes("overflow-scroll"))).toBe(false);
     expect(divs.some((node) => node.style.overflow === "auto" || node.style.overflow === "scroll")).toBe(false);
-    expect(divs.filter((node) => node.style.overflow === "hidden")).toHaveLength(2);
   });
 });

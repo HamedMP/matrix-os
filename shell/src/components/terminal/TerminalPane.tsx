@@ -256,7 +256,6 @@ function applyXtermScrollSurface(xtermElement: HTMLElement | null | undefined): 
   viewport.style.height = "100%";
   viewport.style.overflowY = "scroll";
   viewport.style.setProperty("scrollbar-gutter", "stable");
-  viewport.style.setProperty("scrollbar-width", "thin");
   viewport.style.overscrollBehavior = "contain";
   viewport.style.touchAction = "pan-y";
 }

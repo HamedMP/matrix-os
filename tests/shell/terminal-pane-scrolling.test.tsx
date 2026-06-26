@@ -19,6 +19,37 @@ const stubWs = vi.hoisted(() => ({
   onerror: null as (() => void) | null,
 }));
 
+const restorePlan = vi.hoisted(() => ({
+  current: {
+    cached: null as null | {
+      terminal: {
+        element: HTMLElement | null;
+        options: Record<string, unknown>;
+        cols: number;
+        rows: number;
+        focus: ReturnType<typeof vi.fn>;
+        write: ReturnType<typeof vi.fn>;
+        dispose: ReturnType<typeof vi.fn>;
+        onData: ReturnType<typeof vi.fn>;
+        onResize: ReturnType<typeof vi.fn>;
+        attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
+        clearSelection: ReturnType<typeof vi.fn>;
+        getSelection: ReturnType<typeof vi.fn>;
+      };
+      fitAddon: { fit: ReturnType<typeof vi.fn> };
+      webglAddon: null;
+      searchAddon: null;
+      ws: typeof stubWs;
+      lastSeq: number;
+      sessionId: string;
+    },
+    reuseTerminal: false,
+    reuseSocket: false,
+    sessionId: null as string | null,
+    lastSeq: 0,
+  },
+}));
+
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     element: HTMLElement | null = null;
@@ -83,13 +114,7 @@ vi.mock("../../shell/src/components/terminal/terminal-cache.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/terminal/terminal-restore.js", () => ({
-  getCachedTerminalRestorePlan: vi.fn(() => ({
-    cached: null,
-    reuseTerminal: false,
-    reuseSocket: false,
-    sessionId: null,
-    lastSeq: 0,
-  })),
+  getCachedTerminalRestorePlan: vi.fn(() => restorePlan.current),
   discardStaleCachedTerminal: vi.fn(),
   closeStaleCachedSocket: vi.fn(),
 }));
@@ -157,9 +182,42 @@ class WebSocketMock {
   constructor(_url: string) {}
 }
 
+function createCachedTerminal() {
+  const element = document.createElement("div");
+  element.className = "xterm";
+  const viewport = document.createElement("div");
+  viewport.className = "xterm-viewport";
+  element.appendChild(viewport);
+
+  return {
+    terminal: {
+      element,
+      options: {},
+      cols: 80,
+      rows: 24,
+      focus: vi.fn(),
+      write: vi.fn(),
+      dispose: vi.fn(),
+      onData: vi.fn(() => ({ dispose: vi.fn() })),
+      onResize: vi.fn(() => ({ dispose: vi.fn() })),
+      attachCustomKeyEventHandler: vi.fn(),
+      clearSelection: vi.fn(),
+      getSelection: vi.fn(() => ""),
+    },
+    viewport,
+  };
+}
+
 describe("TerminalPane scrolling", () => {
   beforeEach(() => {
     createdTerminals.length = 0;
+    restorePlan.current = {
+      cached: null,
+      reuseTerminal: false,
+      reuseSocket: false,
+      sessionId: null,
+      lastSeq: 0,
+    };
     globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
     globalThis.WebSocket = WebSocketMock as unknown as typeof WebSocket;
     globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) =>
@@ -201,8 +259,58 @@ describe("TerminalPane scrolling", () => {
     expect(terminal.viewport?.style.height).toBe("100%");
     expect(terminal.viewport?.style.overflowY).toBe("scroll");
     expect(terminal.viewport?.style.getPropertyValue("scrollbar-gutter")).toBe("stable");
-    expect(terminal.viewport?.style.getPropertyValue("scrollbar-width")).toBe("thin");
     expect(terminal.viewport?.style.overscrollBehavior).toBe("contain");
     expect(terminal.viewport?.style.touchAction).toBe("pan-y");
+  });
+
+  it("applies scroll surface and options to cached xterm instances on restore", async () => {
+    const cached = createCachedTerminal();
+    const fitAddon = { fit: vi.fn() };
+    restorePlan.current = {
+      cached: {
+        terminal: cached.terminal,
+        fitAddon,
+        webglAddon: null,
+        searchAddon: null,
+        ws: stubWs,
+        lastSeq: 0,
+        sessionId: "cached-terminal",
+      },
+      reuseTerminal: true,
+      reuseSocket: true,
+      sessionId: "cached-terminal",
+      lastSeq: 0,
+    };
+
+    const { container } = render(
+      <TerminalPane
+        paneId="pane-cached-scrolling-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".xterm")).toBe(cached.terminal.element));
+
+    expect(createdTerminals).toHaveLength(0);
+    expect(cached.terminal.options).toEqual(expect.objectContaining({
+      scrollback: 10_000,
+      scrollSensitivity: 1,
+      fastScrollSensitivity: 5,
+      scrollOnUserInput: true,
+    }));
+    expect(cached.terminal.element?.style.height).toBe("100%");
+    expect(cached.terminal.element?.style.overscrollBehavior).toBe("contain");
+    expect(cached.terminal.element?.style.touchAction).toBe("pan-y");
+    expect(cached.viewport.style.height).toBe("100%");
+    expect(cached.viewport.style.overflowY).toBe("scroll");
+    expect(cached.viewport.style.getPropertyValue("scrollbar-gutter")).toBe("stable");
+    expect(cached.viewport.style.overscrollBehavior).toBe("contain");
+    expect(cached.viewport.style.touchAction).toBe("pan-y");
   });
 });
