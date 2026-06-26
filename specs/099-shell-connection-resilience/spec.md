@@ -9,13 +9,13 @@
 
 This spec owns browser-shell live connection resilience: reconnect/degraded-state UX, browser live-event replay, credential refresh, queued outbound shell actions, public route health, platform/runtime route classification, and shell-wide connection diagnostics.
 
-Related spec `specs/098-terminal-session-reliability/` owns terminal runtime/session reliability: terminal process liveness, terminal session truth, saved shell metadata, terminal pane references, terminal WebSocket reattach, terminal close/delete behavior, and terminal-specific diagnostics.
+Related terminal specs `specs/047-terminal/` and `specs/056-terminal-upgrade/` cover terminal app behavior and persistent terminal sessions. This spec does not define terminal process liveness, terminal session truth, saved shell metadata, terminal pane references, terminal WebSocket reattach, terminal close/delete behavior, or terminal-specific diagnostics.
 
 When implementation touches both specs, use this boundary:
 
 - If the user-visible problem is a disruptive browser reconnect banner, missed live events, credential refresh churn, public route failure, queued action delivery, or shell-wide connection health, plan it under this spec.
-- If the user-visible problem is a terminal process/session appearing stuck, lost, duplicated, killed, detached, or not reattached, plan it under `098-terminal-session-reliability`.
-- Shared connection contracts may serve terminal flows, but terminal liveness, session reconciliation, and stale terminal metadata remain acceptance criteria for `098`.
+- If the user-visible problem is a terminal process/session appearing stuck, lost, duplicated, killed, detached, or not reattached, plan it under the existing terminal specs or create a dedicated terminal reliability spec before implementation.
+- Shared connection contracts may serve terminal flows, but terminal liveness, session reconciliation, and stale terminal metadata remain outside this spec and need terminal-specific acceptance criteria.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -121,7 +121,7 @@ As an operator, I can see whether shell connection failures are caused by browse
 - **FR-005**: The shell MUST avoid disruptive connection banners for short interruptions that recover before the user is meaningfully blocked.
 - **FR-006**: The shell MUST show a non-blocking degraded-state notice when live reconnection remains unavailable beyond the quiet recovery window.
 - **FR-007**: Degraded-state copy MUST distinguish, in user-facing terms, between "workspace reachable but live updates reconnecting" and "workspace temporarily unreachable."
-- **FR-008**: Active agent runs MUST be resumable after browser reconnection, including missed visible text, tool status, completion state, and approval prompts.
+- **FR-008**: Active agent runs MUST be resumable after browser reconnection, including missed visible text, tool status, completion state, and approval prompts with their server-authoritative timeout or expired state.
 - **FR-009**: Replayed live events MUST preserve order and MUST NOT duplicate already rendered events.
 - **FR-010**: The system MUST track acknowledgment state for user-submitted messages and other user-visible live actions so the browser can distinguish accepted, pending, retried, and failed actions.
 - **FR-011**: Connection credential refresh MUST be retried as its own recoverable step; the shell MUST NOT repeatedly attempt a live connection that is known to lack valid credentials.
@@ -137,7 +137,7 @@ As an operator, I can see whether shell connection failures are caused by browse
 
 ### One-by-One Work Order
 
-1. **Slice 1: Suppress short disruptive reconnect states** - Covers User Story 1 and FR-001 through FR-005. Deliver failing browser-shell tests for brief live-connection interruptions, then keep local work usable and avoid disruptive banners during the quiet recovery window.
+1. **Slice 1: Suppress short disruptive reconnect states** - Covers User Story 1 and FR-001, FR-002, and FR-005. Deliver failing browser-shell tests for brief live-connection interruptions, then keep local work usable and avoid disruptive banners during the quiet recovery window. Durable outbound-action queuing and acknowledgment handling belong to Slice 2.
 2. **Slice 2: Preserve outbound actions and acknowledgments** - Covers User Story 2 and FR-003, FR-004, FR-006, FR-007, and FR-010. Deliver degraded-state copy tests plus queued-action and at-most-once delivery tests for messages, approvals, aborts, and other user-visible live actions.
 3. **Slice 3: Replay active agent runs after reconnect** - Covers User Story 3 and FR-008 through FR-009. Deliver run-resume cursor and replay ordering tests for missed text, tool status, approval prompts, completion, and generated change notifications.
 4. **Slice 4: Repair auth and routing recovery** - Covers User Story 4 and FR-011 through FR-014, FR-017, and FR-019. Deliver credential-refresh and route-classification tests that prevent guaranteed-failing reconnect loops.
@@ -249,6 +249,7 @@ As an operator, I can see whether shell connection failures are caused by browse
 - Validate public-route failure where runtime health is still reachable and diagnostics classify the mismatch.
 - Validate runtime restart/deploy recovery without page refresh.
 - Validate multi-tab reconnect behavior with bounded credential refresh and connection attempts.
+- Include any required public docs update under `www/content/docs/` when a slice changes user-visible reconnect/degraded-state behavior or operator diagnostic workflows.
 - Run the standard repository checks required for changed areas, including unit tests, pattern checks, typecheck, React audit for browser-shell changes, and screenshot evidence for user-visible shell changes during implementation.
 
 ## Success Criteria *(mandatory)*
@@ -256,13 +257,16 @@ As an operator, I can see whether shell connection failures are caused by browse
 ### Measurable Outcomes
 
 - **SC-001**: In validation scenarios with live-connection interruptions shorter than five seconds, users see no disruptive reconnect banner in at least 99% of trials.
-- **SC-002**: In validation scenarios with browser network changes or sleep/wake interruptions under thirty seconds, active agent transcripts resume without duplicate or missing visible events in at least 99% of trials.
+- **SC-002**: In validation scenarios with browser network changes or sleep/wake interruptions shorter than five seconds, active agent transcripts resume without duplicate or missing visible events and without a disruptive reconnect banner in at least 99% of trials.
 - **SC-003**: In validation scenarios where a user submits while reconnecting, the user action is delivered exactly once or preserved with a clear retry state in 100% of trials.
 - **SC-004**: Users can continue editing message drafts and navigating already-open workspace surfaces during live-connection interruptions in 100% of supported browsers.
 - **SC-005**: Sustained live-connection failures show a non-blocking, accurately classified degraded-state notice within ten seconds of meaningful user impact.
 - **SC-006**: Operator diagnostics classify induced browser-network, credential, public-route, platform-route, runtime-unreachable, and deploy/restart failures correctly in at least 95% of validation cases.
 - **SC-007**: Public live-connection health checks detect a public-route failure that general runtime health would miss within two minutes.
 - **SC-008**: During controlled runtime restart or deploy validation, active browser sessions return to a usable connected state without page refresh in at least 99% of trials.
+- **SC-009**: In validation scenarios with five-to-thirty-second browser network changes or sleep/wake interruptions, active agent transcripts resume without duplicate or missing visible events in at least 99% of trials while any visible degraded notice remains non-blocking and accurately distinguishes reachable from unreachable workspace state.
+- **SC-010**: In diagnostic validation, captured and displayed diagnostics include zero raw credentials, user message content, terminal output, private file paths, or provider raw error messages across sampled failure cases.
+- **SC-011**: In approval-prompt reconnect validation, prompts preserve the server-authoritative timeout or expired state and apply any approval or denial response at most once in 100% of trials.
 
 ## Assumptions
 
@@ -270,4 +274,4 @@ As an operator, I can see whether shell connection failures are caused by browse
 - Users should be told about connection state only when work is delayed, at risk, or requires their action.
 - Existing open app surfaces can remain useful while live shell updates reconnect, even if fresh backend data may be delayed.
 - Metadata-only diagnostics are acceptable for support and operations, but private user content is not.
-- This feature covers the browser shell's live gateway connection and related auth/routing/recovery behavior; terminal-specific runtime/session truth belongs to `specs/098-terminal-session-reliability/`.
+- This feature covers the browser shell's live gateway connection and related auth/routing/recovery behavior; terminal-specific runtime/session truth remains outside this spec and belongs in terminal-specific specs.

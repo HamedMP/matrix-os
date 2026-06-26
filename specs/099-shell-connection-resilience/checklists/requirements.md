@@ -32,6 +32,6 @@
 ## Notes
 
 - Validation pass complete. The specification intentionally uses product-domain terms such as live connection, credential refresh, public route, and runtime health because these are observable user/operator concepts for the Matrix OS shell experience, not prescribed implementation choices.
-- Reviewed against `specs/098-terminal-session-reliability/`; this spec owns browser-shell live connection resilience, while 098 owns terminal runtime/session lifecycle.
+- Reviewed against existing terminal specs `specs/047-terminal/` and `specs/056-terminal-upgrade/`; this spec owns browser-shell live connection resilience, while terminal runtime/session lifecycle remains outside this spec and must be planned in terminal-specific specs.
 - `.specify/feature.json` is intentionally treated as a local active-feature pointer rather than a durable spec artifact.
 - Ready for implementation planning and task generation one slice at a time.
