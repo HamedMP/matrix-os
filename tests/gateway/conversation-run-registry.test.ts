@@ -122,6 +122,36 @@ describe("ConversationRunRegistry", () => {
     expect(registry.attach("sess-2", () => {})).not.toBeNull();
   });
 
+  it("evicts a completed run before evicting an active run at the cap", () => {
+    const registry = new ConversationRunRegistry({
+      maxRuns: 2,
+      maxEventsPerRun: 10,
+      completedRunRetentionMs: 30_000,
+    });
+
+    registry.begin("active-oldest");
+    registry.publish("active-oldest", {
+      type: "kernel:init",
+      sessionId: "active-oldest",
+    });
+    registry.begin("completed-newer");
+    registry.publish("completed-newer", {
+      type: "kernel:init",
+      sessionId: "completed-newer",
+    });
+    registry.complete("completed-newer");
+
+    registry.begin("active-incoming");
+    registry.publish("active-incoming", {
+      type: "kernel:init",
+      sessionId: "active-incoming",
+    });
+
+    expect(registry.attach("active-oldest", () => {})).not.toBeNull();
+    expect(registry.attach("completed-newer", () => {})).toBeNull();
+    expect(registry.attach("active-incoming", () => {})).not.toBeNull();
+  });
+
   it("returns null instead of throwing when subscriber cap is reached", () => {
     const registry = new ConversationRunRegistry({
       maxRuns: 1,

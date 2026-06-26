@@ -169,16 +169,27 @@ export class ConversationRunRegistry {
     }
 
     while (this.runs.size >= this.maxRuns) {
-      const oldestEntry = this.runs.entries().next().value;
-      if (!oldestEntry) {
+      const evictEntry = this.findOldestCompletedRunEntry()
+        ?? this.runs.entries().next().value;
+      if (!evictEntry) {
         return;
       }
 
-      const [sessionId, run] = oldestEntry;
+      const [sessionId, run] = evictEntry;
       run.subscribers.clear();
       this.runs.delete(sessionId);
       console.warn(`Evicted conversation run for ${sessionId} due to registry cap`);
     }
+  }
+
+  private findOldestCompletedRunEntry(): [string, RunState] | undefined {
+    for (const entry of this.runs) {
+      if (entry[1].completedAt !== null) {
+        return entry;
+      }
+    }
+
+    return undefined;
   }
 
   private evictExpiredCompletedRuns(now = Date.now()): void {
