@@ -212,6 +212,31 @@ body {
   background: var(--muted-foreground);
 }
 
+.matrix-terminal-xterm-viewport {
+  scrollbar-color: color-mix(in srgb, var(--foreground) 34%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.matrix-terminal-xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.matrix-terminal-xterm-viewport::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+}
+
+.matrix-terminal-xterm-viewport::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 28%, transparent);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.matrix-terminal-xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--foreground) 46%, transparent);
+  background-clip: padding-box;
+}
+
 input,
 textarea {
   font-family: var(--font-sans);
