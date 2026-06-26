@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearReconnectAbortTimersForSession,
+  scheduleReconnectAbortTimersForDisconnectedClient,
   scheduleReconnectAbortTimersForSession,
   type ReconnectableAbortEntry,
 } from "../../packages/gateway/src/conversation-reconnect-aborts.js";
@@ -99,5 +100,38 @@ describe("conversation reconnect abort guards", () => {
 
     expect(abort).not.toHaveBeenCalled();
     expect(entries.get("req-1")?.abortTimer).toBeNull();
+  });
+
+  it("schedules inactive adopted runs from earlier sessions when a switched client closes", () => {
+    vi.useFakeTimers();
+    const inactiveAbort = vi.fn();
+    const healthyAbort = vi.fn();
+    const entries = new Map<string, ReconnectableAbortEntry>([
+      ["req-from-sess-a", {
+        controller: { abort: inactiveAbort },
+        sessionId: "sess-A",
+        abortTimer: null,
+      }],
+      ["req-from-sess-b", {
+        controller: { abort: healthyAbort },
+        sessionId: "sess-B",
+        abortTimer: null,
+      }],
+    ]);
+
+    scheduleReconnectAbortTimersForDisconnectedClient(entries, {
+      graceMs: 1_000,
+      hasActiveSessionConnection: (sessionId) => sessionId === "sess-B",
+    });
+
+    expect(entries.get("req-from-sess-a")?.abortTimer).not.toBeNull();
+    expect(entries.get("req-from-sess-b")?.abortTimer).toBeNull();
+
+    vi.advanceTimersByTime(1_000);
+
+    expect(inactiveAbort).toHaveBeenCalledTimes(1);
+    expect(healthyAbort).not.toHaveBeenCalled();
+    expect(entries.has("req-from-sess-a")).toBe(false);
+    expect(entries.has("req-from-sess-b")).toBe(true);
   });
 });

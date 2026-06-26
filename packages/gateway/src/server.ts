@@ -24,7 +24,7 @@ import { createConversationStore, type ConversationStore } from "./conversations
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import {
   clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
-  scheduleReconnectAbortTimersForSession,
+  scheduleReconnectAbortTimersForDisconnectedClient,
   type ReconnectableAbortEntry,
 } from "./conversation-reconnect-aborts.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
@@ -2413,32 +2413,17 @@ export async function createGateway(config: GatewayConfig) {
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
           syncPeerSocket = null;
-          // Abort any in-flight runs for this client so the kernel doesn't
-          // keep burning tokens forever, while still allowing short browser
-          // reconnects to replay and reattach active runs.
-          scheduleReconnectAbortTimersForSession(
+          // Abort inactive in-flight runs so the kernel doesn't keep burning
+          // tokens forever, while still allowing short browser reconnects to
+          // replay and reattach runs that still have an active subscriber.
+          scheduleReconnectAbortTimersForDisconnectedClient(
             reconnectableAbortControllers,
-            activeSessionId,
             {
               graceMs: CONVERSATION_RECONNECT_GRACE_MS,
               hasActiveSessionConnection: (sessionId) =>
                 conversationRuns.hasActiveSubscribers(sessionId),
             },
           );
-          for (const [requestId, controller] of abortControllers) {
-            const reconnectable = reconnectableAbortControllers.get(requestId);
-            if (!reconnectable || reconnectable.abortTimer) continue;
-            if (
-              reconnectable.sessionId
-              && conversationRuns.hasActiveSubscribers(reconnectable.sessionId)
-            ) {
-              continue;
-            }
-            reconnectable.abortTimer = setTimeout(() => {
-              controller.abort();
-              reconnectableAbortControllers.delete(requestId);
-            }, CONVERSATION_RECONNECT_GRACE_MS);
-          }
           abortControllers.clear();
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
