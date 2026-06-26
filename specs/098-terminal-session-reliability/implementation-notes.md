@@ -20,6 +20,12 @@ The shell sidebar keeps last-known terminal rows visible when refresh fails, lab
 
 `/api/terminal/health?include=sessions` now returns coarse terminal/session counts for operator diagnosis without direct SSH access. The response includes only aggregate counts and generic failure codes; it does not expose session names, filesystem paths, provider details, or raw runtime errors.
 
+### Coverage Expansion
+
+Reopening a background shell now keeps the selected runtime session as the active shell even if the follow-up placement persistence request fails. The local attach/open action is treated as current UI truth, so the drawer does not roll the row back to background while the pane is visibly attached. The regression also verifies that reattach uses the existing managed session and does not issue create or delete calls.
+
+The zellij terminal WebSocket now accepts the explicit `destroy` frame emitted by terminal pane close paths. The frame uses the existing scoped cleanup path for the attached shell bridge process instead of being rejected as an invalid message.
+
 ## Expected User Experience
 
 - A terminal with newer command-start or recent-output evidence shows as running even if old metadata says waiting.
@@ -27,6 +33,8 @@ The shell sidebar keeps last-known terminal rows visible when refresh fails, lab
 - A quiet live terminal with old waiting metadata settles back to idle instead of staying visually stuck.
 - A fresh repeated waiting phase stays waiting for the full bounded window.
 - A terminal session refresh failure keeps previous rows usable and labels them stale until a later successful refresh clears the label.
+- Reopening a background shell keeps the selected row active even when placement persistence is temporarily unavailable, without creating or deleting a runtime session.
+- Explicit terminal pane close frames are accepted by the zellij WebSocket protocol instead of surfacing as invalid-message noise.
 - Matrix does not silently delete saved owner metadata while deriving the safer visible state.
 - Operators can check coarse terminal/session health through the gateway when SSH is unavailable.
 
@@ -34,6 +42,7 @@ The shell sidebar keeps last-known terminal rows visible when refresh fails, lab
 
 - Full end-to-end proof with a real long-running process across browser tab switch, backgrounding, refresh, WebSocket reconnect, and return still needs a browser/runtime integration or preview-VPS test. This PR strengthens and tests the component and gateway contracts, but it does not stand up a live zellij process in Playwright.
 - Workspace-session alias reconciliation remains covered at the shell/session boundary through existing attach and layout tests, but this PR does not introduce a new cross-store canonical alias service.
+- Normal-read stale pane recovery remains partial: this PR verifies legacy layout fallback, managed reattach, and delete-scoped pane removal, but does not replace the saved-layout canonical recreation behavior with a dedicated recoverable stale-pane state.
 - Public docs are not updated because the user-visible copy change is limited to the terminal drawer stale label and the diagnostics surface is an internal gateway health extension.
 
 ## Tests To Run
@@ -41,6 +50,7 @@ The shell sidebar keeps last-known terminal rows visible when refresh fails, lab
 ```bash
 bun run test tests/gateway/shell-registry.test.ts
 bun run test tests/gateway/shell-routes.test.ts
+bun run test tests/gateway/terminal-zellij-ws.test.ts
 bun run test tests/shell/terminal-session-state.test.ts
 bun run test tests/shell/terminal-app-component.test.tsx
 bun run typecheck

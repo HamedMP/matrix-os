@@ -3159,7 +3159,12 @@ function LocalTerminalSidebar() {
     }
   };
 
-  const patchShellUiState = async (name: string, patch: ShellUiStatePatch) => {
+  const patchShellUiState = async (
+    name: string,
+    patch: ShellUiStatePatch,
+    options: { rollbackOnFailure?: boolean } = {},
+  ) => {
+    const rollbackOnFailure = options.rollbackOnFailure ?? true;
     setShellsError(null);
     const previousValues: ShellUiStatePatch = {};
     setShells((prev) => prev.map((shell) => {
@@ -3183,7 +3188,9 @@ function LocalTerminalSidebar() {
       });
       if (!res.ok) {
         setShellsError("Failed to update session");
-        rollback();
+        if (rollbackOnFailure) {
+          rollback();
+        }
         return null;
       }
       const data = (await res.json()) as { session?: ShellSessionSummary };
@@ -3195,7 +3202,9 @@ function LocalTerminalSidebar() {
     } catch (err: unknown) {
       console.warn("Failed to update shell session UI state:", err instanceof Error ? err.message : err);
       setShellsError("Could not update session");
-      rollback();
+      if (rollbackOnFailure) {
+        rollback();
+      }
       return null;
     }
   };
@@ -3372,7 +3381,7 @@ function LocalTerminalSidebar() {
     void patchShellUiState(shell.name, {
       placement: "active",
       ...(shell.latestSeq !== undefined && shell.latestSeq !== null ? { lastSeenSeq: shell.latestSeq } : {}),
-    });
+    }, { rollbackOnFailure: false });
     openActiveShell(shell, { markSeen: false });
   };
 

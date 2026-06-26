@@ -1311,6 +1311,58 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Make matrix-main active" })).toBeTruthy();
   });
 
+  it("keeps a reopened background shell active when the placement patch fails after attach", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", latestSeq: 7, lastSeenSeq: 7, unread: false, visualStatus: "idle", attachCommand: "mos shell attach main", tabs: [] },
+              { name: "docs", status: "active", placement: "background", latestSeq: 11, lastSeenSeq: 11, unread: false, visualStatus: "running", attachCommand: "mos shell attach docs", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      if (url.includes("/api/terminal/sessions/docs/ui-state")) {
+        return Promise.resolve({ ok: false, status: 503, json: async () => ({}) } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Make docs active" }));
+      await Promise.resolve();
+    });
+
+    expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
+      paneTree: { sessionId: "docs" },
+    });
+    expect(screen.getByRole("button", { name: "Move docs to background" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Make docs active" })).toBeNull();
+    expect(vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions") && init?.method === "POST"
+    ))).toHaveLength(0);
+    expect(vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
+      String(input).includes("/api/terminal/sessions/docs?force=1") && init?.method === "DELETE"
+    ))).toHaveLength(0);
+  });
+
   it("focuses active shell rows without creating duplicate attached tabs or layout save noise", async () => {
     render(<TerminalApp />);
 
