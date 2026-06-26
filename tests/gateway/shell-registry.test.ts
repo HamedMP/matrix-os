@@ -959,6 +959,60 @@ describe("shell registry", () => {
     expect(adapter.deleteSession).not.toHaveBeenCalled();
   });
 
+  it("deduplicates stale pane references that point through an alias and canonical name", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "workspace-docs": "docs",
+        },
+        references: [
+          { id: "pane-alias-docs", source: "pane", sessionName: "workspace-docs" },
+          { id: "pane-canonical-docs", source: "pane", sessionName: "docs" },
+        ],
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    const sessions = await registry.list();
+
+    expect(sessions.filter((session) => session.canonicalName === "docs")).toHaveLength(1);
+    expect(sessions).toMatchObject([
+      { name: "main", status: "active", recoverable: false },
+      {
+        name: "docs",
+        canonicalName: "docs",
+        status: "exited",
+        recoverable: true,
+        recoveryReason: "missing_runtime_session",
+        aliases: [{ name: "workspace-docs", target: "docs", source: "workspace" }],
+        references: [
+          { id: "pane-alias-docs", source: "pane", sessionName: "workspace-docs" },
+          { id: "pane-canonical-docs", source: "pane", sessionName: "docs" },
+        ],
+      },
+    ]);
+  });
+
   it("resolves known legacy aliases for open and delete without touching unrelated live sessions", async () => {
     const root = await tempRoot();
     const persistPath = join(root, "system", "shell-sessions.json");

@@ -36,6 +36,8 @@ Known workspace and legacy aliases collapse onto one canonical runtime session s
 
 Stale pane references are surfaced during normal `/api/terminal/sessions` reads as recoverable exited rows with coarse recovery metadata. The route-level regression uses a real `ShellRegistry` behind `createShellRoutes`, proving aliases, recoverable pane refs, and legacy delete behavior flow through the product HTTP path.
 
+Stale pane references that point at the same missing canonical session through both an alias and the canonical name now collapse to one recoverable canonical row. The row preserves all matching references and aliases, so the read path does not emit duplicate exited sessions or lose recovery metadata for alias-only references.
+
 ## Expected User Experience
 
 - A terminal with newer command-start or recent-output evidence shows as running even if old metadata says waiting.
@@ -46,6 +48,7 @@ Stale pane references are surfaced during normal `/api/terminal/sessions` reads 
 - Reopening a background shell keeps the selected row active even when placement persistence is temporarily unavailable, without creating or deleting a runtime session or showing a false update-failed banner.
 - Explicit terminal pane close frames are accepted by the zellij WebSocket protocol instead of surfacing as invalid-message noise.
 - Matrix does not silently delete saved owner metadata while deriving the safer visible state.
+- Stale alias and canonical pane references for the same missing terminal appear as one recoverable session row.
 - Operators can check coarse terminal/session health through the gateway when SSH is unavailable.
 
 ## Remaining Spec Gaps

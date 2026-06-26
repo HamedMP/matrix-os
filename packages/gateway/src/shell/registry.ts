@@ -566,12 +566,14 @@ export class ShellRegistry {
       if (activeNames.has(reference.sessionName)) {
         continue;
       }
+      const existing = file.sessions[targetName] ?? file.sessions[reference.sessionName];
       result.push({
-        ...(file.sessions[reference.sessionName] ?? this.adoptSession(reference.sessionName, now)),
-        name: reference.sessionName,
+        ...(existing ?? this.adoptSession(targetName, now)),
+        name: targetName,
         status: "exited",
-        updatedAt: file.sessions[reference.sessionName]?.updatedAt ?? now,
+        updatedAt: existing?.updatedAt ?? now,
       });
+      activeNames.add(targetName);
       activeNames.add(reference.sessionName);
     }
 
