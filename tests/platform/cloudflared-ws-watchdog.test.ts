@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  buildPublicLiveRouteDiagnostic,
   buildProbeWebSocketUrl,
   redactProbeUrl,
   selectProbeMachine,
@@ -53,6 +54,56 @@ describe('cloudflared websocket watchdog', () => {
     expect(redactProbeUrl('wss://app.matrix-os.com/ws?token=jwt-token&fromSeq=0')).toBe(
       'wss://app.matrix-os.com/ws?token=REDACTED&fromSeq=0',
     );
+  });
+
+  it('classifies public live-route failures separately from healthy runtime state', () => {
+    const diagnostic = buildPublicLiveRouteDiagnostic({
+      machine: {
+        handle: 'alice',
+        clerkUserId: 'user_alice',
+        runtimeSlot: 'primary',
+      },
+      results: [
+        {
+          path: '/ws',
+          url: 'wss://app.matrix-os.com/ws?token=jwt-token',
+          ok: false,
+          reason: 'status_502',
+        },
+      ],
+    });
+
+    expect(diagnostic).toEqual({
+      version: 1,
+      layer: 'public-route',
+      runtimeReachability: 'online',
+      publicLiveRoute: 'unavailable',
+      runtimeSlot: 'primary',
+      probedPaths: ['/ws'],
+      failures: [{ path: '/ws', reason: 'status_502' }],
+    });
+    expect(JSON.stringify(diagnostic)).not.toMatch(/jwt-token|user_alice|alice/i);
+  });
+
+  it('reduces public live-route probe reasons to stable metadata categories', () => {
+    const diagnostic = buildPublicLiveRouteDiagnostic({
+      machine: {
+        handle: 'alice',
+        clerkUserId: 'user_alice',
+        runtimeSlot: 'primary',
+      },
+      results: [
+        {
+          path: '/ws',
+          url: 'wss://app.matrix-os.com/ws?token=jwt-token',
+          ok: false,
+          reason: 'connect failed for wss://app.matrix-os.com/ws?token=jwt-token from /home/matrix sk_live_123',
+        },
+      ],
+    });
+
+    expect(diagnostic.failures).toEqual([{ path: '/ws', reason: 'websocket_error' }]);
+    expect(JSON.stringify(diagnostic)).not.toMatch(/jwt-token|\/home\/matrix|sk_live|app\.matrix-os\.com/i);
   });
 
   it('restarts cloudflared only after repeated consecutive failures', () => {

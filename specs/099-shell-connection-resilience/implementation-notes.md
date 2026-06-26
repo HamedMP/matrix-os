@@ -31,11 +31,11 @@ Manual verification:
 - Slice 2: outbound shell actions are queued with bounded TTL/cap behavior, deduped by action id, and tracked through metadata-only delivery states. The gateway emits `client:ack` for accepted/rejected message, approval, abort, and session-switch actions.
 - Slice 3: active conversation runs are replayable after reconnect. The shell reattaches the active session on each socket-open epoch, replayed kernel events carry stable event ids, and duplicate replay events are ignored client-side.
 - Slice 4: the main shell socket requires fresh live-connection credentials and retries credential refresh before opening `/ws`; it no longer falls into an unauthenticated reconnect loop when token refresh temporarily fails.
-- Slice 5: shell connection diagnostics record bounded metadata-only snapshots for credential failures, websocket closes, recovery timing, route class, attempts, and visibility. Public websocket route probing is covered by the existing cloudflared websocket watchdog.
+- Slice 5: shell connection diagnostics record bounded metadata-only snapshots for credential failures, websocket closes, recovery timing, route class, attempts, and visibility. Public websocket route probing is covered by the cloudflared websocket watchdog, which now emits a structured metadata-only public live-route diagnostic when `/ws` fails while the selected runtime is already known healthy.
 - Slice 6: queued outbound work and completed replay buffers have explicit cap/TTL cleanup. Gateway closes detach active runs with a bounded reconnect grace instead of aborting immediately, so short deploy/restart/browser reconnects can replay.
 
 ## Remaining validation outside this PR
 
 - Full SC-001 through SC-008 percentages require live browser/VPS chaos validation across network switching, sleep/wake, and deploy restart trials.
-- Operator dashboards can consume the metadata categories now emitted/recorded, but this PR does not add a new dashboard panel.
+- Operator dashboards can consume the metadata categories and summary helpers now emitted/recorded, but this PR does not add a new dashboard panel.
 - Terminal-specific reattach and stale terminal metadata remain under `specs/098-terminal-session-reliability/`.

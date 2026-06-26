@@ -28,9 +28,38 @@ export interface ConnectionDiagnosticSnapshot extends ConnectionDiagnosticInput 
   at: number;
 }
 
+export interface ConnectionDiagnosticsSummary {
+  version: 1;
+  total: number;
+  byLayer: Record<ConnectionFailureLayer, number>;
+  latest: Pick<
+    ConnectionDiagnosticSnapshot,
+    | "event"
+    | "layer"
+    | "state"
+    | "attempt"
+    | "route"
+    | "at"
+    | "closeCode"
+    | "wasClean"
+    | "reconnectDurationMs"
+    | "runtimeReachability"
+  > | null;
+}
+
 const MAX_CONNECTION_DIAGNOSTICS = 50;
 const diagnostics: ConnectionDiagnosticSnapshot[] = [];
 let diagnosticSeq = 0;
+const CONNECTION_FAILURE_LAYERS: ConnectionFailureLayer[] = [
+  "browser-network",
+  "credential",
+  "public-route",
+  "platform-route",
+  "runtime-reachable",
+  "runtime-unreachable",
+  "deploy-restart",
+  "unknown",
+];
 
 export function classifySocketClose(
   evt: Pick<CloseEvent, "code" | "wasClean"> | undefined,
@@ -58,6 +87,39 @@ export function recordConnectionDiagnostic(input: ConnectionDiagnosticInput): Co
 
 export function getConnectionDiagnostics(): ConnectionDiagnosticSnapshot[] {
   return diagnostics.map((entry) => ({ ...entry }));
+}
+
+export function summarizeConnectionDiagnostics(
+  entries: ConnectionDiagnosticSnapshot[] = diagnostics,
+): ConnectionDiagnosticsSummary {
+  const byLayer = Object.fromEntries(CONNECTION_FAILURE_LAYERS.map((layer) => [layer, 0])) as Record<
+    ConnectionFailureLayer,
+    number
+  >;
+  for (const entry of entries) {
+    byLayer[entry.layer] = (byLayer[entry.layer] ?? 0) + 1;
+  }
+  const latest = entries.at(-1) ?? null;
+
+  return {
+    version: 1,
+    total: entries.length,
+    byLayer,
+    latest: latest
+      ? {
+          event: latest.event,
+          layer: latest.layer,
+          state: latest.state,
+          attempt: latest.attempt,
+          route: latest.route,
+          at: latest.at,
+          closeCode: latest.closeCode,
+          wasClean: latest.wasClean,
+          reconnectDurationMs: latest.reconnectDurationMs,
+          runtimeReachability: latest.runtimeReachability,
+        }
+      : null,
+  };
 }
 
 export function resetConnectionDiagnosticsForTests(): void {
