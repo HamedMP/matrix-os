@@ -137,8 +137,8 @@ As an operator, I can see whether shell connection failures are caused by browse
 
 ### One-by-One Work Order
 
-1. **Slice 1: Suppress short disruptive reconnect states** - Covers User Story 1 and FR-001 through FR-006. Deliver failing browser-shell tests for brief live-connection interruptions, then keep local work usable and avoid disruptive banners during the quiet recovery window.
-2. **Slice 2: Preserve outbound actions and acknowledgments** - Covers User Story 2 and FR-003, FR-004, and FR-010. Deliver queued-action and at-most-once delivery tests for messages, approvals, aborts, and other user-visible live actions.
+1. **Slice 1: Suppress short disruptive reconnect states** - Covers User Story 1 and FR-001 through FR-005. Deliver failing browser-shell tests for brief live-connection interruptions, then keep local work usable and avoid disruptive banners during the quiet recovery window.
+2. **Slice 2: Preserve outbound actions and acknowledgments** - Covers User Story 2 and FR-003, FR-004, FR-006, FR-007, and FR-010. Deliver degraded-state copy tests plus queued-action and at-most-once delivery tests for messages, approvals, aborts, and other user-visible live actions.
 3. **Slice 3: Replay active agent runs after reconnect** - Covers User Story 3 and FR-008 through FR-009. Deliver run-resume cursor and replay ordering tests for missed text, tool status, approval prompts, completion, and generated change notifications.
 4. **Slice 4: Repair auth and routing recovery** - Covers User Story 4 and FR-011 through FR-014, FR-017, and FR-019. Deliver credential-refresh and route-classification tests that prevent guaranteed-failing reconnect loops.
 5. **Slice 5: Add metadata-only operator diagnostics** - Covers User Story 5 and FR-015 through FR-016. Deliver diagnostics that classify browser/network, credential, public-route, platform-route, runtime, deploy/restart, and unknown failures without exposing private content.
