@@ -21,6 +21,7 @@ import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import {
   clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
@@ -2383,20 +2384,21 @@ export async function createGateway(config: GatewayConfig) {
                   shell_surface: "gateway_ws",
                   request_id_present: Boolean(requestId),
                 });
-                if (activeSessionId) {
-                  publishConversationRunMessage(activeSessionId, withReplayId({
-                    type: "kernel:error",
-                    message: CLIENT_KERNEL_ERROR_MESSAGE,
-                    requestId,
-                  }) as ConversationRunMessage);
+                const failureReplay = buildDispatchFailureReplayMessage({
+                  activeSessionId,
+                  requestId,
+                  clientMessage: CLIENT_KERNEL_ERROR_MESSAGE,
+                  stamp: (message) => withReplayId(message) as typeof message,
+                });
+                if (activeSessionId && failureReplay.runMessage) {
+                  publishConversationRunMessage(
+                    activeSessionId,
+                    failureReplay.runMessage as ConversationRunMessage,
+                  );
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
                 }
-                send(ws, withReplayId({
-                  type: "kernel:error",
-                  message: CLIENT_KERNEL_ERROR_MESSAGE,
-                  requestId,
-                }));
+                send(ws, failureReplay.liveMessage);
               })
               .finally(() => {
                 if (requestId) {
