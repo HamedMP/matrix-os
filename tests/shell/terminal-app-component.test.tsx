@@ -1355,6 +1355,8 @@ describe("TerminalApp", () => {
     });
     expect(screen.getByRole("button", { name: "Move docs to background" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Make docs active" })).toBeNull();
+    expect(screen.queryByText("Failed to update session")).toBeNull();
+    expect(screen.queryByText("Could not update session")).toBeNull();
     expect(vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
       String(input).includes("/api/terminal/sessions") && init?.method === "POST"
     ))).toHaveLength(0);

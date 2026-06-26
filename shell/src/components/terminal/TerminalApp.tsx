@@ -3187,8 +3187,8 @@ function LocalTerminalSidebar() {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        setShellsError("Failed to update session");
         if (rollbackOnFailure) {
+          setShellsError("Failed to update session");
           rollback();
         }
         return null;
@@ -3201,8 +3201,8 @@ function LocalTerminalSidebar() {
       return null;
     } catch (err: unknown) {
       console.warn("Failed to update shell session UI state:", err instanceof Error ? err.message : err);
-      setShellsError("Could not update session");
       if (rollbackOnFailure) {
+        setShellsError("Could not update session");
         rollback();
       }
       return null;
