@@ -42,6 +42,8 @@ Idempotent same-name rename requests also return the same decorated canonical se
 
 Create adoption of an already-live runtime session now returns the same alias/reference-aware decoration as normal reads. Rename also resolves known aliases before liveness checks and adapter operations, so a rename request for a legacy or workspace alias acts on the canonical runtime session.
 
+Rename consumes an existing alias when the canonical session is renamed to that alias name. This prevents self-referential alias metadata such as `workspace-main -> workspace-main` from being persisted while keeping pane references on the new canonical name.
+
 ## Expected User Experience
 
 - A terminal with newer command-start or recent-output evidence shows as running even if old metadata says waiting.
@@ -55,6 +57,7 @@ Create adoption of an already-live runtime session now returns the same alias/re
 - Stale alias and canonical pane references for the same missing terminal appear as one recoverable session row.
 - Renaming a session to its existing name returns the same alias/reference metadata as a normal session read.
 - Creating an already-live session or renaming through a known alias returns canonical alias/reference metadata instead of a partially decorated row or 404.
+- Renaming a canonical session to one of its aliases makes that alias the canonical name and removes the stale alias entry.
 - Operators can check coarse terminal/session health through the gateway when SSH is unavailable.
 
 ## Remaining Spec Gaps

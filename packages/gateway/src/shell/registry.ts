@@ -283,6 +283,10 @@ export class ShellRegistry {
         await this.write(file);
         return this.decorateSession(session, file);
       }
+      const existingAliasTarget = file.aliases?.[safeNextName];
+      if (existingAliasTarget !== undefined && existingAliasTarget !== targetName) {
+        throw shellError("session_exists", "Session already exists", 409);
+      }
       if (live.has(safeNextName) || file.sessions[safeNextName]) {
         throw shellError("session_exists", "Session already exists", 409);
       }
@@ -299,6 +303,12 @@ export class ShellRegistry {
       file.sessions[safeNextName] = next;
       if (file.order) {
         file.order = file.order.map((entry) => entry === targetName ? safeNextName : entry);
+      }
+      if (file.aliases?.[safeNextName] === targetName) {
+        delete file.aliases[safeNextName];
+        if (Object.keys(file.aliases).length === 0) {
+          delete file.aliases;
+        }
       }
       this.retargetAliasesAndReferences(file, targetName, safeNextName);
 

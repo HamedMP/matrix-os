@@ -800,6 +800,53 @@ describe("shell registry", () => {
     expect(adapter.renameSession).toHaveBeenCalledWith("main", "review-main");
   });
 
+  it("consumes an existing alias when renaming the canonical session to that alias name", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "workspace-main": "main",
+        },
+        references: [
+          { id: "pane-main", source: "pane", sessionName: "main" },
+        ],
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const live = new Set(["main"]);
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      renameSession: vi.fn(async (name: string, nextName: string) => {
+        live.delete(name);
+        live.add(nextName);
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.rename("main", "workspace-main")).resolves.toMatchObject({
+      name: "workspace-main",
+      aliases: [],
+      references: [{ id: "pane-main", source: "pane", sessionName: "workspace-main" }],
+    });
+    const raw = await readFile(persistPath, "utf-8");
+    expect(JSON.parse(raw).aliases).toBeUndefined();
+  });
+
   it("connects by adopting an orphan active zellij session", async () => {
     const root = await tempRoot();
     const adapter = {
