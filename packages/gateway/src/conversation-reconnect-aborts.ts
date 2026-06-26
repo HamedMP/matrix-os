@@ -21,6 +21,19 @@ function scheduleReconnectAbortTimer(
   }, graceMs);
 }
 
+export function replaceReconnectableAbortEntry(
+  entries: Map<string, ReconnectableAbortEntry>,
+  requestId: string,
+  entry: ReconnectableAbortEntry,
+): void {
+  const existing = entries.get(requestId);
+  if (existing?.abortTimer) {
+    clearTimeout(existing.abortTimer);
+    existing.abortTimer = null;
+  }
+  entries.set(requestId, entry);
+}
+
 export function clearReconnectAbortTimersForSession(
   entries: Map<string, ReconnectableAbortEntry>,
   sessionId: string | undefined,

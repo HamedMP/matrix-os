@@ -26,6 +26,7 @@ import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failu
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import {
   clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
+  replaceReconnectableAbortEntry,
   scheduleReconnectAbortTimersForDisconnectedClient,
   type ReconnectableAbortEntry,
 } from "./conversation-reconnect-aborts.js";
@@ -2316,7 +2317,7 @@ export async function createGateway(config: GatewayConfig) {
             const abortController = requestId ? new AbortController() : undefined;
             if (requestId && abortController) {
               abortControllers.set(requestId, abortController);
-              reconnectableAbortControllers.set(requestId, {
+              replaceReconnectableAbortEntry(reconnectableAbortControllers, requestId, {
                 controller: abortController,
                 sessionId: parsed.sessionId,
                 abortTimer: null,

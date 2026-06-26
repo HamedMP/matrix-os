@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearReconnectAbortTimersForSession,
+  replaceReconnectableAbortEntry,
   scheduleReconnectAbortTimersForDisconnectedClient,
   scheduleReconnectAbortTimersForSession,
   type ReconnectableAbortEntry,
@@ -133,5 +134,48 @@ describe("conversation reconnect abort guards", () => {
     expect(healthyAbort).not.toHaveBeenCalled();
     expect(entries.has("req-from-sess-a")).toBe(false);
     expect(entries.has("req-from-sess-b")).toBe(true);
+  });
+
+  it("cancels a stale reconnect timer before replacing a reused request id", () => {
+    vi.useFakeTimers();
+    const staleAbort = vi.fn();
+    const liveAbort = vi.fn();
+    const entries = new Map<string, ReconnectableAbortEntry>([
+      ["req-1", {
+        controller: { abort: staleAbort },
+        sessionId: "sess-1",
+        abortTimer: null,
+      }],
+    ]);
+
+    scheduleReconnectAbortTimersForSession(entries, "sess-1", {
+      graceMs: 30_000,
+      hasActiveSessionConnection: () => false,
+    });
+    const staleTimer = entries.get("req-1")?.abortTimer;
+    expect(staleTimer).not.toBeNull();
+
+    replaceReconnectableAbortEntry(entries, "req-1", {
+      controller: { abort: liveAbort },
+      sessionId: "sess-1",
+      abortTimer: null,
+    });
+
+    vi.advanceTimersByTime(30_000);
+
+    expect(staleAbort).not.toHaveBeenCalled();
+    expect(liveAbort).not.toHaveBeenCalled();
+    expect(entries.get("req-1")?.controller.abort).toBe(liveAbort);
+
+    scheduleReconnectAbortTimersForSession(entries, "sess-1", {
+      graceMs: 30_000,
+      hasActiveSessionConnection: () => false,
+    });
+    expect(entries.get("req-1")?.abortTimer).not.toBeNull();
+
+    vi.advanceTimersByTime(30_000);
+
+    expect(liveAbort).toHaveBeenCalledTimes(1);
+    expect(entries.has("req-1")).toBe(false);
   });
 });
