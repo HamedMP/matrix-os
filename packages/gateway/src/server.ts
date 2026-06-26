@@ -21,6 +21,7 @@ import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
 import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
 import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import {
@@ -343,7 +344,15 @@ export type ServerMessage =
   | { type: "provision:start"; appCount: number }
   | { type: "provision:complete"; total: number; succeeded: number; failed: number }
   | { type: "session:switched"; sessionId: string }
-  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
+  | {
+      type: "approval:request";
+      id: string;
+      toolName: string;
+      args: unknown;
+      timeout: number;
+      requestId?: string;
+      eventId?: string;
+    }
   | {
       type: "client:ack";
       actionId: string;
@@ -2172,8 +2181,9 @@ export async function createGateway(config: GatewayConfig) {
           });
           approvalBridge = createApprovalBridge({
             send: (msg) => {
-              send(ws, msg);
-              publishConversationRunMessage(activeSessionId, msg);
+              const replayableMessage = stampApprovalRequestForReplay(activeSessionId, msg);
+              send(ws, replayableMessage);
+              publishConversationRunMessage(activeSessionId, replayableMessage);
             },
             timeout: approvalPolicy.timeout,
           });

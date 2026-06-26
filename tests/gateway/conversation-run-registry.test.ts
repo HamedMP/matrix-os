@@ -3,6 +3,7 @@ import {
   ConversationRunRegistry,
   type ConversationRunMessage,
 } from "../../packages/gateway/src/conversation-run-registry.js";
+import { stampApprovalRequestForReplay } from "../../packages/gateway/src/conversation-approval-replay.js";
 
 describe("ConversationRunRegistry", () => {
   afterEach(() => {
@@ -223,15 +224,17 @@ describe("ConversationRunRegistry", () => {
 
     registry.begin("sess-1");
     registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
-    registry.publish("sess-1", {
+    const rawApprovalRequest = {
       type: "approval:request",
       id: "approval-1",
       toolName: "Bash",
       args: { command: "pnpm test" },
       timeout: 30_000,
-      requestId: "req-1",
-      eventId: "sess-1:req-1:1",
-    });
+    } as const;
+    registry.publish(
+      "sess-1",
+      stampApprovalRequestForReplay("sess-1", rawApprovalRequest),
+    );
 
     const received: ConversationRunMessage[] = [];
     registry.attach("sess-1", (msg) => {
@@ -246,8 +249,7 @@ describe("ConversationRunRegistry", () => {
         toolName: "Bash",
         args: { command: "pnpm test" },
         timeout: 30_000,
-        requestId: "req-1",
-        eventId: "sess-1:req-1:1",
+        eventId: "sess-1:approval:approval-1",
       },
     ]);
   });
