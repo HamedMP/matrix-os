@@ -59,10 +59,12 @@ export function createSocketHealth(config: SocketHealthConfig) {
 export interface MessageQueueConfig {
   maxSize: number;
   ttlMs: number;
+  onDrop?: (data: string, reason: "expired" | "overflow") => void;
 }
 
 interface QueueEntry {
   data: string;
+  key?: string;
   enqueuedAt: number;
 }
 
@@ -70,26 +72,43 @@ export class MessageQueue {
   private entries: QueueEntry[] = [];
   private readonly maxSize: number;
   private readonly ttlMs: number;
+  private readonly onDrop?: (data: string, reason: "expired" | "overflow") => void;
 
   constructor(config: MessageQueueConfig) {
     this.maxSize = config.maxSize;
     this.ttlMs = config.ttlMs;
+    this.onDrop = config.onDrop;
   }
 
   get size(): number {
     return this.entries.length;
   }
 
-  enqueue(data: string): void {
-    if (this.entries.length >= this.maxSize) {
-      this.entries.shift();
+  enqueue(data: string, key?: string): void {
+    if (key) {
+      const existingIndex = this.entries.findIndex((entry) => entry.key === key);
+      if (existingIndex >= 0) {
+        this.entries[existingIndex] = { data, key, enqueuedAt: Date.now() };
+        return;
+      }
     }
-    this.entries.push({ data, enqueuedAt: Date.now() });
+    if (this.entries.length >= this.maxSize) {
+      const dropped = this.entries.shift();
+      if (dropped) {
+        this.onDrop?.(dropped.data, "overflow");
+      }
+    }
+    this.entries.push({ data, key, enqueuedAt: Date.now() });
   }
 
   drain(): string[] {
     const now = Date.now();
     const valid = this.entries.filter((e) => now - e.enqueuedAt < this.ttlMs);
+    for (const entry of this.entries) {
+      if (now - entry.enqueuedAt >= this.ttlMs) {
+        this.onDrop?.(entry.data, "expired");
+      }
+    }
     this.entries = [];
     return valid.map((e) => e.data);
   }

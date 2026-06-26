@@ -1,16 +1,17 @@
 export type ConversationRunMessage =
-  | { type: "kernel:init"; sessionId: string; requestId?: string }
-  | { type: "kernel:text"; text: string; requestId?: string }
-  | { type: "kernel:tool_start"; tool: string; requestId?: string }
-  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
-  | { type: "kernel:result"; data: unknown; requestId?: string }
-  | { type: "kernel:error"; message: string; requestId?: string }
-  | { type: "kernel:aborted"; requestId?: string };
+  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
+  | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
+  | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
+  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }
+  | { type: "kernel:result"; data: unknown; requestId?: string; eventId?: string }
+  | { type: "kernel:error"; message: string; requestId?: string; eventId?: string }
+  | { type: "kernel:aborted"; requestId?: string; eventId?: string };
 
 export interface ConversationRunRegistryOptions {
   maxRuns?: number;
   maxEventsPerRun?: number;
   maxSubscribersPerRun?: number;
+  completedRunRetentionMs?: number;
 }
 
 type Subscriber = (message: ConversationRunMessage) => void;
@@ -29,6 +30,7 @@ interface RunState {
   readonly createdAt: number;
   readonly messages: ConversationRunMessage[];
   readonly subscribers: Set<Subscriber>;
+  completedAt: number | null;
 }
 
 export class ConversationRunRegistry {
@@ -36,26 +38,30 @@ export class ConversationRunRegistry {
   private readonly maxRuns: number;
   private readonly maxEventsPerRun: number;
   private readonly maxSubscribersPerRun: number;
+  private readonly completedRunRetentionMs: number;
 
   constructor(options?: ConversationRunRegistryOptions) {
     this.maxRuns = options?.maxRuns ?? 20;
     this.maxEventsPerRun = options?.maxEventsPerRun ?? 2_000;
     this.maxSubscribersPerRun = options?.maxSubscribersPerRun ?? 10;
+    this.completedRunRetentionMs = options?.completedRunRetentionMs ?? 30_000;
   }
 
   begin(sessionId: string): void {
+    this.evictExpiredCompletedRuns();
     this.evictIfNeeded(sessionId);
     this.runs.set(sessionId, {
       sessionId,
       createdAt: Date.now(),
       messages: [],
       subscribers: new Set(),
+      completedAt: null,
     });
   }
 
   publish(sessionId: string, message: ConversationRunMessage): void {
     const run = this.runs.get(sessionId);
-    if (!run) {
+    if (!run || run.completedAt !== null) {
       return;
     }
 
@@ -71,6 +77,7 @@ export class ConversationRunRegistry {
   }
 
   getBufferedMessages(sessionId: string): ConversationRunMessage[] | null {
+    this.evictExpiredCompletedRuns();
     const run = this.runs.get(sessionId);
     if (!run) {
       return null;
@@ -83,9 +90,17 @@ export class ConversationRunRegistry {
     sessionId: string,
     subscriber: Subscriber,
   ): ConversationRunAttachment | null {
+    this.evictExpiredCompletedRuns();
     const run = this.runs.get(sessionId);
     if (!run) {
       return null;
+    }
+
+    if (run.completedAt !== null) {
+      return {
+        bufferedMessages: [...run.messages],
+        detach: () => {},
+      };
     }
 
     if (run.subscribers.size >= this.maxSubscribersPerRun) {
@@ -130,7 +145,7 @@ export class ConversationRunRegistry {
     }
 
     run.subscribers.clear();
-    this.runs.delete(sessionId);
+    run.completedAt = Date.now();
   }
 
   private evictIfNeeded(incomingSessionId: string): void {
@@ -148,7 +163,15 @@ export class ConversationRunRegistry {
       const [sessionId, run] = oldestEntry;
       run.subscribers.clear();
       this.runs.delete(sessionId);
-      console.warn(`Evicted active conversation run for ${sessionId} due to registry cap`);
+      console.warn(`Evicted conversation run for ${sessionId} due to registry cap`);
+    }
+  }
+
+  private evictExpiredCompletedRuns(now = Date.now()): void {
+    for (const [sessionId, run] of this.runs) {
+      if (run.completedAt !== null && now - run.completedAt >= this.completedRunRetentionMs) {
+        this.runs.delete(sessionId);
+      }
     }
   }
 }

@@ -24,3 +24,18 @@ Manual verification:
 3. Confirm no Matrix connection status toast appears, the typed draft remains editable, and the send control stays available.
 4. Force the next reconnect attempt to stay unavailable for more than five seconds.
 5. Confirm the non-blocking Matrix connection status appears, uses generic recovery copy, and does not cover or reset the workspace.
+
+## Completed implementation scope
+
+- Slice 1: short post-connect reconnect blips stay inside the shared five-second quiet window. `useConnectionHealth` owns the timer; `useSocket` derives usable state from that single store.
+- Slice 2: outbound shell actions are queued with bounded TTL/cap behavior, deduped by action id, and tracked through metadata-only delivery states. The gateway emits `client:ack` for accepted/rejected message, approval, abort, and session-switch actions.
+- Slice 3: active conversation runs are replayable after reconnect. The shell reattaches the active session on each socket-open epoch, replayed kernel events carry stable event ids, and duplicate replay events are ignored client-side.
+- Slice 4: the main shell socket requires fresh live-connection credentials and retries credential refresh before opening `/ws`; it no longer falls into an unauthenticated reconnect loop when token refresh temporarily fails.
+- Slice 5: shell connection diagnostics record bounded metadata-only snapshots for credential failures, websocket closes, recovery timing, route class, attempts, and visibility. Public websocket route probing is covered by the existing cloudflared websocket watchdog.
+- Slice 6: queued outbound work and completed replay buffers have explicit cap/TTL cleanup. Gateway closes detach active runs with a bounded reconnect grace instead of aborting immediately, so short deploy/restart/browser reconnects can replay.
+
+## Remaining validation outside this PR
+
+- Full SC-001 through SC-008 percentages require live browser/VPS chaos validation across network switching, sleep/wake, and deploy restart trials.
+- Operator dashboards can consume the metadata categories now emitted/recorded, but this PR does not add a new dashboard panel.
+- Terminal-specific reattach and stale terminal metadata remain under `specs/098-terminal-session-reliability/`.

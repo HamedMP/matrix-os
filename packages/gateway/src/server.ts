@@ -324,13 +324,13 @@ export interface GatewayConfig {
 }
 
 export type ServerMessage =
-  | { type: "kernel:init"; sessionId: string; requestId?: string }
-  | { type: "kernel:text"; text: string; requestId?: string }
-  | { type: "kernel:tool_start"; tool: string; requestId?: string }
-  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
-  | { type: "kernel:result"; data: unknown; requestId?: string }
-  | { type: "kernel:error"; message: string; requestId?: string }
-  | { type: "kernel:aborted"; requestId?: string }
+  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
+  | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
+  | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
+  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }
+  | { type: "kernel:result"; data: unknown; requestId?: string; eventId?: string }
+  | { type: "kernel:error"; message: string; requestId?: string; eventId?: string }
+  | { type: "kernel:aborted"; requestId?: string; eventId?: string }
   | { type: "file:change"; path: string; event: string }
   | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
   | { type: "task:updated"; taskId: string; status: string }
@@ -338,6 +338,13 @@ export type ServerMessage =
   | { type: "provision:complete"; total: number; succeeded: number; failed: number }
   | { type: "session:switched"; sessionId: string }
   | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
+  | {
+      type: "client:ack";
+      actionId: string;
+      actionType: string;
+      status: "accepted" | "rejected";
+      retryable?: boolean;
+    }
   | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
   | { type: "data:change"; app: string; key: string }
   | { type: "integration:connected"; service: string; accountLabel: string }
@@ -368,11 +375,44 @@ function kernelEventToServerMessage(event: KernelEvent, requestId?: string): Ser
   }
 }
 
-function send(ws: WSContext, msg: ServerMessage) {
-  ws.send(JSON.stringify(msg));
+function send(ws: WSContext, msg: ServerMessage): boolean {
+  try {
+    ws.send(JSON.stringify(msg));
+    return true;
+  } catch (err: unknown) {
+    console.warn("[gateway] Main WebSocket send failed:", err instanceof Error ? err.name : typeof err);
+    return false;
+  }
+}
+
+function actionIdForClientMessage(message: MainWsClientMessage): string | null {
+  if ("requestId" in message && typeof message.requestId === "string" && message.requestId.length > 0) {
+    return message.requestId;
+  }
+  if (message.type === "approval_response") return message.id;
+  if (message.type === "switch_session") return `switch_session:${message.sessionId}`;
+  return null;
+}
+
+function sendClientAck(
+  ws: WSContext,
+  message: MainWsClientMessage,
+  status: "accepted" | "rejected",
+  retryable = status !== "accepted",
+) {
+  const actionId = actionIdForClientMessage(message);
+  if (!actionId) return;
+  send(ws, {
+    type: "client:ack",
+    actionId,
+    actionType: message.type,
+    status,
+    retryable,
+  });
 }
 
 const CONVERSATION_REPLAY_BATCH_SIZE = 100;
+const CONVERSATION_RECONNECT_GRACE_MS = 30_000;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
 
@@ -577,6 +617,11 @@ export async function createGateway(config: GatewayConfig) {
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
+  const reconnectableAbortControllers = new Map<string, {
+    controller: AbortController;
+    sessionId?: string;
+    abortTimer: ReturnType<typeof setTimeout> | null;
+  }>();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
   const toolPackRepository = new InMemoryToolPackRepository();
@@ -2058,6 +2103,16 @@ export async function createGateway(config: GatewayConfig) {
       // map doesn't grow.
       const abortControllers = new Map<string, AbortController>();
 
+      const clearReconnectAbortTimersForSession = (sessionId: string | undefined) => {
+        if (!sessionId) return;
+        for (const entry of reconnectableAbortControllers.values()) {
+          if (entry.sessionId === sessionId && entry.abortTimer) {
+            clearTimeout(entry.abortTimer);
+            entry.abortTimer = null;
+          }
+        }
+      };
+
       const clearConversationRunAttachment = () => {
         conversationReplayVersion++;
         if (detachConversationRun) {
@@ -2163,6 +2218,8 @@ export async function createGateway(config: GatewayConfig) {
           if (parsed.type === "switch_session") {
             activeSessionId = parsed.sessionId;
             clearConversationRunAttachment();
+            clearReconnectAbortTimersForSession(parsed.sessionId);
+            sendClientAck(ws, parsed, "accepted", false);
             const pendingLiveMessages: ConversationRunMessage[] = [];
             let replayComplete = false;
             const attachment = conversationRuns.attachWithBufferedSnapshot(
@@ -2195,8 +2252,13 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
 
-          if (parsed.type === "approval_response" && approvalBridge) {
-            approvalBridge.handleResponse({ id: parsed.id, approved: parsed.approved });
+          if (parsed.type === "approval_response") {
+            if (approvalBridge) {
+              approvalBridge.handleResponse({ id: parsed.id, approved: parsed.approved });
+              sendClientAck(ws, parsed, "accepted", false);
+            } else {
+              sendClientAck(ws, parsed, "rejected", true);
+            }
             return;
           }
 
@@ -2215,11 +2277,15 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           if (parsed.type === "abort") {
-            const controller = abortControllers.get(parsed.requestId);
+            const controller = abortControllers.get(parsed.requestId)
+              ?? reconnectableAbortControllers.get(parsed.requestId)?.controller;
             if (controller) {
               controller.abort();
+              sendClientAck(ws, parsed, "accepted", false);
               // Map cleanup happens in the dispatcher's terminal-event
               // path (kernel:aborted -> delete). No need to delete here.
+            } else {
+              sendClientAck(ws, parsed, "rejected", false);
             }
             return;
           }
@@ -2241,15 +2307,36 @@ export async function createGateway(config: GatewayConfig) {
             const abortController = requestId ? new AbortController() : undefined;
             if (requestId && abortController) {
               abortControllers.set(requestId, abortController);
+              reconnectableAbortControllers.set(requestId, {
+                controller: abortController,
+                sessionId: parsed.sessionId,
+                abortTimer: null,
+              });
             }
+            sendClientAck(ws, parsed, "accepted", false);
+            let runEventSeq = 0;
+            const withReplayId = (msg: ServerMessage): ServerMessage => {
+              if (!msg.type.startsWith("kernel:")) return msg;
+              const replaySessionId = msg.type === "kernel:init"
+                ? msg.sessionId
+                : activeSessionId ?? parsed.sessionId ?? "pending";
+              return {
+                ...msg,
+                eventId: `${replaySessionId}:${requestId ?? "legacy"}:${runEventSeq++}`,
+              } as ServerMessage;
+            };
 
             dispatcher
               .dispatch(parsed.text, parsed.sessionId, (event) => {
-                const msg = kernelEventToServerMessage(event, requestId);
+                const msg = withReplayId(kernelEventToServerMessage(event, requestId));
                 send(ws, msg);
 
                 if (msg.type === "kernel:init") {
                   activeSessionId = msg.sessionId;
+                  if (requestId) {
+                    const reconnectable = reconnectableAbortControllers.get(requestId);
+                    if (reconnectable) reconnectable.sessionId = msg.sessionId;
+                  }
                   conversationRuns.begin(msg.sessionId);
                   publishConversationRunMessage(msg.sessionId, msg);
                   conversations.begin(msg.sessionId);
@@ -2299,22 +2386,27 @@ export async function createGateway(config: GatewayConfig) {
                   request_id_present: Boolean(requestId),
                 });
                 if (activeSessionId) {
-                  publishConversationRunMessage(activeSessionId, {
+                  publishConversationRunMessage(activeSessionId, withReplayId({
                     type: "kernel:error",
                     message: CLIENT_KERNEL_ERROR_MESSAGE,
                     requestId,
-                  });
+                  }) as ConversationRunMessage);
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
                 }
-                send(ws, {
+                send(ws, withReplayId({
                   type: "kernel:error",
                   message: CLIENT_KERNEL_ERROR_MESSAGE,
                   requestId,
-                });
+                }));
               })
               .finally(() => {
-                if (requestId) abortControllers.delete(requestId);
+                if (requestId) {
+                  abortControllers.delete(requestId);
+                  const reconnectable = reconnectableAbortControllers.get(requestId);
+                  if (reconnectable?.abortTimer) clearTimeout(reconnectable.abortTimer);
+                  reconnectableAbortControllers.delete(requestId);
+                }
               });
           }
         },
@@ -2324,9 +2416,15 @@ export async function createGateway(config: GatewayConfig) {
           syncPeerLifecycle?.close();
           syncPeerSocket = null;
           // Abort any in-flight runs for this client so the kernel doesn't
-          // keep burning tokens after the WS closes.
-          for (const controller of abortControllers.values()) {
-            controller.abort();
+          // keep burning tokens forever, while still allowing short browser
+          // reconnects to replay and reattach active runs.
+          for (const [requestId, controller] of abortControllers) {
+            const reconnectable = reconnectableAbortControllers.get(requestId);
+            if (!reconnectable || reconnectable.abortTimer) continue;
+            reconnectable.abortTimer = setTimeout(() => {
+              controller.abort();
+              reconnectableAbortControllers.delete(requestId);
+            }, CONVERSATION_RECONNECT_GRACE_MS);
           }
           abortControllers.clear();
           if (clients.delete(ws)) {

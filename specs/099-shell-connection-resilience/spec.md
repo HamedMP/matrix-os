@@ -1,7 +1,7 @@
 # Feature Specification: Shell Connection Resilience
 
-**Feature Branch**: `099-shell-connection-resilience`  
-**Created**: 2026-06-25  
+**Feature Branch**: `099-shell-connection-resilience`
+**Created**: 2026-06-25
 **Status**: Ready for Planning
 **Input**: User description: "Make the shell browser disconnect banner and backend connection more resilient and stable. This should almost never happen; if it happens it should not affect the user experience. Cover gateway shell, auth, and browser network behavior."
 

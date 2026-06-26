@@ -275,6 +275,35 @@ describe("SocketHealth", () => {
       expect(drained).toEqual(["b", "c", "d"]);
     });
 
+    it("deduplicates queued entries by action key", async () => {
+      const { MessageQueue } = await import("../../shell/src/lib/socket-health.js");
+      const queue = new MessageQueue({ maxSize: 50, ttlMs: 30_000 });
+
+      queue.enqueue("first", "req-1");
+      queue.enqueue("second", "req-1");
+
+      expect(queue.size).toBe(1);
+      expect(queue.drain()).toEqual(["second"]);
+    });
+
+    it("reports overflow and expiry drops without exposing payloads", async () => {
+      const { MessageQueue } = await import("../../shell/src/lib/socket-health.js");
+      const dropped: string[] = [];
+      const queue = new MessageQueue({
+        maxSize: 1,
+        ttlMs: 5_000,
+        onDrop: (_data, reason) => dropped.push(reason),
+      });
+
+      queue.enqueue("old", "req-old");
+      queue.enqueue("new", "req-new");
+      expect(dropped).toEqual(["overflow"]);
+
+      vi.advanceTimersByTime(6_000);
+      expect(queue.drain()).toEqual([]);
+      expect(dropped).toEqual(["overflow", "expired"]);
+    });
+
     it("drain returns empty array on empty queue", async () => {
       const { MessageQueue } = await import("../../shell/src/lib/socket-health.js");
       const queue = new MessageQueue({ maxSize: 50, ttlMs: 30_000 });

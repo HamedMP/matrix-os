@@ -122,6 +122,106 @@ describe("useSocket short blip resilience", () => {
     });
   });
 
+  it("delivers a queued outbound action at most once by request id", async () => {
+    const { ensureConnected, sendMessage } = await import("../../shell/src/hooks/useSocket.js");
+
+    ensureConnected();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    MockWebSocket.autoOpen = false;
+    const firstSocket = MockWebSocket.instances[0];
+    act(() => {
+      firstSocket.close();
+    });
+    sendMessage({ type: "message", text: "first draft", requestId: "req-deduped" });
+    sendMessage({ type: "message", text: "latest draft", requestId: "req-deduped" });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => {
+      ws.readyState = MockWebSocket.OPEN;
+      ws.onopen?.();
+    });
+
+    const delivered = ws.sent.map((raw) => JSON.parse(raw));
+    expect(delivered).toEqual([{ type: "message", text: "latest draft", requestId: "req-deduped" }]);
+  });
+
+  it("tracks outbound action delivery acknowledgments without message content", async () => {
+    const { ensureConnected, getDeliveryState, sendMessage } = await import("../../shell/src/hooks/useSocket.js");
+
+    ensureConnected();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    const ws = MockWebSocket.instances[0];
+    sendMessage({ type: "message", text: "private draft", requestId: "req-ack" });
+
+    expect(getDeliveryState("req-ack")).toMatchObject({
+      id: "req-ack",
+      type: "message",
+      state: "sent",
+    });
+    expect(JSON.stringify(getDeliveryState("req-ack"))).not.toContain("private draft");
+
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: "client:ack",
+          actionId: "req-ack",
+          actionType: "message",
+          status: "accepted",
+        }),
+      });
+    });
+
+    expect(getDeliveryState("req-ack")).toMatchObject({
+      id: "req-ack",
+      type: "message",
+      state: "accepted",
+      retryable: false,
+    });
+  });
+
+  it("retries credential refresh instead of opening unauthenticated shell sockets", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: null, expiresAt: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(credentialResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { getConnectionDiagnostics } = await import("../../shell/src/lib/connection-diagnostics.js");
+    const { ensureConnected } = await import("../../shell/src/hooks/useSocket.js");
+
+    ensureConnected();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(MockWebSocket.instances).toHaveLength(0);
+    expect(getConnectionDiagnostics()).toContainEqual(expect.objectContaining({
+      event: "credential_refresh_failed",
+      layer: "credential",
+      route: "/ws",
+    }));
+    expect(JSON.stringify(getConnectionDiagnostics())).not.toMatch(/ws-token|private draft/i);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(MockWebSocket.instances[0].url).toContain("token=ws-token");
+  });
+
   it("marks primary interactions unavailable after the quiet reconnect window expires", async () => {
     const { useSocket } = await import("../../shell/src/hooks/useSocket.js");
 
@@ -153,6 +253,47 @@ describe("useSocket short blip resilience", () => {
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+    });
+    expect((screen.getByRole("button", { name: "Ask Matrix" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does not restart the quiet window for repeated reconnect close events", async () => {
+    const { useSocket } = await import("../../shell/src/hooks/useSocket.js");
+
+    function PrimaryInteraction() {
+      const { connected } = useSocket();
+      return (
+        <button disabled={!connected} type="button">
+          Ask Matrix
+        </button>
+      );
+    }
+
+    render(<PrimaryInteraction />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect((screen.getByRole("button", { name: "Ask Matrix" }) as HTMLButtonElement).disabled).toBe(false);
+    MockWebSocket.autoOpen = false;
+
+    const firstSocket = MockWebSocket.instances[0];
+    act(() => {
+      firstSocket.close();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect((screen.getByRole("button", { name: "Ask Matrix" }) as HTMLButtonElement).disabled).toBe(false);
+
+    act(() => {
+      firstSocket.onclose?.();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
       await Promise.resolve();
     });
     expect((screen.getByRole("button", { name: "Ask Matrix" }) as HTMLButtonElement).disabled).toBe(true);

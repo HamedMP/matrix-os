@@ -1,10 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationRunRegistry,
   type ConversationRunMessage,
 } from "../../packages/gateway/src/conversation-run-registry.js";
 
 describe("ConversationRunRegistry", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("replays buffered messages to new subscribers and streams future ones", () => {
     const registry = new ConversationRunRegistry({
       maxRuns: 5,
@@ -59,18 +63,49 @@ describe("ConversationRunRegistry", () => {
     ]);
   });
 
-  it("removes runs once they complete", () => {
+  it("retains completed runs for replay until cleanup", () => {
     const registry = new ConversationRunRegistry({
       maxRuns: 5,
       maxEventsPerRun: 10,
+      completedRunRetentionMs: 30_000,
+    });
+
+    registry.begin("sess-1");
+    registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
+    registry.publish("sess-1", { type: "kernel:result", data: { ok: true } });
+    registry.complete("sess-1");
+
+    const received: ConversationRunMessage[] = [];
+    const detach = registry.attach("sess-1", (msg) => {
+      received.push(msg);
+    });
+
+    expect(detach).not.toBeNull();
+    expect(received).toEqual([
+      { type: "kernel:init", sessionId: "sess-1" },
+      { type: "kernel:result", data: { ok: true } },
+    ]);
+  });
+
+  it("evicts completed runs after the replay retention window", () => {
+    vi.useFakeTimers();
+    const registry = new ConversationRunRegistry({
+      maxRuns: 5,
+      maxEventsPerRun: 10,
+      completedRunRetentionMs: 1_000,
     });
 
     registry.begin("sess-1");
     registry.publish("sess-1", { type: "kernel:init", sessionId: "sess-1" });
     registry.complete("sess-1");
 
-    expect(registry.attach("sess-1", () => {})).toBeNull();
+    expect(registry.getBufferedMessages("sess-1")).not.toBeNull();
+
+    vi.advanceTimersByTime(1_000);
+
+    expect(registry.getBufferedMessages("sess-1")).toBeNull();
   });
+
 
   it("evicts the oldest run when the cap is reached", () => {
     const registry = new ConversationRunRegistry({

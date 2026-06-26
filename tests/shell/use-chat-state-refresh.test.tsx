@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const sendMock = vi.fn();
 const subscribeMock = vi.fn(() => () => {});
 const loadMock = vi.fn();
+let mockConnectionEpoch = 0;
 let mockConversations: Array<{
   id: string;
   preview: string;
@@ -18,6 +19,7 @@ let mockConversations: Array<{
 vi.mock("../../shell/src/hooks/useSocket.js", () => ({
   useSocket: () => ({
     connected: true,
+    connectionEpoch: mockConnectionEpoch,
     subscribe: subscribeMock,
     send: sendMock,
   }),
@@ -57,6 +59,7 @@ describe("useChatState refresh recovery", () => {
     subscribeMock.mockReset();
     subscribeMock.mockImplementation(() => () => {});
     loadMock.mockReset();
+    mockConnectionEpoch = 0;
     mockConversations = [];
   });
 
@@ -116,6 +119,62 @@ describe("useChatState refresh recovery", () => {
     });
     await waitFor(() => {
       expect(latestState?.messages[0]?.content).toBe("Build a calendar app");
+    });
+  });
+
+  it("reattaches the active conversation after a socket reconnect epoch", async () => {
+    mockConversations = [];
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    loadMock.mockResolvedValue({
+      id: "conv-replay",
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [],
+    });
+    const { rerender } = render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await waitFor(() => {
+      expect(latestState).not.toBeNull();
+    });
+    await act(async () => {
+      latestState?.switchConversation("conv-replay");
+    });
+
+    await waitFor(() => {
+      expect(sendMock).toHaveBeenCalledWith({
+        type: "switch_session",
+        sessionId: "conv-replay",
+      });
+    });
+    sendMock.mockClear();
+
+    mockConnectionEpoch = 1;
+    rerender(<Probe onState={(state) => { latestState = state; }} />);
+
+    await waitFor(() => {
+      expect(sendMock).toHaveBeenCalledWith({
+        type: "switch_session",
+        sessionId: "conv-replay",
+      });
+    });
+  });
+
+  it("ignores replayed live events that were already rendered", async () => {
+    let handler: ((msg: unknown) => void) | null = null;
+    subscribeMock.mockImplementation((next: (msg: unknown) => void) => {
+      handler = next;
+      return () => {};
+    });
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await act(async () => {
+      handler?.({ type: "kernel:text", text: "Hello", requestId: "req-1", eventId: "evt-1" });
+      handler?.({ type: "kernel:text", text: "Hello", requestId: "req-1", eventId: "evt-1" });
+    });
+
+    await waitFor(() => {
+      expect(latestState?.messages.map((message) => message.content)).toEqual(["Hello"]);
     });
   });
 

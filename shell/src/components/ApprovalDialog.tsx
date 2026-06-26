@@ -74,7 +74,7 @@ export function ApprovalDialog() {
 
   const respond = (approved: boolean) => {
     if (!request) return;
-    send({ type: "approval_response", id: request.id, approved } as any);
+    send({ type: "approval_response", id: request.id, approved });
     setRequest(null);
   };
 

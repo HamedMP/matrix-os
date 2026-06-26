@@ -15,6 +15,8 @@ interface QueuedMessage {
   requestId: string;
 }
 
+const MAX_SEEN_REPLAY_EVENTS = 2_000;
+
 export interface ChatState {
   messages: ChatMessage[];
   sessionId: string | undefined;
@@ -42,10 +44,11 @@ export function useChatState(): ChatState {
   const [busy, setBusy] = useState(false);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
-  const { connected, subscribe, send } = useSocket();
+  const { connected, connectionEpoch, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
   const sessionRef = useRef(sessionId);
-  const pendingRestoreSessionRef = useRef<string | null>(null);
+  const lastReattachKeyRef = useRef<string | null>(null);
+  const seenReplayEventIdsRef = useRef<Set<string>>(new Set());
   // Tracks the requestId of the in-flight run so abortCurrent() can target
   // the right server-side AbortController. Cleared on terminal events.
   const currentRequestIdRef = useRef<string | null>(null);
@@ -65,7 +68,6 @@ export function useChatState(): ChatState {
       load(latest.id)
         .then((conv) => {
           if (!aborted && conv) {
-            pendingRestoreSessionRef.current = conv.id;
             setSessionId(conv.id);
             setMessages(hydrateMessages(conv.messages));
           }
@@ -83,17 +85,28 @@ export function useChatState(): ChatState {
   }, [conversations, sessionId, load]);
 
   useEffect(() => {
-    if (!sessionId || pendingRestoreSessionRef.current !== sessionId) {
-      return;
-    }
-
-    pendingRestoreSessionRef.current = null;
+    if (!connected || !sessionId) return;
+    const key = `${sessionId}:${connectionEpoch}`;
+    if (lastReattachKeyRef.current === key) return;
+    lastReattachKeyRef.current = key;
     send({ type: "switch_session", sessionId });
-  }, [sessionId, send]);
+  }, [connected, connectionEpoch, sessionId, send]);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the multiple setState calls (setBusy/setCurrentTool/setQueue/setSessionId/setMessages) all fire from inside the async WebSocket message handler in response to discrete server events (a run's init -> tool -> result/error/aborted transition), never synchronously during render, so they are event-driven transitions and not a render-time cascade
   useEffect(() => {
     return subscribe((msg: ServerMessage) => {
+      const eventId = "eventId" in msg && typeof msg.eventId === "string" ? msg.eventId : null;
+      if (eventId) {
+        const seen = seenReplayEventIdsRef.current;
+        if (seen.has(eventId)) return;
+        seen.add(eventId);
+        while (seen.size > MAX_SEEN_REPLAY_EVENTS) {
+          const oldest = seen.values().next().value;
+          if (!oldest) break;
+          seen.delete(oldest);
+        }
+      }
+
       if (msg.type === "kernel:init") {
         setSessionId(msg.sessionId);
         setBusy(true);
@@ -212,7 +225,6 @@ export function useChatState(): ChatState {
       if (res.ok) {
         const { id } = await res.json();
         setSessionId(id);
-        send({ type: "switch_session", sessionId: id });
       } else {
         setSessionId(undefined);
       }
@@ -220,7 +232,7 @@ export function useChatState(): ChatState {
       console.warn("[chat] Failed to create conversation:", err);
       setSessionId(undefined);
     }
-  }, [send]);
+  }, []);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const switchConversation = useCallback(
@@ -231,14 +243,13 @@ export function useChatState(): ChatState {
             setSessionId(conv.id);
             setMessages(hydrateMessages(conv.messages));
             setQueue([]);
-            send({ type: "switch_session", sessionId: conv.id });
           }
         })
         .catch((err) => {
           console.warn(`[chat] Failed to switch to conversation "${id}":`, err);
         });
     },
-    [load, send],
+    [load],
   );
 
   return {
