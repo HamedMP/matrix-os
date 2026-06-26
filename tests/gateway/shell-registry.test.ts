@@ -653,6 +653,65 @@ describe("shell registry", () => {
     expect(Array.from(live)).toEqual(["main"]);
   });
 
+  it("retargets aliases and pane references when a canonical live session is renamed", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "workspace-main": "main",
+          "matrix-sess_run_8162a7cca11891c0": "main",
+        },
+        references: [
+          { id: "pane-main", source: "pane", sessionName: "main" },
+        ],
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const live = new Set(["main"]);
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      renameSession: vi.fn(async (name: string, nextName: string) => {
+        live.delete(name);
+        live.add(nextName);
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.rename("main", "review-main")).resolves.toMatchObject({
+      name: "review-main",
+      aliases: [
+        { name: "matrix-sess_run_8162a7cca11891c0", target: "review-main", source: "legacy" },
+        { name: "workspace-main", target: "review-main", source: "workspace" },
+      ],
+      references: [{ id: "pane-main", source: "pane", sessionName: "review-main" }],
+    });
+
+    const raw = await readFile(persistPath, "utf-8");
+    const persisted = JSON.parse(raw);
+    expect(persisted.aliases).toEqual({
+      "workspace-main": "review-main",
+      "matrix-sess_run_8162a7cca11891c0": "review-main",
+    });
+    expect(persisted.references).toEqual([
+      { id: "pane-main", source: "pane", sessionName: "review-main" },
+    ]);
+  });
+
   it("connects by adopting an orphan active zellij session", async () => {
     const root = await tempRoot();
     const adapter = {
@@ -711,6 +770,250 @@ describe("shell registry", () => {
     });
 
     expect(adapter.createSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps a live background session attached across reopen and reconnect reads without creating or deleting it", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+            placement: "background",
+          },
+          docs: {
+            name: "docs",
+            status: "active",
+            createdAt: "2026-06-25T12:00:01.000Z",
+            updatedAt: "2026-06-25T12:00:01.000Z",
+            attachedClients: 0,
+            tabs: [],
+            placement: "active",
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main", "docs"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.list()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "main",
+        status: "active",
+        placement: "background",
+        attachCommand: "mos shell attach main",
+      }),
+    ]));
+    await expect(registry.get("main")).resolves.toMatchObject({
+      name: "main",
+      status: "active",
+      placement: "background",
+      attachCommand: "mos shell attach main",
+    });
+    await expect(registry.list()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "main", status: "active" }),
+    ]));
+
+    expect(adapter.createSession).not.toHaveBeenCalled();
+    expect(adapter.deleteSession).not.toHaveBeenCalled();
+    expect(adapter.listSessions).toHaveBeenCalledTimes(3);
+  });
+
+  it("collapses workspace and legacy aliases onto one canonical live session during normal reads", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "workspace-main": "main",
+          "matrix-sess_run_8162a7cca11891c0": "main",
+        },
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      {
+        name: "main",
+        canonicalName: "main",
+        attachCommand: "mos shell attach main",
+        aliases: [
+          { name: "matrix-sess_run_8162a7cca11891c0", target: "main", source: "legacy" },
+          { name: "workspace-main", target: "main", source: "workspace" },
+        ],
+      },
+    ]);
+
+    expect(adapter.createSession).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed alias metadata without blocking normal session reads", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "Bad Alias": "main",
+          "legacy-good": "Main",
+        },
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "main", aliases: [] },
+    ]);
+  });
+
+  it("surfaces stale pane references as recoverable rows during normal reads", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        references: [
+          { id: "pane-stale-docs", source: "pane", sessionName: "docs" },
+        ],
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.list()).resolves.toMatchObject([
+      { name: "main", status: "active", recoverable: false },
+      {
+        name: "docs",
+        status: "exited",
+        recoverable: true,
+        recoveryReason: "missing_runtime_session",
+        references: [{ id: "pane-stale-docs", source: "pane", sessionName: "docs" }],
+      },
+    ]);
+
+    expect(adapter.createSession).not.toHaveBeenCalled();
+    expect(adapter.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it("resolves known legacy aliases for open and delete without touching unrelated live sessions", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "matrix-sess_run_8162a7cca11891c0": "main",
+        },
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+          docs: {
+            name: "docs",
+            status: "active",
+            createdAt: "2026-06-25T12:00:01.000Z",
+            updatedAt: "2026-06-25T12:00:01.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const live = new Set(["main", "docs"]);
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async (name: string) => {
+        live.delete(name);
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.get("matrix-sess_run_8162a7cca11891c0")).resolves.toMatchObject({
+      name: "main",
+      canonicalName: "main",
+      attachCommand: "mos shell attach main",
+    });
+    await expect(registry.delete("matrix-sess_run_8162a7cca11891c0")).resolves.toBeUndefined();
+
+    expect(adapter.deleteSession).toHaveBeenCalledWith("main", {});
+    expect(Array.from(live)).toEqual(["docs"]);
+    const raw = await readFile(persistPath, "utf-8");
+    const persisted = JSON.parse(raw);
+    expect(persisted.sessions.main).toBeUndefined();
+    expect(persisted.sessions.docs).toBeDefined();
+    expect(persisted.aliases?.["matrix-sess_run_8162a7cca11891c0"]).toBeUndefined();
   });
 
   it("force deletes live orphan zellij sessions missing from metadata", async () => {

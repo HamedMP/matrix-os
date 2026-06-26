@@ -1,7 +1,23 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
+import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
 import { createRateLimiter } from "../../packages/gateway/src/security/rate-limiter.js";
+
+const roots: string[] = [];
+
+async function tempRoot() {
+  const root = await mkdtemp(join(tmpdir(), "matrix-shell-routes-"));
+  roots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
 
 describe("gateway shell routes", () => {
   function appWithRegistry(registry: {
@@ -53,6 +69,74 @@ describe("gateway shell routes", () => {
 
     expect(registry.create).toHaveBeenCalledWith({ name: "setup" });
     expect(registry.delete).toHaveBeenCalledWith("setup", { force: true });
+  });
+
+  it("serves reconciled aliases and stale pane recovery through the terminal sessions route", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      join(root, "system", "shell-sessions.json"),
+      JSON.stringify({
+        aliases: {
+          "workspace-main": "main",
+          "matrix-sess_run_8162a7cca11891c0": "main",
+        },
+        references: [
+          { id: "pane-stale-docs", source: "pane", sessionName: "docs" },
+        ],
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      sessions: [
+        {
+          name: "main",
+          canonicalName: "main",
+          attachCommand: "mos shell attach main",
+          aliases: [
+            { name: "matrix-sess_run_8162a7cca11891c0", target: "main", source: "legacy" },
+            { name: "workspace-main", target: "main", source: "workspace" },
+          ],
+        },
+        {
+          name: "docs",
+          status: "exited",
+          recoverable: true,
+          recoveryReason: "missing_runtime_session",
+          references: [{ id: "pane-stale-docs", source: "pane", sessionName: "docs" }],
+        },
+      ],
+    });
+    expect(adapter.createSession).not.toHaveBeenCalled();
+    expect(adapter.deleteSession).not.toHaveBeenCalled();
+
+    const deleteRes = await app.request("/api/terminal/sessions/matrix-sess_run_8162a7cca11891c0", {
+      method: "DELETE",
+    });
+
+    expect(deleteRes.status).toBe(200);
+    expect(adapter.deleteSession).toHaveBeenCalledWith("main", { force: false });
   });
 
   it("creates sessions through a bounded JSON route", async () => {

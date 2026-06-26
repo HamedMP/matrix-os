@@ -26,6 +26,16 @@ Reopening a background shell now keeps the selected runtime session as the activ
 
 The zellij terminal WebSocket now accepts the explicit `destroy` frame emitted by terminal pane close paths. The frame uses the existing scoped cleanup path for the attached shell bridge process instead of being rejected as an invalid message.
 
+### Lifecycle And Canonical Reconciliation Expansion
+
+`ShellRegistry.list()` now returns a reconciled session summary from the real registry read path, not only from isolated helper tests. Runtime/zellij session existence remains canonical for liveness. Saved metadata contributes UI preferences such as placement and status hints, while aliases and stale pane references are folded into the returned summaries.
+
+The registry now preserves background sessions across normal list/get/list cycles that model backgrounding, reopening, and reconnecting. The adapter contract test proves those flows call `listSessions()`/attach lookup only: they do not call `createSession()` and they do not call `deleteSession()` while the runtime still lists the same live session.
+
+Known workspace and legacy aliases collapse onto one canonical runtime session summary with a single attach command. Known legacy aliases also resolve through `get()` and `delete()`, so open/delete flows act on the canonical selected runtime session instead of rejecting before recovery. Delete removes only that canonical target and cleans aliases/references for that target.
+
+Stale pane references are surfaced during normal `/api/terminal/sessions` reads as recoverable exited rows with coarse recovery metadata. The route-level regression uses a real `ShellRegistry` behind `createShellRoutes`, proving aliases, recoverable pane refs, and legacy delete behavior flow through the product HTTP path.
+
 ## Expected User Experience
 
 - A terminal with newer command-start or recent-output evidence shows as running even if old metadata says waiting.
@@ -40,9 +50,9 @@ The zellij terminal WebSocket now accepts the explicit `destroy` frame emitted b
 
 ## Remaining Spec Gaps
 
-- Full end-to-end proof with a real long-running process across browser tab switch, backgrounding, refresh, WebSocket reconnect, and return still needs a browser/runtime integration or preview-VPS test. This PR strengthens and tests the component and gateway contracts, but it does not stand up a live zellij process in Playwright.
-- Workspace-session alias reconciliation remains covered at the shell/session boundary through existing attach and layout tests, but this PR does not introduce a new cross-store canonical alias service.
-- Normal-read stale pane recovery remains partial: this PR verifies legacy layout fallback, managed reattach, and delete-scoped pane removal, but does not replace the saved-layout canonical recreation behavior with a dedicated recoverable stale-pane state.
+- Full end-to-end proof with a real long-running process across browser tab switch, backgrounding, refresh, WebSocket reconnect, and return still needs a browser/runtime integration or preview-VPS test. This PR now proves the gateway/zellij adapter contract does not create or delete sessions during background/reopen/reconnect read flows, but it still does not stand up a live zellij process in Playwright.
+- Workspace-session and legacy alias reconciliation is now represented in the registry read model and route tests. Broader cross-store ingestion of every possible workspace alias source remains outside this slice.
+- Normal-read stale pane recovery now returns recoverable rows for saved pane references in `/api/terminal/sessions`. A richer user-facing recovery action flow for every layout restore path remains outside this slice.
 - Public docs are not updated because the user-visible copy change is limited to the terminal drawer stale label and the diagnostics surface is an internal gateway health extension.
 
 ## Tests To Run
@@ -56,6 +66,7 @@ bun run test tests/shell/terminal-app-component.test.tsx
 bun run typecheck
 bun run check:patterns
 npx react-doctor@latest shell
+git diff --check
 ```
 
 ## Manual Verification
