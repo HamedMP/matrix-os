@@ -221,7 +221,7 @@ export class ShellRegistry {
       }
       const existingVisualStatusUpdatedAt =
         existing.visualStatusUpdatedAt ?? (existing.visualStatus ? existing.updatedAt : undefined);
-      const visualStatusChanged = patch.visualStatus !== undefined && patch.visualStatus !== existing.visualStatus;
+      const visualStatusIntent = patch.visualStatus !== undefined;
       const next: PersistedShellSession = {
         ...existing,
         updatedAt: now,
@@ -229,7 +229,7 @@ export class ShellRegistry {
         ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
         ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
         ...(patch.visualStatus !== undefined ? { visualStatus: patch.visualStatus } : {}),
-        ...(visualStatusChanged ? { visualStatusUpdatedAt: now } : {}),
+        ...(visualStatusIntent ? { visualStatusUpdatedAt: now } : {}),
       };
       file.sessions[safeName] = next;
       await this.write(file);

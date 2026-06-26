@@ -51,6 +51,16 @@ interface ShellBackendHealthRoutes {
   health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
 }
 
+interface ShellSessionDiagnosticSummary {
+  ok: true;
+  total: number;
+  active: number;
+  background: number;
+  unread: number;
+  waiting: number;
+  exited: number;
+}
+
 interface ShellThemeConfigRoutes {
   setShellTheme(themeId: ShellThemeId): Promise<void>;
 }
@@ -141,6 +151,32 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
     try {
       const health = await deps.shellBackend.health();
+      if (new URL(c.req.url).searchParams.get("include") === "sessions") {
+        try {
+          const sessions = await deps.registry.list();
+          return c.json({
+            shell: {
+              ...health,
+              sessions: summarizeShellSessionDiagnostics(sessions),
+            },
+          }, health.ok ? 200 : 503);
+        } catch (err: unknown) {
+          console.warn(
+            "[shell] terminal session diagnostics failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+          return c.json({
+            shell: {
+              ok: false,
+              code: "session_list_unavailable",
+              sessions: {
+                ok: false,
+                code: "session_list_unavailable",
+              },
+            },
+          }, 503);
+        }
+      }
       return c.json({ shell: health }, health.ok ? 200 : 503);
     } catch (err: unknown) {
       console.warn("[shell] shell health check failed:", err instanceof Error ? err.message : String(err));
@@ -477,4 +513,44 @@ function describeErrorForLog(err: unknown) {
     context.cause = String(cause);
   }
   return context;
+}
+
+function summarizeShellSessionDiagnostics(sessions: unknown[]): ShellSessionDiagnosticSummary {
+  const summary: ShellSessionDiagnosticSummary = {
+    ok: true,
+    total: 0,
+    active: 0,
+    background: 0,
+    unread: 0,
+    waiting: 0,
+    exited: 0,
+  };
+  for (const session of sessions) {
+    if (!session || typeof session !== "object") {
+      continue;
+    }
+    summary.total += 1;
+    const candidate = session as {
+      status?: unknown;
+      placement?: unknown;
+      unread?: unknown;
+      visualStatus?: unknown;
+    };
+    if (candidate.status === "active") {
+      summary.active += 1;
+    }
+    if (candidate.status === "exited") {
+      summary.exited += 1;
+    }
+    if (candidate.placement === "background") {
+      summary.background += 1;
+    }
+    if (candidate.unread === true) {
+      summary.unread += 1;
+    }
+    if (candidate.visualStatus === "waiting") {
+      summary.waiting += 1;
+    }
+  }
+  return summary;
 }

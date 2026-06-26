@@ -2544,6 +2544,7 @@ describe("TerminalApp", () => {
 
     expect(screen.getByTestId("terminal-session-card-main")).toBeTruthy();
     expect(screen.getByText("Failed to load shells")).toBeTruthy();
+    expect(screen.getByTestId("terminal-sessions-stale-label").textContent).toContain("Terminal session data is stale");
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" }));
@@ -2553,6 +2554,7 @@ describe("TerminalApp", () => {
 
     expect(screen.getByText("bench")).toBeTruthy();
     expect(screen.queryByText("Failed to load shells")).toBeNull();
+    expect(screen.queryByTestId("terminal-sessions-stale-label")).toBeNull();
   });
 
   it("refreshes the Shells sidebar while open so exited zellij sessions disappear", async () => {

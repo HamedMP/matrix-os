@@ -1,7 +1,7 @@
 # Feature Specification: Terminal Session Reliability
 
-**Feature Branch**: `fix-shell-sticky-waiting-status`  
-**Created**: 2026-06-25  
+**Feature Branch**: `fix-shell-sticky-waiting-status`
+**Created**: 2026-06-25
 **Status**: Ready for Planning
 **Input**: User description: "List all shell terminal and gateway session-management code-quality findings in a new spec, then work on them one by one."
 

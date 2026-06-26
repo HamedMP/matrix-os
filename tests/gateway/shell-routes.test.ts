@@ -504,4 +504,70 @@ describe("gateway shell routes", () => {
     expect(res.status).toBe(503);
     await expect(res.json()).resolves.toEqual({ shell: { ok: false, code: "zellij_failed" } });
   });
+
+  it("adds coarse terminal session diagnostics to health on request", async () => {
+    const registry = {
+      list: vi.fn(async () => [
+        { name: "main", status: "active", placement: "active", unread: true, visualStatus: "running" },
+        { name: "docs", status: "active", placement: "background", unread: false, visualStatus: "waiting" },
+        { name: "old", status: "exited", placement: "active", unread: false, visualStatus: "idle" },
+      ]),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry, {
+      health: vi.fn(async () => ({ ok: true, code: "ok" })),
+    });
+
+    const res = await app.request("/api/terminal/health?include=sessions");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      shell: {
+        ok: true,
+        code: "ok",
+        sessions: {
+          ok: true,
+          total: 3,
+          active: 2,
+          background: 1,
+          unread: 1,
+          waiting: 1,
+          exited: 1,
+        },
+      },
+    });
+    expect(registry.list).toHaveBeenCalledTimes(1);
+    expect(registry.create).not.toHaveBeenCalled();
+    expect(registry.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps terminal health diagnostics coarse when session listing fails", async () => {
+    const app = appWithRegistry({
+      list: vi.fn(async () => {
+        throw new Error("/home/matrix/home/system/shell-sessions.json unavailable");
+      }),
+      create: vi.fn(),
+      delete: vi.fn(),
+    }, {
+      health: vi.fn(async () => ({ ok: true, code: "ok" })),
+    });
+
+    const res = await app.request("/api/terminal/health?include=sessions");
+    const bodyText = await res.text();
+
+    expect(res.status).toBe(503);
+    expect(JSON.parse(bodyText)).toEqual({
+      shell: {
+        ok: false,
+        code: "session_list_unavailable",
+        sessions: {
+          ok: false,
+          code: "session_list_unavailable",
+        },
+      },
+    });
+    expect(bodyText).not.toContain("/home/matrix");
+    expect(bodyText).not.toContain("shell-sessions.json");
+  });
 });
