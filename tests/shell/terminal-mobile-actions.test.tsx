@@ -28,9 +28,33 @@ vi.mock("@/hooks/useTheme", () => ({
   }),
 }));
 
-vi.mock("@/stores/terminal-settings", () => ({
-  useTerminalSettings: () => "system",
-}));
+vi.mock("@/stores/terminal-settings", () => {
+  const state = {
+    appThemeId: "matrix-dark",
+    themeId: "system",
+    fontSize: 13,
+    fontFamily: "JetBrains Mono",
+    ligatures: true,
+    cursorStyle: "block",
+    smoothScroll: true,
+    cursorBlink: true,
+    setAppThemeId: () => {},
+    setThemeId: () => {},
+    setFontSize: () => {},
+    setFontFamily: () => {},
+    setLigatures: () => {},
+    setCursorStyle: () => {},
+    setSmoothScroll: () => {},
+    setCursorBlink: () => {},
+  };
+
+  return {
+    TERMINAL_FONT_FAMILIES: ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"],
+    DEFAULT_TERMINAL_THEME_ID: "dark",
+    DEFAULT_TERMINAL_APP_THEME_ID: "matrix-dark",
+    useTerminalSettings: (selector: (value: typeof state) => unknown) => selector(state),
+  };
+});
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
 
