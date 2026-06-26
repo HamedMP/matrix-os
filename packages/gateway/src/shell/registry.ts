@@ -280,7 +280,7 @@ export class ShellRegistry {
         };
         file.sessions[safeName] = session;
         await this.write(file);
-        return this.decorateSession(session);
+        return this.decorateSession(session, file);
       }
       if (live.has(safeNextName) || file.sessions[safeNextName]) {
         throw shellError("session_exists", "Session already exists", 409);

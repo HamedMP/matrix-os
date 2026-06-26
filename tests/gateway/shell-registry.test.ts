@@ -712,6 +712,48 @@ describe("shell registry", () => {
     ]);
   });
 
+  it("returns aliases and references for an idempotent same-name rename", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "workspace-main": "main",
+        },
+        references: [
+          { id: "pane-main", source: "pane", sessionName: "main" },
+        ],
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      renameSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.rename("main", "main")).resolves.toMatchObject({
+      name: "main",
+      aliases: [{ name: "workspace-main", target: "main", source: "workspace" }],
+      references: [{ id: "pane-main", source: "pane", sessionName: "main" }],
+    });
+    expect(adapter.renameSession).not.toHaveBeenCalled();
+  });
+
   it("connects by adopting an orphan active zellij session", async () => {
     const root = await tempRoot();
     const adapter = {

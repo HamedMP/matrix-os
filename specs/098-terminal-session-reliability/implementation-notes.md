@@ -38,6 +38,8 @@ Stale pane references are surfaced during normal `/api/terminal/sessions` reads 
 
 Stale pane references that point at the same missing canonical session through both an alias and the canonical name now collapse to one recoverable canonical row. The row preserves all matching references and aliases, so the read path does not emit duplicate exited sessions or lose recovery metadata for alias-only references.
 
+Idempotent same-name rename requests also return the same decorated canonical session shape as normal reads, including aliases and references. The no-op branch does not call the adapter rename path, but it still includes registry file context when building the response.
+
 ## Expected User Experience
 
 - A terminal with newer command-start or recent-output evidence shows as running even if old metadata says waiting.
@@ -49,6 +51,7 @@ Stale pane references that point at the same missing canonical session through b
 - Explicit terminal pane close frames are accepted by the zellij WebSocket protocol instead of surfacing as invalid-message noise.
 - Matrix does not silently delete saved owner metadata while deriving the safer visible state.
 - Stale alias and canonical pane references for the same missing terminal appear as one recoverable session row.
+- Renaming a session to its existing name returns the same alias/reference metadata as a normal session read.
 - Operators can check coarse terminal/session health through the gateway when SSH is unavailable.
 
 ## Remaining Spec Gaps
