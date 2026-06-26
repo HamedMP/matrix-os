@@ -3410,7 +3410,11 @@ function LocalTerminalSidebar() {
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
       if (Array.isArray(data.sessions)) {
-        setShells((prev) => shellSessionsEqual(prev, data.sessions!) ? prev : data.sessions!);
+        commitShellRefreshState(applyShellRefreshSuccess(
+          shellRefreshStateRef.current,
+          data.sessions,
+          true,
+        ));
       } else {
         await fetchShells({ silent: true });
       }
