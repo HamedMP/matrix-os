@@ -754,6 +754,52 @@ describe("shell registry", () => {
     expect(adapter.renameSession).not.toHaveBeenCalled();
   });
 
+  it("renames a canonical live session through a known alias", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "workspace-main": "main",
+        },
+        references: [
+          { id: "pane-main", source: "pane", sessionName: "main" },
+        ],
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const live = new Set(["main"]);
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+      renameSession: vi.fn(async (name: string, nextName: string) => {
+        live.delete(name);
+        live.add(nextName);
+      }),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.rename("workspace-main", "review-main")).resolves.toMatchObject({
+      name: "review-main",
+      aliases: [{ name: "workspace-main", target: "review-main", source: "workspace" }],
+      references: [{ id: "pane-main", source: "pane", sessionName: "review-main" }],
+    });
+    expect(adapter.renameSession).toHaveBeenCalledWith("main", "review-main");
+  });
+
   it("connects by adopting an orphan active zellij session", async () => {
     const root = await tempRoot();
     const adapter = {
@@ -811,6 +857,34 @@ describe("shell registry", () => {
       status: "active",
     });
 
+    expect(adapter.createSession).not.toHaveBeenCalled();
+  });
+
+  it("returns alias metadata when create adopts an existing live session", async () => {
+    const root = await tempRoot();
+    const persistPath = join(root, "system", "shell-sessions.json");
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      persistPath,
+      JSON.stringify({
+        aliases: {
+          "workspace-main": "main",
+        },
+        sessions: {},
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+
+    await expect(registry.create({ name: "main" })).resolves.toMatchObject({
+      name: "main",
+      aliases: [{ name: "workspace-main", target: "main", source: "workspace" }],
+    });
     expect(adapter.createSession).not.toHaveBeenCalled();
   });
 

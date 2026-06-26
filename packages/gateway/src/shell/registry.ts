@@ -183,7 +183,7 @@ export class ShellRegistry {
         };
         file.sessions[name] = session;
         await this.write(file);
-        return this.decorateSession(session);
+        return this.decorateSession(session, file);
       }
       if (changed) {
         await this.write(file);
@@ -223,7 +223,7 @@ export class ShellRegistry {
         throw err;
       }
 
-      return this.decorateSession(session);
+      return this.decorateSession(session, file);
     });
   }
 
@@ -268,17 +268,18 @@ export class ShellRegistry {
       }
 
       const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
       const live = new Set(await this.options.adapter.listSessions());
-      if (!live.has(safeName)) {
+      if (!live.has(targetName)) {
         throw shellError("session_not_found", "Session not found", 404);
       }
-      if (safeName === safeNextName) {
+      if (targetName === safeNextName) {
         const now = new Date().toISOString();
         const session = {
-          ...(file.sessions[safeName] ?? this.adoptSession(safeName, now)),
+          ...(file.sessions[targetName] ?? this.adoptSession(targetName, now)),
           status: "active" as const,
         };
-        file.sessions[safeName] = session;
+        file.sessions[targetName] = session;
         await this.write(file);
         return this.decorateSession(session, file);
       }
@@ -287,44 +288,44 @@ export class ShellRegistry {
       }
 
       const now = new Date().toISOString();
-      const existing = file.sessions[safeName] ?? this.adoptSession(safeName, now);
+      const existing = file.sessions[targetName] ?? this.adoptSession(targetName, now);
       const next: PersistedShellSession = {
         ...existing,
         name: safeNextName,
         status: "active",
         updatedAt: now,
       };
-      delete file.sessions[safeName];
+      delete file.sessions[targetName];
       file.sessions[safeNextName] = next;
       if (file.order) {
-        file.order = file.order.map((entry) => entry === safeName ? safeNextName : entry);
+        file.order = file.order.map((entry) => entry === targetName ? safeNextName : entry);
       }
-      this.retargetAliasesAndReferences(file, safeName, safeNextName);
+      this.retargetAliasesAndReferences(file, targetName, safeNextName);
 
-      await this.options.adapter.renameSession(safeName, safeNextName);
+      await this.options.adapter.renameSession(targetName, safeNextName);
       let scrollbackRenamed = false;
       let preferencesRenamed = false;
       try {
-        await this.options.scrollbackStore?.rename(safeName, safeNextName);
+        await this.options.scrollbackStore?.rename(targetName, safeNextName);
         scrollbackRenamed = true;
-        await this.options.preferencesStore?.rename(safeName, safeNextName);
+        await this.options.preferencesStore?.rename(targetName, safeNextName);
         preferencesRenamed = true;
         if (file.order) {
           const nextLive = new Set(live);
-          nextLive.delete(safeName);
+          nextLive.delete(targetName);
           nextLive.add(safeNextName);
           void this.normalizeCustomOrder(file, Array.from(nextLive).map((liveName) => file.sessions[liveName] ?? this.adoptSession(liveName, now)));
         }
         await this.write(file);
       } catch (err: unknown) {
-        await this.options.adapter.renameSession(safeNextName, safeName).catch((rollbackErr: unknown) => {
+        await this.options.adapter.renameSession(safeNextName, targetName).catch((rollbackErr: unknown) => {
           console.warn(
             "[shell] failed to rollback renamed zellij session:",
             rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
           );
         });
         if (scrollbackRenamed) {
-          await this.options.scrollbackStore?.rename(safeNextName, safeName).catch((rollbackErr: unknown) => {
+          await this.options.scrollbackStore?.rename(safeNextName, targetName).catch((rollbackErr: unknown) => {
             console.warn(
               "[shell] failed to rollback renamed scrollback:",
               rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
@@ -332,7 +333,7 @@ export class ShellRegistry {
           });
         }
         if (preferencesRenamed) {
-          await this.options.preferencesStore?.rename(safeNextName, safeName).catch((rollbackErr: unknown) => {
+          await this.options.preferencesStore?.rename(safeNextName, targetName).catch((rollbackErr: unknown) => {
             console.warn(
               "[shell] failed to rollback renamed preferences:",
               rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),

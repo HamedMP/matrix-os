@@ -40,6 +40,8 @@ Stale pane references that point at the same missing canonical session through b
 
 Idempotent same-name rename requests also return the same decorated canonical session shape as normal reads, including aliases and references. The no-op branch does not call the adapter rename path, but it still includes registry file context when building the response.
 
+Create adoption of an already-live runtime session now returns the same alias/reference-aware decoration as normal reads. Rename also resolves known aliases before liveness checks and adapter operations, so a rename request for a legacy or workspace alias acts on the canonical runtime session.
+
 ## Expected User Experience
 
 - A terminal with newer command-start or recent-output evidence shows as running even if old metadata says waiting.
@@ -52,6 +54,7 @@ Idempotent same-name rename requests also return the same decorated canonical se
 - Matrix does not silently delete saved owner metadata while deriving the safer visible state.
 - Stale alias and canonical pane references for the same missing terminal appear as one recoverable session row.
 - Renaming a session to its existing name returns the same alias/reference metadata as a normal session read.
+- Creating an already-live session or renaming through a known alias returns canonical alias/reference metadata instead of a partially decorated row or 404.
 - Operators can check coarse terminal/session health through the gateway when SSH is unavailable.
 
 ## Remaining Spec Gaps
