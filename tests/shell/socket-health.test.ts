@@ -286,6 +286,17 @@ describe("SocketHealth", () => {
       expect(queue.drain()).toEqual(["second"]);
     });
 
+    it("moves replaced keyed entries to the tail", async () => {
+      const { MessageQueue } = await import("../../shell/src/lib/socket-health.js");
+      const queue = new MessageQueue({ maxSize: 50, ttlMs: 30_000 });
+
+      queue.enqueue("switch to B", "switch_session:B");
+      queue.enqueue("switch to C", "switch_session:C");
+      queue.enqueue("latest switch to B", "switch_session:B");
+
+      expect(queue.drain()).toEqual(["switch to C", "latest switch to B"]);
+    });
+
     it("reports overflow and expiry drops without exposing payloads", async () => {
       const { MessageQueue } = await import("../../shell/src/lib/socket-health.js");
       const dropped: string[] = [];

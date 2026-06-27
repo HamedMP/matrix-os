@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearReconnectAbortTimersForSession,
+  drainReconnectableAbortEntries,
   replaceReconnectableAbortEntry,
   scheduleReconnectAbortTimersForDisconnectedClient,
   scheduleReconnectAbortTimersForSession,
@@ -177,5 +178,52 @@ describe("conversation reconnect abort guards", () => {
 
     expect(liveAbort).toHaveBeenCalledTimes(1);
     expect(entries.has("req-1")).toBe(false);
+  });
+
+  it("evicts and aborts oldest reconnectable entries when the map reaches its cap", () => {
+    vi.useFakeTimers();
+    const oldestAbort = vi.fn();
+    const newestAbort = vi.fn();
+    const entries = new Map<string, ReconnectableAbortEntry>([
+      ["oldest", {
+        controller: { abort: oldestAbort },
+        sessionId: "sess-old",
+        abortTimer: setTimeout(() => {
+          oldestAbort();
+        }, 30_000),
+      }],
+    ]);
+
+    replaceReconnectableAbortEntry(entries, "newest", {
+      controller: { abort: newestAbort },
+      sessionId: "sess-new",
+      abortTimer: null,
+    }, { maxEntries: 1 });
+    vi.advanceTimersByTime(30_000);
+
+    expect(oldestAbort).toHaveBeenCalledTimes(1);
+    expect(newestAbort).not.toHaveBeenCalled();
+    expect(entries.has("oldest")).toBe(false);
+    expect(entries.has("newest")).toBe(true);
+  });
+
+  it("drains reconnect abort entries on shutdown", () => {
+    vi.useFakeTimers();
+    const abort = vi.fn();
+    const entries = new Map<string, ReconnectableAbortEntry>([
+      ["req-1", {
+        controller: { abort },
+        sessionId: "sess-1",
+        abortTimer: setTimeout(() => {
+          abort();
+        }, 30_000),
+      }],
+    ]);
+
+    drainReconnectableAbortEntries(entries);
+    vi.advanceTimersByTime(30_000);
+
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(entries.size).toBe(0);
   });
 });

@@ -6,7 +6,7 @@ import {
   stat as statAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, extname, join, normalize, resolve, relative } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
@@ -26,6 +26,7 @@ import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failu
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
 import {
   clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
+  drainReconnectableAbortEntries,
   replaceReconnectableAbortEntry,
   scheduleReconnectAbortTimersForDisconnectedClient,
   type ReconnectableAbortEntry,
@@ -429,6 +430,7 @@ function sendClientAck(
 
 const CONVERSATION_REPLAY_BATCH_SIZE = 100;
 const CONVERSATION_RECONNECT_GRACE_MS = 30_000;
+const MAX_RECONNECTABLE_ABORT_CONTROLLERS = 100;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
 
@@ -2321,10 +2323,13 @@ export async function createGateway(config: GatewayConfig) {
                 controller: abortController,
                 sessionId: parsed.sessionId,
                 abortTimer: null,
+              }, {
+                maxEntries: MAX_RECONNECTABLE_ABORT_CONTROLLERS,
               });
             }
             sendClientAck(ws, parsed, "accepted", false);
             let runEventSeq = 0;
+            const replayRequestId = requestId ?? `legacy-${randomUUID()}`;
             const withReplayId = (msg: ServerMessage): ServerMessage => {
               if (!msg.type.startsWith("kernel:")) return msg;
               const replaySessionId = msg.type === "kernel:init"
@@ -2332,7 +2337,7 @@ export async function createGateway(config: GatewayConfig) {
                 : activeSessionId ?? parsed.sessionId ?? "pending";
               return {
                 ...msg,
-                eventId: `${replaySessionId}:${requestId ?? "legacy"}:${runEventSeq++}`,
+                eventId: `${replaySessionId}:${replayRequestId}:${runEventSeq++}`,
               } as ServerMessage;
             };
 
@@ -4570,6 +4575,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();

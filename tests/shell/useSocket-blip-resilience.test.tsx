@@ -152,6 +152,37 @@ describe("useSocket short blip resilience", () => {
     expect(delivered).toEqual([{ type: "message", text: "latest draft", requestId: "req-deduped" }]);
   });
 
+  it("preserves stop requests during a short reconnect blip", async () => {
+    const { ensureConnected, sendMessage } = await import("../../shell/src/hooks/useSocket.js");
+
+    ensureConnected();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    MockWebSocket.autoOpen = false;
+    const firstSocket = MockWebSocket.instances[0];
+    act(() => {
+      firstSocket.close();
+    });
+    sendMessage({ type: "abort", requestId: "req-stop" });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => {
+      ws.readyState = MockWebSocket.OPEN;
+      ws.onopen?.();
+    });
+
+    expect(ws.sent.map((raw) => JSON.parse(raw))).toContainEqual({
+      type: "abort",
+      requestId: "req-stop",
+    });
+  });
+
   it("tracks outbound action delivery acknowledgments without message content", async () => {
     const { ensureConnected, getDeliveryState, sendMessage } = await import("../../shell/src/hooks/useSocket.js");
 

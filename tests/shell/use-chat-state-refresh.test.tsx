@@ -178,6 +178,37 @@ describe("useChatState refresh recovery", () => {
     });
   });
 
+  it("restores the active abort target when replaying an active run", async () => {
+    let handler: ((msg: unknown) => void) | null = null;
+    subscribeMock.mockImplementation((next: (msg: unknown) => void) => {
+      handler = next;
+      return () => {};
+    });
+    let latestState: ReturnType<typeof useChatState> | null = null;
+    render(<Probe onState={(state) => { latestState = state; }} />);
+
+    await act(async () => {
+      handler?.({
+        type: "kernel:init",
+        sessionId: "conv-replay",
+        requestId: "req-replay",
+        eventId: "conv-replay:req-replay:0",
+      });
+    });
+    await waitFor(() => {
+      expect(latestState?.busy).toBe(true);
+    });
+
+    await act(async () => {
+      latestState?.abortCurrent();
+    });
+
+    expect(sendMock).toHaveBeenCalledWith({
+      type: "abort",
+      requestId: "req-replay",
+    });
+  });
+
   it("ignores stale restore loads when conversations change mid-restore", async () => {
     const conv1 = {
       id: "conv-1",

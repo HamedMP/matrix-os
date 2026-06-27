@@ -88,7 +88,8 @@ export class MessageQueue {
     if (key) {
       const existingIndex = this.entries.findIndex((entry) => entry.key === key);
       if (existingIndex >= 0) {
-        this.entries[existingIndex] = { data, key, enqueuedAt: Date.now() };
+        this.entries.splice(existingIndex, 1);
+        this.entries.push({ data, key, enqueuedAt: Date.now() });
         return;
       }
     }

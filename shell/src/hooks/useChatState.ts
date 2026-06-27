@@ -109,6 +109,9 @@ export function useChatState(): ChatState {
 
       if (msg.type === "kernel:init") {
         setSessionId(msg.sessionId);
+        if (msg.requestId) {
+          currentRequestIdRef.current = msg.requestId;
+        }
         setBusy(true);
         return;
       }

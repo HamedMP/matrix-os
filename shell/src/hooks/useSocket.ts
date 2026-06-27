@@ -23,7 +23,7 @@ export type ServerMessage =
   | { type: "provision:start"; appCount: number }
   | { type: "provision:complete"; total: number; succeeded: number; failed: number }
   | { type: "session:switched"; sessionId: string }
-  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
+  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number; requestId?: string; eventId?: string }
   | { type: "data:change"; app: string; key: string }
   | {
       type: "client:ack";
@@ -330,11 +330,6 @@ export function sendMessage(msg: ClientMessage) {
   if (globalSocket?.readyState === WebSocket.OPEN) {
     globalSocket.send(data);
     setDeliveryState(metadata, "sent", false);
-  } else if (msg.type === "abort") {
-    // Don't queue aborts -- if the socket dropped, the run on the gateway
-    // is already cleaned up server-side via the WS close handler.
-    setDeliveryState(metadata, "failed", true);
-    return;
   } else {
     messageQueue.enqueue(data, metadata?.id);
     setDeliveryState(metadata, "queued", true);

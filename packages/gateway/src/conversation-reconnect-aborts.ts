@@ -9,6 +9,10 @@ interface ScheduleReconnectAbortOptions {
   hasActiveSessionConnection: (sessionId: string) => boolean;
 }
 
+interface ReplaceReconnectableAbortEntryOptions {
+  maxEntries?: number;
+}
+
 function scheduleReconnectAbortTimer(
   entries: Map<string, ReconnectableAbortEntry>,
   requestId: string,
@@ -25,6 +29,7 @@ export function replaceReconnectableAbortEntry(
   entries: Map<string, ReconnectableAbortEntry>,
   requestId: string,
   entry: ReconnectableAbortEntry,
+  options: ReplaceReconnectableAbortEntryOptions = {},
 ): void {
   const existing = entries.get(requestId);
   if (existing?.abortTimer) {
@@ -32,6 +37,38 @@ export function replaceReconnectableAbortEntry(
     existing.abortTimer = null;
   }
   entries.set(requestId, entry);
+  evictOverflowEntries(entries, options.maxEntries);
+}
+
+function evictOverflowEntries(
+  entries: Map<string, ReconnectableAbortEntry>,
+  maxEntries: number | undefined,
+): void {
+  if (!maxEntries || maxEntries < 1) return;
+  while (entries.size > maxEntries) {
+    const oldest = entries.entries().next().value;
+    if (!oldest) return;
+    const [requestId, entry] = oldest;
+    if (entry.abortTimer) {
+      clearTimeout(entry.abortTimer);
+      entry.abortTimer = null;
+    }
+    entry.controller.abort();
+    entries.delete(requestId);
+  }
+}
+
+export function drainReconnectableAbortEntries(
+  entries: Map<string, ReconnectableAbortEntry>,
+): void {
+  for (const entry of entries.values()) {
+    if (entry.abortTimer) {
+      clearTimeout(entry.abortTimer);
+      entry.abortTimer = null;
+    }
+    entry.controller.abort();
+  }
+  entries.clear();
 }
 
 export function clearReconnectAbortTimersForSession(
