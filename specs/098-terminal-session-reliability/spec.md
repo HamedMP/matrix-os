@@ -23,7 +23,7 @@ When implementation touches both specs, use this boundary:
 
 A developer running commands or agents in Matrix Terminal always sees a visual status that reflects the real runtime state. Stale saved metadata must not keep a shell looking "waiting", "running", or otherwise stuck after the process has produced newer activity, finished, exited, or disappeared.
 
-**Why this priority**: Dennis's report that sessions remain visually stuck after v2026.06.24-483 shows that the current status model can mislead users even when the underlying runtime may have changed.
+**Why this priority**: A customer runtime incident showed sessions remaining visually stuck after v2026.06.24-483, showing that the current status model can mislead users even when the underlying runtime may have changed.
 
 **Independent Test**: Seed an existing terminal session with stale waiting metadata, then simulate live output, command-start marks, command-finished marks, quiet live state, and missing runtime state. The user-visible status must update from runtime evidence without manual data cleanup.
 

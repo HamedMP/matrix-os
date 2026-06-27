@@ -21,9 +21,10 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, patterns, react-doctor, sync-client, unit, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
+    expect(workflow).toContain('needs.shell-production-build.result');
     expect(workflow).toContain('needs.patterns.result');
     expect(workflow).toContain('needs.react-doctor.result');
     expect(workflow).toContain('needs.sync-client.result');

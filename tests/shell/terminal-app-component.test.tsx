@@ -8,6 +8,7 @@ const paneGridSpy = vi.fn();
 const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
   saveThemeSpy: vi.fn(async () => {}),
   terminalSettingsState: {
+    appThemeId: "matrix-dark",
     themeId: "system",
     fontSize: 13,
     fontFamily: "JetBrains Mono",
@@ -15,6 +16,9 @@ const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
     cursorStyle: "block",
     smoothScroll: true,
     cursorBlink: true,
+    setAppThemeId: vi.fn((appThemeId: string) => {
+      terminalSettingsState.appThemeId = appThemeId;
+    }),
     setThemeId: vi.fn(),
     setFontSize: vi.fn(),
     setFontFamily: vi.fn(),
@@ -50,6 +54,7 @@ vi.mock("@/stores/terminal-settings", () => {
   return {
     TERMINAL_FONT_FAMILIES: ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"],
     DEFAULT_TERMINAL_THEME_ID: "dark",
+    DEFAULT_TERMINAL_APP_THEME_ID: "matrix-dark",
     useTerminalSettings,
   };
 });
@@ -130,7 +135,10 @@ describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
     saveThemeSpy.mockClear();
+    terminalSettingsState.appThemeId = "matrix-dark";
     terminalSettingsState.themeId = "system";
+    terminalSettingsState.setAppThemeId.mockClear();
+    terminalSettingsState.setThemeId.mockClear();
     vi.useFakeTimers();
     vi.stubGlobal("ResizeObserver", ResizeObserverMock as unknown as typeof ResizeObserver);
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -304,8 +312,8 @@ describe("TerminalApp", () => {
     expect(keyBar.style.position).toBe("sticky");
     expect(keyBar.style.bottom).toBe("var(--matrix-terminal-keybar-bottom)");
     expect(keyBar.style.getPropertyValue("--matrix-terminal-keybar-bottom")).toBe("env(keyboard-inset-height, 0px)");
-    expect(keyBar.style.background).toContain("28, 32, 25");
-    expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("240, 239, 229");
+    expect(keyBar.style.background).toContain("21, 24, 15");
+    expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("201, 199, 183");
     expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy();
   });
 
@@ -342,7 +350,7 @@ describe("TerminalApp", () => {
     expect(screen.queryByText("Zellij")).toBeNull();
   });
 
-  it("opens terminal-only theme preferences without global Matrix OS theme controls", async () => {
+  it("opens terminal-only app theme menu without Match system or global Matrix OS theme controls", async () => {
     const fetchMock = vi.mocked(fetch);
     render(<TerminalApp />);
 
@@ -357,30 +365,31 @@ describe("TerminalApp", () => {
     expect(button.textContent?.replace(/\s+/g, "")).toBe("☼Theme");
     expect(button.style.height).toBe("34px");
     expect(button.style.borderRadius).toBe("9px");
-    expect(button.style.background).toBe("rgb(32, 36, 28)");
-    expect(button.style.borderColor).toBe("rgb(45, 49, 39)");
+    expect(button.style.background).toBe("var(--terminal-chrome-control-bg)");
+    expect(button.getAttribute("style")).toContain("border-color: var(--terminal-chrome-control-border)");
 
     await act(async () => {
       fireEvent.click(button);
       await Promise.resolve();
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions/main/preferences"),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(screen.getByRole("dialog", { name: "Shell theme" })).toBeTruthy();
-    expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
-    expect(screen.getByText("gruvbox-light")).toBeTruthy();
-    expect(screen.getByText("custom · green on black")).toBeTruthy();
-    expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
-    expect(screen.queryByText("Warm paper")).toBeNull();
-    expect(screen.queryByText("Warm dark")).toBeNull();
-    expect(screen.queryByText("Phosphor green")).toBeNull();
+    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    expect(screen.getByText("Warm paper")).toBeTruthy();
+    expect(screen.getByText("Warm dark")).toBeTruthy();
+    expect(screen.getByText("Phosphor green")).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Light Warm paper" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Matrix OS Dark Warm dark" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: "Matrix Phosphor green" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Change shell theme Advanced terminal colors" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Match system" })).toBeNull();
-    expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
+    expect(screen.queryByText("Match system")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Shell theme" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
     expect(saveThemeSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.anything(),
+    );
 
     fetchMock.mockClear();
     await act(async () => {
@@ -388,11 +397,91 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.queryByRole("dialog", { name: "Shell theme" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("saves terminal shell theme preferences to the session-scoped API", async () => {
+  it("updates terminal app theme without saving the global Matrix OS theme", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Light Warm paper" }));
+      await Promise.resolve();
+    });
+
+    expect(terminalSettingsState.setAppThemeId).toHaveBeenCalledWith("light");
+    expect(terminalSettingsState.appThemeId).toBe("light");
+    expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
+    expect(saveThemeSpy).not.toHaveBeenCalled();
+  });
+
+  it("applies terminal app theme to Terminal chrome without changing shell colors", async () => {
+    terminalSettingsState.themeId = "dark";
+    const view = render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let terminalApp = screen.getByRole("application", { name: "Terminal" });
+    const contentSurface = screen.getByTestId("terminal-content-surface");
+    expect(contentSurface.style.background).toBe("rgb(12, 12, 12)");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#15180F");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#20241C");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Light Warm paper" }));
+      await Promise.resolve();
+    });
+    view.rerender(<TerminalApp />);
+
+    terminalApp = screen.getByRole("application", { name: "Terminal" });
+    expect(terminalSettingsState.appThemeId).toBe("light");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#E9E9D8");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#FFFDF7");
+    expect(screen.getByTestId("terminal-sidebar-shell").style.background).toBe("var(--terminal-drawer-bg)");
+    expect(screen.getByTestId("terminal-session-card-main").style.background).toBe("var(--terminal-drawer-card-bg)");
+    expect(screen.getByTestId("terminal-content-surface").style.background).toBe("rgb(12, 12, 12)");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix Phosphor green" }));
+      await Promise.resolve();
+    });
+    view.rerender(<TerminalApp />);
+
+    terminalApp = screen.getByRole("application", { name: "Terminal" });
+    expect(terminalSettingsState.appThemeId).toBe("matrix");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#08110B");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#0F1A12");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-fg")).toBe("#9BFFB5");
+    expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-fg)");
+    expect(screen.getByTestId("terminal-content-surface").style.background).toBe("rgb(12, 12, 12)");
+    expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
+    expect(saveThemeSpy).not.toHaveBeenCalled();
+  });
+
+  it("opens advanced shell theme chooser and saves global terminal shell theme", async () => {
     const fetchMock = vi.mocked(fetch);
     render(<TerminalApp />);
 
@@ -408,17 +497,47 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions/main/preferences"),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(screen.getByRole("dialog", { name: "Shell theme" })).toBeTruthy();
+    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    fetchMock.mockClear();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Change shell theme Advanced terminal colors" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("dialog", { name: "Shell theme" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Shell theme" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-shell-theme-panel")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to theme menu" })).toBeTruthy();
     expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
     expect(screen.getByText("custom · green on black")).toBeTruthy();
     expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
+    expect(screen.getByTestId("terminal-shell-theme-panel").style.animation).toContain("terminalShellThemePanelIn");
+    expect(screen.getByText("RECOMMENDED").style.fontSize).toBe("8px");
+    expect(screen.getByText("RECOMMENDED").style.animation).toContain("terminalShellThemeBadgeIn");
+    expect(screen.getByText("RECOMMENDED").parentElement?.style.justifyContent).toBe("flex-end");
+    expect(screen.getByText("RECOMMENDED").parentElement?.style.minWidth).toBe("132px");
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
     expect(saveThemeSpy).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.anything(),
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Back to theme menu" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Shell theme" })).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("menuitem", { name: "Change shell theme Advanced terminal colors" }));
+      await Promise.resolve();
+    });
 
     fetchMock.mockClear();
     await act(async () => {
@@ -427,7 +546,7 @@ describe("TerminalApp", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/terminal/sessions/main/preferences"),
+      expect.stringContaining("/api/terminal/preferences"),
       expect.objectContaining({
         method: "PUT",
         body: expect.stringContaining("\"shellThemeId\":\"light\""),
@@ -1461,6 +1580,23 @@ describe("TerminalApp", () => {
     ))).toBe(false);
   });
 
+  it("keeps the new-session menu visible outside a resized drawer", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    expect(screen.getByRole("menu", { name: "New session menu" })).toBeTruthy();
+    expect(screen.getByTestId("terminal-sidebar-shell").style.overflow).toBe("visible");
+  });
+
   it("opens Matrix-named shell sessions from the new-session menu", async () => {
     render(<TerminalApp />);
 
@@ -1627,8 +1763,9 @@ describe("TerminalApp", () => {
     expect(sidebarShell.style.width).toBe("440px");
   });
 
-  it("uses the terminal background for the sessions drawer terminal-facing divider", async () => {
+  it("uses the terminal app drawer border for the sessions drawer divider", async () => {
     terminalSettingsState.themeId = "dark";
+    terminalSettingsState.appThemeId = "matrix-dark";
 
     render(<TerminalApp />);
 
@@ -1641,14 +1778,14 @@ describe("TerminalApp", () => {
     const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
     const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
 
-    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(12, 12, 12)");
-    expect(resizeHandle.style.background).toBe("rgb(12, 12, 12)");
+    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(36, 39, 31)");
+    expect(resizeHandle.style.background).toBe("rgb(36, 39, 31)");
     expect(resizeHandle.style.background).not.toContain("transparent");
     expect(resizeHandle.style.background).not.toContain("197, 196, 180");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
-    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(12, 12, 12)");
+    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(36, 39, 31)");
   });
 
   it("stops terminal drawer resizing when the drag is canceled", async () => {
@@ -1860,7 +1997,7 @@ describe("TerminalApp", () => {
     expect(matrixRailDot.style.top).toBe("-3px");
     expect(matrixRailDot.style.right).toBe("-3px");
     expect(matrixRailDot.style.borderTopWidth).toBe("2px");
-    expect(matrixRailDot.style.borderTopColor).toBe("rgb(233, 233, 216)");
+    expect(matrixRailDot.getAttribute("style")).toContain("border-color: var(--terminal-drawer-bg)");
     expect(matrixRailDot.style.zIndex).toBe("1");
     const newSessionIcon = screen.getByTestId("terminal-collapsed-new-session-icon");
     expect(newSessionIcon.getAttribute("width")).toBe("18");
@@ -2893,6 +3030,9 @@ describe("TerminalApp", () => {
     expect(within(menu).getByRole("menuitem", { name: /Pi.*Install/ })).toBeTruthy();
     expect(within(menu).queryByText("Ready")).toBeNull();
     expect(within(menu).getAllByText("Install")).toHaveLength(2);
+    const installPill = within(menu).getAllByTestId("terminal-agent-install-pill")[0];
+    expect(installPill.style.background).toBe("var(--terminal-drawer-action-bg)");
+    expect(installPill.style.color).toBe("var(--terminal-drawer-action-fg)");
     expect(within(menu).getByTestId("terminal-agent-logo-claude")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-codex")).toBeTruthy();
     expect(within(menu).getByTestId("terminal-agent-logo-opencode")).toBeTruthy();
@@ -2901,6 +3041,58 @@ describe("TerminalApp", () => {
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-codex"), "/agent-logos/codex.png");
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-opencode"), "/agent-logos/opencode-white.png");
     expectOptimizedImageSrc(within(menu).getByTestId("terminal-agent-logo-image-pi"), "/agent-logos/pi-coding-agent.png");
+  });
+
+  it("refreshes agent install state when opening the new-session menu", async () => {
+    let agentStatusCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/agents")) {
+        agentStatusCalls += 1;
+        const installed = agentStatusCalls > 1;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            agents: [
+              { id: "claude", installed: true, authState: "ok" },
+              { id: "codex", installed: true, authState: "ok" },
+              { id: "opencode", installed, authState: installed ? "ok" : "unknown", errorCode: installed ? null : "agent_missing" },
+              { id: "pi", installed, authState: installed ? "ok" : "unknown", errorCode: installed ? null : "agent_missing" },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    const menu = screen.getByRole("menu", { name: "New session menu" });
+    await vi.waitFor(() => {
+      expect(within(menu).queryByRole("menuitem", { name: /OpenCode.*Install/ })).toBeNull();
+      expect(within(menu).queryByRole("menuitem", { name: /Pi.*Install/ })).toBeNull();
+    });
+    expect(within(menu).getByRole("menuitem", { name: /^OpenCode$/ })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /^Pi$/ })).toBeTruthy();
   });
 
   it("starts installed agents directly from the new-session menu", async () => {

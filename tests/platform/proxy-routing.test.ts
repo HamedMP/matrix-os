@@ -494,6 +494,7 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBeNull();
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
@@ -516,6 +517,38 @@ describe("platform proxy routing", () => {
     });
 
     expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBe("app-session-stale");
+    expect(await res.json()).toEqual({ error: "Unauthorized" });
+  });
+
+  it("returns generic unauthorized for expired app-shell session cookies on billing routes", async () => {
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: "alice",
+      gatewayUrl: "https://app.matrix-os.com",
+      runtimeSlot: "primary",
+      expiresInSec: -120,
+    });
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/billing/status", {
+      headers: {
+        host: "app.matrix-os.com",
+        cookie: `matrix_app_session=${encodeURIComponent(issued.token)}`,
+      },
+    });
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("x-auth-failure")).toBe("app-session-stale");
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
@@ -2855,6 +2888,20 @@ describe("platform proxy routing", () => {
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
     expect(html).toContain("signal: controller.signal");
     expect(html).toContain("window.clearTimeout(timeoutId);");
+    expect(html).toContain(".auth-card.default-installs-card");
+    expect(html).toContain("setDefaultInstallsCard(true);");
+    expect(html).toContain("state.className = 'session-state default-installs-state';");
+    expect(html).toContain("kicker.textContent = 'Default installs';");
+    expect(html).toContain("heading.textContent = 'Choose what Matrix installs first';");
+    expect(html).toContain("toolsHeading.textContent = 'Developer tools';");
+    expect(html).toContain("label.className = 'developer-tool-option selected';");
+    expect(html).toContain("var developerToolLogos = {");
+    expect(html).toContain("<title>OpenAI</title>");
+    expect(html).toContain("<title>Anthropic</title>");
+    expect(html).toContain("<title id=\"opencode-title\">OpenCode</title>");
+    expect(html).toContain("<title>Pi</title>");
+    expect(html).toContain("logo.innerHTML = developerToolLogos[tool] || '';");
+    expect(html).toContain("footerText.textContent = 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';");
     expect(html).toContain("matrix.billing.checkoutAttemptAt");
     expect(html).toContain("hasTrustedCheckoutReturn()");
     expect(html).toContain("stripCheckoutReturnParams()");
