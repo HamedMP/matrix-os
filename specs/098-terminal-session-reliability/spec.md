@@ -9,7 +9,7 @@
 
 This spec owns terminal runtime/session reliability: the truth model for live terminal sessions, saved shell metadata, terminal pane references, terminal WebSocket reattach, terminal close/delete behavior, and terminal-specific diagnostics.
 
-Related spec `specs/099-shell-connection-resilience/` owns browser-shell live connection resilience: reconnect banners, browser live-event replay, credential refresh, queued outbound shell actions, public route health, and shell-wide connection diagnostics.
+Companion spec PR #642, expected to land at `specs/099-shell-connection-resilience/`, owns browser-shell live connection resilience: reconnect banners, browser live-event replay, credential refresh, queued outbound shell actions, public route health, and shell-wide connection diagnostics.
 
 When implementation touches both specs, use this boundary:
 
@@ -23,7 +23,7 @@ When implementation touches both specs, use this boundary:
 
 A developer running commands or agents in Matrix Terminal always sees a visual status that reflects the real runtime state. Stale saved metadata must not keep a shell looking "waiting", "running", or otherwise stuck after the process has produced newer activity, finished, exited, or disappeared.
 
-**Why this priority**: A user (VPS username: dennisschm) reported that sessions remain visually stuck after v2026.06.24-483, showing that the current status model can mislead users even when the underlying runtime may have changed.
+**Why this priority**: A customer runtime incident showed sessions remaining visually stuck after v2026.06.24-483, showing that the current status model can mislead users even when the underlying runtime may have changed.
 
 **Independent Test**: Seed an existing terminal session with stale waiting metadata, then simulate live output, command-start marks, command-finished marks, quiet live state, and missing runtime state. The user-visible status must update from runtime evidence without manual data cleanup.
 
