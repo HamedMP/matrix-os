@@ -12,6 +12,13 @@ interface WsTokenResponse {
   expiresAt?: unknown;
 }
 
+export class WebSocketCredentialUnavailableError extends Error {
+  constructor() {
+    super("WebSocket credential unavailable");
+    this.name = "WebSocketCredentialUnavailableError";
+  }
+}
+
 function getCachedToken(now = Date.now()): string | null {
   if (!cachedToken) {
     return null;
@@ -57,6 +64,7 @@ export async function getWebSocketAuthToken(): Promise<string | null> {
 export async function buildAuthenticatedWebSocketUrl(
   path: string,
   query?: Record<string, string | undefined>,
+  options?: { requireToken?: boolean },
 ): Promise<string> {
   const gatewayUrl = new URL(getGatewayWs());
   gatewayUrl.pathname = path;
@@ -69,6 +77,9 @@ export async function buildAuthenticatedWebSocketUrl(
   }
 
   const token = await getWebSocketAuthToken();
+  if (!token && options?.requireToken) {
+    throw new WebSocketCredentialUnavailableError();
+  }
   if (token) {
     gatewayUrl.searchParams.set("token", token);
   }
