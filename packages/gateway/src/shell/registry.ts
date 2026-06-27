@@ -3,12 +3,19 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { shellError } from "./errors.js";
-import { resolveShellCwd, validateLayoutName, validateSessionName } from "./names.js";
+import { resolveShellCwd, SESSION_NAME_PATTERN, validateLayoutName, validateSessionName } from "./names.js";
 import type { ScrollbackActivity, ScrollbackStore } from "./scrollback-store.js";
 
 const ShellPlacementSchema = z.enum(["active", "background"]);
 const ShellVisualStatusSchema = z.enum(["running", "finished", "idle", "waiting"]);
+const ShellSessionReferenceSourceSchema = z.enum(["pane", "workspace", "legacy"]);
+const ShellSessionReferenceSchema = z.object({
+  id: z.string().min(1).max(128),
+  source: ShellSessionReferenceSourceSchema,
+  sessionName: z.string().regex(SESSION_NAME_PATTERN),
+});
 const SHELL_RUNNING_FALLBACK_WINDOW_MS = 12_000;
+const SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS = 12_000;
 
 export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
@@ -34,22 +41,37 @@ const ShellSessionSchema = z.object({
   placement: ShellPlacementSchema.default("active"),
   lastSeenSeq: z.number().int().nonnegative().nullable().default(null),
   visualStatus: ShellVisualStatusSchema.optional(),
+  visualStatusUpdatedAt: z.string().optional(),
 });
 
 const RegistryFileSchema = z.object({
   sessions: z.record(z.string(), ShellSessionSchema).default({}),
   order: z.array(z.string()).optional(),
+  aliases: z.record(z.string(), z.string()).catch({}).optional(),
+  references: z.array(ShellSessionReferenceSchema).catch([]).optional(),
 });
 
 type PersistedShellSession = z.infer<typeof ShellSessionSchema>;
 type RegistryFile = z.infer<typeof RegistryFileSchema>;
+type ShellSessionReference = z.infer<typeof ShellSessionReferenceSchema>;
 export type ShellPlacement = z.infer<typeof ShellPlacementSchema>;
 export type ShellVisualStatus = z.infer<typeof ShellVisualStatusSchema>;
+export type ShellSessionAliasSource = z.infer<typeof ShellSessionReferenceSourceSchema>;
+export interface ShellSessionAlias {
+  name: string;
+  target: string;
+  source: ShellSessionAliasSource;
+}
 export interface ShellSession extends PersistedShellSession {
+  canonicalName: string;
   latestSeq: number | null;
   unread: boolean;
   visualStatus: ShellVisualStatus;
   attachCommand: string;
+  aliases: ShellSessionAlias[];
+  references: ShellSessionReference[];
+  recoverable: boolean;
+  recoveryReason?: "missing_runtime_session";
 }
 
 export interface ShellSessionUiStatePatch {
@@ -108,7 +130,7 @@ export class ShellRegistry {
         await this.write(file);
       }
 
-      return this.decorateSessions(this.orderActiveSessions(file, activeSessions));
+      return this.decorateSessions(this.withRecoverableReferences(file, live, this.orderActiveSessions(file, activeSessions)), file);
     });
   }
 
@@ -116,22 +138,23 @@ export class ShellRegistry {
     return this.withMutationLock(async () => {
       const safeName = validateSessionName(name);
       const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
       const live = await this.options.adapter.listSessions();
-      if (!live.includes(safeName)) {
+      if (!live.includes(targetName)) {
         throw shellError("session_not_found", "Session not found", 404);
       }
       const now = new Date().toISOString();
-      const existing = file.sessions[safeName];
+      const existing = file.sessions[targetName];
       const session: PersistedShellSession = {
-        ...(existing ?? this.adoptSession(safeName, now)),
+        ...(existing ?? this.adoptSession(targetName, now)),
         status: "active" as const,
         updatedAt: existing?.status === "active" ? existing.updatedAt : now,
       };
       if (!existing || existing.status !== "active") {
-        file.sessions[safeName] = session;
+        file.sessions[targetName] = session;
         await this.write(file);
       }
-      return this.decorateSession(session);
+      return this.decorateSession(session, file);
     });
   }
 
@@ -160,7 +183,7 @@ export class ShellRegistry {
         };
         file.sessions[name] = session;
         await this.write(file);
-        return this.decorateSession(session);
+        return this.decorateSession(session, file);
       }
       if (changed) {
         await this.write(file);
@@ -200,7 +223,7 @@ export class ShellRegistry {
         throw err;
       }
 
-      return this.decorateSession(session);
+      return this.decorateSession(session, file);
     });
   }
 
@@ -209,24 +232,30 @@ export class ShellRegistry {
       const safeName = validateSessionName(name);
       const file = await this.read();
       const now = new Date().toISOString();
-      let existing = file.sessions[safeName];
+      const targetName = this.resolveSessionName(file, safeName);
+      let existing = file.sessions[targetName];
       if (!existing) {
         const live = new Set(await this.options.adapter.listSessions());
-        if (!live.has(safeName)) {
+        if (!live.has(targetName)) {
           throw shellError("session_not_found", "Session not found", 404);
         }
-        existing = this.adoptSession(safeName, now);
+        existing = this.adoptSession(targetName, now);
       }
+      const existingVisualStatusUpdatedAt =
+        existing.visualStatusUpdatedAt ?? (existing.visualStatus ? existing.updatedAt : undefined);
+      const visualStatusIntent = patch.visualStatus !== undefined;
       const next: PersistedShellSession = {
         ...existing,
         updatedAt: now,
+        ...(existingVisualStatusUpdatedAt ? { visualStatusUpdatedAt: existingVisualStatusUpdatedAt } : {}),
         ...(patch.placement !== undefined ? { placement: patch.placement } : {}),
         ...(patch.lastSeenSeq !== undefined ? { lastSeenSeq: patch.lastSeenSeq } : {}),
         ...(patch.visualStatus !== undefined ? { visualStatus: patch.visualStatus } : {}),
+        ...(visualStatusIntent ? { visualStatusUpdatedAt: now } : {}),
       };
-      file.sessions[safeName] = next;
+      file.sessions[targetName] = next;
       await this.write(file);
-      return this.decorateSession(next);
+      return this.decorateSession(next, file);
     });
   }
 
@@ -239,62 +268,74 @@ export class ShellRegistry {
       }
 
       const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
       const live = new Set(await this.options.adapter.listSessions());
-      if (!live.has(safeName)) {
+      if (!live.has(targetName)) {
         throw shellError("session_not_found", "Session not found", 404);
       }
-      if (safeName === safeNextName) {
+      if (targetName === safeNextName) {
         const now = new Date().toISOString();
         const session = {
-          ...(file.sessions[safeName] ?? this.adoptSession(safeName, now)),
+          ...(file.sessions[targetName] ?? this.adoptSession(targetName, now)),
           status: "active" as const,
         };
-        file.sessions[safeName] = session;
+        file.sessions[targetName] = session;
         await this.write(file);
-        return this.decorateSession(session);
+        return this.decorateSession(session, file);
+      }
+      const existingAliasTarget = file.aliases?.[safeNextName];
+      if (existingAliasTarget !== undefined && existingAliasTarget !== targetName) {
+        throw shellError("session_exists", "Session already exists", 409);
       }
       if (live.has(safeNextName) || file.sessions[safeNextName]) {
         throw shellError("session_exists", "Session already exists", 409);
       }
 
       const now = new Date().toISOString();
-      const existing = file.sessions[safeName] ?? this.adoptSession(safeName, now);
+      const existing = file.sessions[targetName] ?? this.adoptSession(targetName, now);
       const next: PersistedShellSession = {
         ...existing,
         name: safeNextName,
         status: "active",
         updatedAt: now,
       };
-      delete file.sessions[safeName];
+      delete file.sessions[targetName];
       file.sessions[safeNextName] = next;
       if (file.order) {
-        file.order = file.order.map((entry) => entry === safeName ? safeNextName : entry);
+        file.order = file.order.map((entry) => entry === targetName ? safeNextName : entry);
       }
+      if (file.aliases?.[safeNextName] === targetName) {
+        delete file.aliases[safeNextName];
+        if (Object.keys(file.aliases).length === 0) {
+          delete file.aliases;
+        }
+      }
+      this.retargetAliasesAndReferences(file, targetName, safeNextName);
 
-      await this.options.adapter.renameSession(safeName, safeNextName);
+      await this.options.adapter.renameSession(targetName, safeNextName);
       let scrollbackRenamed = false;
       let preferencesRenamed = false;
       try {
-        await this.options.scrollbackStore?.rename(safeName, safeNextName);
+        await this.options.scrollbackStore?.rename(targetName, safeNextName);
         scrollbackRenamed = true;
-        await this.options.preferencesStore?.rename(safeName, safeNextName);
+        await this.options.preferencesStore?.rename(targetName, safeNextName);
         preferencesRenamed = true;
         if (file.order) {
           const nextLive = new Set(live);
-          nextLive.delete(safeName);
+          nextLive.delete(targetName);
           nextLive.add(safeNextName);
           void this.normalizeCustomOrder(file, Array.from(nextLive).map((liveName) => file.sessions[liveName] ?? this.adoptSession(liveName, now)));
         }
         await this.write(file);
       } catch (err: unknown) {
-        await this.options.adapter.renameSession(safeNextName, safeName).catch((rollbackErr: unknown) => {
+        await this.options.adapter.renameSession(safeNextName, targetName).catch((rollbackErr: unknown) => {
           console.warn(
             "[shell] failed to rollback renamed zellij session:",
             rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
           );
         });
         if (scrollbackRenamed) {
-          await this.options.scrollbackStore?.rename(safeNextName, safeName).catch((rollbackErr: unknown) => {
+          await this.options.scrollbackStore?.rename(safeNextName, targetName).catch((rollbackErr: unknown) => {
             console.warn(
               "[shell] failed to rollback renamed scrollback:",
               rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
@@ -302,7 +343,7 @@ export class ShellRegistry {
           });
         }
         if (preferencesRenamed) {
-          await this.options.preferencesStore?.rename(safeNextName, safeName).catch((rollbackErr: unknown) => {
+          await this.options.preferencesStore?.rename(safeNextName, targetName).catch((rollbackErr: unknown) => {
             console.warn(
               "[shell] failed to rollback renamed preferences:",
               rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
@@ -312,7 +353,7 @@ export class ShellRegistry {
         throw err;
       }
 
-      return this.decorateSession(next);
+      return this.decorateSession(next, file);
     });
   }
 
@@ -320,21 +361,24 @@ export class ShellRegistry {
     return this.withMutationLock(async () => {
       const safeName = validateSessionName(name);
       const file = await this.read();
-      if (!file.sessions[safeName]) {
+      const targetName = this.resolveSessionName(file, safeName);
+      if (!file.sessions[targetName]) {
         if (!options.force) {
           throw shellError("session_not_found", "Session not found", 404);
         }
         const live = new Set(await this.options.adapter.listSessions());
-        if (!live.has(safeName)) {
+        if (!live.has(targetName)) {
           throw shellError("session_not_found", "Session not found", 404);
         }
       }
-      await this.options.adapter.deleteSession(safeName, options);
-      delete file.sessions[safeName];
+      await this.options.adapter.deleteSession(targetName, options);
+      delete file.sessions[targetName];
       if (file.order) {
-        file.order = file.order.filter((entry) => entry !== safeName);
+        file.order = file.order.filter((entry) => entry !== targetName);
       }
-      await this.cleanupScrollback(safeName);
+      this.removeReferencesForTarget(file, targetName);
+      this.removeAliasesForTarget(file, targetName);
+      await this.cleanupScrollback(targetName);
       await this.write(file);
     });
   }
@@ -375,7 +419,7 @@ export class ShellRegistry {
       file.order = this.orderedNamesFromSessions(orderedSessions);
 
       await this.write(file);
-      return this.decorateSessions(orderedSessions);
+      return this.decorateSessions(orderedSessions, file);
     });
   }
 
@@ -392,11 +436,13 @@ export class ShellRegistry {
     };
   }
 
-  private async decorateSession(session: PersistedShellSession): Promise<ShellSession> {
+  private async decorateSession(session: PersistedShellSession, file?: RegistryFile): Promise<ShellSession> {
     const activity = await this.options.scrollbackStore?.latestActivity?.(session.name);
     const latestSeq = activity?.latestSeq ?? await this.options.scrollbackStore?.latestSeq(session.name) ?? null;
     const lastSeenSeq = session.lastSeenSeq ?? session.lastSeq ?? latestSeq;
     const unread = latestSeq !== null && lastSeenSeq !== null && latestSeq > lastSeenSeq;
+    const references = file ? this.referencesForTarget(file, session.name) : [];
+    const recoverable = session.status === "exited" && references.length > 0;
     const visualStatus = this.deriveVisualStatus(session, unread, activity);
     return {
       ...session,
@@ -406,6 +452,11 @@ export class ShellRegistry {
       unread,
       visualStatus,
       attachCommand: `mos shell attach ${session.name}`,
+      canonicalName: session.name,
+      aliases: file ? this.aliasesForTarget(file, session.name) : [],
+      references,
+      recoverable,
+      ...(recoverable ? { recoveryReason: "missing_runtime_session" as const } : {}),
     };
   }
 
@@ -414,9 +465,6 @@ export class ShellRegistry {
     unread: boolean,
     activity?: ScrollbackActivity,
   ): ShellVisualStatus {
-    if (session.visualStatus === "waiting") {
-      return "waiting";
-    }
     if (session.status !== "active") {
       return unread ? "finished" : "idle";
     }
@@ -428,6 +476,15 @@ export class ShellRegistry {
     }
     if (activity?.latestOutputAt && isRecentShellOutput(activity.latestOutputAt)) {
       return "running";
+    }
+    if (
+      session.visualStatus === "waiting" &&
+      isRecentShellTimestamp(
+        session.visualStatusUpdatedAt ?? session.updatedAt,
+        SHELL_TRANSITIONAL_VISUAL_STATUS_WINDOW_MS,
+      )
+    ) {
+      return "waiting";
     }
     return unread ? "finished" : "idle";
   }
@@ -494,12 +551,107 @@ export class ShellRegistry {
     return changed;
   }
 
-  private async decorateSessions(sessions: PersistedShellSession[]): Promise<ShellSession[]> {
+  private async decorateSessions(sessions: PersistedShellSession[], file?: RegistryFile): Promise<ShellSession[]> {
     const decorated: ShellSession[] = [];
     for (const session of sessions) {
-      decorated.push(await this.decorateSession(session));
+      decorated.push(await this.decorateSession(session, file));
     }
     return decorated;
+  }
+
+  private withRecoverableReferences(
+    file: RegistryFile,
+    live: string[],
+    activeSessions: PersistedShellSession[],
+  ): PersistedShellSession[] {
+    const liveSet = new Set(live);
+    const activeNames = new Set(activeSessions.map((session) => session.name));
+    const result = [...activeSessions];
+    const now = new Date().toISOString();
+
+    for (const reference of file.references ?? []) {
+      const targetName = this.resolveSessionName(file, reference.sessionName);
+      if (liveSet.has(targetName) || activeNames.has(targetName)) {
+        continue;
+      }
+      if (activeNames.has(reference.sessionName)) {
+        continue;
+      }
+      const existing = file.sessions[targetName] ?? file.sessions[reference.sessionName];
+      result.push({
+        ...(existing ?? this.adoptSession(targetName, now)),
+        name: targetName,
+        status: "exited",
+        updatedAt: existing?.updatedAt ?? now,
+      });
+      activeNames.add(targetName);
+      activeNames.add(reference.sessionName);
+    }
+
+    return result;
+  }
+
+  private resolveSessionName(file: RegistryFile, name: string): string {
+    const target = file.aliases?.[name];
+    return target && isSessionName(target) ? target : name;
+  }
+
+  private aliasesForTarget(file: RegistryFile, target: string): ShellSessionAlias[] {
+    return Object.entries(file.aliases ?? {})
+      .filter(([name, aliasTarget]) => isSessionName(name) && aliasTarget === target)
+      .map(([name, aliasTarget]) => ({
+        name,
+        target: aliasTarget,
+        source: inferAliasSource(name),
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  private referencesForTarget(file: RegistryFile, target: string): ShellSessionReference[] {
+    return (file.references ?? [])
+      .filter((reference) => this.resolveSessionName(file, reference.sessionName) === target)
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  private removeAliasesForTarget(file: RegistryFile, target: string): void {
+    if (!file.aliases) {
+      return;
+    }
+    for (const [alias, aliasTarget] of Object.entries(file.aliases)) {
+      if (alias === target || aliasTarget === target) {
+        delete file.aliases[alias];
+      }
+    }
+    if (Object.keys(file.aliases).length === 0) {
+      delete file.aliases;
+    }
+  }
+
+  private removeReferencesForTarget(file: RegistryFile, target: string): void {
+    if (!file.references) {
+      return;
+    }
+    file.references = file.references.filter((reference) => (
+      reference.sessionName !== target && this.resolveSessionName(file, reference.sessionName) !== target
+    ));
+    if (file.references.length === 0) {
+      delete file.references;
+    }
+  }
+
+  private retargetAliasesAndReferences(file: RegistryFile, fromName: string, toName: string): void {
+    if (file.aliases) {
+      for (const [alias, target] of Object.entries(file.aliases)) {
+        if (target === fromName) {
+          file.aliases[alias] = toName;
+        }
+      }
+    }
+    if (file.references) {
+      file.references = file.references.map((reference) => (
+        reference.sessionName === fromName ? { ...reference, sessionName: toName } : reference
+      ));
+    }
   }
 
   private async read(): Promise<RegistryFile> {
@@ -543,10 +695,22 @@ export class ShellRegistry {
   }
 }
 
+function inferAliasSource(name: string): ShellSessionAliasSource {
+  return name.startsWith("matrix-sess_") ? "legacy" : "workspace";
+}
+
+function isSessionName(value: string): boolean {
+  return SESSION_NAME_PATTERN.test(value);
+}
+
 function isRecentShellOutput(value: string): boolean {
+  return isRecentShellTimestamp(value, SHELL_RUNNING_FALLBACK_WINDOW_MS);
+}
+
+function isRecentShellTimestamp(value: string, windowMs: number): boolean {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
     return false;
   }
-  return Date.now() - timestamp <= SHELL_RUNNING_FALLBACK_WINDOW_MS;
+  return Date.now() - timestamp <= windowMs;
 }

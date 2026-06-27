@@ -9,7 +9,7 @@
 
 This spec owns terminal runtime/session reliability: the truth model for live terminal sessions, saved shell metadata, terminal pane references, terminal WebSocket reattach, terminal close/delete behavior, and terminal-specific diagnostics.
 
-Companion spec PR #642, expected to land at `specs/099-shell-connection-resilience/`, owns browser-shell live connection resilience: reconnect banners, browser live-event replay, credential refresh, queued outbound shell actions, public route health, and shell-wide connection diagnostics.
+Related spec `specs/099-shell-connection-resilience/` owns browser-shell live connection resilience: reconnect banners, browser live-event replay, credential refresh, queued outbound shell actions, public route health, and shell-wide connection diagnostics.
 
 When implementation touches both specs, use this boundary:
 

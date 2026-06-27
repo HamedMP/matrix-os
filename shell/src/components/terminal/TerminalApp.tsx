@@ -37,6 +37,18 @@ import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
+import {
+  applyShellRefreshFailure,
+  applyShellRefreshSilentFailure,
+  applyShellRefreshSuccess,
+  applyShellUiStatePatch,
+  rollbackShellUiStatePatch,
+  shellSessionsEqual,
+  snapshotShellUiStatePatch,
+  type ShellRefreshState,
+  type ShellSessionSummary,
+  type ShellUiStatePatch,
+} from "./terminal-session-state";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
@@ -329,6 +341,18 @@ const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
   position: "relative",
   width: 44,
   zIndex: 1,
+};
+
+const SHELL_ROW_DRAG_HANDLE_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  color: "var(--terminal-drawer-subtle)",
+  flexShrink: 0,
+  height: 18,
+  padding: 0,
+  pointerEvents: "auto",
+  transition: "opacity 120ms ease",
+  width: 12,
 };
 
 const SHELL_THEME_OPTIONS: Array<{
@@ -3390,25 +3414,6 @@ interface ProjectInfo {
 type SidebarTab = "projects" | "shells" | "sessions" | "files";
 type NewSessionMenuAnchor = "drawer" | "rail";
 
-interface ShellSessionSummary {
-  name: string;
-  status?: "active" | "exited" | "degraded";
-  placement?: "active" | "background";
-  updatedAt?: string;
-  attachedClients?: number;
-  latestSeq?: number | null;
-  lastSeenSeq?: number | null;
-  unread?: boolean;
-  visualStatus?: "running" | "waiting" | "finished" | "idle";
-  attachCommand?: string;
-  tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
-}
-
-type ShellUiStatePatch = Partial<Pick<ShellSessionSummary, "placement" | "lastSeenSeq" | "visualStatus">>;
-type ShellUiStatePatchKey = keyof ShellUiStatePatch;
-
-const SHELL_UI_STATE_PATCH_KEYS: ShellUiStatePatchKey[] = ["placement", "lastSeenSeq", "visualStatus"];
-
 interface WorkspaceSessionSummary {
   id: string;
   kind?: "shell" | "agent";
@@ -3546,39 +3551,6 @@ function terminalAgentVisibleInstallCommand(option: TerminalAgentOption): string
   return `sh -lc ${shellQuote(`printf '%s\\n' ${shellQuote(command)}; ${command}; exec "\${SHELL:-sh}" -l`)}`;
 }
 
-function shellSessionsEqual(left: ShellSessionSummary[], right: ShellSessionSummary[]): boolean {
-  return left.length === right.length && left.every((session, index) => {
-    const next = right[index];
-    if (!next) return false;
-    if (
-      session.name !== next.name ||
-      session.status !== next.status ||
-      session.placement !== next.placement ||
-      session.updatedAt !== next.updatedAt ||
-      session.attachedClients !== next.attachedClients ||
-      session.latestSeq !== next.latestSeq ||
-      session.lastSeenSeq !== next.lastSeenSeq ||
-      session.unread !== next.unread ||
-      session.visualStatus !== next.visualStatus ||
-      session.attachCommand !== next.attachCommand
-    ) {
-      return false;
-    }
-    const tabs = session.tabs ?? [];
-    const nextTabs = next.tabs ?? [];
-    if (tabs.length !== nextTabs.length) return false;
-    return tabs.every((tab, tabIndex) => {
-      const nextTab = nextTabs[tabIndex];
-      if (!nextTab) return false;
-      return (
-        tab.idx === nextTab.idx &&
-        tab.name === nextTab.name &&
-        tab.focused === nextTab.focused
-      );
-    });
-  });
-}
-
 function getShellTabCount(shell: ShellSessionSummary): number | null {
   if (!Array.isArray(shell.tabs)) return null;
   return shell.tabs.reduce((count, tab) => {
@@ -3629,89 +3601,6 @@ function shellAttachCommand(shell: ShellSessionSummary): string {
   return shellConnectCommand(shell.name);
 }
 
-function getShellUiStatePatchKeys(patch: ShellUiStatePatch): ShellUiStatePatchKey[] {
-  return SHELL_UI_STATE_PATCH_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(patch, key));
-}
-
-function deriveShellUnread(shell: ShellSessionSummary): ShellSessionSummary {
-  if (shell.latestSeq === undefined || shell.latestSeq === null || shell.lastSeenSeq === undefined || shell.lastSeenSeq === null) {
-    return shell;
-  }
-  return { ...shell, unread: shell.latestSeq > shell.lastSeenSeq };
-}
-
-function applyShellUiStatePatch(shell: ShellSessionSummary, patch: ShellUiStatePatch): ShellSessionSummary {
-  return deriveShellUnread({ ...shell, ...patch });
-}
-
-function snapshotShellUiStatePatchValue(
-  previousValues: ShellUiStatePatch,
-  shell: ShellSessionSummary,
-  key: ShellUiStatePatchKey,
-): void {
-  switch (key) {
-    case "placement":
-      previousValues.placement = shell.placement;
-      return;
-    case "lastSeenSeq":
-      previousValues.lastSeenSeq = shell.lastSeenSeq;
-      return;
-    case "visualStatus":
-      previousValues.visualStatus = shell.visualStatus;
-      return;
-    default: {
-      const unhandledKey: never = key;
-      throw new Error(`Unhandled shell UI state patch key: ${String(unhandledKey)}`);
-    }
-  }
-}
-
-function snapshotShellUiStatePatch(shell: ShellSessionSummary, patch: ShellUiStatePatch): ShellUiStatePatch {
-  const previousValues: ShellUiStatePatch = {};
-  for (const key of getShellUiStatePatchKeys(patch)) {
-    snapshotShellUiStatePatchValue(previousValues, shell, key);
-  }
-  return previousValues;
-}
-
-function rollbackShellUiStatePatchValue(
-  shell: ShellSessionSummary,
-  patch: ShellUiStatePatch,
-  previousValues: ShellUiStatePatch,
-  key: ShellUiStatePatchKey,
-): ShellSessionSummary {
-  switch (key) {
-    case "placement":
-      return Object.is(shell.placement, patch.placement)
-        ? { ...shell, placement: previousValues.placement }
-        : shell;
-    case "lastSeenSeq":
-      return Object.is(shell.lastSeenSeq, patch.lastSeenSeq)
-        ? { ...shell, lastSeenSeq: previousValues.lastSeenSeq }
-        : shell;
-    case "visualStatus":
-      return Object.is(shell.visualStatus, patch.visualStatus)
-        ? { ...shell, visualStatus: previousValues.visualStatus }
-        : shell;
-    default: {
-      const unhandledKey: never = key;
-      throw new Error(`Unhandled shell UI state patch key: ${String(unhandledKey)}`);
-    }
-  }
-}
-
-function rollbackShellUiStatePatch(
-  shell: ShellSessionSummary,
-  patch: ShellUiStatePatch,
-  previousValues: ShellUiStatePatch,
-): ShellSessionSummary {
-  let next = shell;
-  for (const key of getShellUiStatePatchKeys(patch)) {
-    next = rollbackShellUiStatePatchValue(next, patch, previousValues, key);
-  }
-  return deriveShellUnread(next);
-}
-
 function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: WorkspaceSessionSummary[]): boolean {
   if (left.length !== right.length) return false;
   const sortedLeft = [...left].sort((a, b) => a.id.localeCompare(b.id));
@@ -3744,8 +3633,31 @@ function LocalTerminalSidebar() {
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [shells, setShells] = useState<ShellSessionSummary[]>([]);
   const [shellsAuthoritative, setShellsAuthoritative] = useState(false);
+  const [shellsStale, setShellsStale] = useState(false);
   const [shellsLoading, setShellsLoading] = useState(false);
   const [shellsError, setShellsError] = useState<string | null>(null);
+  const shellRefreshStateRef = useRef<ShellRefreshState>({
+    shells: [],
+    authoritative: false,
+    stale: false,
+    error: null,
+  });
+  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for `fetchShells` and shell-tab refresh effect dependencies in compiled and test/runtime surfaces.
+  const commitShellRefreshState = useCallback((nextState: ShellRefreshState) => {
+    shellRefreshStateRef.current = nextState;
+    setShells(nextState.shells);
+    setShellsAuthoritative(nextState.authoritative);
+    setShellsStale(nextState.stale);
+    setShellsError(nextState.error);
+  }, []);
+  useEffect(() => {
+    shellRefreshStateRef.current = {
+      shells,
+      authoritative: shellsAuthoritative,
+      stale: shellsStale,
+      error: shellsError,
+    };
+  }, [shells, shellsAuthoritative, shellsError, shellsStale]);
   const creatingShellRef = useRef(false);
   const reorderSaveCountRef = useRef(0);
   const [creatingShell, setCreatingShell] = useState(false);
@@ -3837,8 +3749,14 @@ function LocalTerminalSidebar() {
         signal: options.signal ?? AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
+        if (silent) {
+          commitShellRefreshState(applyShellRefreshSilentFailure(shellRefreshStateRef.current));
+        }
         if (!silent) {
-          setShellsError("Failed to load shells");
+          commitShellRefreshState(applyShellRefreshFailure(
+            shellRefreshStateRef.current,
+            "Failed to load shells",
+          ));
         }
         return;
       }
@@ -3848,18 +3766,26 @@ function LocalTerminalSidebar() {
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
       const hasSessionList = Array.isArray(data.sessions);
       const nextShells = hasSessionList ? data.sessions! : [];
-      setShellsAuthoritative(hasSessionList);
-      setShells((prev) => shellSessionsEqual(prev, nextShells) ? prev : nextShells);
-      setShellsError(null);
+      commitShellRefreshState(applyShellRefreshSuccess(
+        shellRefreshStateRef.current,
+        nextShells,
+        hasSessionList,
+      ));
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      if (silent) return;
+      if (silent) {
+        commitShellRefreshState(applyShellRefreshSilentFailure(shellRefreshStateRef.current));
+        return;
+      }
       console.warn("Failed to load shell sessions:", err instanceof Error ? err.message : err);
-      setShellsError("Could not reach gateway");
+      commitShellRefreshState(applyShellRefreshFailure(
+        shellRefreshStateRef.current,
+        "Could not reach gateway",
+      ));
     } finally {
       if (!silent) setShellsLoading(false);
     }
-  }, []);
+  }, [commitShellRefreshState]);
 
   useEffect(() => {
     if (tab !== "shells") return;
@@ -4051,7 +3977,12 @@ function LocalTerminalSidebar() {
     }
   };
 
-  const patchShellUiState = async (name: string, patch: ShellUiStatePatch) => {
+  const patchShellUiState = async (
+    name: string,
+    patch: ShellUiStatePatch,
+    options: { rollbackOnFailure?: boolean } = {},
+  ) => {
+    const rollbackOnFailure = options.rollbackOnFailure ?? true;
     setShellsError(null);
     const previousValues: ShellUiStatePatch = {};
     setShells((prev) => prev.map((shell) => {
@@ -4074,8 +4005,10 @@ function LocalTerminalSidebar() {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        setShellsError("Failed to update session");
-        rollback();
+        if (rollbackOnFailure) {
+          setShellsError("Failed to update session");
+          rollback();
+        }
         return null;
       }
       const data = (await res.json()) as { session?: ShellSessionSummary };
@@ -4086,8 +4019,10 @@ function LocalTerminalSidebar() {
       return null;
     } catch (err: unknown) {
       console.warn("Failed to update shell session UI state:", err instanceof Error ? err.message : err);
-      setShellsError("Could not update session");
-      rollback();
+      if (rollbackOnFailure) {
+        setShellsError("Could not update session");
+        rollback();
+      }
       return null;
     }
   };
@@ -4264,7 +4199,7 @@ function LocalTerminalSidebar() {
     void patchShellUiState(shell.name, {
       placement: "active",
       ...(shell.latestSeq !== undefined && shell.latestSeq !== null ? { lastSeenSeq: shell.latestSeq } : {}),
-    });
+    }, { rollbackOnFailure: false });
     openActiveShell(shell, { markSeen: false });
   };
 
@@ -4302,7 +4237,11 @@ function LocalTerminalSidebar() {
       }
       const data = (await res.json()) as { sessions?: ShellSessionSummary[] };
       if (Array.isArray(data.sessions)) {
-        setShells((prev) => shellSessionsEqual(prev, data.sessions!) ? prev : data.sessions!);
+        commitShellRefreshState(applyShellRefreshSuccess(
+          shellRefreshStateRef.current,
+          data.sessions,
+          true,
+        ));
       } else {
         await fetchShells({ silent: true });
       }
@@ -4616,6 +4555,23 @@ function LocalTerminalSidebar() {
       <div className="min-h-0 flex-1 overflow-y-auto" style={{ display: "flex", flexDirection: "column", gap: 18, padding: ctx.mobile ? 20 : 18 }}>
         {shellsLoading && (
           <div style={{ color: "var(--terminal-drawer-muted)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>Loading sessions...</div>
+        )}
+        {!shellsLoading && shellsStale && renderedShells.length > 0 && (
+          <div
+            data-testid="terminal-sessions-stale-label"
+            style={{
+              background: "#FFF7DA",
+              border: "1px solid #EADFAE",
+              borderRadius: 8,
+              color: "#7C5A0B",
+              fontSize: 12,
+              lineHeight: "16px",
+              padding: "9px 10px",
+              textAlign: "center",
+            }}
+          >
+            Terminal session data is stale. Retry refresh.
+          </div>
         )}
         {!shellsLoading && shellsError && (
           <div style={{ color: "#8F6712", fontSize: 12, padding: "24px 0", textAlign: "center" }}>{shellsError}</div>
@@ -5922,17 +5878,9 @@ function ShellCard({
           }}
           className="flex items-center justify-center"
           style={{
-            background: "transparent",
-            border: 0,
-            color: "var(--terminal-drawer-subtle)",
+            ...SHELL_ROW_DRAG_HANDLE_STYLE,
             cursor: showDragHandle ? "grab" : "default",
-            flexShrink: 0,
-            height: 18,
             opacity: showDragHandle ? 1 : 0,
-            padding: 0,
-            pointerEvents: "auto",
-            transition: "opacity 120ms ease",
-            width: 12,
           }}
         >
           <GripVerticalIcon size={12} strokeWidth={2.1} />

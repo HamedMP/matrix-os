@@ -1,7 +1,23 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
+import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
 import { createRateLimiter } from "../../packages/gateway/src/security/rate-limiter.js";
+
+const roots: string[] = [];
+
+async function tempRoot() {
+  const root = await mkdtemp(join(tmpdir(), "matrix-shell-routes-"));
+  roots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
 
 describe("gateway shell routes", () => {
   function appWithRegistry(registry: {
@@ -53,6 +69,74 @@ describe("gateway shell routes", () => {
 
     expect(registry.create).toHaveBeenCalledWith({ name: "setup" });
     expect(registry.delete).toHaveBeenCalledWith("setup", { force: true });
+  });
+
+  it("serves reconciled aliases and stale pane recovery through the terminal sessions route", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "system"), { recursive: true });
+    await writeFile(
+      join(root, "system", "shell-sessions.json"),
+      JSON.stringify({
+        aliases: {
+          "workspace-main": "main",
+          "matrix-sess_run_8162a7cca11891c0": "main",
+        },
+        references: [
+          { id: "pane-stale-docs", source: "pane", sessionName: "docs" },
+        ],
+        sessions: {
+          main: {
+            name: "main",
+            status: "active",
+            createdAt: "2026-06-25T12:00:00.000Z",
+            updatedAt: "2026-06-25T12:00:00.000Z",
+            attachedClients: 0,
+            tabs: [],
+          },
+        },
+      }),
+      { flag: "wx" },
+    );
+    const adapter = {
+      listSessions: vi.fn(async () => ["main"]),
+      createSession: vi.fn(async () => undefined),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+    const app = appWithRegistry(registry);
+
+    const res = await app.request("/api/terminal/sessions");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      sessions: [
+        {
+          name: "main",
+          canonicalName: "main",
+          attachCommand: "mos shell attach main",
+          aliases: [
+            { name: "matrix-sess_run_8162a7cca11891c0", target: "main", source: "legacy" },
+            { name: "workspace-main", target: "main", source: "workspace" },
+          ],
+        },
+        {
+          name: "docs",
+          status: "exited",
+          recoverable: true,
+          recoveryReason: "missing_runtime_session",
+          references: [{ id: "pane-stale-docs", source: "pane", sessionName: "docs" }],
+        },
+      ],
+    });
+    expect(adapter.createSession).not.toHaveBeenCalled();
+    expect(adapter.deleteSession).not.toHaveBeenCalled();
+
+    const deleteRes = await app.request("/api/terminal/sessions/matrix-sess_run_8162a7cca11891c0", {
+      method: "DELETE",
+    });
+
+    expect(deleteRes.status).toBe(200);
+    expect(adapter.deleteSession).toHaveBeenCalledWith("main", { force: false });
   });
 
   it("creates sessions through a bounded JSON route", async () => {
@@ -503,5 +587,71 @@ describe("gateway shell routes", () => {
 
     expect(res.status).toBe(503);
     await expect(res.json()).resolves.toEqual({ shell: { ok: false, code: "zellij_failed" } });
+  });
+
+  it("adds coarse terminal session diagnostics to health on request", async () => {
+    const registry = {
+      list: vi.fn(async () => [
+        { name: "main", status: "active", placement: "active", unread: true, visualStatus: "running" },
+        { name: "docs", status: "active", placement: "background", unread: false, visualStatus: "waiting" },
+        { name: "old", status: "exited", placement: "active", unread: false, visualStatus: "idle" },
+      ]),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry, {
+      health: vi.fn(async () => ({ ok: true, code: "ok" })),
+    });
+
+    const res = await app.request("/api/terminal/health?include=sessions");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      shell: {
+        ok: true,
+        code: "ok",
+        sessions: {
+          ok: true,
+          total: 3,
+          active: 2,
+          background: 1,
+          unread: 1,
+          waiting: 1,
+          exited: 1,
+        },
+      },
+    });
+    expect(registry.list).toHaveBeenCalledTimes(1);
+    expect(registry.create).not.toHaveBeenCalled();
+    expect(registry.delete).not.toHaveBeenCalled();
+  });
+
+  it("keeps shell health healthy when only session diagnostics fail", async () => {
+    const app = appWithRegistry({
+      list: vi.fn(async () => {
+        throw new Error("/home/matrix/home/system/shell-sessions.json unavailable");
+      }),
+      create: vi.fn(),
+      delete: vi.fn(),
+    }, {
+      health: vi.fn(async () => ({ ok: true, code: "ok" })),
+    });
+
+    const res = await app.request("/api/terminal/health?include=sessions");
+    const bodyText = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(bodyText)).toEqual({
+      shell: {
+        ok: true,
+        code: "ok",
+        sessions: {
+          ok: false,
+          code: "session_list_unavailable",
+        },
+      },
+    });
+    expect(bodyText).not.toContain("/home/matrix");
+    expect(bodyText).not.toContain("shell-sessions.json");
   });
 });
