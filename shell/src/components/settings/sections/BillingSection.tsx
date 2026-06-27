@@ -13,7 +13,7 @@ export function BillingSection({
   onCheckoutIntent?: () => void;
   checkoutReturnPath?: string;
 }) {
-  const { active, entitlement, accessReason } = useMatrixBillingAccess();
+  const { active, entitlement, accessReason, accessIssue } = useMatrixBillingAccess();
 
   return (
     <div className="mx-auto max-w-5xl space-y-3 p-2 sm:p-4">
@@ -33,12 +33,14 @@ export function BillingSection({
           className={
             active === true
               ? "border-forest/25 bg-forest/8 text-forest"
+              : accessIssue === "auth"
+                ? "border-sky-500/30 bg-sky-500/10 text-sky-700"
               : active === false
                 ? "border-amber-500/30 bg-amber-500/10 text-amber-700"
                 : "border-border/30 bg-muted/30 text-muted-foreground"
           }
         >
-          {active === true ? "Active" : active === false ? "Not active" : "Checking"}
+          {active === true ? "Active" : accessIssue === "auth" ? "Reconnecting" : active === false ? "Not active" : "Checking"}
         </Badge>
       </div>
 
@@ -46,6 +48,7 @@ export function BillingSection({
         active={active}
         entitlement={entitlement}
         accessReason={accessReason}
+        accessIssue={accessIssue}
         mode={mode}
         onCheckoutIntent={onCheckoutIntent}
         checkoutReturnPath={checkoutReturnPath}

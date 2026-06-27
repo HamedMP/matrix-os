@@ -53,6 +53,9 @@ const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_C
 const MAX_TERMINAL_INPUT = 65_536;
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
+const TERMINAL_SCROLLBACK_LINES = 10_000;
+const TERMINAL_SCROLL_SENSITIVITY = 1;
+const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
 const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   enableSizeReports: false,
   pixelLimit: 4_194_304,
@@ -231,6 +234,37 @@ function suppressXtermNativeKeyboard(container: HTMLElement): void {
   helper.autocapitalize = "none";
   helper.spellcheck = false;
   helper.setAttribute("aria-hidden", "true");
+}
+
+function applyXtermScrollSurface(xtermElement: HTMLElement | null | undefined): void {
+  if (!xtermElement) {
+    return;
+  }
+
+  xtermElement.classList.add("matrix-terminal-xterm-root");
+  xtermElement.style.width = "100%";
+  xtermElement.style.height = "100%";
+  xtermElement.style.overscrollBehavior = "contain";
+  xtermElement.style.touchAction = "pan-y";
+
+  const viewport = xtermElement.querySelector(".xterm-viewport");
+  if (!(viewport instanceof HTMLElement)) {
+    return;
+  }
+
+  viewport.classList.add("matrix-terminal-xterm-viewport");
+  viewport.style.height = "100%";
+  viewport.style.overflowY = "scroll";
+  viewport.style.setProperty("scrollbar-gutter", "stable");
+  viewport.style.overscrollBehavior = "contain";
+  viewport.style.touchAction = "pan-y";
+}
+
+function applyXtermScrollOptions(term: Terminal): void {
+  term.options.scrollback = TERMINAL_SCROLLBACK_LINES;
+  term.options.scrollSensitivity = TERMINAL_SCROLL_SENSITIVITY;
+  term.options.fastScrollSensitivity = TERMINAL_FAST_SCROLL_SENSITIVITY;
+  term.options.scrollOnUserInput = true;
 }
 
 function terminalTelemetry(event: string, properties: Record<string, string | number | boolean | undefined>): void {
@@ -520,14 +554,14 @@ export function TerminalPane({
       if (canReuseCachedTerminal && cached) {
         const termElement = (cached.terminal as { element?: HTMLElement }).element;
         if (termElement) {
-          termElement.style.width = "100%";
-          termElement.style.height = "100%";
           container.appendChild(termElement);
+          applyXtermScrollSurface(termElement);
           if (suppressNativeKeyboard) {
             suppressXtermNativeKeyboard(container);
           }
         }
         term = cached.terminal;
+        applyXtermScrollOptions(term);
         fitAddon = cached.fitAddon;
         searchAddon = cached.searchAddon;
         webglAddon = cached.webglAddon;
@@ -554,6 +588,10 @@ export function TerminalPane({
           cursorBlink,
           cursorStyle: terminalCursorStyle,
           smoothScrollDuration: terminalSmoothScroll ? 125 : 0,
+          scrollback: TERMINAL_SCROLLBACK_LINES,
+          scrollSensitivity: TERMINAL_SCROLL_SENSITIVITY,
+          fastScrollSensitivity: TERMINAL_FAST_SCROLL_SENSITIVITY,
+          scrollOnUserInput: true,
           allowProposedApi: true,
           logger: createXtermLogger(),
           fontSize: terminalFontSize,
@@ -575,8 +613,7 @@ export function TerminalPane({
         }
         const xtermElement = (xterm as { element?: HTMLElement }).element;
         if (xtermElement) {
-          xtermElement.style.width = "100%";
-          xtermElement.style.height = "100%";
+          applyXtermScrollSurface(xtermElement);
           xtermElement.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
         }
         nextFitAddon.fit();

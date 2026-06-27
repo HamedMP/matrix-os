@@ -4,7 +4,15 @@
 // session cookies must land or the handoff failed), L3 (stale Clerk cookies are
 // cleared before installing the fresh pair).
 
-export const REQUIRED_COOKIES = ["matrix_app_session", "matrix_native_app_session"] as const;
+export const HOSTED_SHELL_APP_SESSION_COOKIE = "matrix_app_session";
+export const HOSTED_SHELL_NATIVE_SESSION_COOKIE = "matrix_native_app_session";
+export const REQUIRED_COOKIES = [
+  HOSTED_SHELL_APP_SESSION_COOKIE,
+  HOSTED_SHELL_NATIVE_SESSION_COOKIE,
+] as const;
+export const HOSTED_SHELL_SESSION_REFRESH_SKEW_MS = 10 * 60 * 1000;
+export const HOSTED_SHELL_SESSION_REFRESH_FALLBACK_MS = 30 * 60 * 1000;
+export const HOSTED_SHELL_SESSION_REFRESH_RETRY_MS = 30 * 1000;
 const APP_SESSION_TIMEOUT_MS = 10_000;
 
 export interface ParsedCookie {
@@ -109,6 +117,20 @@ export function isStaleClerkCookie(cookie: { name: string; domain?: string }): b
   return false;
 }
 
+export function computeHostedShellSessionRefreshDelay(
+  cookies: Array<{ name: string; expires?: number }>,
+  now = Date.now(),
+): number {
+  const appSessionCookie = cookies.find(
+    (cookie) =>
+      cookie.name === HOSTED_SHELL_APP_SESSION_COOKIE &&
+      typeof cookie.expires === "number" &&
+      Number.isFinite(cookie.expires),
+  );
+  if (!appSessionCookie?.expires) return HOSTED_SHELL_SESSION_REFRESH_FALLBACK_MS;
+  return Math.max(0, appSessionCookie.expires - HOSTED_SHELL_SESSION_REFRESH_SKEW_MS - now);
+}
+
 function removalUrlForCookie(cookie: { domain?: string }, gatewayOrigin: string): string {
   const fallbackHost = new URL(gatewayOrigin).hostname;
   const domain = cookie.domain?.replace(/^\./, "").trim() || fallbackHost;
@@ -116,7 +138,7 @@ function removalUrlForCookie(cookie: { domain?: string }, gatewayOrigin: string)
 }
 
 export interface CookieJarLike {
-  get(filter: Record<string, never>): Promise<Array<{ name: string; domain?: string; path?: string }>>;
+  get(filter: Record<string, never>): Promise<Array<{ name: string; domain?: string; path?: string; expires?: number }>>;
   set(cookie: ParsedCookie & { url: string }): Promise<void>;
   remove(url: string, name: string): Promise<void>;
 }

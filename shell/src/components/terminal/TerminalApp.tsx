@@ -4,6 +4,8 @@ import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, use
 import Image from "next/image";
 import {
   BotIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CheckIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
@@ -29,7 +31,8 @@ import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
-import { useTerminalSettings, type ShellThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
+import { MATRIX_OS_APP_THEME_OPTIONS } from "@/lib/theme-presets";
+import { DEFAULT_TERMINAL_APP_THEME_ID, useTerminalSettings, type ShellThemeId, type TerminalAppThemeId, type TerminalThemeId } from "@/stores/terminal-settings";
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
@@ -47,10 +50,12 @@ const TOOLBAR_BTN_BASE_STYLE: CSSProperties = {
 
 const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
   alignItems: "center",
-  background: "#20241C",
-  border: "1px solid #2D3127",
+  background: "var(--terminal-chrome-control-bg)",
+  borderColor: "var(--terminal-chrome-control-border)",
   borderRadius: 9,
-  color: "#C9C7B7",
+  borderStyle: "solid",
+  borderWidth: 1,
+  color: "var(--terminal-chrome-control-fg)",
   cursor: "pointer",
   display: "flex",
   fontFamily: "Inter, system-ui, sans-serif",
@@ -62,14 +67,236 @@ const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
   padding: "0 12px",
 };
 
+const TERMINAL_THEME_MOBILE_DIALOG_STYLE: CSSProperties = {
+  alignItems: "flex-end",
+  background: "rgba(2, 5, 2, 0.42)",
+  border: 0,
+  display: "flex",
+  height: "100dvh",
+  inset: 0,
+  justifyContent: "center",
+  margin: 0,
+  maxHeight: "none",
+  maxWidth: "none",
+  overflow: "hidden",
+  padding: 0,
+  position: "fixed",
+  width: "100vw",
+  zIndex: 94,
+};
+
+const TERMINAL_THEME_MOBILE_SHEET_STYLE: CSSProperties = {
+  background: "#FFFDF7",
+  borderRadius: "26px 26px 0 0",
+  boxShadow: "0 -18px 50px rgba(0, 0, 0, 0.44)",
+  color: "#2A2E22",
+  display: "flex",
+  flexDirection: "column",
+  gap: 16,
+  padding: "10px 20px 17px",
+  position: "relative",
+  width: "min(390px, 100%)",
+  zIndex: 1,
+};
+
+const TERMINAL_THEME_DESKTOP_MENU_STYLE: CSSProperties = {
+  background: "#20241C",
+  border: "1px solid #2D3127",
+  borderRadius: 14,
+  boxShadow: "0 18px 44px rgba(0, 0, 0, 0.42)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  marginTop: 8,
+  padding: 6,
+  position: "absolute",
+  right: 0,
+  top: "100%",
+  width: 280,
+  zIndex: 90,
+};
+
+const TERMINAL_THEME_MENU_DISMISS_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  cursor: "default",
+  inset: 0,
+  padding: 0,
+  position: "absolute",
+};
+
+const TERMINAL_SHELL_THEME_MOTION_CSS = `
+@keyframes terminalShellThemePanelIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0) scale(0.975);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes terminalShellThemeMobilePanelIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes terminalShellThemeRowIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes terminalShellThemeBadgeIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(8px, 0, 0) scale(0.9);
+  }
+  68% {
+    opacity: 1;
+    transform: translate3d(-1px, 0, 0) scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes terminalShellThemeCheckIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-terminal-shell-theme-motion] {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+`;
+
+const TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE: CSSProperties = {
+  ...TERMINAL_THEME_DESKTOP_MENU_STYLE,
+  background: "var(--terminal-chrome-bg)",
+  border: "1px solid var(--terminal-chrome-control-border)",
+  boxShadow: "0 18px 44px rgba(0, 0, 0, 0.44)",
+  gap: 10,
+  padding: 10,
+  width: 386,
+};
+
+const TERMINAL_SHELL_THEME_DESKTOP_HEADER_STYLE: CSSProperties = {
+  alignItems: "center",
+  display: "flex",
+  gap: 10,
+  padding: "2px 2px 0",
+};
+
+const TERMINAL_SHELL_THEME_MOBILE_HEADER_STYLE: CSSProperties = {
+  alignItems: "center",
+  display: "flex",
+  gap: 12,
+};
+
+const TERMINAL_THEME_MENU_ITEM_TEXT_STYLE: CSSProperties = {
+  display: "flex",
+  flex: 1,
+  flexDirection: "column",
+  gap: 1,
+  minWidth: 0,
+};
+
+function getTerminalThemeMenuItemStyle(mobile: boolean, selected: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    background: selected ? (mobile ? "#F4F3E9" : "#2A2E22") : "transparent",
+    border: mobile ? `1px solid ${selected ? "#E4E2D2" : "transparent"}` : 0,
+    borderRadius: mobile ? 14 : 10,
+    color: mobile ? "#2A2E22" : "#F0EFE5",
+    cursor: "pointer",
+    display: "flex",
+    gap: mobile ? 14 : 12,
+    minHeight: mobile ? 64 : 51,
+    padding: mobile ? "12px 14px" : "8px 10px",
+    textAlign: "left",
+    width: "100%",
+  };
+}
+
+function getTerminalThemePreviewStyle(option: TerminalAppThemeOption, mobile: boolean): CSSProperties {
+  return {
+    background: option.preview.background,
+    border: `1px solid ${option.preview.border}`,
+    borderRadius: mobile ? 9 : 8,
+    display: "flex",
+    flexDirection: "column",
+    flexShrink: 0,
+    gap: mobile ? 5 : 4,
+    height: mobile ? 38 : 32,
+    justifyContent: "center",
+    padding: mobile ? 9 : 7,
+    width: mobile ? 48 : 40,
+  };
+}
+
+function getChangeShellThemeMenuItemStyle(mobile: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    background: mobile ? "#F4F3E9" : "transparent",
+    border: mobile ? "1px solid #E4E2D2" : 0,
+    borderRadius: mobile ? 14 : 10,
+    cursor: "pointer",
+    display: "flex",
+    gap: mobile ? 14 : 12,
+    minHeight: mobile ? 64 : 48,
+    padding: mobile ? "12px 14px" : "8px 10px",
+    textAlign: "left",
+    width: "100%",
+  };
+}
+
+function getChangeShellThemeIconStyle(mobile: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    background: mobile ? "#15180F" : "#171A13",
+    border: mobile ? 0 : "1px solid #2D3127",
+    borderRadius: mobile ? 10 : 8,
+    color: mobile ? "#9CB77A" : "#6F7167",
+    display: "flex",
+    flexShrink: 0,
+    height: mobile ? 38 : 32,
+    justifyContent: "center",
+    width: mobile ? 38 : 40,
+  };
+}
+
 const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
   alignItems: "center",
   alignSelf: "center",
-  background: "#DDEDD6",
-  border: "1px solid #C9E1C2",
+  background: "var(--terminal-drawer-toggle-bg)",
+  border: "1px solid var(--terminal-drawer-toggle-border)",
   borderRadius: 999,
   boxSizing: "border-box",
-  color: "#24452A",
+  color: "var(--terminal-drawer-toggle-fg)",
   cursor: "pointer",
   display: "flex",
   flexShrink: 0,
@@ -86,11 +313,11 @@ const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
 const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
   alignItems: "center",
   alignSelf: "center",
-  background: "#D8D7C7",
-  border: "1px solid #C8C7B7",
+  background: "var(--terminal-drawer-toggle-off-bg)",
+  border: "1px solid var(--terminal-drawer-toggle-off-border)",
   borderRadius: 999,
   boxSizing: "border-box",
-  color: "#77786E",
+  color: "var(--terminal-drawer-toggle-off-fg)",
   cursor: "pointer",
   display: "flex",
   flexShrink: 0,
@@ -161,6 +388,306 @@ const SHELL_THEME_OPTIONS: Array<{
     },
   },
 ];
+
+type TerminalAppThemeOption = (typeof MATRIX_OS_APP_THEME_OPTIONS)[number];
+
+function getTerminalAppThemeOption(appThemeId: TerminalAppThemeId): TerminalAppThemeOption {
+  const selected = MATRIX_OS_APP_THEME_OPTIONS.find((option) => option.id === appThemeId);
+  if (selected) return selected;
+
+  const fallback = MATRIX_OS_APP_THEME_OPTIONS.find((option) => option.id === DEFAULT_TERMINAL_APP_THEME_ID);
+  if (fallback) return fallback;
+
+  throw new Error("Default terminal app theme is not configured");
+}
+
+interface TerminalAppChromeTheme {
+  windowBackground: string;
+  windowBorder: string;
+  chromeBackground: string;
+  chromeBorder: string;
+  chromeForeground: string;
+  chromeActive: string;
+  chromeMuted: string;
+  chromeSubtle: string;
+  chromeControlBackground: string;
+  chromeControlBorder: string;
+  chromeControlForeground: string;
+  chromeBadgeBackground: string;
+  chromeBadgeBorder: string;
+  chromeAccent: string;
+  bodyBackground: string;
+  drawerBackground: string;
+  drawerBorder: string;
+  drawerForeground: string;
+  drawerMuted: string;
+  drawerSubtle: string;
+  drawerBrandBackground: string;
+  drawerBrandForeground: string;
+  drawerPrimaryButtonBackground: string;
+  drawerPrimaryButtonForeground: string;
+  drawerButtonBackground: string;
+  drawerButtonBorder: string;
+  drawerButtonForeground: string;
+  drawerSearchBackground: string;
+  drawerSearchBorder: string;
+  drawerSearchIcon: string;
+  drawerCardBackground: string;
+  drawerCardMutedBackground: string;
+  drawerCardBorder: string;
+  drawerCardMutedBorder: string;
+  drawerSelectedBorder: string;
+  drawerSelectedRing: string;
+  drawerSelectedStripe: string;
+  drawerCardShadow: string;
+  drawerCardMutedShadow: string;
+  drawerActionBackground: string;
+  drawerActionBorder: string;
+  drawerActionForeground: string;
+  drawerWarningBackground: string;
+  drawerWarningForeground: string;
+  drawerToggleBackground: string;
+  drawerToggleBorder: string;
+  drawerToggleForeground: string;
+  drawerToggleKnob: string;
+  drawerToggleOffBackground: string;
+  drawerToggleOffBorder: string;
+  drawerToggleOffForeground: string;
+  drawerToggleOffKnob: string;
+  drawerDropLine: string;
+}
+
+type TerminalAppChromeCssVars = CSSProperties & Record<`--${string}`, string>;
+
+const TERMINAL_APP_CHROME_THEMES: Record<TerminalAppThemeId, TerminalAppChromeTheme> = {
+  light: {
+    windowBackground: "#171A13",
+    windowBorder: "#32342E",
+    chromeBackground: "#15180F",
+    chromeBorder: "#24271F",
+    chromeForeground: "#C9C7B7",
+    chromeActive: "#F0EFE5",
+    chromeMuted: "#858578",
+    chromeSubtle: "#5F6258",
+    chromeControlBackground: "#20241C",
+    chromeControlBorder: "#2D3127",
+    chromeControlForeground: "#C9C7B7",
+    chromeBadgeBackground: "#20241C",
+    chromeBadgeBorder: "#24271F",
+    chromeAccent: "#CF7835",
+    bodyBackground: "#1C2019",
+    drawerBackground: "#E9E9D8",
+    drawerBorder: "#D6D5C4",
+    drawerForeground: "#31362D",
+    drawerMuted: "#858578",
+    drawerSubtle: "#A09F92",
+    drawerBrandBackground: "#465243",
+    drawerBrandForeground: "#F8F7EF",
+    drawerPrimaryButtonBackground: "#465243",
+    drawerPrimaryButtonForeground: "#F8F7EF",
+    drawerButtonBackground: "#FFFDF7",
+    drawerButtonBorder: "#D6D5C4",
+    drawerButtonForeground: "#6F7167",
+    drawerSearchBackground: "#FFFDF7",
+    drawerSearchBorder: "#D6D5C4",
+    drawerSearchIcon: "#A09F92",
+    drawerCardBackground: "#FFFDF7",
+    drawerCardMutedBackground: "#E2E2D0",
+    drawerCardBorder: "#D6D5C4",
+    drawerCardMutedBorder: "#D4D2C1",
+    drawerSelectedBorder: "#9CB77A",
+    drawerSelectedRing: "rgba(156,183,122,0.28)",
+    drawerSelectedStripe: "#465243",
+    drawerCardShadow: "rgba(39,40,34,0.13)",
+    drawerCardMutedShadow: "transparent",
+    drawerActionBackground: "#F0EFE5",
+    drawerActionBorder: "#E4E2D2",
+    drawerActionForeground: "#8A8B7C",
+    drawerWarningBackground: "#F6EAC9",
+    drawerWarningForeground: "#8F6712",
+    drawerToggleBackground: "#DDEDD6",
+    drawerToggleBorder: "#C9E1C2",
+    drawerToggleForeground: "#24452A",
+    drawerToggleKnob: "#4F8A55",
+    drawerToggleOffBackground: "#D8D7C7",
+    drawerToggleOffBorder: "#C8C7B7",
+    drawerToggleOffForeground: "#77786E",
+    drawerToggleOffKnob: "#F7F6EC",
+    drawerDropLine: "#D8792C",
+  },
+  "matrix-dark": {
+    windowBackground: "#171A13",
+    windowBorder: "#32342E",
+    chromeBackground: "#15180F",
+    chromeBorder: "#24271F",
+    chromeForeground: "#C9C7B7",
+    chromeActive: "#F0EFE5",
+    chromeMuted: "#858578",
+    chromeSubtle: "#5F6258",
+    chromeControlBackground: "#20241C",
+    chromeControlBorder: "#2D3127",
+    chromeControlForeground: "#C9C7B7",
+    chromeBadgeBackground: "#20241C",
+    chromeBadgeBorder: "#24271F",
+    chromeAccent: "#CF7835",
+    bodyBackground: "#1C2019",
+    drawerBackground: "#15180F",
+    drawerBorder: "#24271F",
+    drawerForeground: "#F0EFE5",
+    drawerMuted: "#858578",
+    drawerSubtle: "#6F7167",
+    drawerBrandBackground: "#465243",
+    drawerBrandForeground: "#F8F7EF",
+    drawerPrimaryButtonBackground: "#465243",
+    drawerPrimaryButtonForeground: "#F8F7EF",
+    drawerButtonBackground: "#20241C",
+    drawerButtonBorder: "#2D3127",
+    drawerButtonForeground: "#858578",
+    drawerSearchBackground: "#20241C",
+    drawerSearchBorder: "#2D3127",
+    drawerSearchIcon: "#6F7167",
+    drawerCardBackground: "#20241C",
+    drawerCardMutedBackground: "#171A13",
+    drawerCardBorder: "#2D3127",
+    drawerCardMutedBorder: "#24271F",
+    drawerSelectedBorder: "#2D3127",
+    drawerSelectedRing: "rgba(156,183,122,0.18)",
+    drawerSelectedStripe: "#465243",
+    drawerCardShadow: "rgba(0,0,0,0.22)",
+    drawerCardMutedShadow: "transparent",
+    drawerActionBackground: "#20241C",
+    drawerActionBorder: "#2D3127",
+    drawerActionForeground: "#858578",
+    drawerWarningBackground: "#2A2008",
+    drawerWarningForeground: "#E0A12E",
+    drawerToggleBackground: "#1F3325",
+    drawerToggleBorder: "#2E4A34",
+    drawerToggleForeground: "#9CB77A",
+    drawerToggleKnob: "#5FB85F",
+    drawerToggleOffBackground: "#20241C",
+    drawerToggleOffBorder: "#2D3127",
+    drawerToggleOffForeground: "#6F7167",
+    drawerToggleOffKnob: "#5A5D50",
+    drawerDropLine: "#CF7835",
+  },
+  matrix: {
+    windowBackground: "#07100A",
+    windowBorder: "#16271B",
+    chromeBackground: "#070D09",
+    chromeBorder: "#16271B",
+    chromeForeground: "#5BF08A",
+    chromeActive: "#5BF08A",
+    chromeMuted: "#4E8C61",
+    chromeSubtle: "#2E5B39",
+    chromeControlBackground: "#0E1810",
+    chromeControlBorder: "#1C3324",
+    chromeControlForeground: "#5BF08A",
+    chromeBadgeBackground: "#0E1810",
+    chromeBadgeBorder: "#1C3324",
+    chromeAccent: "#CF7835",
+    bodyBackground: "#1C2019",
+    drawerBackground: "#08110B",
+    drawerBorder: "#16271B",
+    drawerForeground: "#9BFFB5",
+    drawerMuted: "#4E8C61",
+    drawerSubtle: "#2F7A44",
+    drawerBrandBackground: "#0E3A1C",
+    drawerBrandForeground: "#5BF08A",
+    drawerPrimaryButtonBackground: "#0E3A1C",
+    drawerPrimaryButtonForeground: "#5BF08A",
+    drawerButtonBackground: "#0E1810",
+    drawerButtonBorder: "#1C3324",
+    drawerButtonForeground: "#4E8C61",
+    drawerSearchBackground: "#0C150E",
+    drawerSearchBorder: "#1C3324",
+    drawerSearchIcon: "#2F7A44",
+    drawerCardBackground: "#0F1A12",
+    drawerCardMutedBackground: "#0B130D",
+    drawerCardBorder: "#1C3324",
+    drawerCardMutedBorder: "#16271B",
+    drawerSelectedBorder: "#1C3324",
+    drawerSelectedRing: "rgba(57,255,106,0.18)",
+    drawerSelectedStripe: "#39FF6A",
+    drawerCardShadow: "rgba(0,0,0,0.22)",
+    drawerCardMutedShadow: "transparent",
+    drawerActionBackground: "#0E1810",
+    drawerActionBorder: "#1C3324",
+    drawerActionForeground: "#4E8C61",
+    drawerWarningBackground: "#2A2008",
+    drawerWarningForeground: "#E0A12E",
+    drawerToggleBackground: "#0F3A1E",
+    drawerToggleBorder: "#1F5A30",
+    drawerToggleForeground: "#9BFFB5",
+    drawerToggleKnob: "#39FF6A",
+    drawerToggleOffBackground: "#0E1810",
+    drawerToggleOffBorder: "#1C3324",
+    drawerToggleOffForeground: "#4E8C61",
+    drawerToggleOffKnob: "#244E2D",
+    drawerDropLine: "#39FF6A",
+  },
+};
+
+function getTerminalAppChromeTheme(appThemeId: TerminalAppThemeId): TerminalAppChromeTheme {
+  return TERMINAL_APP_CHROME_THEMES[appThemeId] ?? TERMINAL_APP_CHROME_THEMES[DEFAULT_TERMINAL_APP_THEME_ID];
+}
+
+function getTerminalAppChromeCssVars(theme: TerminalAppChromeTheme): TerminalAppChromeCssVars {
+  return {
+    "--terminal-app-window-bg": theme.windowBackground,
+    "--terminal-app-window-border": theme.windowBorder,
+    "--terminal-chrome-bg": theme.chromeBackground,
+    "--terminal-chrome-border": theme.chromeBorder,
+    "--terminal-chrome-fg": theme.chromeForeground,
+    "--terminal-chrome-active": theme.chromeActive,
+    "--terminal-chrome-muted": theme.chromeMuted,
+    "--terminal-chrome-subtle": theme.chromeSubtle,
+    "--terminal-chrome-control-bg": theme.chromeControlBackground,
+    "--terminal-chrome-control-border": theme.chromeControlBorder,
+    "--terminal-chrome-control-fg": theme.chromeControlForeground,
+    "--terminal-chrome-badge-bg": theme.chromeBadgeBackground,
+    "--terminal-chrome-badge-border": theme.chromeBadgeBorder,
+    "--terminal-chrome-accent": theme.chromeAccent,
+    "--terminal-app-body-bg": theme.bodyBackground,
+    "--terminal-drawer-bg": theme.drawerBackground,
+    "--terminal-drawer-border": theme.drawerBorder,
+    "--terminal-drawer-fg": theme.drawerForeground,
+    "--terminal-drawer-muted": theme.drawerMuted,
+    "--terminal-drawer-subtle": theme.drawerSubtle,
+    "--terminal-drawer-brand-bg": theme.drawerBrandBackground,
+    "--terminal-drawer-brand-fg": theme.drawerBrandForeground,
+    "--terminal-drawer-primary-button-bg": theme.drawerPrimaryButtonBackground,
+    "--terminal-drawer-primary-button-fg": theme.drawerPrimaryButtonForeground,
+    "--terminal-drawer-button-bg": theme.drawerButtonBackground,
+    "--terminal-drawer-button-border": theme.drawerButtonBorder,
+    "--terminal-drawer-button-fg": theme.drawerButtonForeground,
+    "--terminal-drawer-search-bg": theme.drawerSearchBackground,
+    "--terminal-drawer-search-border": theme.drawerSearchBorder,
+    "--terminal-drawer-search-icon": theme.drawerSearchIcon,
+    "--terminal-drawer-card-bg": theme.drawerCardBackground,
+    "--terminal-drawer-card-muted-bg": theme.drawerCardMutedBackground,
+    "--terminal-drawer-card-border": theme.drawerCardBorder,
+    "--terminal-drawer-card-muted-border": theme.drawerCardMutedBorder,
+    "--terminal-drawer-selected-border": theme.drawerSelectedBorder,
+    "--terminal-drawer-selected-ring": theme.drawerSelectedRing,
+    "--terminal-drawer-selected-stripe": theme.drawerSelectedStripe,
+    "--terminal-drawer-card-shadow": theme.drawerCardShadow,
+    "--terminal-drawer-card-muted-shadow": theme.drawerCardMutedShadow,
+    "--terminal-drawer-action-bg": theme.drawerActionBackground,
+    "--terminal-drawer-action-border": theme.drawerActionBorder,
+    "--terminal-drawer-action-fg": theme.drawerActionForeground,
+    "--terminal-drawer-warning-bg": theme.drawerWarningBackground,
+    "--terminal-drawer-warning-fg": theme.drawerWarningForeground,
+    "--terminal-drawer-toggle-bg": theme.drawerToggleBackground,
+    "--terminal-drawer-toggle-border": theme.drawerToggleBorder,
+    "--terminal-drawer-toggle-fg": theme.drawerToggleForeground,
+    "--terminal-drawer-toggle-knob": theme.drawerToggleKnob,
+    "--terminal-drawer-toggle-off-bg": theme.drawerToggleOffBackground,
+    "--terminal-drawer-toggle-off-border": theme.drawerToggleOffBorder,
+    "--terminal-drawer-toggle-off-fg": theme.drawerToggleOffForeground,
+    "--terminal-drawer-toggle-off-knob": theme.drawerToggleOffKnob,
+    "--terminal-drawer-drop-line": theme.drawerDropLine,
+  };
+}
 
 const TAB_ITEM_BASE_STYLE: CSSProperties = {
   borderRadius: 6,
@@ -233,10 +760,10 @@ const SESSION_ACTIONS_STYLE: CSSProperties = {
   width: 58,
 };
 const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
-  background: "#F0EFE5",
-  border: "1px solid #E4E2D2",
+  background: "var(--terminal-drawer-action-bg)",
+  border: "1px solid var(--terminal-drawer-action-border)",
   borderRadius: 6,
-  color: "#8A8B7C",
+  color: "var(--terminal-drawer-action-fg)",
   flexShrink: 0,
   height: 22,
   pointerEvents: "auto",
@@ -244,8 +771,8 @@ const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
   width: 22,
 };
 const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
-  background: "#F0EFE5",
-  border: "1px solid #E4E2D2",
+  background: "var(--terminal-drawer-action-bg)",
+  border: "1px solid var(--terminal-drawer-action-border)",
   borderRadius: 6,
   cursor: "pointer",
   flexShrink: 0,
@@ -259,10 +786,10 @@ const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
   width: 24,
 };
 const SESSION_CLOSE_BUTTON_STYLE: CSSProperties = {
-  background: "#F0EFE5",
-  border: "1px solid #E4E2D2",
+  background: "var(--terminal-drawer-action-bg)",
+  border: "1px solid var(--terminal-drawer-action-border)",
   borderRadius: 6,
-  color: "#77786E",
+  color: "var(--terminal-drawer-action-fg)",
   fontSize: 15,
   height: 24,
   lineHeight: "20px",
@@ -283,10 +810,10 @@ const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
   textAlign: "left",
 };
 const SESSION_RENAME_INPUT_STYLE: CSSProperties = {
-  background: "#FFFDF7",
-  border: "1px solid #D6D5C4",
+  background: "var(--terminal-drawer-card-bg)",
+  border: "1px solid var(--terminal-drawer-card-border)",
   borderRadius: 6,
-  color: "#31362D",
+  color: "var(--terminal-drawer-fg)",
   flex: "1 1 auto",
   fontFamily: "var(--font-mono, ui-monospace, monospace)",
   fontSize: 14,
@@ -684,10 +1211,6 @@ async function ensureInitialShellSession(): Promise<string | null> {
   return sessionReady ? DEFAULT_SHELL_SESSION_NAME : null;
 }
 
-function getSafePreferencesSessionName(value: string | null): string | null {
-  return value && /^[a-z0-9][a-z0-9-]{0,30}$/.test(value) ? value : null;
-}
-
 function mapTerminalThemeToShellTheme(themeId: TerminalThemeId | undefined): ShellThemeId {
   if (themeId === "dark" || themeId === "light" || themeId === "matrix") {
     return themeId;
@@ -698,11 +1221,17 @@ function mapTerminalThemeToShellTheme(themeId: TerminalThemeId | undefined): She
   return "dark";
 }
 
-function loadShellThemePreference(sessionName: string | null, setThemeId: (themeId: TerminalThemeId) => void): void {
-  if (!sessionName || typeof fetch !== "function") {
+let globalShellThemePreferenceLoadStarted = false;
+
+function loadGlobalShellThemePreference(setThemeId: (themeId: TerminalThemeId) => void): void {
+  if (typeof fetch !== "function") {
     return;
   }
-  void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+  if (globalShellThemePreferenceLoadStarted) {
+    return;
+  }
+  globalShellThemePreferenceLoadStarted = true;
+  void fetch(`${getGatewayUrl()}/api/terminal/preferences`, {
     signal: AbortSignal.timeout(10_000),
   })
     .then((res) => res.ok ? res.json() : null)
@@ -716,6 +1245,7 @@ function loadShellThemePreference(sessionName: string | null, setThemeId: (theme
       }
     })
     .catch((err: unknown) => {
+      globalShellThemePreferenceLoadStarted = false;
       console.warn("Failed to load shell theme preferences:", err instanceof Error ? err.message : err);
     });
 }
@@ -763,22 +1293,22 @@ interface TerminalAppProps {
 export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
+  const setThemeId = useTerminalSettings((s) => s.setThemeId);
+  const appThemeId = useTerminalSettings((s) => s.appThemeId);
+  const appThemeOption = getTerminalAppThemeOption(appThemeId);
+  const appChromeTheme = getTerminalAppChromeTheme(appThemeOption.id);
+  const appChromeCssVars = getTerminalAppChromeCssVars(appChromeTheme);
 
-  // Keep shell-controlled terminal surfaces aligned with the active terminal
-  // theme. Falls back to the desktop theme when "Match OS" is selected.
+  // Keep terminal content aligned with the active shell theme. App chrome is
+  // intentionally terminal-scoped and uses the separate app theme below.
   const terminalPreset = themeId === "system" ? null : getTerminalThemePreset(themeId);
-  const terminalBackground =
+  const terminalContentBackground =
     themeId === "system"
       ? (theme.colors.background || "var(--background)")
       : terminalPreset?.background ?? "var(--background)";
-  const terminalForeground =
-    themeId === "system"
-      ? (theme.colors.foreground || "var(--foreground)")
-      : terminalPreset?.foreground ?? "var(--foreground)";
-  const terminalAccent =
-    themeId === "system"
-      ? (theme.colors.primary || "var(--primary)")
-      : terminalPreset?.cursor ?? "var(--primary)";
+  const terminalChromeBackground = appChromeTheme.chromeBackground;
+  const terminalChromeForeground = appChromeTheme.chromeForeground;
+  const terminalChromeAccent = appChromeTheme.chromeAccent;
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
@@ -866,6 +1396,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    loadGlobalShellThemePreference(setThemeId);
+  }, [setThemeId]);
 
   const addTab = (cwd: string, label?: string, claude?: boolean, startupCommand?: string, sessionId?: string) => {
     const id = genId();
@@ -1327,7 +1861,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   // Construct store-compatible interface for child components
   const storeApi = {
     tabs, activeTabId, sidebarOpen, sidebarWidth, sidebarSelectedPath, focusedPaneId, mobile, windowControls,
-    terminalBackground,
+    terminalBackground: appChromeTheme.drawerBorder,
     addTab: (...args: Parameters<typeof addTab>) => {
       markTerminalLayoutDirty();
       return addTab(...args);
@@ -1392,7 +1926,11 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     <div
       ref={containerRef}
       className="flex flex-col h-full w-full"
-      style={{ background: "var(--background)" }}
+      style={{
+        ...appChromeCssVars,
+        background: "var(--terminal-app-window-bg)",
+        color: "var(--terminal-chrome-fg)",
+      }}
       role="application"
       aria-label="Terminal"
       onKeyDown={handleKeyDown}
@@ -1400,7 +1938,10 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       <style>{SHELL_STATUS_DOT_CSS}</style>
       <TerminalAppContext.Provider value={storeApi}>
         <TerminalWorkspaceChrome />
-        <div className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}>
+        <div
+          className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
+          style={{ background: "var(--terminal-app-body-bg)" }}
+        >
           <LocalTerminalSidebar />
           {activeTab ? (
             <div
@@ -1408,7 +1949,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               className="flex-1 min-w-0 min-h-0 flex"
               style={{
                 padding: 0,
-                background: terminalBackground,
+                background: terminalContentBackground,
                 minHeight: mobile ? 0 : undefined,
               }}
             >
@@ -1428,21 +1969,21 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                   <>
                     <MobileTerminalActions
                       defaultCwd={DEFAULT_CWD}
-                      background={terminalBackground}
-                      foreground={terminalForeground}
-                      accent={terminalAccent}
+                      background={terminalChromeBackground}
+                      foreground={terminalChromeForeground}
+                      accent={terminalChromeAccent}
                     />
                     <MobileCommandComposer
                       onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
-                      background={terminalBackground}
-                      foreground={terminalForeground}
-                      accent={terminalAccent}
+                      background={terminalChromeBackground}
+                      foreground={terminalChromeForeground}
+                      accent={terminalChromeAccent}
                     />
                     <TerminalKeyBar
                       onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
-                      background={terminalBackground}
-                      foreground={terminalForeground}
-                      accent={terminalAccent}
+                      background={terminalChromeBackground}
+                      foreground={terminalChromeForeground}
+                      accent={terminalChromeAccent}
                     />
                   </>
                 )}
@@ -1600,22 +2141,22 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
 
 function ThemePickerButton() {
   const ctx = useTerminalAppContext();
-  const [shellThemeOpen, setShellThemeOpen] = useState(false);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const [themeMenuView, setThemeMenuView] = useState<"app" | "shell">("app");
   const wrapRef = useRef<HTMLDivElement>(null);
-  const setTerminalThemeId = useTerminalSettings((s) => s.setThemeId);
-  const activeTab = ctx.tabs.find((tab) => tab.id === ctx.activeTabId);
-  const focusedPaneId = ctx.focusedPaneId ?? (activeTab ? getFirstPaneId(activeTab.paneTree) : null);
-  const sessionName = activeTab && focusedPaneId
-    ? getSafePreferencesSessionName(getPaneSessionId(activeTab.paneTree, focusedPaneId))
-    : null;
+  const closeThemeMenu = () => {
+    setThemeMenuOpen(false);
+    setThemeMenuView("app");
+  };
+  const closeThemeMenuEvent = useEffectEvent(closeThemeMenu);
 
   useEffect(() => {
-    if (!shellThemeOpen) return;
+    if (!themeMenuOpen) return;
     const onClick = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setShellThemeOpen(false);
+      if (!wrapRef.current?.contains(e.target as Node)) closeThemeMenuEvent();
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setShellThemeOpen(false);
+      if (event.key === "Escape") closeThemeMenuEvent();
     };
     document.addEventListener("mousedown", onClick);
     document.addEventListener("keydown", onKeyDown);
@@ -1623,15 +2164,15 @@ function ThemePickerButton() {
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [shellThemeOpen]);
+  }, [themeMenuOpen]);
 
-  const openShellThemeChooser = () => {
-    if (shellThemeOpen) {
-      setShellThemeOpen(false);
+  const openThemeMenu = () => {
+    if (themeMenuOpen) {
+      closeThemeMenu();
       return;
     }
-    loadShellThemePreference(sessionName, setTerminalThemeId);
-    setShellThemeOpen(true);
+    setThemeMenuView("app");
+    setThemeMenuOpen(true);
   };
 
   return (
@@ -1646,61 +2187,231 @@ function ThemePickerButton() {
         aria-label="Theme"
         title="Theme"
         style={PAPER_THEME_BUTTON_STYLE}
-        onClick={openShellThemeChooser}
+        onClick={openThemeMenu}
       >
         <span style={{ color: "#CF7835", fontSize: 17, fontWeight: 600, lineHeight: "22px" }}>☼</span>
         <span>Theme</span>
       </button>
-      {shellThemeOpen ? (
+      {themeMenuOpen && themeMenuView === "app" ? (
+        <TerminalAppThemeMenu
+          mobile={ctx.mobile}
+          onClose={closeThemeMenu}
+          onOpenShellTheme={() => setThemeMenuView("shell")}
+        />
+      ) : null}
+      {themeMenuOpen && themeMenuView === "shell" ? (
         <ShellThemeChooser
           mobile={ctx.mobile}
-          sessionName={sessionName}
-          onClose={() => setShellThemeOpen(false)}
+          onBack={() => setThemeMenuView("app")}
+          onClose={closeThemeMenu}
         />
       ) : null}
     </div>
   );
 }
 
+function TerminalAppThemeMenu({
+  mobile,
+  onClose,
+  onOpenShellTheme,
+}: {
+  mobile: boolean;
+  onClose: () => void;
+  onOpenShellTheme: () => void;
+}) {
+  const appThemeId = useTerminalSettings((s) => s.appThemeId);
+  const setAppThemeId = useTerminalSettings((s) => s.setAppThemeId);
+
+  const chooseAppTheme = (next: TerminalAppThemeId) => {
+    setAppThemeId(next);
+    onClose();
+  };
+
+  if (mobile) {
+    return (
+      <dialog
+        aria-label="Theme"
+        aria-modal="true"
+        open
+        style={TERMINAL_THEME_MOBILE_DIALOG_STYLE}
+        onCancel={(event) => {
+          event.preventDefault();
+          onClose();
+        }}
+      >
+        <button
+          type="button"
+          aria-label="Dismiss theme menu"
+          tabIndex={-1}
+          onClick={onClose}
+          style={TERMINAL_THEME_MENU_DISMISS_STYLE}
+        />
+        <div
+          role="menu"
+          aria-label="Theme"
+          style={TERMINAL_THEME_MOBILE_SHEET_STYLE}
+        >
+          <div style={{ alignItems: "center", display: "flex", justifyContent: "center", paddingBottom: 4 }}>
+            <div style={{ background: "#D6D5C4", borderRadius: 999, height: 5, width: 42 }} />
+          </div>
+          <div style={{ color: "#2A2E22", fontFamily: "Inter, system-ui, sans-serif", fontSize: 19, fontWeight: 700, lineHeight: "24px" }}>
+            Theme
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {MATRIX_OS_APP_THEME_OPTIONS.map((option) => (
+              <TerminalAppThemeMenuItem
+                key={option.id}
+                mobile
+                option={option}
+                selected={option.id === appThemeId}
+                onClick={() => chooseAppTheme(option.id)}
+              />
+            ))}
+          </div>
+          <div style={{ background: "#E4E2D2", height: 1 }} />
+          <ChangeShellThemeMenuItem mobile onClick={onOpenShellTheme} />
+          <div style={{ alignItems: "center", display: "flex", justifyContent: "center", paddingBottom: 9, paddingTop: 8 }}>
+            <div style={{ background: "#1F221B", borderRadius: 999, height: 5, width: 140 }} />
+          </div>
+        </div>
+      </dialog>
+    );
+  }
+
+  return (
+    <div
+      role="menu"
+      aria-label="Theme"
+      style={TERMINAL_THEME_DESKTOP_MENU_STYLE}
+    >
+      <div style={{ padding: "8px 10px 4px" }}>
+        <div style={{ color: "#6F7167", fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", lineHeight: "15px", textTransform: "uppercase" }}>
+          Theme
+        </div>
+      </div>
+      {MATRIX_OS_APP_THEME_OPTIONS.map((option) => (
+        <TerminalAppThemeMenuItem
+          key={option.id}
+          option={option}
+          selected={option.id === appThemeId}
+          onClick={() => chooseAppTheme(option.id)}
+        />
+      ))}
+      <div style={{ background: "#2A2E22", height: 1, margin: "4px 8px" }} />
+      <ChangeShellThemeMenuItem onClick={onOpenShellTheme} />
+    </div>
+  );
+}
+
+function TerminalAppThemeMenuItem({
+  mobile = false,
+  option,
+  selected,
+  onClick,
+}: {
+  mobile?: boolean;
+  option: TerminalAppThemeOption;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={selected}
+      aria-label={`${option.label} ${option.description}`}
+      onClick={onClick}
+      style={getTerminalThemeMenuItemStyle(mobile, selected)}
+    >
+      <TerminalAppThemePreview option={option} mobile={mobile} />
+      <span style={TERMINAL_THEME_MENU_ITEM_TEXT_STYLE}>
+        <span style={{ color: mobile ? "#2A2E22" : "#F0EFE5", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 16 : 14, fontWeight: 600, lineHeight: mobile ? "20px" : "18px" }}>
+          {option.label}
+        </span>
+        <span style={{ color: "#858578", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 13 : 12, lineHeight: "16px" }}>
+          {option.description}
+        </span>
+      </span>
+      {selected ? <CheckIcon size={mobile ? 20 : 18} strokeWidth={2.4} style={{ color: mobile ? "#4F8A55" : "#9CB77A", flexShrink: 0 }} /> : null}
+    </button>
+  );
+}
+
+function TerminalAppThemePreview({
+  option,
+  mobile,
+}: {
+  option: TerminalAppThemeOption;
+  mobile: boolean;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      style={getTerminalThemePreviewStyle(option, mobile)}
+    >
+      <span style={{ background: option.preview.stripe, borderRadius: 2, display: "block", height: 3, width: mobile ? 22 : 18 }} />
+      <span style={{ display: "flex", gap: mobile ? 4 : 3 }}>
+        <span style={{ background: option.preview.dotA, borderRadius: 999, display: "block", height: mobile ? 7 : 6, width: mobile ? 7 : 6 }} />
+        <span style={{ background: option.preview.dotB, borderRadius: 999, display: "block", height: mobile ? 7 : 6, width: mobile ? 7 : 6 }} />
+      </span>
+    </span>
+  );
+}
+
+function ChangeShellThemeMenuItem({
+  mobile = false,
+  onClick,
+}: {
+  mobile?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      aria-label="Change shell theme Advanced terminal colors"
+      onClick={onClick}
+      style={getChangeShellThemeMenuItemStyle(mobile)}
+    >
+      <span
+        aria-hidden="true"
+        style={getChangeShellThemeIconStyle(mobile)}
+      >
+        <SquareTerminalIcon size={mobile ? 18 : 16} strokeWidth={2} />
+      </span>
+      <span style={TERMINAL_THEME_MENU_ITEM_TEXT_STYLE}>
+        <span style={{ color: mobile ? "#5F6258" : "#858578", fontFamily: "Inter, system-ui, sans-serif", fontSize: mobile ? 15 : 13, fontWeight: 600, lineHeight: mobile ? "18px" : "16px" }}>
+          Change shell theme
+        </span>
+        <span style={{ color: mobile ? "#A09F92" : "#5F6258", fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, lineHeight: mobile ? "16px" : "15px" }}>
+          Advanced · terminal colors
+        </span>
+      </span>
+      <ChevronRightIcon size={mobile ? 18 : 16} strokeWidth={2} style={{ color: mobile ? "#A09F92" : "#5F6258", flexShrink: 0 }} />
+    </button>
+  );
+}
+
 function ShellThemeChooser({
   mobile,
-  sessionName,
+  onBack,
   onClose,
 }: {
   mobile: boolean;
-  sessionName: string | null;
+  onBack: () => void;
   onClose: () => void;
 }) {
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
   const selectedShellThemeId = mapTerminalThemeToShellTheme(themeId);
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const dialogNeedsOpenAttribute =
-    typeof globalThis.HTMLDialogElement === "undefined" ||
-    typeof globalThis.HTMLDialogElement.prototype.showModal !== "function";
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog || dialogNeedsOpenAttribute || typeof dialog.showModal !== "function") {
-      return;
-    }
-    if (!dialog.open) {
-      dialog.showModal();
-    }
-    return () => {
-      if (dialog.open) {
-        dialog.close();
-      }
-    };
-  }, [dialogNeedsOpenAttribute]);
 
   const persistShellTheme = (next: ShellThemeId) => {
     setThemeId(next);
-    if (!sessionName || typeof fetch !== "function") {
+    if (typeof fetch !== "function") {
       return;
     }
     const state = useTerminalSettings.getState();
-    void fetch(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionName)}/preferences`, {
+    void fetch(`${getGatewayUrl()}/api/terminal/preferences`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1716,202 +2427,309 @@ function ShellThemeChooser({
     });
   };
 
-  const cardStyle: CSSProperties = mobile
-    ? {
-        background: "#FFFDF7",
-        border: "1px solid #E4E2D2",
-        borderBottom: 0,
-        borderRadius: "26px 26px 0 0",
-        boxShadow: "0 -18px 50px rgba(0, 0, 0, 0.44)",
-        color: "#2F332C",
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-        padding: "10px 20px 16px",
-        width: "min(390px, 100%)",
-      }
-    : {
-        background: "#FFFDF7",
-        border: "1px solid #E4E2D2",
-        borderRadius: 18,
-        boxShadow: "0 30px 70px rgba(0, 0, 0, 0.37)",
-        color: "#2F332C",
-        display: "flex",
-        flexDirection: "column",
-        gap: 18,
-        padding: 26,
-        width: 460,
-      };
+  const content = (
+    <ShellThemeChooserContent
+      mobile={mobile}
+      onBack={onBack}
+      onSelectTheme={persistShellTheme}
+      selectedShellThemeId={selectedShellThemeId}
+    />
+  );
 
-  return (
-    <dialog
-      ref={dialogRef}
-      aria-label="Shell theme"
-      aria-modal="true"
-      open={dialogNeedsOpenAttribute ? true : undefined}
-      style={{
-        alignItems: mobile ? "flex-end" : "center",
-        background: "rgba(2, 5, 2, 0.58)",
-        border: 0,
-        display: "flex",
-        height: "100dvh",
-        inset: 0,
-        justifyContent: "center",
-        margin: 0,
-        maxHeight: "none",
-        maxWidth: "none",
-        overflow: "hidden",
-        padding: mobile ? 0 : 24,
-        position: "fixed",
-        width: "100vw",
-        zIndex: 95,
-      }}
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
-    >
-      <button
-        type="button"
-        aria-label="Dismiss shell theme chooser"
-        tabIndex={-1}
-        onClick={onClose}
-        style={{
-          background: "transparent",
-          border: 0,
-          cursor: "default",
-          inset: 0,
-          padding: 0,
-          position: "absolute",
+  if (mobile) {
+    return (
+      <dialog
+        aria-label="Theme"
+        aria-modal="true"
+        open
+        style={TERMINAL_THEME_MOBILE_DIALOG_STYLE}
+        onCancel={(event) => {
+          event.preventDefault();
+          onClose();
         }}
-      />
-      <div
-        style={{ ...cardStyle, position: "relative", zIndex: 1 }}
       >
-        {mobile ? (
-          <div style={{ alignSelf: "center", background: "#D4D4C4", borderRadius: 999, height: 5, width: 42 }} />
-        ) : null}
-        <div style={{ alignItems: "center", display: "flex", gap: 14 }}>
-          <span
-            aria-hidden="true"
-            style={{
-              alignItems: "center",
-              background: "#15180F",
-              borderRadius: 8,
-              color: "#9CB77A",
-              display: "flex",
-              flexShrink: 0,
-              height: mobile ? 42 : 38,
-              justifyContent: "center",
-              width: mobile ? 42 : 38,
-            }}
-          >
-            <SquareTerminalIcon size={mobile ? 20 : 18} strokeWidth={2} />
-          </span>
-          <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-            <span style={{ color: "#20241C", fontSize: mobile ? 17 : 15, fontWeight: 800, lineHeight: mobile ? "22px" : "19px" }}>
-              Shell theme
-            </span>
-            <span style={{ color: "#77786C", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "15px" }}>
-              {mobile
-                ? "Terminal colors. We recommend Dark."
-                : "Colors for the terminal itself. We recommend Dark — agent output, diffs and status read best."}
-            </span>
-          </span>
-        </div>
-
-        <div role="radiogroup" aria-label="Shell theme options" style={{ display: "flex", flexDirection: "column", gap: mobile ? 9 : 8 }}>
-          {SHELL_THEME_OPTIONS.map((option) => {
-            const selected = option.id === selectedShellThemeId;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                aria-label={`${option.label} ${option.description}`}
-                onClick={() => persistShellTheme(option.id)}
-                style={{
-                  alignItems: "center",
-                  background: selected ? "#F4F3E9" : "#FFFDF7",
-                  border: `1px solid ${selected ? "#D6D5C4" : "#E9E6D8"}`,
-                  borderRadius: mobile ? 14 : 13,
-                  color: "#2F332C",
-                  cursor: "pointer",
-                  display: "flex",
-                  gap: mobile ? 13 : 12,
-                  minHeight: mobile ? 58 : 56,
-                  padding: mobile ? "10px 12px" : "10px 13px",
-                  textAlign: "left",
-                  width: "100%",
-                }}
-              >
-                <ShellThemePreviewIcon option={option} mobile={mobile} />
-                <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 2, minWidth: 0 }}>
-                  <span style={{ alignItems: "center", display: "flex", gap: 8, minWidth: 0 }}>
-                    <span style={{ color: "#20241C", fontSize: mobile ? 14 : 13, fontWeight: 800, lineHeight: "18px" }}>
-                      {option.label}
-                    </span>
-                    <span
-                      style={{
-                        background: option.badgeTone === "recommended" ? "#DDEBCE" : "#F4E4A8",
-                        borderRadius: 4,
-                        color: option.badgeTone === "recommended" ? "#4F8A55" : "#A06F1D",
-                        fontSize: mobile ? 7 : 6,
-                        fontWeight: 800,
-                        letterSpacing: "0.02em",
-                        lineHeight: "10px",
-                        padding: "1px 4px",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {option.badge}
-                    </span>
-                  </span>
-                  <span style={{ color: "#77786C", fontSize: mobile ? 11 : 10, lineHeight: mobile ? "15px" : "13px" }}>
-                    {option.description}
-                  </span>
-                </span>
-                {selected ? (
-                  <CheckIcon
-                    size={mobile ? 17 : 15}
-                    strokeWidth={2.4}
-                    style={{ color: "#4F8A55", flexShrink: 0 }}
-                  />
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-
-        <div
+        <style>{TERMINAL_SHELL_THEME_MOTION_CSS}</style>
+        <button
+          type="button"
+          aria-label="Dismiss theme menu"
+          tabIndex={-1}
+          onClick={onClose}
+          style={TERMINAL_THEME_MENU_DISMISS_STYLE}
+        />
+        <section
+          aria-label="Shell theme"
+          data-terminal-shell-theme-motion
+          data-testid="terminal-shell-theme-panel"
           style={{
-            background: "#F7F1E2",
-            border: "1px solid #ECE2C6",
-            borderRadius: 9,
-            color: "#8A7B52",
-            display: "flex",
-            fontSize: mobile ? 10 : 11,
-            gap: 10,
-            lineHeight: mobile ? "14px" : "16px",
-            padding: mobile ? "10px 12px" : "12px 14px",
+            ...TERMINAL_THEME_MOBILE_SHEET_STYLE,
+            ...getShellThemePanelMotionStyle(true),
           }}
         >
-          <span aria-hidden="true" style={{ background: "#D2B35F", borderRadius: 999, flexShrink: 0, width: 3 }} />
-          <span>
-            {mobile
-              ? "Light & Matrix aren't fully tuned — some colors lose contrast. Switch back to Dark if output looks off."
-              : "Light and Matrix aren't fully tuned — some terminal colors lose contrast. Switch back to Dark if output looks off."}
-          </span>
-        </div>
+          {content}
+        </section>
+      </dialog>
+    );
+  }
 
-        {mobile ? (
-          <div style={{ alignItems: "center", display: "flex", height: 18, justifyContent: "center" }}>
-            <div style={{ background: "#000000", borderRadius: 999, height: 5, width: 140 }} />
-          </div>
-        ) : null}
+  return (
+    <>
+      <style>{TERMINAL_SHELL_THEME_MOTION_CSS}</style>
+      <section
+        aria-label="Shell theme"
+        data-terminal-shell-theme-motion
+        data-testid="terminal-shell-theme-panel"
+        style={{
+          ...TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE,
+          ...getShellThemePanelMotionStyle(false),
+        }}
+      >
+        {content}
+      </section>
+    </>
+  );
+}
+
+function ShellThemeChooserContent({
+  mobile,
+  onBack,
+  onSelectTheme,
+  selectedShellThemeId,
+}: {
+  mobile: boolean;
+  onBack: () => void;
+  onSelectTheme: (next: ShellThemeId) => void;
+  selectedShellThemeId: ShellThemeId;
+}) {
+  return (
+    <>
+      {mobile ? (
+        <div style={{ alignSelf: "center", background: "#D4D4C4", borderRadius: 999, height: 5, width: 42 }} />
+      ) : null}
+      <div style={mobile ? TERMINAL_SHELL_THEME_MOBILE_HEADER_STYLE : TERMINAL_SHELL_THEME_DESKTOP_HEADER_STYLE}>
+        <button
+          type="button"
+          aria-label="Back to theme menu"
+          onClick={onBack}
+          style={{
+            alignItems: "center",
+            background: mobile ? "#F4F3E9" : "var(--terminal-chrome-control-bg)",
+            border: `1px solid ${mobile ? "#E4E2D2" : "var(--terminal-chrome-control-border)"}`,
+            borderRadius: mobile ? 10 : 8,
+            color: mobile ? "#5F6258" : "var(--terminal-chrome-control-fg)",
+            cursor: "pointer",
+            display: "flex",
+            flexShrink: 0,
+            height: mobile ? 38 : 32,
+            justifyContent: "center",
+            width: mobile ? 38 : 32,
+          }}
+        >
+          <ChevronLeftIcon size={mobile ? 19 : 17} strokeWidth={2.2} />
+        </button>
+        <ShellThemeHeaderIcon mobile={mobile} />
+        <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 3, minWidth: 0 }}>
+          <span style={{ color: mobile ? "#20241C" : "var(--terminal-chrome-fg)", fontSize: mobile ? 17 : 14, fontWeight: 800, lineHeight: mobile ? "22px" : "18px" }}>
+            Shell theme
+          </span>
+          <span style={{ color: mobile ? "#77786C" : "var(--terminal-chrome-muted)", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
+            {mobile
+              ? "Terminal colors. We recommend Dark."
+              : "Terminal colors. Dark reads best for agent output, diffs, and status."}
+          </span>
+        </span>
       </div>
-    </dialog>
+
+      <div role="radiogroup" aria-label="Shell theme options" style={{ display: "flex", flexDirection: "column", gap: mobile ? 9 : 7 }}>
+        {SHELL_THEME_OPTIONS.map((option, index) => {
+          const selected = option.id === selectedShellThemeId;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-label={`${option.label} ${option.description}`}
+              data-terminal-shell-theme-motion
+              onClick={() => onSelectTheme(option.id)}
+              style={{
+                ...getShellThemeOptionStyle(mobile, selected),
+                ...getShellThemeOptionMotionStyle(index),
+              }}
+            >
+              <ShellThemePreviewIcon option={option} mobile={mobile} />
+              <span style={{ display: "flex", flex: 1, flexDirection: "column", gap: 2, minWidth: 0 }}>
+                <span style={{ color: mobile ? "#20241C" : "var(--terminal-chrome-fg)", fontSize: mobile ? 14 : 13, fontWeight: 800, lineHeight: "18px" }}>
+                  {option.label}
+                </span>
+                <span style={{ color: mobile ? "#77786C" : "var(--terminal-chrome-muted)", fontSize: mobile ? 11 : 10, lineHeight: mobile ? "15px" : "13px" }}>
+                  {option.description}
+                </span>
+              </span>
+              <span style={getShellThemeOptionTrailingStyle(mobile)}>
+                <span data-terminal-shell-theme-motion style={getShellThemeBadgeStyle(option.badgeTone, mobile, index)}>
+                  {option.badge}
+                </span>
+                {selected ? (
+                  <span data-terminal-shell-theme-motion style={getShellThemeCheckStyle(mobile, index)}>
+                    <CheckIcon
+                      size={mobile ? 18 : 16}
+                      strokeWidth={2.5}
+                      style={{ color: mobile ? "#4F8A55" : "var(--terminal-chrome-active)", display: "block" }}
+                    />
+                  </span>
+                ) : (
+                  <span aria-hidden="true" style={{ flexShrink: 0, height: mobile ? 18 : 16, width: mobile ? 18 : 16 }} />
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={getShellThemeWarningStyle(mobile)}>
+        <span aria-hidden="true" style={{ background: mobile ? "#D2B35F" : "#D2A23C", borderRadius: 999, flexShrink: 0, width: 3 }} />
+        <span>
+          {mobile
+            ? "Light & Matrix aren't fully tuned — some colors lose contrast. Switch back to Dark if output looks off."
+            : "Light and Matrix aren't fully tuned — some terminal colors lose contrast. Switch back to Dark if output looks off."}
+        </span>
+      </div>
+
+      {mobile ? (
+        <div style={{ alignItems: "center", display: "flex", height: 18, justifyContent: "center" }}>
+          <div style={{ background: "#000000", borderRadius: 999, height: 5, width: 140 }} />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function getShellThemePanelMotionStyle(mobile: boolean): CSSProperties {
+  return {
+    animation: `${mobile ? "terminalShellThemeMobilePanelIn" : "terminalShellThemePanelIn"} 180ms cubic-bezier(0.16, 1, 0.3, 1) both`,
+    transformOrigin: mobile ? "bottom center" : "top right",
+  };
+}
+
+function getShellThemeOptionMotionStyle(index: number): CSSProperties {
+  return {
+    animation: `terminalShellThemeRowIn 220ms cubic-bezier(0.16, 1, 0.3, 1) ${45 + index * 35}ms both`,
+  };
+}
+
+function getShellThemeOptionStyle(mobile: boolean, selected: boolean): CSSProperties {
+  if (mobile) {
+    return {
+      alignItems: "center",
+      background: selected ? "#F4F3E9" : "#FFFDF7",
+      border: `1px solid ${selected ? "#D6D5C4" : "#E9E6D8"}`,
+      borderRadius: 14,
+      color: "#2F332C",
+      cursor: "pointer",
+      display: "flex",
+      gap: 13,
+      minHeight: 58,
+      padding: "10px 12px",
+      textAlign: "left",
+      width: "100%",
+    };
+  }
+
+  return {
+    alignItems: "center",
+    background: selected ? "rgba(57, 255, 106, 0.08)" : "rgba(255, 255, 255, 0.02)",
+    border: `1px solid ${selected ? "var(--terminal-chrome-active)" : "var(--terminal-chrome-control-border)"}`,
+    borderRadius: 10,
+    color: "var(--terminal-chrome-fg)",
+    cursor: "pointer",
+    display: "flex",
+    gap: 12,
+    minHeight: 58,
+    padding: "10px 12px",
+    textAlign: "left",
+    width: "100%",
+  };
+}
+
+function getShellThemeOptionTrailingStyle(mobile: boolean): CSSProperties {
+  return {
+    alignItems: "center",
+    display: "flex",
+    flexShrink: 0,
+    gap: mobile ? 9 : 10,
+    justifyContent: "flex-end",
+    minWidth: mobile ? 116 : 132,
+  };
+}
+
+function getShellThemeBadgeStyle(badgeTone: "recommended" | "warning", mobile: boolean, index: number): CSSProperties {
+  const recommended = badgeTone === "recommended";
+  return {
+    animation: `terminalShellThemeBadgeIn 300ms cubic-bezier(0.19, 1, 0.22, 1) ${95 + index * 45}ms both`,
+    background: recommended ? (mobile ? "#DDEBCE" : "rgba(156, 183, 122, 0.2)") : (mobile ? "#F4E4A8" : "rgba(210, 162, 60, 0.2)"),
+    borderRadius: 6,
+    color: recommended ? (mobile ? "#4F8A55" : "#A8D27C") : (mobile ? "#A06F1D" : "#E2BC62"),
+    fontSize: mobile ? 9 : 8,
+    fontWeight: 800,
+    letterSpacing: "0.01em",
+    lineHeight: mobile ? "14px" : "13px",
+    padding: mobile ? "2px 7px" : "2px 6px",
+    transformOrigin: "center right",
+    whiteSpace: "nowrap",
+  };
+}
+
+function getShellThemeCheckStyle(mobile: boolean, index: number): CSSProperties {
+  return {
+    alignItems: "center",
+    animation: `terminalShellThemeCheckIn 180ms cubic-bezier(0.16, 1, 0.3, 1) ${145 + index * 45}ms both`,
+    display: "flex",
+    flexShrink: 0,
+    height: mobile ? 18 : 16,
+    justifyContent: "center",
+    width: mobile ? 18 : 16,
+  };
+}
+
+function getShellThemeWarningStyle(mobile: boolean): CSSProperties {
+  return {
+    background: mobile ? "#F7F1E2" : "rgba(210, 162, 60, 0.12)",
+    border: `1px solid ${mobile ? "#ECE2C6" : "rgba(210, 162, 60, 0.28)"}`,
+    borderRadius: mobile ? 9 : 10,
+    color: mobile ? "#8A7B52" : "#D4B570",
+    display: "flex",
+    fontSize: mobile ? 10 : 11,
+    gap: 10,
+    lineHeight: mobile ? "14px" : "16px",
+    padding: mobile ? "10px 12px" : "11px 12px",
+  };
+}
+
+function ShellThemeHeaderIcon({ mobile }: { mobile: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        alignItems: "center",
+        background: "#050A06",
+        border: "1px solid rgba(57, 255, 106, 0.48)",
+        borderRadius: mobile ? 11 : 9,
+        boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 18px rgba(57, 255, 106, 0.14)",
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+        gap: mobile ? 5 : 4,
+        height: mobile ? 40 : 34,
+        justifyContent: "center",
+        width: mobile ? 40 : 34,
+      }}
+    >
+      <span style={{ background: "#39FF6A", borderRadius: 999, display: "block", height: 3, width: mobile ? 21 : 18 }} />
+      <span style={{ display: "flex", gap: 4 }}>
+        <span style={{ background: "#27E9A4", borderRadius: 999, display: "block", height: mobile ? 6 : 5, width: mobile ? 6 : 5 }} />
+        <span style={{ background: "#E6E678", borderRadius: 999, display: "block", height: mobile ? 6 : 5, width: mobile ? 6 : 5 }} />
+      </span>
+    </span>
   );
 }
 
@@ -1981,9 +2799,9 @@ function TerminalWorkspaceChrome() {
       onDoubleClick={handleDragDoubleClick}
       style={{
         alignItems: "center",
-        background: "#15180F",
-        borderBottom: "1px solid #24271F",
-        color: "#C9C7B7",
+        background: "var(--terminal-chrome-bg)",
+        borderBottom: "1px solid var(--terminal-chrome-border)",
+        color: "var(--terminal-chrome-fg)",
         display: "flex",
         height: ctx.mobile ? 52 : 54,
         justifyContent: "space-between",
@@ -2013,7 +2831,7 @@ function TerminalWorkspaceChrome() {
                 onClick={ctx.windowControls?.toggleFullscreen}
               />
             </div>
-            <span style={{ background: "#2D3127", height: 22, width: 1 }} />
+            <span style={{ background: "var(--terminal-chrome-control-border)", height: 22, width: 1 }} />
           </>
         )}
         {ctx.mobile ? (
@@ -2025,7 +2843,7 @@ function TerminalWorkspaceChrome() {
               alignItems: "center",
               background: "transparent",
               border: 0,
-              color: "#C9C7B7",
+              color: "var(--terminal-chrome-fg)",
               cursor: "pointer",
               display: "flex",
               height: 40,
@@ -2037,20 +2855,20 @@ function TerminalWorkspaceChrome() {
           </button>
         ) : null}
         <div className="flex min-w-0 items-center" style={{ gap: 10, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}>
-          <span style={{ color: "#858578", fontSize: 15, lineHeight: "20px" }}>matrix-os</span>
-          {!ctx.mobile && <span style={{ color: "#5F6258", fontSize: 15 }}>/</span>}
-          <span className="truncate" style={{ color: "#F0EFE5", fontSize: 15, fontWeight: 700, lineHeight: "20px" }}>
+          <span style={{ color: "var(--terminal-chrome-muted)", fontSize: 15, lineHeight: "20px" }}>matrix-os</span>
+          {!ctx.mobile && <span style={{ color: "var(--terminal-chrome-subtle)", fontSize: 15 }}>/</span>}
+          <span className="truncate" style={{ color: "var(--terminal-chrome-active)", fontSize: 15, fontWeight: 700, lineHeight: "20px" }}>
             {activeName}
           </span>
           {!ctx.mobile && (
             <span
               className="inline-flex shrink-0 items-center"
               style={{
-                background: "#20241C",
-                border: "1px solid #24271F",
+                background: "var(--terminal-chrome-badge-bg)",
+                border: "1px solid var(--terminal-chrome-badge-border)",
                 borderRadius: 8,
                 boxSizing: "border-box",
-                color: "#858578",
+                color: "var(--terminal-chrome-muted)",
                 fontSize: 11,
                 gap: 5,
                 height: 22,
@@ -2079,7 +2897,7 @@ function TerminalWorkspaceChrome() {
             >
               <IconSplitV />
             </ChromeIconButton>
-            <span style={{ background: "#2D3127", height: 22, margin: "0 4px", width: 1 }} />
+            <span style={{ background: "var(--terminal-chrome-control-border)", height: 22, margin: "0 4px", width: 1 }} />
           </>
         )}
         <ThemePickerButton />
@@ -2140,10 +2958,10 @@ function ChromeIconButton({
       onMouseDown={(event) => event.stopPropagation()}
       className="flex items-center justify-center"
       style={{
-        background: "#20241C",
-        border: "1px solid #2D3127",
+        background: "var(--terminal-chrome-control-bg)",
+        border: "1px solid var(--terminal-chrome-control-border)",
         borderRadius: 9,
-        color: "#C9C7B7",
+        color: "var(--terminal-chrome-control-fg)",
         cursor: "pointer",
         height: 32,
         width: 32,
@@ -3528,6 +4346,9 @@ function LocalTerminalSidebar() {
 
   const openNewSessionMenu = (anchor: NewSessionMenuAnchor) => {
     if (creatingShell) return;
+    if (newSessionMenuAnchor !== anchor) {
+      void fetchAgentStatuses();
+    }
     setNewSessionMenuAnchor((current) => current === anchor ? null : anchor);
   };
 
@@ -3590,7 +4411,7 @@ function LocalTerminalSidebar() {
             display: "flex",
             minHeight: 0,
             opacity: 1,
-            overflow: "hidden",
+            overflow: "visible",
             transform: "translateX(0)",
             transition: TERMINAL_SIDEBAR_TRANSITION,
             width: 76,
@@ -3626,15 +4447,16 @@ function LocalTerminalSidebar() {
         data-testid="terminal-sidebar-shell"
         className="shrink-0 overflow-hidden"
         style={{
-          background: "#E9E9D8",
+          background: "var(--terminal-drawer-bg)",
           borderRight: ctx.mobile ? "none" : `1px solid ${terminalDividerColor}`,
-          borderBottom: ctx.mobile ? "1px solid #D6D5C4" : "none",
-          color: "#31362D",
+          borderBottom: ctx.mobile ? "1px solid var(--terminal-drawer-border)" : "none",
+          color: "var(--terminal-drawer-fg)",
           display: "flex",
           flexDirection: "column",
           maxHeight: ctx.mobile ? "52%" : undefined,
           minHeight: ctx.mobile ? 360 : undefined,
           opacity: 1,
+          overflow: "visible",
           position: "relative",
           transform: "translateX(0)",
           transition: ctx.mobile ? undefined : TERMINAL_SIDEBAR_TRANSITION,
@@ -3644,7 +4466,8 @@ function LocalTerminalSidebar() {
       <div
         className="shrink-0"
         style={{
-          borderBottom: "1px solid #D6D5C4",
+          background: "var(--terminal-drawer-bg)",
+          borderBottom: "1px solid var(--terminal-drawer-border)",
           display: "flex",
           flexDirection: "column",
           gap: 18,
@@ -3656,9 +4479,9 @@ function LocalTerminalSidebar() {
             <div
               className="flex shrink-0 items-center justify-center"
               style={{
-                background: "#465243",
+                background: "var(--terminal-drawer-brand-bg)",
                 borderRadius: ctx.mobile ? 12 : 9,
-                color: "#F8F7EF",
+                color: "var(--terminal-drawer-brand-fg)",
                 fontFamily: "Orbitron, system-ui, sans-serif",
                 fontSize: ctx.mobile ? 17 : 15,
                 fontWeight: 800,
@@ -3669,11 +4492,11 @@ function LocalTerminalSidebar() {
               M
             </div>
             <div className="min-w-0">
-              <div style={{ color: "#3E4339", fontFamily: "Orbitron, system-ui, sans-serif", fontSize: 20, fontWeight: 800, lineHeight: "24px" }}>
+              <div style={{ color: "var(--terminal-drawer-fg)", fontFamily: "Orbitron, system-ui, sans-serif", fontSize: 20, fontWeight: 800, lineHeight: "24px" }}>
                 matrixos
               </div>
               {!ctx.mobile ? (
-                <div className="truncate" style={{ color: "#858578", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
+                <div className="truncate" style={{ color: "var(--terminal-drawer-muted)", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
                   {ctx.sidebarSelectedPath ? formatCwd(ctx.sidebarSelectedPath) : "~/projects"}
                 </div>
               ) : null}
@@ -3690,10 +4513,10 @@ function LocalTerminalSidebar() {
                 disabled={creatingShell}
                 className="flex items-center justify-center"
                 style={{
-                  background: "#465243",
+                  background: "var(--terminal-drawer-primary-button-bg)",
                   border: 0,
                   borderRadius: ctx.mobile ? 13 : 10,
-                  color: "#F8F7EF",
+                  color: "var(--terminal-drawer-primary-button-fg)",
                   cursor: creatingShell ? "not-allowed" : "pointer",
                   fontSize: 25,
                   height: ctx.mobile ? 44 : 40,
@@ -3723,10 +4546,10 @@ function LocalTerminalSidebar() {
                   disabled={shellsLoading}
                   className="flex items-center justify-center"
                   style={{
-                    background: "#FFFDF7",
-                    border: "1px solid #D6D5C4",
+                    background: "var(--terminal-drawer-button-bg)",
+                    border: "1px solid var(--terminal-drawer-button-border)",
                     borderRadius: 10,
-                    color: "#6F7167",
+                    color: "var(--terminal-drawer-button-fg)",
                     cursor: shellsLoading ? "not-allowed" : "pointer",
                     height: 40,
                     opacity: shellsLoading ? 0.72 : 1,
@@ -3746,10 +4569,10 @@ function LocalTerminalSidebar() {
                   onClick={() => ctx.setSidebarOpen(false)}
                   className="flex items-center justify-center"
                   style={{
-                    background: "#FFFDF7",
-                    border: "1px solid #D6D5C4",
+                    background: "var(--terminal-drawer-button-bg)",
+                    border: "1px solid var(--terminal-drawer-button-border)",
                     borderRadius: 10,
-                    color: "#6F7167",
+                    color: "var(--terminal-drawer-button-fg)",
                     cursor: "pointer",
                     height: 40,
                     width: 40,
@@ -3764,15 +4587,15 @@ function LocalTerminalSidebar() {
         <div
           className="flex items-center"
           style={{
-            background: "#FFFDF7",
-            border: "1px solid #D6D5C4",
+            background: "var(--terminal-drawer-search-bg)",
+            border: "1px solid var(--terminal-drawer-search-border)",
             borderRadius: ctx.mobile ? 14 : 10,
             gap: 10,
             height: ctx.mobile ? 48 : 40,
             padding: "0 14px",
           }}
         >
-          <SearchIcon size={18} strokeWidth={1.9} color="#A09F92" />
+          <SearchIcon size={18} strokeWidth={1.9} color="var(--terminal-drawer-search-icon)" />
           <input
             aria-label="Search sessions"
             value={filter}
@@ -3781,7 +4604,7 @@ function LocalTerminalSidebar() {
             style={{
               background: "transparent",
               border: 0,
-              color: "#31362D",
+              color: "var(--terminal-drawer-fg)",
               flex: 1,
               fontSize: ctx.mobile ? 16 : 15,
               minWidth: 0,
@@ -3792,13 +4615,13 @@ function LocalTerminalSidebar() {
 
       <div className="min-h-0 flex-1 overflow-y-auto" style={{ display: "flex", flexDirection: "column", gap: 18, padding: ctx.mobile ? 20 : 18 }}>
         {shellsLoading && (
-          <div style={{ color: "#858578", fontSize: 12, padding: "24px 0", textAlign: "center" }}>Loading sessions...</div>
+          <div style={{ color: "var(--terminal-drawer-muted)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>Loading sessions...</div>
         )}
         {!shellsLoading && shellsError && (
           <div style={{ color: "#8F6712", fontSize: 12, padding: "24px 0", textAlign: "center" }}>{shellsError}</div>
         )}
         {!shellsLoading && !shellsError && !creatingShell && renderedShells.length === 0 && (
-          <div style={{ color: "#858578", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
+          <div style={{ color: "var(--terminal-drawer-muted)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
             {filter ? "No sessions match" : "No sessions yet"}
           </div>
         )}
@@ -3918,10 +4741,10 @@ function NewSessionMenu({
       onPointerDown={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
       style={{
-        background: "#FFFDF7",
-        border: "1px solid #D6D5C4",
+        background: "var(--terminal-drawer-card-bg)",
+        border: "1px solid var(--terminal-drawer-card-border)",
         borderRadius: 10,
-        boxShadow: "0 20px 45px rgba(39, 40, 34, 0.18)",
+        boxShadow: "0 20px 45px var(--terminal-drawer-card-shadow)",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
@@ -3938,7 +4761,7 @@ function NewSessionMenu({
       <div style={{ paddingBottom: 2 }}>
         <div
           style={{
-            color: "#A09F92",
+            color: "var(--terminal-drawer-subtle)",
             fontFamily: "Inter, system-ui, sans-serif",
             fontSize: 12,
             fontWeight: 800,
@@ -3959,7 +4782,7 @@ function NewSessionMenu({
             aria-hidden="true"
             size={20}
             strokeWidth={2.1}
-            style={{ color: "#465243", flexShrink: 0 }}
+            style={{ color: "var(--terminal-drawer-selected-stripe)", flexShrink: 0 }}
           />
         )}
         onClick={onCreateShell}
@@ -4027,11 +4850,11 @@ function NewSessionMenuItem({
       onClick={onClick}
       style={{
         alignItems: "center",
-        background: active ? "#F0EFE5" : install ? "#F7F4EA" : "transparent",
+        background: active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent",
         border: 0,
         borderRadius: active ? 7 : 7,
         boxSizing: "border-box",
-        color: "#31362D",
+        color: "var(--terminal-drawer-fg)",
         cursor: "pointer",
         display: "flex",
         flexShrink: 0,
@@ -4041,10 +4864,10 @@ function NewSessionMenuItem({
         textAlign: "left",
       }}
       onMouseEnter={(event) => {
-        event.currentTarget.style.background = "#F0EFE5";
+        event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
       }}
       onMouseLeave={(event) => {
-        event.currentTarget.style.background = active ? "#F0EFE5" : install ? "#F7F4EA" : "transparent";
+        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent";
       }}
     >
       {icon}
@@ -4056,13 +4879,14 @@ function NewSessionMenuItem({
           fontWeight: active ? 700 : 600,
           lineHeight: "20px",
           minWidth: 0,
-          color: install ? "#858578" : "#31362D",
+          color: install ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
         }}
       >
         {label}
       </span>
       <span
         style={{
+          color: "var(--terminal-drawer-subtle)",
           alignItems: "center",
           display: "flex",
           flex: "0 0 62px",
@@ -4072,18 +4896,21 @@ function NewSessionMenuItem({
       >
         {install ? (
           <span
+            data-testid="terminal-agent-install-pill"
             style={{
               alignItems: "center",
-              background: "#D8792C",
-              borderRadius: 6,
-              color: "#FFFDF7",
+              background: "var(--terminal-drawer-action-bg)",
+              border: "1px solid var(--terminal-drawer-action-border)",
+              borderRadius: 999,
+              boxSizing: "border-box",
+              color: "var(--terminal-drawer-action-fg)",
               display: "flex",
               fontFamily: "Inter, system-ui, sans-serif",
               fontSize: 12,
-              fontWeight: 800,
-              height: 22,
+              fontWeight: 700,
+              height: 21,
               lineHeight: "14px",
-              padding: "0 8px",
+              padding: "0 7px",
             }}
           >
             Install
@@ -4092,11 +4919,11 @@ function NewSessionMenuItem({
           <span
             style={{
               alignItems: "center",
-              background: shortcut ? "#F0EFE5" : "transparent",
-              border: shortcut ? "1px solid #DAD8CC" : "1px solid transparent",
+              background: shortcut ? "var(--terminal-drawer-action-bg)" : "transparent",
+              border: shortcut ? "1px solid var(--terminal-drawer-action-border)" : "1px solid transparent",
               borderRadius: 6,
               boxSizing: "border-box",
-              color: "#8C8B80",
+              color: "var(--terminal-drawer-action-fg)",
               display: "inline-flex",
               fontFamily: "Inter, system-ui, sans-serif",
               fontSize: 11,
@@ -4391,7 +5218,7 @@ function ShellCloseConfirmation({
                 color: "#F8F7EF",
                 cursor: deleting ? "not-allowed" : "pointer",
                 fontFamily: "Inter, system-ui, sans-serif",
-                fontSize: 11,
+                fontSize: 12,
                 fontWeight: 600,
                 gap: 6,
                 height: 30,
@@ -4502,9 +5329,9 @@ function CollapsedSessionsRail({
       className="shrink-0"
       style={{
         alignItems: "center",
-        background: "#E9E9D8",
+        background: "var(--terminal-drawer-bg)",
         borderRight: `1px solid ${terminalDividerColor}`,
-        color: "#31362D",
+        color: "var(--terminal-drawer-fg)",
         display: "flex",
         flexDirection: "column",
         gap: 12,
@@ -4516,9 +5343,9 @@ function CollapsedSessionsRail({
         data-testid="terminal-collapsed-brand"
         className="flex items-center justify-center"
         style={{
-          background: "#465243",
+          background: "var(--terminal-drawer-brand-bg)",
           borderRadius: 11,
-          color: "#F8F7EF",
+          color: "var(--terminal-drawer-brand-fg)",
           flexShrink: 0,
           fontFamily: "Orbitron, system-ui, sans-serif",
           fontSize: 15,
@@ -4547,11 +5374,11 @@ function CollapsedSessionsRail({
           />
         ) : null}
       </div>
-      <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
+      <div style={{ background: "var(--terminal-drawer-border)", height: 1, width: 34 }} />
       <CollapsedRailGroup shells={activeShells} selectedShellName={selectedShellName} onOpen={onOpen} />
       {backgroundShells.length > 0 && (
         <>
-          <div style={{ background: "#D6D5C4", height: 1, width: 34 }} />
+          <div style={{ background: "var(--terminal-drawer-border)", height: 1, width: 34 }} />
           <CollapsedRailGroup shells={backgroundShells} selectedShellName={selectedShellName} onOpen={onOpen} muted />
         </>
       )}
@@ -4587,11 +5414,11 @@ function CollapsedRailGroup({
             onClick={() => onOpen(shell)}
             className="relative flex items-center justify-center"
             style={{
-              background: selected ? "#FFFDF7" : muted ? "#E2E2D0" : "#FFFDF7",
-              border: `1px solid ${selected ? "#9CB77A" : muted ? "#D4D2C1" : "#D6D5C4"}`,
+              background: selected ? "var(--terminal-drawer-card-bg)" : muted ? "var(--terminal-drawer-card-muted-bg)" : "var(--terminal-drawer-card-bg)",
+              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : muted ? "var(--terminal-drawer-card-muted-border)" : "var(--terminal-drawer-card-border)"}`,
               borderRadius: 11,
-              boxShadow: selected ? "0 0 0 5px rgba(156,183,122,0.30), 0 8px 18px rgba(39,40,34,0.16)" : "none",
-              color: muted ? "#858578" : "#31362D",
+              boxShadow: selected ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
+              color: muted ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
               cursor: "pointer",
               flexShrink: 0,
               fontFamily: "var(--font-mono, ui-monospace, monospace)",
@@ -4611,7 +5438,9 @@ function CollapsedRailGroup({
               data-testid={`terminal-session-status-${shell.name}`}
               style={{
                 ...getShellStatusDotStyle(shell),
-                border: "2px solid #E9E9D8",
+                borderColor: "var(--terminal-drawer-bg)",
+                borderStyle: "solid",
+                borderWidth: 2,
                 borderRadius: 999,
                 boxSizing: "border-box",
                 height: 12,
@@ -4655,10 +5484,10 @@ function CollapsedRailButton({
       disabled={disabled}
       className="flex items-center justify-center"
       style={{
-        background: strong ? "#465243" : "#FFFDF7",
-        border: strong ? "1px solid #465243" : "1px solid #D6D5C4",
+        background: strong ? "var(--terminal-drawer-primary-button-bg)" : "var(--terminal-drawer-button-bg)",
+        border: strong ? "1px solid var(--terminal-drawer-primary-button-bg)" : "1px solid var(--terminal-drawer-button-border)",
         borderRadius: strong ? 11 : 10,
-        color: strong ? "#F8F7EF" : "#6F7167",
+        color: strong ? "var(--terminal-drawer-primary-button-fg)" : "var(--terminal-drawer-button-fg)",
         cursor: disabled ? "not-allowed" : "pointer",
         flexShrink: 0,
         fontSize: strong ? 24 : 14,
@@ -4713,10 +5542,10 @@ function ShellSessionGroup({
 }) {
   return (
     <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div className="flex items-center justify-between" style={{ color: "#858578", minHeight: 22 }}>
+      <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
         <div className="flex items-center" style={{ gap: 7 }}>
           {label === "Background" && (
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#858578" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--terminal-drawer-muted)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="m6 9 6 6 6-6" />
             </svg>
           )}
@@ -4730,7 +5559,7 @@ function ShellSessionGroup({
       </div>
       {pending ? <ShellPendingCard /> : null}
       {shells.length === 0 && !pending ? (
-        <div style={{ color: "#A09F92", fontSize: 12, padding: "8px 0 6px" }}>
+        <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 12, padding: "8px 0 6px" }}>
           {foreground ? "No active sessions" : "Nothing running in background"}
         </div>
       ) : shells.map((shell) => (
@@ -4763,11 +5592,11 @@ function ShellPendingCard() {
       data-testid="terminal-session-pending-row"
       style={{
         alignItems: "center",
-        background: "#FFFDF7",
-        border: "1px solid #D6D5C4",
+        background: "var(--terminal-drawer-card-bg)",
+        border: "1px solid var(--terminal-drawer-card-border)",
         borderRadius: 10,
-        boxShadow: "0 9px 22px rgba(39,40,34,0.10)",
-        color: "#858578",
+        boxShadow: "0 9px 22px var(--terminal-drawer-card-shadow)",
+        color: "var(--terminal-drawer-muted)",
         display: "grid",
         gap: 10,
         gridTemplateColumns: "12px 8px minmax(0, 1fr) 58px 46px",
@@ -4781,8 +5610,8 @@ function ShellPendingCard() {
         aria-hidden="true"
         className="terminal-refresh-icon--loading"
         style={{
-          border: "2px solid #D6D5C4",
-          borderTopColor: "#465243",
+          border: "2px solid var(--terminal-drawer-card-border)",
+          borderTopColor: "var(--terminal-drawer-selected-stripe)",
           borderRadius: "50%",
           height: 8,
           width: 8,
@@ -4802,10 +5631,10 @@ function ShellPendingCard() {
       <span />
       <span
         style={{
-          background: "#F0EFE5",
-          border: "1px solid #E4E2D2",
+          background: "var(--terminal-drawer-action-bg)",
+          border: "1px solid var(--terminal-drawer-action-border)",
           borderRadius: 999,
-          color: "#858578",
+          color: "var(--terminal-drawer-action-fg)",
           fontSize: 12,
           fontWeight: 800,
           lineHeight: "18px",
@@ -4990,14 +5819,14 @@ function ShellCard({
         }
       }}
       style={{
-        background: selected ? "#FFFDF7" : foreground ? "#FFFDF7" : "#E2E2D0",
-        border: `1px solid ${selected ? "#9CB77A" : foreground ? "#D6D5C4" : "#D4D2C1"}`,
+        background: selected ? "var(--terminal-drawer-card-bg)" : foreground ? "var(--terminal-drawer-card-bg)" : "var(--terminal-drawer-card-muted-bg)",
+        border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : foreground ? "var(--terminal-drawer-card-border)" : "var(--terminal-drawer-card-muted-border)"}`,
         borderRadius: 10,
         boxShadow: dragging
-          ? "0 18px 34px rgba(39,40,34,0.22)"
+          ? "0 18px 34px var(--terminal-drawer-card-shadow)"
           : selected
-            ? "0 0 0 5px rgba(156,183,122,0.28), 0 14px 30px rgba(39,40,34,0.18)"
-            : foreground ? "0 9px 22px rgba(39,40,34,0.13)" : "none",
+            ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 14px 30px var(--terminal-drawer-card-shadow)"
+            : foreground ? "0 9px 22px var(--terminal-drawer-card-shadow)" : "none",
         cursor: renaming || deleting ? "default" : "pointer",
         alignItems: "center",
         display: "grid",
@@ -5016,7 +5845,7 @@ function ShellCard({
           aria-hidden="true"
           data-testid={`terminal-session-drop-line-${shell.name}`}
           style={{
-            background: "#D8792C",
+            background: "var(--terminal-drawer-drop-line)",
             borderRadius: 999,
             height: 3,
             left: 12,
@@ -5031,7 +5860,7 @@ function ShellCard({
         <span
           aria-hidden="true"
           style={{
-            background: "#465243",
+            background: "var(--terminal-drawer-selected-stripe)",
             borderRadius: 999,
             bottom: 12,
             left: -1,
@@ -5095,7 +5924,7 @@ function ShellCard({
           style={{
             background: "transparent",
             border: 0,
-            color: "#A09F92",
+            color: "var(--terminal-drawer-subtle)",
             cursor: showDragHandle ? "grab" : "default",
             flexShrink: 0,
             height: 18,
@@ -5166,7 +5995,7 @@ function ShellCard({
               }}
               style={{
                 ...SESSION_NAME_BUTTON_BASE_STYLE,
-                color: foreground ? "#31362D" : "#5F6258",
+                color: foreground ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
               }}
             >
               {displayName}
@@ -5221,7 +6050,7 @@ function ShellCard({
                 className="flex items-center justify-center"
                 style={{
                   ...SESSION_COPY_BUTTON_STYLE,
-                  color: copyFeedback === "copied" ? "#465243" : "#8A8B7C",
+                  color: copyFeedback === "copied" ? "var(--terminal-drawer-selected-stripe)" : "var(--terminal-drawer-action-fg)",
                 }}
               >
                 {copyFeedback === "copied" ? (
@@ -5270,11 +6099,11 @@ function ShellCard({
         onMouseDown={(event) => event.stopPropagation()}
         style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
       >
-        {foreground && <span style={{ background: "#4F8A55", borderRadius: 999, height: 12, width: 12 }} />}
+        {foreground && <span style={{ background: "var(--terminal-drawer-toggle-knob)", borderRadius: 999, height: 12, width: 12 }} />}
         <span style={{ flex: "1 1 auto", fontSize: 10, fontWeight: 800, lineHeight: "10px", textAlign: "center" }}>
           {foreground ? "ON" : "BG"}
         </span>
-        {!foreground && <span style={{ background: "#F7F6EC", border: "1px solid #D6D5C4", borderRadius: 999, height: 12, width: 12 }} />}
+        {!foreground && <span style={{ background: "var(--terminal-drawer-toggle-off-knob)", border: "1px solid var(--terminal-drawer-toggle-off-border)", borderRadius: 999, height: 12, width: 12 }} />}
       </button>
     </div>
   );

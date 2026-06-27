@@ -2078,6 +2078,9 @@ export function createApp(deps: {
     }
   }
 
+  const BILLING_AUTH_FAILURE_HEADER = 'X-Auth-Failure';
+  const BILLING_APP_SESSION_STALE_FAILURE = 'app-session-stale';
+
   async function resolveBillingClerkUserId(c: Context): Promise<string | null> {
     const authorization = c.req.header('authorization');
     const cookie = c.req.header('cookie');
@@ -2106,6 +2109,9 @@ export function createApp(deps: {
       const kind = err instanceof Error ? err.name : typeof err;
       const source = bearerToken ? 'native token' : 'app session token';
       console.warn(`[billing] ${source} verification failed: ${kind}`);
+      if (!bearerToken && appSessionToken) {
+        c.header(BILLING_AUTH_FAILURE_HEADER, BILLING_APP_SESSION_STALE_FAILURE);
+      }
       return null;
     }
   }

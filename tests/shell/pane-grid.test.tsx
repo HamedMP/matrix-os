@@ -53,4 +53,32 @@ describe("PaneGrid", () => {
       shouldCacheOnUnmount: shouldCachePane,
     }));
   });
+
+  it("keeps pane grid and split wrappers as non-scroll containers", () => {
+    const paneTree: PaneNode = {
+      type: "split",
+      id: "split-1",
+      direction: "horizontal",
+      ratio: 0.5,
+      children: [
+        { type: "pane", id: "pane-left", cwd: "" },
+        { type: "pane", id: "pane-right", cwd: "" },
+      ],
+    };
+
+    const { container } = render(
+      <PaneGrid
+        paneTree={paneTree}
+        theme={{ mode: "dark", colors: {} }}
+        focusedPaneId="pane-left"
+      />,
+    );
+
+    const gridRoot = container.firstElementChild;
+    expect(gridRoot?.className).toContain("overflow-hidden");
+
+    const divs = Array.from(container.querySelectorAll("div"));
+    expect(divs.some((node) => node.className.includes("overflow-auto") || node.className.includes("overflow-scroll"))).toBe(false);
+    expect(divs.some((node) => node.style.overflow === "auto" || node.style.overflow === "scroll")).toBe(false);
+  });
 });
