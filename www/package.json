@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --port 3001",
-    "build": "pnpm --dir .. --filter '@matrix-os/observability' build && next build",
+    "build": "pnpm --dir .. --filter '@matrix-os/observability' --filter '@matrix-os/brand' build && next build",
     "start": "next start"
   },
   "dependencies": {
     "@clerk/nextjs": "6.39.5",
     "@clerk/ui": "1.12.1",
     "@matrix-os/clerk-sync": "workspace:*",
+    "@matrix-os/brand": "workspace:*",
     "@matrix-os/observability": "workspace:*",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-popover": "^1.1.15",
