@@ -75,7 +75,7 @@
 }
 
 :root {
-  --font-sans: "Inter", system-ui, sans-serif;
+  --font-sans: var(--font-instrument), "Instrument Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --radius: 0.75rem;
 

@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import { Inter, JetBrains_Mono, Cormorant_Garamond, Orbitron } from "next/font/google";
+import { Inter, Instrument_Sans, JetBrains_Mono, Cormorant_Garamond, Orbitron } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { getPostHogVisitorCountry } from "@matrix-os/observability/client";
 import { buildShellMetadata } from "@/lib/shell-metadata";
@@ -16,6 +16,12 @@ import { PostHogIdentify } from "@/components/PostHogIdentify";
 
 const inter = Inter({
   variable: "--font-inter",
+  subsets: ["latin"],
+});
+
+// Default shell sans — matches the landing site's --font-sans (Instrument Sans).
+const instrumentSans = Instrument_Sans({
+  variable: "--font-instrument",
   subsets: ["latin"],
 });
 
@@ -73,7 +79,7 @@ export default async function RootLayout({
         // replay without rebuilding the bundle.
         data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
       >
-        <body className={`${inter.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
+        <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
           {children}
           <PostHogIdentify />
           <PwaRegister />

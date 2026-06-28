@@ -205,7 +205,9 @@ describe("BillingSection", () => {
     render(<BillingSection />);
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
 
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
     fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany/ }));
     fireEvent.click(screen.getByRole("button", { name: "Annual" }));
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("true");
@@ -273,12 +275,18 @@ describe("BillingSection", () => {
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
     expect(screen.getByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
     expect(screen.getAllByText("Computer").length).toBeGreaterThanOrEqual(1);
+
+    // Computer options live in a click-to-open dropdown now.
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     expect(screen.getByText("CPX22")).toBeTruthy();
     expect(screen.getByText("$14")).toBeTruthy();
     expect(screen.getAllByText("CPX32").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("$19").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("CPX52")).toBeTruthy();
     expect(screen.getByText("$49")).toBeTruthy();
+
+    // Region options live in their own dropdown (opening it closes the computer one).
+    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
     expect(screen.getAllByText("Region").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Closest location is selected automatically")).toBeTruthy();
     expect(screen.getAllByText("🇩🇪").length).toBeGreaterThanOrEqual(2);
