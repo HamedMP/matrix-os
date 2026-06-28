@@ -1,55 +1,90 @@
 ---
 title: Coding Agents
-description: Run supported coding agents inside Matrix OS.
+description: Install and run coding agents on your Matrix computer.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-Matrix OS is designed for coding agents that run on the Matrix computer, not on your laptop. The agent gets the same shell, files, repo, dev server, and Matrix skills that you see in the web shell.
+Matrix OS runs coding agents on your Matrix computer, not on your laptop. The agent gets the same shell, files, repository, dev server, and Matrix skills that you see in the web shell — and it keeps running after you close your browser.
 
 ## Supported agents
 
-| Agent | Typical command | Notes |
-| --- | --- | --- |
-| Claude Code | `claude` | Sign in if the CLI asks. Matrix skills are synced into Claude skill discovery. |
-| Codex | `codex` | Use the Matrix onboarding plugin/skills when available. |
-| Pi | `pi` | Use it from a named Matrix shell session when installed. |
-| OpenCode | `opencode` | Sign in or configure provider credentials as needed. |
-| Hermes | `hermes` | Install/sync the Matrix skill pack and set the Matrix gateway URL. |
+Four coding agents are supported:
 
-## Start an agent from the CLI
+<Cards>
+  <Card title="Claude Code" description="Anthropic's coding agent. Launched with the claude command. Matrix skills are synced into Claude's skill discovery path." />
+  <Card title="Codex" description="OpenAI's CLI coding agent. Launched with the codex command." />
+  <Card title="OpenCode" description="Open-source coding agent. Launched with the opencode command." />
+  <Card title="Pi" description="Earendil's Pi coding agent. Launched with the pi command." />
+</Cards>
 
-```bash
-matrix shell connect -c setup
-matrix run -it --session setup -- codex
-matrix run -it --session setup -- claude
-matrix run -it --session setup -- opencode
-matrix run -it --session setup -- hermes
-```
-
-## Start an agent from the web shell
-
-Open Terminal, click the new-session `+` menu, and choose `Claude Code`, `Codex`, `OpenCode`, or `Pi`. Matrix opens a new shell tab for every choice.
-
-If the selected agent is already installed, the new tab starts the agent command. If it is missing, the row shows `Install`; clicking it opens a new shell tab and runs the installer there so you can watch the install complete.
-
-You can also start an installed agent manually:
-
-```bash
-cd ~/projects/repo
-codex
-```
-
-Use one named session per major workflow. For example: `setup`, `frontend`, `review`, `release`.
-
-## Benefits
-
-- Agents keep running even when your laptop closes.
-- Dev servers and tests run on the same machine the agent edits.
-- Browser, CLI, and agent sessions share the same workspace.
-- Work can continue from another device without copying repo state.
-- Matrix skills teach agents how to build Matrix apps, use the design system, and debug common app failures.
-
-<Callout type="warn" title="Credentials remain your responsibility">
-  Sign in to each coding agent only through its own supported CLI flow. Do not paste API keys into chats, docs, or public logs.
+<Callout type="info" title="Hermes is separate">
+  Hermes is the always-on Matrix chat agent, not a coding agent you install from the Terminal menu. See [Hermes](/docs/hermes) for details.
 </Callout>
+
+## Installing an agent
+
+The Terminal `+` menu shows all four agents and whether each one is installed on your Matrix computer. If an agent is missing, clicking it opens a new shell tab and runs the npm installer there so you can watch the output.
+
+The install command that runs is:
+
+```bash
+export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
+npm install -g --prefix "$MATRIX_NODE_PREFIX" <package>
+```
+
+Each agent maps to an npm package:
+
+| Agent | Package |
+|---|---|
+| Claude Code | `@anthropic-ai/claude-code@latest` |
+| Codex | `@openai/codex@latest` |
+| OpenCode | `opencode-ai@latest` |
+| Pi | `@earendil-works/pi-coding-agent@latest` |
+
+The default node prefix is `/opt/matrix/runtime/node`. Set `MATRIX_NODE_PREFIX` in your environment to use a different location.
+
+## Running an agent
+
+### From the Terminal menu
+
+<Steps>
+  <Step>Open Terminal in the web shell.</Step>
+  <Step>Click the `+` button to open the new-session menu.</Step>
+  <Step>Select the agent you want to run. If it is installed, a new tab opens running the agent. If it is not installed, a new tab opens running the installer instead.</Step>
+</Steps>
+
+### From the CLI
+
+Use `matrix run -it` to start an agent in a named shell session. Named sessions keep working after you disconnect.
+
+```bash
+matrix run -it --session main -- claude
+matrix run -it --session main -- codex
+matrix run -it --session main -- opencode
+matrix run -it --session main -- pi
+```
+
+Or connect to an existing session and run the agent manually:
+
+```bash
+matrix shell connect -c main
+cd ~/projects/my-repo
+claude
+```
+
+See [CLI reference](/docs/cli) for `matrix run` and `matrix shell connect` options, and [Shell](/docs/shell) for how named sessions work across devices.
+
+## Agent credentials
+
+Each agent requires its own credentials. Sign in through the agent's own CLI flow after the install completes — for example `claude` prompts for Anthropic account login, and `codex` and `opencode` require an API key or provider login.
+
+<Callout type="warn" title="Keep credentials out of chat and logs">
+  Sign in to each coding agent only through its own supported CLI flow. Do not paste API keys into chats, documents, or terminal output that may be shared or logged.
+</Callout>
+
+## Matrix skills for agents
+
+Matrix OS syncs a curated skill pack into each agent's skill discovery path at install time. The skills teach agents how to build Matrix apps, use the shell design system, and navigate the project layout. They are stored under `~/agents/skills/` on your Matrix computer and updated when you run `matrix sync`.
