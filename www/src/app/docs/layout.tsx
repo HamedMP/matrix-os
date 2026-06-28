@@ -1,17 +1,11 @@
 import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { RootProvider } from 'fumadocs-ui/provider/next';
+import { Rocket, Terminal } from 'lucide-react';
 import Image from 'next/image';
 import { source } from '@/lib/source';
 import { baseOptions } from '@/lib/layout.shared';
 import { DocsSidebarFooter } from '@/components/docs-sidebar-footer';
 import type { ReactNode } from 'react';
-
-function getSection(path: string | undefined) {
-  if (!path) return 'users';
-  const [dir] = path.split('/', 1);
-  if (dir === 'developer' || dir === 'deployment' || dir === 'users') return dir;
-  return 'users';
-}
 
 export default function Layout({ children }: { children: ReactNode }) {
   const base = baseOptions();
@@ -48,26 +42,23 @@ export default function Layout({ children }: { children: ReactNode }) {
         }}
         sidebar={{
           footer: <DocsSidebarFooter />,
-          tabs: {
-            transform(option, node) {
-              const meta = source.getNodeMeta(node);
-              if (!meta || !node.icon) return option;
-
-              const color = `var(--${getSection(meta.path)}-color, var(--color-fd-foreground))`;
-
-              return {
-                ...option,
-                icon: (
-                  <div
-                    className='[&_svg]:size-full rounded-lg size-full text-[var(--tab-color)] max-md:bg-[var(--tab-color)]/10 max-md:border max-md:p-1.5'
-                    style={{ '--tab-color': color } as React.CSSProperties}
-                  >
-                    {node.icon}
-                  </div>
-                ),
-              };
+          // Explicit tabs override auto-generation from root folders and render
+          // as the sidebar dropdown (fumadocs default). Users is the default tab
+          // (flat pages at /docs root); Contributors is the scoped dev section.
+          tabs: [
+            {
+              title: 'For Users',
+              description: 'Use Matrix OS',
+              url: '/docs',
+              icon: <Rocket className='size-4' />,
             },
-          },
+            {
+              title: 'For Developers',
+              description: 'Build & operate Matrix OS',
+              url: '/docs/developer',
+              icon: <Terminal className='size-4' />,
+            },
+          ],
         }}
       >
         {children}

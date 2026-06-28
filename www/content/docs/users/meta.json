@@ -1,7 +1,0 @@
-{
-  "root": true,
-  "title": "For Users",
-  "description": "Start using Matrix OS as a developer-focused cloud computer",
-  "icon": "Rocket",
-  "pages": ["index", "quickstart", "cli", "shell", "coding-agents", "matrix-skills", "hermes", "settings-billing"]
-}

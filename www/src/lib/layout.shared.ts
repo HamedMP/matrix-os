@@ -7,10 +7,6 @@ export function baseOptions(): BaseLayoutProps {
     },
     links: [
       {
-        text: 'Docs Home',
-        url: '/docs',
-      },
-      {
         text: 'Whitepaper',
         url: '/whitepaper',
       },
