@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { ClerkProvider } from "@clerk/nextjs";
 import {
   Inter,
   Instrument_Sans,
@@ -105,8 +106,10 @@ export default async function RootLayout({
         <link rel="preconnect" href="https://eu.i.posthog.com" crossOrigin="anonymous" />
       </head>
       <body className={`${inter.variable} ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} ${caveat.variable} ${cormorant.variable} ${orbitron.variable}`}>
-        {children}
-        <PostHogCookieBanner visitorCountry={visitorCountry} />
+        <ClerkProvider>
+          {children}
+          <PostHogCookieBanner visitorCountry={visitorCountry} />
+        </ClerkProvider>
       </body>
     </html>
   );

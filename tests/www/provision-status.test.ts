@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getMarketingAuthRedirectUrl,
   getProvisionVerificationTarget,
   getSignupFallbackRedirectUrl,
   isCustomerVpsUsableStatus,
@@ -8,6 +9,13 @@ import {
 describe("www provisioning status helpers", () => {
   it("sends completed Clerk signups to the app domain by default", () => {
     expect(getSignupFallbackRedirectUrl({})).toBe("https://app.matrix-os.com");
+  });
+
+  it("forces completed marketing auth flows to the app domain", () => {
+    expect(getMarketingAuthRedirectUrl({})).toBe("https://app.matrix-os.com");
+    expect(getMarketingAuthRedirectUrl({
+      NEXT_PUBLIC_MATRIX_APP_URL: "https://preview.matrix-os.com",
+    })).toBe("https://preview.matrix-os.com");
   });
 
   it("allows an explicit signup fallback override", () => {
