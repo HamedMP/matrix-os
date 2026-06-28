@@ -1,13 +1,15 @@
+import { palette as brand } from "@matrix-os/brand";
+
 export const MATRIX_ONBOARDING_BRAND_VERSION = "matrix-onboarding-v1";
 
 export const matrixOnboardingPalette = {
-  stone: "#e7e0d4",
-  sage: "#9aa889",
-  forest: "#17281f",
-  ember: "#d6653b",
-  ink: "#111612",
-  lichen: "#c9d2bd",
-  pebble: "#f4f0e8",
+  stone: brand.cream,
+  sage: brand.forest,
+  forest: brand.forest,
+  ember: brand.ember,
+  ink: brand.deep,
+  lichen: brand.cream,
+  pebble: brand.card,
 } as const;
 
 export const matrixOnboardingMotion = {
@@ -19,7 +21,7 @@ export const matrixOnboardingMotion = {
 } as const;
 
 export const matrixOnboardingTypography = {
-  brand: "Orbitron, var(--font-sans)",
+  brand: "var(--font-sans)",
   body: "var(--font-sans)",
   technical: "var(--font-mono)",
 } as const;
