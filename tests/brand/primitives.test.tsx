@@ -14,5 +14,7 @@ describe("@matrix-os/brand primitives", () => {
   it("renders a connected status pill", () => {
     render(<StatusPill tone="connected">Connected</StatusPill>);
     expect(screen.getByText("Connected")).toBeTruthy();
+    const pill = screen.getByText("Connected");
+    expect(pill.getAttribute("style") ?? "").toContain("67, 78, 63");
   });
 });
