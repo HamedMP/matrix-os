@@ -5,10 +5,11 @@
     "cli",
     "shell",
     "coding-agents",
-    "matrix-skills",
     "hermes",
-    "settings-billing",
+    "matrix-skills",
+    "mobile",
     "messages",
-    "desktop"
+    "desktop",
+    "settings-billing"
   ]
 }
