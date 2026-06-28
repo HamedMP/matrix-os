@@ -1,58 +1,113 @@
 ---
 title: Hermes
-description: Set up Hermes for Matrix OS.
+description: The always-on Matrix chat agent that responds across web, mobile, and messaging channels.
 ---
 
-Hermes can run in Matrix OS with the same canonical Matrix skill pack used by Claude Code, Codex, and the Matrix kernel.
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-## Install the Matrix skills
+Hermes is the Matrix system agent: always running in the background, reachable across
+web chat, mobile, and connected messaging channels. It is distinct from the coding agents
+(Claude Code, Codex, OpenCode, Pi) that you install and launch from the Terminal.
 
-From a Matrix checkout:
+<Callout type="warn" title="Hermes needs a Claude login">
+  Hermes runs on Claude. Connect your Claude login before using it — without a
+  Claude login, Hermes can't generate responses. See [Coding Agents](/docs/coding-agents)
+  to set up Claude.
+</Callout>
 
-```bash
-./scripts/install-hermes-matrix-skills.sh
-```
+## What Hermes is
 
-Install from a local checkout or alternate source:
+Hermes fills the role of a persistent background agent that is always reachable. Coding
+agents are interactive: you open a terminal, launch the agent, and it runs for that
+session. Hermes is different — it stays alive across sessions and responds to messages
+without you having to start it each time.
 
-```bash
-./scripts/install-hermes-matrix-skills.sh /home/matrix/projects/matrix-os
-MATRIX_SKILLS_SOURCE=HamedMP/matrix-os ./scripts/install-hermes-matrix-skills.sh
-HERMES_BIN=/opt/matrix/runtime/node/bin/hermes ./scripts/install-hermes-matrix-skills.sh
-```
+The agent tri is:
 
-Manual install:
+<Cards>
+  <Card title="Hermes" description="System agent. Always on. Handles app-building, assistant, integrations, and company-brain workflows. No separate install or login required — but needs Claude credentials to generate responses." />
+  <Card title="Claude" description="Core agent. Requires Anthropic login. Powers the core agent path and is also the inference engine Hermes runs on." />
+  <Card title="Codex" description="Coding specialist. Optional. Adds coding-specific workflows when connected." />
+</Cards>
 
-```bash
-for skill in app-builder app-ui-patterns design-system integrations dev-vps debug-app landing-design; do
-  hermes skills install "HamedMP/matrix-os/skills/matrix/$skill"
-done
-```
+## Claude credential requirement
 
-If Hermes supports taps in your environment:
+Hermes does not need its own install or separate login — it is always registered as the
+Matrix system agent. However, Hermes uses the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`)
+to generate every response. Without a valid Claude credential the kernel cannot run and
+Hermes cannot reply to anything.
 
-```bash
-hermes skills tap add HamedMP/matrix-os
-hermes skills browse matrix
-```
+The credential check (in order of priority):
 
-## Configure the Matrix gateway
+1. `ANTHROPIC_API_KEY` environment variable on the VPS.
+2. `kernel.anthropicApiKey` in `~/system/config.json` — set by the web onboarding API key step.
+3. `CLAUDE_CODE_AUTH` — present when Claude Code is logged in on the VPS.
 
-```bash
-hermes config set skills.config.matrix.gateway_url http://localhost:4000
-```
+If none of these are present, Hermes is listed as the active system agent but all
+responses fail silently.
 
-Inside a Matrix VPS, Hermes should call Matrix gateway/platform APIs for authenticated Matrix actions.
+### What works without Claude
 
-## Security boundary
+- Hermes appears as the system agent in the readiness panel.
+- Room-level permission settings for Messages are still stored and enforced.
+- Automation rules can be created and queued.
+- Pending reply drafts remain visible in Messages.
 
-Do not write Pipedream, Clerk, Gmail, GitHub, Slack, or provider secrets into Hermes config or customer VPS environment files. Matrix owns integration credentials at the platform layer and exposes approved actions through Matrix APIs.
+### What requires Claude
 
-## Recommended workflow
+- Any chat response in web, mobile, or messaging channels.
+- AI-generated drafts from automation rules.
+- All `core_agent` workflows (including app-building and assistant goals).
 
-```bash
-matrix shell connect -c hermes
-matrix run -it --session hermes -- hermes
-```
+### How to connect
 
-Use the Matrix skills when building apps, debugging manifests, working with integrations, or applying the Matrix design system.
+<Steps>
+  <Step>Open Terminal in the web shell and run `claude`. Follow the Anthropic login flow that appears.</Step>
+  <Step>Once logged in, the `CLAUDE_CODE_AUTH` credential is active on your VPS. Hermes picks it up immediately — no restart required.</Step>
+  <Step>Check Settings in the shell under the Agent Credentials section to confirm Claude shows "available".</Step>
+</Steps>
+
+Alternatively, provide an Anthropic API key directly through the onboarding flow or the
+API key settings route. Both paths write `kernel.anthropicApiKey` into your
+`~/system/config.json`.
+
+## Where you talk to Hermes
+
+<Cards>
+  <Card title="Web shell chat" description="The chat surface built into the Matrix OS web shell. Start a conversation from any page." />
+  <Card title="Mobile" description="The Matrix OS mobile app surfaces the same Hermes conversation. Responses arrive even when the web shell is closed." />
+  <Card title="Messages" description="Connect Telegram or WhatsApp accounts and grant Hermes per-room access. See Messages for the privacy model." href="/docs/messages" />
+</Cards>
+
+## What Hermes can do
+
+Hermes can access shell, files, skills, and integrations — each gated by explicit
+owner permission. The default state is no access to any room or integration.
+
+- **Shell and files**: requires the owner to grant terminal or file-browser access in
+  the room permission settings.
+- **Skills**: Hermes loads the Matrix skill pack from `~/agents/skills/` at startup.
+  Skills teach it how to build apps, use the design system, and navigate the project layout.
+  See [Matrix Skills](/docs/matrix-skills) for installation details.
+- **Integrations**: assistant capabilities (calendar, email, summaries) require the
+  owner to approve each capability in the Integrations panel. Hermes starts with no
+  integration access.
+- **Messages**: default-deny. Each room must have read and reply access explicitly
+  granted. See [Messages](/docs/messages) for per-room controls.
+
+## Hermes versus coding agents
+
+| | Hermes | Coding agents |
+|---|---|---|
+| Always running | Yes | No — you start them per session |
+| Reachable via messaging channels | Yes | No |
+| Requires install | No | Yes (from Terminal menu) |
+| Requires its own login | No | Yes (per-agent login) |
+| Needs Claude credentials | Yes (for responses) | Only Claude Code |
+
+Coding agents are better for long interactive development sessions where you want a
+persistent terminal context. Hermes is better for background tasks, quick questions,
+and ambient access across web, mobile, and messaging. See
+[Coding Agents](/docs/coding-agents) for how to install and launch them.
