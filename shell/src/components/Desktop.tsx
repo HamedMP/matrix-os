@@ -1470,7 +1470,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
       </ShellNotificationStack>
-      <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize}>
+      <MenuBar onOpenCommandPalette={onOpenCommandPalette ?? (() => {})} onNewWindow={() => openWindow("Terminal", "__terminal__")} onMinimizeWindow={animateMinimize} onOpenSettings={() => { setSettingsOpen(true); setTaskBoardOpen(false); setChatOpen(false); }}>
         {desktopMode === "canvas" ? (
           <CanvasToolbar
             guideVisible={manualSetupVisible}

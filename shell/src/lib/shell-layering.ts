@@ -4,6 +4,9 @@ export const SHELL_Z_INDEX = {
   fullscreenExit: 601,
   settings: 700,
   hardGate: 800,
+  // Floating menus/popovers (e.g. the account dropdown) portal to <body>, so they
+  // must out-rank the modal surfaces they can be opened from (settings, hardGate).
+  popover: 900,
   notifications: 10000,
 } as const;
 
