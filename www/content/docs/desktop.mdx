@@ -1,6 +1,6 @@
 ---
 title: Desktop App (Operator)
-description: The native macOS Electron app for Matrix OS — projects, tasks, agent threads, terminals, and apps in one keyboard-first window.
+description: The native macOS app for Matrix OS — projects, tasks, agent threads, terminals, and apps in one keyboard-first window.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -9,12 +9,12 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 
 Operator is the Matrix OS desktop app for macOS: a keyboard-first mission control where
 your projects, tasks, agent runs, terminals, files, and Matrix OS apps live in one window,
-connected as a thin client to your personal VPS. Nothing runs locally except the app itself —
+connected to your Matrix computer. Nothing runs locally except the app itself —
 sign in on a new machine and everything is restored from your computer in the cloud.
 
 <Callout type="info" title="macOS only">
-  Operator is a macOS Electron app. The web shell at `app.matrix-os.com` provides the same
-  VPS access from any browser. See the [Web Shell](/docs/shell) docs.
+  Operator is a macOS app. The web shell at `app.matrix-os.com` gives you the same
+  access to your Matrix computer from any browser. See the [Web Shell](/docs/shell) docs.
 </Callout>
 
 ## Install and sign in
@@ -42,7 +42,7 @@ sign in on a new machine and everything is restored from your computer in the cl
 </Steps>
 
 Signing out clears the local credential and any embedded web sessions, but never touches data
-on your VPS.
+on your Matrix computer.
 
 ## Navigation
 
@@ -58,13 +58,13 @@ Open a project from the sidebar to see its kanban board with **Todo, Running, Wa
 and Complete** columns. Drag cards between columns, right-click a card for status, priority,
 archive, and delete actions, and press **C** to create a task from anywhere on the board. The
 create dialog offers **Create** (⌘↵) and **Create + open** (⌘⇧↵). Each task opens as its own
-tab. Changes made on the web shell, CLI, or by agents flow through shared gateway events.
+tab. Changes made on the web shell, CLI, or by agents show up in real time.
 
 ## Terminals
 
-The **Terminal** tab lists your named sessions shared with the web shell and CLI — the same
-`/api/terminal/sessions` endpoint backs all three surfaces. Click a session to attach to the
-live shell on your VPS, with scrollback intact. Terminals reconnect automatically after a
+The **Terminal** tab lists your named sessions, shared with the web shell and CLI — all three
+surfaces show the same sessions. Click a session to attach to the
+live shell on your Matrix computer, with scrollback intact. Terminals reconnect automatically after a
 network drop or sleep/wake without duplicating output. If a session has ended on the server,
 the terminal shows a clear ended state with a one-click recreate action.
 
@@ -84,7 +84,7 @@ opens the full Hermes thread list as a tab.
 
 Opening a task reveals a resizable panel strip — terminal, editor, git, files, artifacts, and a
 processes panel. Toggle panels with **⌘1–⌘6**, drag dividers to resize, and the layout persists
-per task. The editor is powered by CodeMirror with syntax highlighting for common languages,
+per task. The built-in code editor has syntax highlighting for common languages,
 find/replace, and conflict-safe saves (it warns if a file changed on the server since you opened
 it). Press **⌘P** to quick-open a file by name.
 
@@ -113,7 +113,7 @@ Standard macOS menus, full-screen, and window controls work as expected.
 ## Settings
 
 Native settings cover **Account**, **Billing**, **Appearance** (dark/light/system),
-**Agent** (Hermes configuration), **Runtime** (switch VPS target), **Channels**,
+**Agent** (Hermes configuration), **Runtime** (switch Matrix computer target), **Channels**,
 **Integrations**, **Schedules**, and **System info**. Switching runtime re-targets every
 surface — board, terminals, chat, and apps.
 

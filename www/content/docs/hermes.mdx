@@ -34,19 +34,10 @@ The agent tri is:
 
 ## Claude credential requirement
 
-Hermes does not need its own install or separate login — it is always registered as the
-Matrix system agent. However, Hermes uses the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`)
-to generate every response. Without a valid Claude credential the kernel cannot run and
-Hermes cannot reply to anything.
-
-The credential check (in order of priority):
-
-1. `ANTHROPIC_API_KEY` environment variable on the VPS.
-2. `kernel.anthropicApiKey` in `~/system/config.json` — set by the web onboarding API key step.
-3. `CLAUDE_CODE_AUTH` — present when Claude Code is logged in on the VPS.
-
-If none of these are present, Hermes is listed as the active system agent but all
-responses fail silently.
+Hermes doesn't need its own install or a separate login — it's always available as the
+Matrix system agent. But Hermes runs on Claude, so it needs a Claude login on your Matrix
+computer to generate responses. Until Claude is connected, Hermes shows as active but can't
+reply to anything.
 
 ### What works without Claude
 
@@ -64,14 +55,12 @@ responses fail silently.
 ### How to connect
 
 <Steps>
-  <Step>Open Terminal in the web shell and run `claude`. Follow the Anthropic login flow that appears.</Step>
-  <Step>Once logged in, the `CLAUDE_CODE_AUTH` credential is active on your VPS. Hermes picks it up immediately — no restart required.</Step>
-  <Step>Check Settings in the shell under the Agent Credentials section to confirm Claude shows "available".</Step>
+  <Step>Open Terminal in the web shell and run `claude`. Follow the login flow that appears.</Step>
+  <Step>Hermes picks up the login immediately — no restart required.</Step>
+  <Step>In Settings, confirm Claude shows "available".</Step>
 </Steps>
 
-Alternatively, provide an Anthropic API key directly through the onboarding flow or the
-API key settings route. Both paths write `kernel.anthropicApiKey` into your
-`~/system/config.json`.
+You can also connect Claude by adding an Anthropic API key during onboarding or in Settings.
 
 ## Where you talk to Hermes
 
