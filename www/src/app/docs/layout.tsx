@@ -47,13 +47,13 @@ export default function Layout({ children }: { children: ReactNode }) {
           // (flat pages at /docs root); Contributors is the scoped dev section.
           tabs: [
             {
-              title: 'For Users',
-              description: 'Use Matrix OS',
+              title: 'Guides',
+              description: 'Use your cloud coding computer',
               url: '/docs',
               icon: <Rocket className='size-4' />,
             },
             {
-              title: 'For Developers',
+              title: 'Developers',
               description: 'Build & operate Matrix OS',
               url: '/docs/developer',
               icon: <Terminal className='size-4' />,
