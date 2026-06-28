@@ -28,3 +28,15 @@ export const typeScale = {
   body: "1rem",
   caption: "0.8125rem",
 } as const;
+
+// Status tones for StatusPill — forest/ember tints with semantic foregrounds.
+export const statusTones = {
+  connected: { bg: "rgba(67, 78, 63, 0.08)", fg: "#3B6D11" },
+  ready: { bg: "rgba(67, 78, 63, 0.08)", fg: "#3B6D11" },
+  pending: { bg: "rgba(208, 111, 37, 0.10)", fg: "#993C1D" },
+} as const;
+
+// On-dark foreground (cream text on the deep CTA / light SectionTitle).
+export const lightFg = "#FAFAF5";
+// Translucent card surface for the outline CTA.
+export const cardTranslucent = "rgba(252, 252, 248, 0.7)";
