@@ -11,10 +11,10 @@ Hermes is the Matrix system agent: always running in the background, reachable a
 web chat, mobile, and connected messaging channels. It is distinct from the coding agents
 (Claude Code, Codex, OpenCode, Pi) that you install and launch from the Terminal.
 
-<Callout type="warn" title="Hermes needs a Claude login">
-  Hermes runs on Claude. Connect your Claude login before using it — without a
-  Claude login, Hermes can't generate responses. See [Coding Agents](/docs/coding-agents)
-  to set up Claude.
+<Callout type="warn" title="Pick a model before using Hermes">
+  Hermes is model-agnostic — it works with many LLM providers. Choose a model and add that
+  provider's credential before Hermes can respond. Until a model is configured, Hermes shows
+  as active but can't generate replies.
 </Callout>
 
 ## What Hermes is
@@ -24,43 +24,38 @@ agents are interactive: you open a terminal, launch the agent, and it runs for t
 session. Hermes is different — it stays alive across sessions and responds to messages
 without you having to start it each time.
 
-The agent tri is:
+## Choose your model
+
+Hermes runs on a **main model** for its core reasoning, plus a set of auxiliary models for
+specialized tasks (each defaults to your main model unless you override it). It is not tied
+to any single provider — it works with:
 
 <Cards>
-  <Card title="Hermes" description="System agent. Always on. Handles app-building, assistant, integrations, and company-brain workflows. No separate install or login required — but needs Claude credentials to generate responses." />
-  <Card title="Claude" description="Core agent. Requires Anthropic login. Powers the core agent path and is also the inference engine Hermes runs on." />
-  <Card title="Codex" description="Coding specialist. Optional. Adds coding-specific workflows when connected." />
+  <Card title="Nous Portal" description="300+ models via OpenRouter through a single Nous Portal subscription. The fastest way to get started." />
+  <Card title="Anthropic" description="Claude models, using your Anthropic API key or login." />
+  <Card title="OpenAI" description="GPT models with your OpenAI key." />
+  <Card title="Google" description="Gemini models with your Google credential." />
+  <Card title="Custom endpoint" description="Point Hermes at any compatible model server with your own base URL." />
 </Cards>
 
-## Claude credential requirement
-
-Hermes doesn't need its own install or a separate login — it's always available as the
-Matrix system agent. But Hermes runs on Claude, so it needs a Claude login on your Matrix
-computer to generate responses. Until Claude is connected, Hermes shows as active but can't
-reply to anything.
-
-### What works without Claude
-
-- Hermes appears as the system agent in the readiness panel.
-- Room-level permission settings for Messages are still stored and enforced.
-- Automation rules can be created and queued.
-- Pending reply drafts remain visible in Messages.
-
-### What requires Claude
-
-- Any chat response in web, mobile, or messaging channels.
-- AI-generated drafts from automation rules.
-- All `core_agent` workflows (including app-building and assistant goals).
-
-### How to connect
+Configure which model Hermes uses:
 
 <Steps>
-  <Step>Open Terminal in the web shell and run `claude`. Follow the login flow that appears.</Step>
-  <Step>Hermes picks up the login immediately — no restart required.</Step>
-  <Step>In Settings, confirm Claude shows "available".</Step>
+  <Step>Add a provider credential first — only providers you've authenticated are selectable.</Step>
+  <Step>Run `hermes model` in a terminal for interactive setup, or `/model <name>` inside a chat. You can also run `hermes setup --portal` to use Nous Portal in one step.</Step>
+  <Step>Prefer editing config directly? Set your model in `~/.hermes/config.yaml`.</Step>
 </Steps>
 
-You can also connect Claude by adding an Anthropic API key during onboarding or in Settings.
+For the full provider list and model slots, see the [Hermes model configuration docs](https://hermes-agent.nousresearch.com/docs/user-guide/configuring-models).
+
+### Before Hermes can respond
+
+- A **main model** must be selected.
+- The **provider credential** for that model must be set (API key, OAuth, or a custom endpoint).
+
+Until both are in place, Hermes still appears as the system agent, room permissions and
+automation rules are still stored, and pending drafts stay visible — but it can't generate
+chat responses, drafts, or assistant results.
 
 ## Where you talk to Hermes
 
@@ -77,9 +72,9 @@ owner permission. The default state is no access to any room or integration.
 
 - **Shell and files**: requires the owner to grant terminal or file-browser access in
   the room permission settings.
-- **Skills**: Hermes loads the Matrix skill pack from `~/agents/skills/` at startup.
-  Skills teach it how to build apps, use the design system, and navigate the project layout.
-  See [Matrix Skills](/docs/matrix-skills) for installation details.
+- **Skills**: Hermes loads the Matrix skill pack at startup. Skills teach it how to build
+  apps, use the design system, and navigate the project layout. See
+  [Matrix Skills](/docs/matrix-skills).
 - **Integrations**: assistant capabilities (calendar, email, summaries) require the
   owner to approve each capability in the Integrations panel. Hermes starts with no
   integration access.
@@ -94,7 +89,7 @@ owner permission. The default state is no access to any room or integration.
 | Reachable via messaging channels | Yes | No |
 | Requires install | No | Yes (from Terminal menu) |
 | Requires its own login | No | Yes (per-agent login) |
-| Needs Claude credentials | Yes (for responses) | Only Claude Code |
+| Needs a model configured | Yes | The agent brings its own |
 
 Coding agents are better for long interactive development sessions where you want a
 persistent terminal context. Hermes is better for background tasks, quick questions,
