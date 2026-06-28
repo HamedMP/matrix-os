@@ -72,7 +72,7 @@ matrix login --profile local
 
 ## Run agents
 
-`matrix run` starts a command on your Matrix computer and, with `-it`, attaches an interactive terminal to it over the gateway WebSocket.
+`matrix run` starts a command on your Matrix computer and, with `-it`, attaches an interactive terminal to it.
 
 ```bash
 matrix run -it -- claude
@@ -104,7 +104,7 @@ When you pass `--session <name>` and a session with that name already exists, `m
 
 ## Connect to sessions
 
-Shell sessions on your Matrix computer are backed by zellij. The same sessions visible in the web shell are available from the CLI.
+Your sessions live on your Matrix computer. The same sessions you see in the web shell are available from the CLI.
 
 ```bash
 # List sessions
@@ -131,7 +131,7 @@ matrix shell rm old-session --force
 Detach without stopping the session: press `Ctrl-\` twice quickly. Reconnect any time with `matrix shell connect <name>`.
 
 <Callout type="warn" title="If session creation fails">
-If `matrix run -it`, `matrix shell new`, or `matrix shell attach` returns a `zellij_failed` error, run `matrix shell ls` and connect to an existing session rather than retrying the same create path.
+If `matrix run -it`, `matrix shell new`, or `matrix shell attach` fails to start a session, run `matrix shell ls` and connect to an existing session rather than retrying the same create path.
 </Callout>
 
 ## File sync

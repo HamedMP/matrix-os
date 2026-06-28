@@ -7,7 +7,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-The Matrix OS mobile app gives you a terminal and session browser that connect directly to your Matrix VPS. You can run commands, pick up sessions you left open on the web shell or CLI, and switch between them — all from your phone.
+The Matrix OS mobile app gives you a terminal and session browser that connect directly to your Matrix Matrix computer. You can run commands, pick up sessions you left open on the web shell or CLI, and switch between them — all from your phone.
 
 <Callout type="info" title="Early access">
   The native mobile app is in active development. The terminal and session browser are functional. Some features available in the web shell and CLI are not yet exposed in the native app.
@@ -15,13 +15,13 @@ The Matrix OS mobile app gives you a terminal and session browser that connect d
 
 ## Overview
 
-The app uses four tabs: Chat, Apps, Terminal, and Settings. The Apps launcher is the home screen — it shows your installed Matrix apps. The Terminal tab connects to your VPS gateway over WebSocket and gives you a full terminal surface running xterm.js inside a WebView.
+The app uses four tabs: Chat, Apps, Terminal, and Settings. The Apps launcher is the home screen — it shows your installed Matrix apps. The Terminal tab connects to your Matrix computer and gives you a full terminal.
 
-Because sessions live on your VPS, not on your phone, everything you start or leave running in the terminal is also visible from the web shell and the CLI. No SSH keys or separate credentials are needed.
+Because sessions live on your Matrix computer, not on your phone, everything you start or leave running in the terminal is also visible from the web shell and the CLI. No SSH keys or separate credentials are needed.
 
 ## Terminal on mobile
 
-The Terminal tab embeds xterm.js 5.5 inside a native WebView. Output from your VPS shell streams directly into the emulator. The terminal surface fits to the available screen area and reports its grid size to the server so line wrapping matches what you see.
+Output from your Matrix computer streams directly to your phone. The terminal fits the available screen area, and line wrapping matches what you see.
 
 ### Control bar
 
@@ -48,7 +48,7 @@ The bar contains:
   <Step>
     ### Start a new session
 
-    Tap the **+** button in the top-right corner. The app creates a new named shell session on your VPS and attaches to it.
+    Tap the **+** button in the top-right corner. The app creates a new named shell session on your Matrix computer and attaches to it.
   </Step>
   <Step>
     ### Switch sessions
@@ -58,7 +58,7 @@ The bar contains:
   <Step>
     ### End a session
 
-    Tap the stop icon in the header and confirm. This kills the session and its processes on the VPS. The action cannot be undone.
+    Tap the stop icon in the header and confirm. This kills the session and its processes on the Matrix computer. The action cannot be undone.
   </Step>
 </Steps>
 
@@ -72,7 +72,7 @@ Tap the expand icon in the terminal header to hide the session chip row and give
 
 ## Sessions
 
-The Sessions screen lists all shell sessions on your VPS grouped by status.
+The Sessions screen lists all shell sessions on your Matrix computer grouped by status.
 
 Open it by tapping the terminal title in the header while the terminal is visible, or navigate to it from the terminal screen.
 
@@ -92,10 +92,10 @@ Tap **+** in the top-right corner of the Sessions screen. A new session is creat
 
 ### Cross-surface sessions
 
-Sessions are shared across the web shell, CLI, and the mobile app through the same `/api/terminal/sessions` endpoint. A session you start on mobile shows up immediately in the web shell and vice versa.
+Sessions are shared across the web shell, CLI, and the mobile app. A session you start on mobile shows up immediately in the web shell and vice versa.
 
 <Callout type="info" title="Sessions persist when you leave the app">
-  Closing the mobile app does not end your sessions. Processes keep running on your VPS. When you reopen the app, the terminal reconnects to the last active session automatically.
+  Closing the mobile app does not end your sessions. Processes keep running on your Matrix computer. When you reopen the app, the terminal reconnects to the last active session automatically.
 </Callout>
 
 ## Related
