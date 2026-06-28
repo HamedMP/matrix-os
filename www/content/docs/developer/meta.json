@@ -1,7 +1,7 @@
 {
   "root": true,
-  "title": "For Contributors",
+  "title": "For Developers",
   "description": "Build on, operate, and contribute to Matrix OS",
   "icon": "Terminal",
-  "pages": ["index", "dev-vps", "agent-skills", "architecture", "ipc-tools", "browser-automation", "skills", "logging", "testing", "review-pipeline", "releases", "contributing"]
+  "pages": ["index", "dev-vps", "agent-skills", "architecture", "ipc-tools", "browser-automation", "skills", "logging", "testing", "review-pipeline", "releases", "contributing", "deployment"]
 }

@@ -81,7 +81,7 @@ export const solutionPages = [
       "Cloud previews and reviewable diffs",
     ],
     ctaLabel: "Read developer quickstart",
-    ctaHref: "/docs/users/quickstart",
+    ctaHref: "/docs/quickstart",
     related: ["cloud-computer-for-ai-agents", "autonomous-coding-cloud-development", "enterprise-ai-coding-lab"],
   },
   {

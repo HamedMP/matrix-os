@@ -1,5 +1,4 @@
 {
-  "root": true,
   "title": "Deployment",
   "description": "Operate Matrix OS infrastructure",
   "icon": "Server",

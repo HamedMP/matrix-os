@@ -30,7 +30,7 @@ const footerColumns: ReadonlyArray<{ title: string; links: readonly FooterLinkIt
   {
     title: "Resources",
     links: [
-      { label: "Quickstart", href: "/docs/users/quickstart" },
+      { label: "Quickstart", href: "/docs/quickstart" },
       { label: "Agent skill", href: "/skills.md" },
       { label: "Technical", href: "/technical" },
       { label: "Early access", href: "/early-access" },
