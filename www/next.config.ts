@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 import { createMDX } from 'fumadocs-mdx/next';
 import type { NextConfig } from 'next';
 
@@ -37,6 +38,9 @@ const nextConfig: NextConfig = {
     ];
   },
   skipTrailingSlashRedirect: true,
+  turbopack: {
+    root: resolve(__dirname, ".."),
+  },
 };
 
 const withMDX = createMDX();

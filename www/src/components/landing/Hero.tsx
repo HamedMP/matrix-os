@@ -4,6 +4,7 @@ import { palette as c, cardShadow, fonts } from "./theme";
 import { CtaButton, SectionShell } from "./primitives";
 import { CopyPromptButton } from "./CopyPromptButton";
 import { COPYABLE_AGENT_SETUP_PROMPT } from "./content";
+import { SIGN_UP_HREF } from "./links";
 
 export function Hero() {
   return (
@@ -25,7 +26,7 @@ export function Hero() {
           computer. Terminals, repos, previews, and workflows that keep going after your laptop closes.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
-          <CtaButton href="https://app.matrix-os.com" phLocation="hero" phTarget="start_cloud_dev">
+          <CtaButton href={SIGN_UP_HREF} phLocation="hero" phTarget="start_cloud_dev">
             Get started <ArrowRightIcon className="size-4" />
           </CtaButton>
           <CopyPromptButton text={COPYABLE_AGENT_SETUP_PROMPT} />

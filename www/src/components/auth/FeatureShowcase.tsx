@@ -139,13 +139,13 @@ export function FeatureShowcase({
             alt="Matrix OS"
             width={36}
             height={36}
-            className="size-9 rounded-xl border border-forest/10 bg-white/72 p-1.5 shadow-sm"
+            className="size-9 rounded-lg border border-forest/10 bg-white/72 p-1.5 shadow-sm"
           />
-          <span className="font-mono text-sm font-semibold tracking-[-0.03em] text-forest">
+          <span className="font-mono text-sm font-semibold text-forest">
             matrix-os
           </span>
         </div>
-        <h1 className="text-balance text-[clamp(2.7rem,8vw,5.4rem)] font-semibold leading-[0.9] tracking-[-0.06em] text-forest lg:max-w-[10ch]">
+        <h1 className="text-balance text-[clamp(2.7rem,8vw,5.4rem)] font-semibold leading-[0.9] text-forest lg:max-w-[10ch]">
           {heading}
         </h1>
         <p className="mx-auto mt-5 max-w-[46ch] text-[15px] leading-8 text-muted-foreground md:text-base lg:mx-0">
@@ -185,7 +185,7 @@ export function FeatureShowcase({
             <div key={active} style={{ animation: "authFade 600ms cubic-bezier(0.22,1,0.36,1)" }}>
               <Icon className="size-7 text-ember" aria-hidden="true" strokeWidth={1.6} />
 
-              <h3 className="mt-7 text-balance text-left text-[clamp(2rem,3.4vw,2.9rem)] font-semibold leading-[1.02] tracking-[-0.04em] text-forest">
+              <h3 className="mt-7 text-balance text-left text-[clamp(2rem,3.4vw,2.9rem)] font-semibold leading-[1.02] text-forest">
                 {current.title}
               </h3>
               <p className="mt-5 max-w-[40ch] text-left text-[17px] leading-8 text-muted-foreground">
@@ -229,13 +229,13 @@ export function FeatureShowcase({
         </div>
       </div>
 
-      <div className="mx-auto grid w-full max-w-md gap-2 lg:hidden">
+      <div className="mx-auto grid w-full max-w-md divide-y divide-forest/12 border-y border-forest/12 lg:hidden">
         {["Free account first", "Provision only when ready", "Your runtime, your files"].map((item) => (
           <div
             key={item}
-              className="flex items-center gap-2 rounded-2xl border border-forest/10 bg-white/62 px-4 py-3 text-sm font-medium text-forest"
-            >
-              <CheckCircle2Icon className="size-4 text-ember" aria-hidden="true" />
+            className="flex items-center gap-3 py-3 text-sm font-medium text-forest"
+          >
+            <CheckCircle2Icon className="size-4 text-ember" aria-hidden="true" />
             {item}
           </div>
         ))}

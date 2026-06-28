@@ -28,6 +28,10 @@ export function getSignupFallbackRedirectUrl(env: NodeJS.ProcessEnv = process.en
     ?? DEFAULT_APP_URL;
 }
 
+export function getMarketingAuthRedirectUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return env.NEXT_PUBLIC_MATRIX_APP_URL ?? DEFAULT_APP_URL;
+}
+
 export function getProvisionVerificationTarget(
   platformApiUrl: string,
   handle: string,
