@@ -122,6 +122,7 @@ function withEdgeHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("cache-control", "no-store");
   headers.set("cdn-cache-control", "no-store");
+  headers.set("cloudflare-cdn-cache-control", "no-store");
   const isWebSocketUpgrade = response.status === 101;
 
   return new Response(isWebSocketUpgrade ? null : response.body, buildEdgeResponseInit(response, headers));
@@ -185,6 +186,7 @@ function noStoreTextHeaders(): Headers {
     "content-type": "text/plain; charset=utf-8",
     "cache-control": "no-store",
     "cdn-cache-control": "no-store",
+    "cloudflare-cdn-cache-control": "no-store",
   });
 }
 

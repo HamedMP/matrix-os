@@ -59,6 +59,7 @@ describe("edge router worker", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     const [request] = fetchMock.mock.calls[0]!;
     expect(request).toBeInstanceOf(Request);
     const upstream = request as Request;
@@ -100,6 +101,7 @@ describe("edge router worker", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
   });
 
   it("rejects oversized bodies before forwarding", async () => {
