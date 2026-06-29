@@ -415,7 +415,8 @@ export function createProjectManager(options: {
       let parsed: unknown;
       try {
         parsed = JSON.parse(result.stdout);
-      } catch {
+      } catch (err: unknown) {
+        console.warn("[project-manager] Failed to parse GitHub repo list:", err instanceof Error ? err.message : typeof err);
         throw new Error("github_repos_unparseable");
       }
       const list = Array.isArray(parsed) ? parsed : [];

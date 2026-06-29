@@ -24,7 +24,7 @@ describe("SetupChecklist", () => {
     const { SetupChecklist } = await load();
     render(<SetupChecklist onOpenTerminal={() => {}} />);
     expect(screen.getByText("Set up your workspace")).toBeTruthy();
-    expect(screen.getByText(/Connect a coding agent/i)).toBeTruthy();
+    expect(screen.getByText("Connect a coding agent")).toBeTruthy();
     expect(screen.getByText(/Connect GitHub/i)).toBeTruthy();
     expect(screen.getByText(/Clone or import a repo/i)).toBeTruthy();
   });
