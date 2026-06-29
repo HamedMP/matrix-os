@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { createHmac } from "node:crypto";
 import {
   insertContainer,
+  insertUserMachine,
   type PlatformDB,
 } from "../../packages/platform/src/db.js";
 import { createApp } from "../../packages/platform/src/main.js";
@@ -81,5 +82,64 @@ describe("platform/internal-integration-routes", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ clerkUserId: "user_alice" });
+  });
+
+  it("resolves current VPS user machines without legacy container rows", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-bob",
+      clerkUserId: "user_bob",
+      handle: "bob",
+      hetznerServerId: 123,
+      publicIPv4: "203.0.113.12",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-06-24T00:00:00.000Z",
+    });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/bob/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("bob", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ clerkUserId: "user_bob" });
+  });
+
+  it("keeps unknown internal integration handles as 404", async () => {
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/charlie/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("charlie", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Unknown handle" });
+  });
+
+  it("does not resolve non-running VPS machines for internal integrations", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-dana",
+      clerkUserId: "user_dana",
+      handle: "dana",
+      hetznerServerId: 124,
+      publicIPv4: "203.0.113.13",
+      status: "stopped",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-06-24T00:00:00.000Z",
+    });
+    const app = createTestApp();
+
+    const res = await app.request("/internal/containers/dana/integrations/probe", {
+      headers: {
+        authorization: `Bearer ${bearerFor("dana", "platform-secret-123")}`,
+      },
+    });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Unknown handle" });
   });
 });
