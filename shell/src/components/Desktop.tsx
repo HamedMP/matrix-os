@@ -47,7 +47,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, Code2Icon, LayoutGridIcon } from "lucide-react";
+import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, LayoutGridIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -66,7 +66,7 @@ import { versionedIconUrl } from "@/lib/icon-url";
 import { cn, nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, VSCODE_URL } from "@/lib/feature-flags";
-import { isSystemApp, applyOrder } from "@/lib/dock-sections";
+import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
@@ -859,12 +859,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
       // Register built-in apps
       addApp("Terminal", "__terminal__", "terminal", iconForSlug("terminal"));
-      addApp("Workspace", "__workspace__", "workspace", iconForSlug("workspace"));
       addApp("Files", "__file-browser__", "files", iconForSlug("files"));
       if (!HERMES_CHAT_HIDDEN) {
         addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
       }
-      addApp("Activity Monitor", "__activity-monitor__", "chart", iconForSlug("chart"));
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
@@ -1158,13 +1156,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         execute: () => openWindow("Files", "__file-browser__"),
       },
       {
-        id: "action:open-activity-monitor",
-        label: "Open Activity Monitor",
-        group: "Actions",
-        keywords: ["activity", "monitor", "cpu", "memory", "disk", "processes"],
-        execute: () => openWindow("Activity Monitor", "__activity-monitor__"),
-      },
-      {
         id: "action:toggle-vocal",
         label: "Toggle Aoede",
         group: "Actions",
@@ -1410,7 +1401,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
 
             const userAppsRaw = apps.filter(
-              (a) => !isSystemApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
+              (a) => !isMainSectionApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
             );
             const userApps = applyOrder(userAppsRaw, dockOrder?.userApps, appLaunchTimes);
             if (userApps.length === 0) return null;
@@ -1533,7 +1524,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             const hasVisibleWindow = (appPath: string) =>
               visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
             const systemAppsRaw = apps.filter(
-              (a) => isSystemApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
+              (a) => isMainSectionApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
             );
             const systemApps = applyOrder(systemAppsRaw, dockOrder?.systemApps, appLaunchTimes);
             return (
@@ -1616,7 +1607,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                       className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
                       style={{ width: dock.iconSize, height: dock.iconSize }}
                     >
-                      <Code2Icon className="size-4" />
+                      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- small static dock icon from /public; next/image is overkill for a 20px square */}
+                      <img src="/vscode.png" alt="VS Code" className="size-5 rounded-[5px]" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Code editor</TooltipContent>
