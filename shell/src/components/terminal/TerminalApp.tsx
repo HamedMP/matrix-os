@@ -789,11 +789,13 @@ const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
 const SESSION_ACTIONS_STYLE: CSSProperties = {
   gap: 6,
   position: "absolute",
-  right: 0,
+  // Anchored to the grid row, whose right edge is inset by the card's 12px
+  // padding; a small negative right pulls the actions flush to the card edge.
+  right: -8,
   top: "50%",
   transform: "translateY(-50%)",
   transition: "opacity 120ms ease",
-  width: 58,
+  justifyContent: "flex-end",
 };
 const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
   background: "var(--terminal-drawer-action-bg)",
