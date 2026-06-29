@@ -6001,7 +6001,6 @@ function ShellCard({
           gap: 6,
           gridTemplateColumns: renaming ? "minmax(0, 1fr)" : foreground ? "minmax(0, 1fr) 22px" : "minmax(0, 1fr)",
           paddingRight: renaming ? 0 : 64,
-          position: "relative",
         }}
       >
           {renaming ? (
