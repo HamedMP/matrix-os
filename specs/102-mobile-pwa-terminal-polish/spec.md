@@ -3,7 +3,7 @@
 **Status:** Draft (design approved, not yet implemented)
 **Branch:** `102-mobile-pwa-terminal-polish` (forked off `fix/www-onboarding-flow`)
 **Surface:** `shell/` (Next.js web shell PWA) only
-**Inspiration:** [BennyKok/lfg](https://github.com/BennyKok/lfg) — adapt its mobile/terminal *techniques*, keep Matrix OS brand.
+**Approach:** adapt best-in-class mobile-terminal-PWA *techniques*, keep the Matrix OS brand.
 
 ---
 
@@ -60,7 +60,7 @@ Several in-flight worktrees/branches touch the same area. Reconcile before start
 
 ## 4. Design Principles
 
-1. **Adapt techniques, keep the brand.** No new design language; reuse forest/cream/ember + existing CSS-var tokens. Port lfg's *methods* (glass surfaces, motion, drawers, viewport handling), not its iOS-blue palette.
+1. **Adapt techniques, keep the brand.** No new design language; reuse forest/cream/ember + existing CSS-var tokens. Port proven *methods* (glass surfaces, motion, drawers, viewport handling), never another product's palette.
 2. **Surgical, not a rewrite.** Do **not** rewrite the `TerminalPane` monolith. Insert the WebGL addon and extend viewport handling in place; only extract a component when it already has a seam (the key bar is already its own file).
 3. **Reusable primitives.** Add a small shared layer — motion variants, a glass-surface utility, a `useVisualViewport` hook — so mobile and terminal share one implementation.
 4. **Desktop must not regress.** Any shared component change is verified against `Desktop.tsx`.
@@ -94,7 +94,7 @@ Several in-flight worktrees/branches touch the same area. Reconcile before start
 - Keep changes presentational; no behavior/data-flow changes.
 
 ### A6. Toasts + drawers/sheets (new deps)
-- Add `sonner` for toasts; position above safe-area bottom (mirror lfg's offset approach) and themed to brand.
+- Add `sonner` for toasts; position above the bottom safe-area inset and theme to brand.
 - Add `vaul` for mobile bottom-sheets (menus/dialogs) with drag handle; use for at least one real surface (e.g. app actions / a settings menu) to establish the pattern.
 
 ### A7. PWA meta/manifest polish
@@ -114,7 +114,7 @@ Several in-flight worktrees/branches touch the same area. Reconcile before start
 
 ### B3. Key bar restyle + paste UX (`TerminalKeyBar.tsx`)
 - Replace raw inline styles with brand tokens; proper pressed/active states; ≥44px targets; scrollable extra-keys row.
-- Add long-press / explicit **Paste** affordance (clipboard read with `<input>` fallback for iOS), matching lfg's paste flow (no trailing Enter).
+- Add long-press / explicit **Paste** affordance (clipboard read with `<input>` fallback for iOS; no trailing Enter — user reviews before sending).
 
 ### B4. Font + theme alignment
 - Align terminal theme tokens (the 3 themes: `light`, `matrix-dark`, `matrix`) with brand palette; ensure JetBrains Mono stack.
