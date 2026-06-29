@@ -351,8 +351,9 @@ export function TerminalPane({
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
-  const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const webglContextLostHandlerRef = useRef<((event: Event) => void) | null>(null);
+  const webglAddonRef = useRef<{ dispose: () => void } | null>(null);
+  const webglContextLossDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const webglRecreateAttemptedRef = useRef(false);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const initialStartupCommandRef = useRef(startupCommand);
@@ -495,12 +496,28 @@ export function TerminalPane({
         }
       };
 
-      const detachWebglContextLostHandler = () => {
-        if (webglCanvasRef.current && webglContextLostHandlerRef.current) {
-          webglCanvasRef.current.removeEventListener("webglcontextlost", webglContextLostHandlerRef.current);
+      // Tears down only the context-loss subscription (the closure that drives
+      // DOM-renderer fallback). Safe to call on every cleanup path: on a cache
+      // for tab-switch the WebGL addon itself stays loaded on the retained
+      // terminal, while on a destroy path term.dispose() disposes the addon.
+      const teardownWebglSubscription = () => {
+        webglContextLossDisposableRef.current?.dispose();
+        webglContextLossDisposableRef.current = null;
+      };
+
+      // Fully disposes the WebGL renderer, dropping back to xterm's DOM
+      // renderer (the default once no WebGL addon is loaded).
+      const disposeWebgl = () => {
+        teardownWebglSubscription();
+        const addon = webglAddonRef.current;
+        webglAddonRef.current = null;
+        if (addon) {
+          try {
+            addon.dispose();
+          } catch (err: unknown) {
+            console.warn("WebGL addon dispose failed:", err instanceof Error ? err.message : err);
+          }
         }
-        webglCanvasRef.current = null;
-        webglContextLostHandlerRef.current = null;
       };
 
       const container = containerRef.current;
@@ -551,6 +568,56 @@ export function TerminalPane({
         window.setTimeout(refitAndFocus, 250);
       };
 
+      // Subscribe to GPU context loss (common on mobile Safari, which drops GL
+      // contexts under memory pressure / backgrounding). On loss: dispose the
+      // WebGL renderer so xterm falls back to its DOM renderer, then attempt a
+      // single re-create. We never leave a blank pane — the DOM renderer keeps
+      // working even if re-creation fails.
+      const wireWebglContextLoss = (addon: {
+        onContextLoss: (cb: () => void) => { dispose: () => void };
+      }) => {
+        teardownWebglSubscription();
+        webglContextLossDisposableRef.current = addon.onContextLoss(() => {
+          log("webgl-context-loss", { recreateAttempted: webglRecreateAttemptedRef.current });
+          disposeWebgl();
+          if (!webglRecreateAttemptedRef.current && !disposed) {
+            webglRecreateAttemptedRef.current = true;
+            void enableWebgl();
+          }
+        });
+      };
+
+      // Instantiates and loads the WebGL renderer. Must run only after
+      // term.open() + an initial fit(), and only client-side (browser-only
+      // addon). Returns the addon, or null when WebGL is unavailable / fails —
+      // in which case xterm keeps using the DOM renderer.
+      const enableWebgl = async (): Promise<unknown> => {
+        if (disposed) {
+          return null;
+        }
+        try {
+          // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading the WebGL addon this way is intentional code-splitting, not a defect.
+          const { WebglAddon } = await import("@xterm/addon-webgl");
+          if (disposed) {
+            return null;
+          }
+          const addon = new WebglAddon();
+          term.loadAddon(addon);
+          webglAddonRef.current = addon;
+          wireWebglContextLoss(addon);
+          log("webgl-enabled");
+          return addon;
+        } catch (err: unknown) {
+          log("webgl-unavailable", { message: err instanceof Error ? err.message : String(err) });
+          console.warn("WebGL renderer unavailable, using DOM renderer:", err instanceof Error ? err.message : err);
+          disposeWebgl();
+          return null;
+        }
+      };
+
+      // Each init run starts with a fresh re-create budget (one retry).
+      webglRecreateAttemptedRef.current = false;
+
       if (canReuseCachedTerminal && cached) {
         const termElement = (cached.terminal as { element?: HTMLElement }).element;
         if (termElement) {
@@ -565,6 +632,22 @@ export function TerminalPane({
         fitAddon = cached.fitAddon;
         searchAddon = cached.searchAddon;
         webglAddon = cached.webglAddon;
+        // The cached terminal kept its WebGL addon loaded, but the old
+        // context-loss subscription was torn down on cache. Re-wire it (or
+        // re-create the renderer if a prior context loss left it on the DOM
+        // renderer).
+        webglAddonRef.current = (cached.webglAddon as { dispose: () => void } | null) ?? null;
+        if (webglAddonRef.current) {
+          wireWebglContextLoss(
+            webglAddonRef.current as unknown as {
+              onContextLoss: (cb: () => void) => { dispose: () => void };
+            },
+          );
+        } else {
+          void enableWebgl().then((addon) => {
+            webglAddon = addon;
+          });
+        }
         fitAddon.fit();
         termRef.current = cached.terminal;
         fitAddonRef.current = cached.fitAddon;
@@ -623,6 +706,11 @@ export function TerminalPane({
         termRef.current = xterm;
         fitAddonRef.current = nextFitAddon;
         scheduleStableFit();
+
+        // GPU renderer — instantiated after open() + initial fit(). Falls back
+        // to the DOM renderer automatically if WebGL is unavailable or the GL
+        // context is later lost (see enableWebgl / wireWebglContextLoss).
+        webglAddon = await enableWebgl();
 
         // Search addon
         try {
@@ -1157,7 +1245,11 @@ export function TerminalPane({
         clearReconnectTimer();
         clearPendingReconnectBanner();
         heartbeatRef.current?.stop();
-        detachWebglContextLostHandler();
+        // Drop the context-loss subscription on every path. On a cache (tab
+        // switch) the WebGL addon stays loaded on the retained terminal and is
+        // re-wired on reattach; on a destroy path term.dispose() below disposes
+        // the addon along with the terminal.
+        teardownWebglSubscription();
         onDataDisposableRef.current?.dispose();
         onDataDisposableRef.current = null;
         onResizeDisposableRef.current?.dispose();
@@ -1187,7 +1279,8 @@ export function TerminalPane({
           }
           ws?.close();
           removeCached(paneId);
-          term.dispose();
+          term.dispose(); // disposes loaded addons, including the WebGL renderer
+          webglAddonRef.current = null;
         } else if (wsRef.current) {
           // Tab switch — cache the terminal for instant restore
           log("cleanup-cache-terminal");
@@ -1201,7 +1294,10 @@ export function TerminalPane({
           cacheTerminal(paneId, {
             terminal: term,
             fitAddon,
-            webglAddon,
+            // The live addon ref is authoritative: it tracks the renderer
+            // through any context-loss re-create that may have replaced the
+            // addon captured in the local `webglAddon` binding.
+            webglAddon: webglAddonRef.current ?? webglAddon,
             searchAddon,
             ws: wsRef.current,
             lastSeq: lastSeqRef.current,
@@ -1210,7 +1306,8 @@ export function TerminalPane({
         } else {
           // WS never established — dispose, don't cache
           log("cleanup-dispose-no-ws");
-          term.dispose();
+          term.dispose(); // disposes loaded addons, including the WebGL renderer
+          webglAddonRef.current = null;
         }
       };
     }

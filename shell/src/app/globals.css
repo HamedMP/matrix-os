@@ -116,6 +116,34 @@
   --neu-distance: 0px;
   --neu-blur: 0px;
 
+  /* ─── Semantic surface / elevation / motion tokens (spec 102) ───
+     Layered on the brand palette above. Mobile chrome, sheets, toasts and
+     the terminal share these so glass + depth + easing stay consistent. */
+
+  /* Glass surfaces: brand bg at ~80% opacity, paired with a backdrop blur.
+     --surface-glass sits on light page chrome; --surface-glass-strong is a
+     denser variant for headers/sheets that overlap busy content. */
+  --surface-glass: color-mix(in srgb, var(--card) 80%, transparent);
+  --surface-glass-strong: color-mix(in srgb, var(--card) 92%, transparent);
+  --surface-glass-deep: color-mix(in srgb, var(--deep) 78%, transparent);
+  --surface-glass-blur: 16px;
+  --surface-glass-border: color-mix(in srgb, var(--foreground) 10%, transparent);
+
+  /* Elevation shadow scale — soft, brand-tinted (deep instead of pure black)
+     so raised surfaces read warm rather than clinical. */
+  --elevation-1: 0 1px 2px color-mix(in srgb, var(--deep) 8%, transparent);
+  --elevation-2: 0 2px 8px color-mix(in srgb, var(--deep) 12%, transparent);
+  --elevation-3: 0 8px 24px color-mix(in srgb, var(--deep) 16%, transparent);
+  --elevation-4: 0 16px 48px color-mix(in srgb, var(--deep) 22%, transparent);
+
+  /* Emphasized easing (iOS-style decelerate) for sheets/app transitions. */
+  --ease-emphasized: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Live keyboard height, published by useVisualViewport on mobile so the
+     key bar / toasts can offset above the on-screen keyboard. */
+  --terminal-keyboard-height: 0px;
+
   /* Page background gradient tokens (separate from app --background) */
   --gradient-deep: #323D2E;
   --gradient-mid: #9AA48C;
@@ -191,7 +219,10 @@ body {
   font-family: var(--font-sans);
   overflow: hidden;
   overscroll-behavior: none;
+  /* dvh tracks the dynamic viewport (URL bar / keyboard) on mobile; the vh
+     fallback keeps older browsers from collapsing the shell to 0 height. */
   height: 100vh;
+  height: 100dvh;
 }
 
 ::-webkit-scrollbar {
@@ -847,4 +878,68 @@ pre {
     scroll-behavior: auto !important;
     transition-duration: 1ms !important;
   }
+}
+
+/* ═══════════════════════════════════════════════
+   Mobile primitives (spec 102) — glass surfaces,
+   safe-area helpers, elevation. Brand-tinted; share
+   one implementation across chrome / sheets / terminal.
+   ═══════════════════════════════════════════════ */
+
+/* Glass surface: brand-tinted translucency + backdrop blur. Pair with a
+   border (--surface-glass-border) for the frosted-edge look. */
+.surface-glass {
+  background: var(--surface-glass);
+  backdrop-filter: blur(var(--surface-glass-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--surface-glass-blur)) saturate(140%);
+  border-color: var(--surface-glass-border);
+}
+
+.surface-glass-strong {
+  background: var(--surface-glass-strong);
+  backdrop-filter: blur(var(--surface-glass-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--surface-glass-blur)) saturate(150%);
+  border-color: var(--surface-glass-border);
+}
+
+/* Dark glass for surfaces over the deep brand backdrop (e.g. terminal chrome). */
+.surface-glass-deep {
+  background: var(--surface-glass-deep);
+  backdrop-filter: blur(var(--surface-glass-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--surface-glass-blur)) saturate(140%);
+  border-color: color-mix(in srgb, var(--cream) 12%, transparent);
+}
+
+/* Elevation utilities mapping to the shadow scale. */
+.elevation-1 { box-shadow: var(--elevation-1); }
+.elevation-2 { box-shadow: var(--elevation-2); }
+.elevation-3 { box-shadow: var(--elevation-3); }
+.elevation-4 { box-shadow: var(--elevation-4); }
+
+/* Safe-area helpers — apply device insets as padding so chrome clears the
+   notch / home indicator / rounded corners on installed PWAs. */
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-left { padding-left: env(safe-area-inset-left); }
+.safe-right { padding-right: env(safe-area-inset-right); }
+.safe-x {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.safe-area {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+/* Margin variant for bottom-pinned UI (toasts/sheets) above the home bar. */
+.safe-mb { margin-bottom: env(safe-area-inset-bottom); }
+
+/* Neumorphic theme drops the frosted look in favor of solid bevels. */
+[data-theme-style="neumorphic"] .surface-glass,
+[data-theme-style="neumorphic"] .surface-glass-strong,
+[data-theme-style="neumorphic"] .surface-glass-deep {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: var(--card);
 }
