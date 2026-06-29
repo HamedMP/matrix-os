@@ -1287,10 +1287,17 @@ interface TerminalAppProps {
   launchTargetId?: string;
   mobile?: boolean;
   windowControls?: TerminalWindowControls;
+  /**
+   * Render without the terminal's own dark title bar (traffic lights +
+   * breadcrumb), because the host window already supplies a generic window
+   * header. The terminal-specific controls (split, theme) move into a slim
+   * embedded toolbar so nothing is lost.
+   */
+  embeddedChrome?: boolean;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal shell component; extraction tracked separately. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
-export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
@@ -1937,7 +1944,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     >
       <style>{SHELL_STATUS_DOT_CSS}</style>
       <TerminalAppContext.Provider value={storeApi}>
-        <TerminalWorkspaceChrome />
+        {embeddedChrome ? <TerminalEmbeddedToolbar /> : <TerminalWorkspaceChrome />}
         <div
           className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
           style={{ background: "var(--terminal-app-body-bg)" }}
@@ -2882,6 +2889,70 @@ function TerminalWorkspaceChrome() {
           )}
         </div>
       </div>
+      <div className="flex shrink-0 items-center" style={{ gap: 8 }}>
+        {!ctx.mobile && (
+          <>
+            <ChromeIconButton
+              label="Split right"
+              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "horizontal"); }}
+            >
+              <IconSplitH />
+            </ChromeIconButton>
+            <ChromeIconButton
+              label="Split down"
+              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "vertical"); }}
+            >
+              <IconSplitV />
+            </ChromeIconButton>
+            <span style={{ background: "var(--terminal-chrome-control-border)", height: 22, margin: "0 4px", width: 1 }} />
+          </>
+        )}
+        <ThemePickerButton />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Slim terminal toolbar used when the host window already renders a generic
+ * window header (Developer mode). It drops the redundant traffic lights and
+ * breadcrumb and keeps only the terminal-specific controls — split and theme —
+ * so the window reads like every other app window while staying fully featured.
+ */
+function TerminalEmbeddedToolbar() {
+  const ctx = useTerminalAppContext();
+  return (
+    <div
+      className="shrink-0 select-none flex items-center justify-between"
+      style={{
+        background: "var(--terminal-chrome-bg)",
+        borderBottom: "1px solid var(--terminal-chrome-border)",
+        color: "var(--terminal-chrome-fg)",
+        height: ctx.mobile ? 44 : 40,
+        padding: "0 10px",
+        minWidth: 0,
+      }}
+    >
+      {ctx.mobile ? (
+        <button
+          type="button"
+          aria-label={ctx.sidebarOpen ? "Hide sessions" : "Back to sessions"}
+          onClick={() => ctx.setSidebarOpen((open) => !open)}
+          style={{
+            alignItems: "center",
+            background: "transparent",
+            border: 0,
+            color: "var(--terminal-chrome-fg)",
+            cursor: "pointer",
+            display: "flex",
+            height: 36,
+            justifyContent: "center",
+            width: 36,
+          }}
+        >
+          <PanelLeftOpenIcon size={18} strokeWidth={1.9} />
+        </button>
+      ) : <span />}
       <div className="flex shrink-0 items-center" style={{ gap: 8 }}>
         {!ctx.mobile && (
           <>
