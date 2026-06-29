@@ -1,10 +1,12 @@
 export type DeveloperToolId = "codex" | "claude-code" | "opencode" | "pi";
 
+// Same brand logos the terminal's new-session menu uses (/agent-logos/*.png).
+// These are light-on-dark, so the installs chip renders them on a dark tile.
 export const developerToolOptions: Array<{ id: DeveloperToolId; label: string; logoPath: string }> = [
-  { id: "codex", label: "Codex", logoPath: "/agents/codex.svg" },
-  { id: "claude-code", label: "Claude Code", logoPath: "/agents/claude-code.svg" },
-  { id: "opencode", label: "OpenCode", logoPath: "/agents/opencode.svg" },
-  { id: "pi", label: "Pi", logoPath: "/agents/pi.svg" },
+  { id: "codex", label: "Codex", logoPath: "/agent-logos/codex.png" },
+  { id: "claude-code", label: "Claude Code", logoPath: "/agent-logos/claude-code.png" },
+  { id: "opencode", label: "OpenCode", logoPath: "/agent-logos/opencode-white.png" },
+  { id: "pi", label: "Pi", logoPath: "/agent-logos/pi-coding-agent.png" },
 ];
 
 export const defaultDeveloperTools: DeveloperToolId[] = developerToolOptions.map((tool) => tool.id);
