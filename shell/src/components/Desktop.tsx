@@ -2024,7 +2024,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
       {/* Single ChatPopover instance shared by desktop + mobile dock
           buttons. Lives outside both dock-orientation branches so it
-          isn't unmounted when the viewport flips. */}
+          isn't unmounted when the viewport orientation flips. */}
       <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
 
       {/* No fullscreen exit pill: every maximized window keeps its own header
