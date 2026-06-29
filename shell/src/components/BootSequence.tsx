@@ -12,6 +12,7 @@ import {
   ServerIcon,
 } from "lucide-react";
 import { useJourney, type JourneyState } from "@/hooks/useJourney";
+import { MatrixBootMark } from "@/components/MatrixBootMark";
 import {
   DefaultInstallsStep,
 } from "@/components/onboarding/DefaultInstallsStep";
@@ -77,9 +78,7 @@ function BootShell({
         className="flex w-full max-w-5xl flex-col items-center gap-6 rounded-lg border border-forest/15 bg-white/85 p-6 shadow-[0_24px_80px_rgba(50,53,46,0.16)]"
         aria-live="polite"
       >
-        <div className="flex size-12 items-center justify-center rounded-md border border-forest/15 bg-cream/60">
-          <ServerIcon className="size-5 text-ember" aria-hidden="true" />
-        </div>
+        <MatrixBootMark size={60} />
         <div className="flex w-full flex-wrap items-center justify-center gap-2 text-xs font-medium text-forest/70">
           {STEP_ORDER.map((step, index) => {
             const state = getStepState(step, activeStep);

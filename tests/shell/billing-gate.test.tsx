@@ -505,13 +505,13 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByText("Default installs")).toBeTruthy();
+    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
     for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
       expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
     }
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/provision-runtime")).toBe(false);
     fireEvent.click(screen.getByRole("checkbox", { name: "Pi" }));
-    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/auth/provision-runtime",
@@ -566,8 +566,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByText("Default installs")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
     expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
@@ -606,8 +606,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByText("Default installs")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
     expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();

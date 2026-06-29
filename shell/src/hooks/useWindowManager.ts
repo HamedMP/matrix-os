@@ -4,6 +4,7 @@ import { TERMINAL_MIN_WINDOW_HEIGHT, TERMINAL_MIN_WINDOW_WIDTH } from "@/lib/bui
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";
+import { useDesktopMode } from "@/stores/desktop-mode";
 
 export interface AppWindow {
   id: string;
@@ -149,6 +150,30 @@ function debouncedSave(state: WindowManagerState) {
   }, 500);
 }
 
+function computeDefaultWindowSize(path: string): { width: number; height: number } {
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const minSize = getMinimumWindowSize(path);
+  return {
+    width: Math.round(Math.min(1200, Math.max(minSize.width, vw * 0.6))),
+    height: Math.round(Math.min(900, Math.max(minSize.height, vh * 0.7))),
+  };
+}
+
+// Float a fresh window centered on the viewport (dev/desktop modes). A small
+// per-window step keeps stacked opens from perfectly overlapping while staying
+// near the middle — never marching off to the right like the canvas cascade.
+function centeredWindowPosition(path: string, offsetIndex: number): { x: number; y: number } {
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const { width, height } = computeDefaultWindowSize(path);
+  const step = (offsetIndex % 6) * 28;
+  return {
+    x: Math.max(20, Math.round((vw - width) / 2) + step),
+    y: Math.max(20, Math.round((vh - height) / 2) + step),
+  };
+}
+
 function createWindowRecord(
   state: WindowManagerState,
   name: string,
@@ -157,11 +182,8 @@ function createWindowRecord(
   fallbackY: number,
 ): AppWindow {
   const saved = state.closedLayouts.get(path);
-  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
-  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const minSize = getMinimumWindowSize(path);
-  const defaultWidth = Math.round(Math.min(1200, Math.max(minSize.width, vw * 0.6)));
-  const defaultHeight = Math.round(Math.min(900, Math.max(minSize.height, vh * 0.7)));
+  const { width: defaultWidth, height: defaultHeight } = computeDefaultWindowSize(path);
 
   return {
     id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -232,16 +254,27 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           };
         }
 
-        // Compute fallback position to the right of the rightmost visible window
-        let fallbackX = dockXOffset + 20;
-        let fallbackY = 20;
+        // Position the new window. Canvas pans to the window after it opens, so
+        // a spatial cascade to the right of the rightmost window is fine there.
+        // Dev/desktop windows float in place, so center them on the viewport
+        // instead of marching off to the right of the last one.
         const visible = zState.windows.filter((w) => !w.minimized);
-        if (visible.length > 0) {
-          const rightmost = visible.reduce((best, w) =>
-            (w.x + w.width) > (best.x + best.width) ? w : best,
-          );
-          fallbackX = rightmost.x + rightmost.width + 24;
-          fallbackY = rightmost.y;
+        let fallbackX: number;
+        let fallbackY: number;
+        if (useDesktopMode.getState().mode === "canvas") {
+          fallbackX = dockXOffset + 20;
+          fallbackY = 20;
+          if (visible.length > 0) {
+            const rightmost = visible.reduce((best, w) =>
+              (w.x + w.width) > (best.x + best.width) ? w : best,
+            );
+            fallbackX = rightmost.x + rightmost.width + 24;
+            fallbackY = rightmost.y;
+          }
+        } else {
+          const pos = centeredWindowPosition(path, visible.length);
+          fallbackX = pos.x;
+          fallbackY = pos.y;
         }
 
         const nextWindow = createWindowRecord(
@@ -284,12 +317,15 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           };
         }
 
+        const exclusivePos = useDesktopMode.getState().mode === "canvas"
+          ? { x: dockXOffset + 20, y: 48 }
+          : centeredWindowPosition(path, 0);
         const nextWindow = createWindowRecord(
           { ...state, windows: zState.windows, nextZ: zState.nextZ },
           name,
           path,
-          dockXOffset + 20,
-          48,
+          exclusivePos.x,
+          exclusivePos.y,
         );
         return {
           windows: [...withMinimized, nextWindow],

@@ -125,12 +125,12 @@ describe("BootSequence", () => {
 
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
 
-    expect(await screen.findByText("Default installs")).toBeTruthy();
+    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
     for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
       expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
     }
     fireEvent.click(screen.getByRole("checkbox", { name: "OpenCode" }));
-    fireEvent.click(screen.getByRole("button", { name: "Build VPS" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
