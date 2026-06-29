@@ -684,6 +684,14 @@ function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Expires', '0');
 }
 
+function applyNoStoreResponseHeaders(headers: Headers): void {
+  headers.set('cache-control', 'no-store, private');
+  headers.set('cdn-cache-control', 'no-store');
+  headers.set('cloudflare-cdn-cache-control', 'no-store');
+  headers.set('pragma', 'no-cache');
+  headers.set('expires', '0');
+}
+
 const APP_DOMAIN_UNREGISTER_SERVICE_WORKER = `
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -2057,9 +2065,11 @@ export function createApp(deps: {
         redirect: 'manual',
         signal: AbortSignal.timeout(AUTH_SHELL_PROXY_TIMEOUT_MS),
       });
+      const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
+      applyNoStoreResponseHeaders(responseHeaders);
       return new Response(response.body, {
         status: response.status,
-        headers: sanitizeProxyResponseHeaders(response.headers),
+        headers: responseHeaders,
       });
     } catch (err: unknown) {
       logPlatformRouteError('app-domain auth-shell proxy', err);

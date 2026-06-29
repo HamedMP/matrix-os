@@ -2033,6 +2033,7 @@ describe("platform proxy routing", () => {
           "matrix_app_session=matrix-token",
           "__session=clerk-token",
           "__client_uat=123",
+          "matrix_shell_route=alice",
           "__session_safeSuffix-123=clerk-token",
           "__client_uat_safeSuffix_456=456",
           "__session_unsafe.suffix=ignored",
@@ -2050,6 +2051,7 @@ describe("platform proxy routing", () => {
     const setCookie = combinedSetCookie(res.headers);
     expect(setCookie).toContain("matrix_app_session=;");
     expect(setCookie).toContain("matrix_native_app_session=;");
+    expect(setCookie).toContain("matrix_shell_route=;");
     expect(setCookie).toContain("__session=;");
     expect(setCookie).toContain("__client_uat=;");
     expect(setCookie).toContain("__session_safeSuffix-123=;");
@@ -3025,6 +3027,9 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("auth shell");
+    expect(res.headers.get("cache-control")).toBe("no-store, private");
+    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "http://auth-shell.test:3200/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
     );
