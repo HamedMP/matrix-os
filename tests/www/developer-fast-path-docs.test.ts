@@ -6,7 +6,7 @@ const root = process.cwd();
 
 describe("developer fast path docs", () => {
   it("makes the agent-first setup prompt the primary quickstart path", () => {
-    const quickstart = readFileSync(join(root, "www/content/docs/users/quickstart.mdx"), "utf-8");
+    const quickstart = readFileSync(join(root, "www/content/docs/quickstart.mdx"), "utf-8");
     const promptIndex = quickstart.indexOf("## Fastest path: paste the setup prompt");
     const manualIndex = quickstart.indexOf("## Manual setup");
     const setupPromptStart = quickstart.indexOf("```text", promptIndex);

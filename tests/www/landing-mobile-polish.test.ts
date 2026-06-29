@@ -43,7 +43,7 @@ describe("www landing mobile polish", () => {
 
     expect(setupSection).toContain("flex flex-wrap");
     expect(setupSection).toContain("Open skills.md");
-    expect(setupSection).toContain('href="/docs/users/quickstart"');
+    expect(setupSection).toContain('href="/docs/quickstart"');
     expect(setupSection).toContain("Quickstart");
   });
 

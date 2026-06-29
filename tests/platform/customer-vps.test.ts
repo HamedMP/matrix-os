@@ -1145,8 +1145,8 @@ describe('platform/customer-vps', () => {
   });
 
   it('publishes VPS-per-user deployment docs through the docs navigation', () => {
-    const meta = JSON.parse(readFileSync('www/content/docs/deployment/meta.json', 'utf8')) as { pages: string[] };
-    const page = readFileSync('www/content/docs/deployment/vps-per-user.mdx', 'utf8');
+    const meta = JSON.parse(readFileSync('www/content/docs/developer/deployment/meta.json', 'utf8')) as { pages: string[] };
+    const page = readFileSync('www/content/docs/developer/deployment/vps-per-user.mdx', 'utf8');
 
     expect(meta.pages).toContain('vps-per-user');
     expect(page).toContain('## Production Scope');

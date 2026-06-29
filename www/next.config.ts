@@ -37,6 +37,24 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      // Docs IA change (spec 100): user pages flattened to /docs root, and
+      // deployment folded under /docs/developer. Keep legacy links alive.
+      { source: '/docs/users/:path*', destination: '/docs/:path*', permanent: true },
+      { source: '/docs/users', destination: '/docs', permanent: true },
+      {
+        source: '/docs/deployment/:path*',
+        destination: '/docs/developer/deployment/:path*',
+        permanent: true,
+      },
+      {
+        source: '/docs/deployment',
+        destination: '/docs/developer/deployment',
+        permanent: true,
+      },
+    ];
+  },
   skipTrailingSlashRedirect: true,
   turbopack: {
     root: resolve(__dirname, ".."),
