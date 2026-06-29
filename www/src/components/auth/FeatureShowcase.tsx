@@ -1,242 +1,164 @@
-"use client";
-
-import { useState, useEffect } from "react";
 import Image from "next/image";
-import {
-  CheckCircle2Icon,
-  TerminalIcon,
-  FolderTreeIcon,
-  ShieldIcon,
-  MonitorSmartphoneIcon,
-  FingerprintIcon,
-  SparklesIcon,
-} from "lucide-react";
-
-const features = [
-  {
-    icon: TerminalIcon,
-    title: "Describe it, it builds it",
-    description:
-      "Tell the OS what you need in natural language. It generates real software, saved as files you own.",
-    visual: (
-      <div className="space-y-2 font-mono text-xs text-muted-foreground">
-        <div className="text-foreground">
-          <span className="text-primary">$</span> Build me an expense tracker
-          with categories
-        </div>
-        <div>
-          <span className="text-primary">writing</span>{" "}
-          ~/apps/expense-tracker.html
-        </div>
-        <div className="text-success">done in 4.2s</div>
-      </div>
-    ),
-  },
-  {
-    icon: FolderTreeIcon,
-    title: "Everything is a file",
-    description:
-      "Apps, config, AI personality: all stored as real files. Back up your OS by copying a folder.",
-    visual: (
-      <div className="grid grid-cols-2 gap-1 font-mono text-[11px] text-muted-foreground">
-        {[
-          "apps/notes.html",
-          "system/soul.md",
-          "data/expenses/items.json",
-          "agents/builder.md",
-        ].map((f) => (
-          <div key={f} className="truncate">
-            {f}
-          </div>
-        ))}
-      </div>
-    ),
-  },
-  {
-    icon: ShieldIcon,
-    title: "Self-healing OS",
-    description:
-      "Break something? The healer agent detects, diagnoses, and repairs it. Git-backed snapshots mean nothing is lost.",
-    visual: (
-      <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
-        <div>
-          <span className="text-destructive">error</span> notes.html corrupted
-        </div>
-        <div>
-          <span className="text-primary">healer</span> diagnosing…
-        </div>
-        <div>
-          <span className="text-success">restored</span> from git snapshot
-        </div>
-      </div>
-    ),
-  },
-  {
-    icon: MonitorSmartphoneIcon,
-    title: "Multi-channel",
-    description:
-      "Same kernel, every platform. Web desktop, Telegram, WhatsApp, Discord, Slack. All connected to one identity.",
-    visual: (
-      <div className="flex flex-wrap gap-1.5">
-        {["Web", "Telegram", "WhatsApp", "Discord", "Slack"].map((ch) => (
-          <span
-            key={ch}
-            className="rounded-full border border-border bg-secondary/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground"
-          >
-            {ch}
-          </span>
-        ))}
-      </div>
-    ),
-  },
-  {
-    icon: FingerprintIcon,
-    title: "Your AI, your identity",
-    description:
-      "Federated identity via Matrix protocol. One handle everywhere. Your AI has its own identity too.",
-    visual: (
-      <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
-        <div>
-          <span className="text-primary">you</span>@you:matrix-os.com
-        </div>
-        <div>
-          <span className="text-primary">ai</span>@you_ai:matrix-os.com
-        </div>
-      </div>
-    ),
-  },
-];
+import { palette as c, fonts } from "@matrix-os/brand";
 
 interface FeatureShowcaseProps {
   heading?: string;
   subheading?: string;
+  variant?: "product" | "roster";
+}
+
+const AGENTS = ["Claude", "Codex", "Cursor", "Hermes"] as const;
+
+function Wordmark() {
+  return (
+    <div className="mb-8 flex items-center gap-3">
+      <Image
+        src="/rabbit.svg"
+        alt="Matrix OS"
+        width={34}
+        height={34}
+        className="size-[34px] rounded-lg border p-1.5"
+        style={{ borderColor: c.border, backgroundColor: c.card }}
+      />
+      <span className="text-sm font-medium tracking-tight" style={{ color: c.forest }}>
+        matrix-os
+      </span>
+    </div>
+  );
 }
 
 export function FeatureShowcase({
-  heading = "The OS that builds itself",
-  subheading = "Sign up to get your personal Matrix OS instance.",
+  heading = "A computer in the cloud for your AI agents",
+  subheading = "Run Claude, Codex, and Hermes as background agents that keep going after your laptop closes.",
+  variant = "product",
 }: FeatureShowcaseProps) {
-  const [active, setActive] = useState(0);
-  const [paused, setPaused] = useState(false);
-
-  useEffect(() => {
-    if (paused) return;
-    const timer = setInterval(() => {
-      setActive((prev) => (prev + 1) % features.length);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [paused]);
-
-  const current = features[active];
-  const Icon = current.icon;
-
   return (
-    <div className="flex flex-col text-center lg:text-left">
-      <div className="mx-auto mb-6 max-w-xl lg:mx-0 lg:mb-9">
-        <div className="mb-6 flex items-center justify-center gap-3 lg:justify-start">
-          <Image
-            src="/rabbit.svg"
-            alt="Matrix OS"
-            width={36}
-            height={36}
-            className="size-9 rounded-lg border border-forest/10 bg-white/72 p-1.5 shadow-sm"
-          />
-          <span className="font-mono text-sm font-semibold text-forest">
-            matrix-os
-          </span>
-        </div>
-        <h1 className="text-balance text-[clamp(2.7rem,8vw,5.4rem)] font-semibold leading-[0.9] text-forest lg:max-w-[10ch]">
-          {heading}
-        </h1>
-        <p className="mx-auto mt-5 max-w-[46ch] text-[15px] leading-8 text-muted-foreground md:text-base lg:mx-0">
-          {subheading}
-        </p>
-      </div>
+    <div className="flex flex-col" style={{ fontFamily: fonts.sans }}>
+      <Wordmark />
 
-      <style>{`
-        @keyframes authFade {
-          0% { opacity: 0; transform: translateY(8px); }
-          100% { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes authProgressFill {
-          0% { width: 0%; }
-          100% { width: 100%; }
-        }
-      `}</style>
-
-      <div
-        className="hidden max-w-[540px] lg:block"
-        onMouseEnter={() => setPaused(true)}
-        onMouseLeave={() => setPaused(false)}
+      <h1
+        className="text-balance tracking-[-0.01em]"
+        style={{
+          fontFamily: fonts.display,
+          fontWeight: 400,
+          color: c.deep,
+          lineHeight: 1.02,
+          fontSize:
+            variant === "roster"
+              ? "clamp(2.8rem,5vw,4rem)"
+              : "clamp(2.4rem,4.2vw,3.2rem)",
+          maxWidth: "13ch",
+        }}
       >
-        {/* eyebrow + counter */}
-        <div className="flex items-center justify-between">
-            <span className="inline-flex items-center gap-2 rounded-full border border-ember/18 bg-ember/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-ember">
-              <SparklesIcon className="size-3.5" aria-hidden="true" />
-              Why Matrix OS
-            </span>
-            <span className="font-mono text-xs tabular-nums text-forest/45">
-              {String(active + 1).padStart(2, "0")} / {String(features.length).padStart(2, "0")}
+        {heading}
+      </h1>
+      <p
+        className="mt-5 max-w-[42ch] text-[15px] leading-[1.6] md:text-base"
+        style={{ color: c.mutedFg }}
+      >
+        {subheading}
+      </p>
+
+      {variant === "product" ? (
+        <div
+          className="mt-10 hidden max-w-[440px] overflow-hidden rounded-2xl border lg:block"
+          style={{
+            borderColor: c.border,
+            backgroundColor: c.card,
+            boxShadow: "0 24px 60px rgba(50,53,46,0.10)",
+          }}
+        >
+          <div
+            className="flex items-center gap-1.5 border-b px-3 py-2"
+            style={{ borderColor: c.border, backgroundColor: "#F1EFE7" }}
+          >
+            <span className="size-[7px] rounded-full" style={{ backgroundColor: c.border }} />
+            <span className="size-[7px] rounded-full" style={{ backgroundColor: c.border }} />
+            <span className="size-[7px] rounded-full" style={{ backgroundColor: c.border }} />
+            <span
+              className="ml-2 text-[10px]"
+              style={{ fontFamily: "var(--font-mono, monospace)", color: c.subtle }}
+            >
+              workspace
             </span>
           </div>
-
-          {/* editorial keynote slide */}
-          <div className="relative mt-7 min-h-[300px]">
-            <div key={active} style={{ animation: "authFade 600ms cubic-bezier(0.22,1,0.36,1)" }}>
-              <Icon className="size-7 text-ember" aria-hidden="true" strokeWidth={1.6} />
-
-              <h3 className="mt-7 text-balance text-left text-[clamp(2rem,3.4vw,2.9rem)] font-semibold leading-[1.02] text-forest">
-                {current.title}
-              </h3>
-              <p className="mt-5 max-w-[40ch] text-left text-[17px] leading-8 text-muted-foreground">
-                {current.description}
+          <div className="grid grid-cols-2 gap-px" style={{ backgroundColor: c.border }}>
+            <div
+              className="space-y-1.5 p-3.5"
+              style={{
+                backgroundColor: c.forestDeep,
+                minHeight: 116,
+                fontFamily: "var(--font-mono, monospace)",
+                fontSize: 11,
+                lineHeight: 1.7,
+              }}
+            >
+              <p style={{ color: "#9FB39A" }}>$ claude build tracker</p>
+              <p style={{ color: c.cream }}>› writing ~/apps/app.tsx</p>
+              <p style={{ color: "#C0DD97" }}>✓ done in 4.2s</p>
+            </div>
+            <div className="p-3.5" style={{ backgroundColor: c.card }}>
+              <p
+                className="text-[10px] font-semibold uppercase tracking-[0.14em]"
+                style={{ color: c.subtle }}
+              >
+                Agents
               </p>
-
-              {/* one quiet supporting visual */}
-              <div className="mt-9 border-l-2 border-ember/45 pl-4">
-                {current.visual}
+              <div className="mt-2.5 flex flex-col gap-2 text-[12px]" style={{ color: c.deep }}>
+                <span className="flex items-center gap-2">
+                  <span className="size-1.5 rounded-full" style={{ backgroundColor: "#639922" }} />
+                  Claude · running
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="size-1.5 rounded-full" style={{ backgroundColor: "#639922" }} />
+                  Codex · PR opened
+                </span>
+                <span className="flex items-center gap-2" style={{ color: c.subtle }}>
+                  <span className="size-1.5 rounded-full" style={{ backgroundColor: c.border }} />
+                  Hermes · idle
+                </span>
               </div>
             </div>
           </div>
-
-        {/* timed progress segments */}
-        <div className="mt-10 flex items-center gap-2">
-          {features.map((feature, i) => (
-            <button
-              key={feature.title}
-                type="button"
-                onClick={() => setActive(i)}
-                className="relative h-[3px] flex-1 overflow-hidden rounded-full bg-forest/14"
-                aria-label={`Show ${feature.title}`}
-                aria-current={i === active}
-              >
-                <span
-                  className="absolute inset-y-0 left-0 rounded-full bg-forest"
-                style={
-                  i < active
-                    ? { width: "100%" }
-                    : i === active
-                      ? {
-                          width: "0%",
-                          animation: "authProgressFill 5s linear forwards",
-                          animationPlayState: paused ? "paused" : "running",
-                        }
-                      : { width: "0%" }
-                }
-              />
-            </button>
-          ))}
         </div>
-      </div>
-
-      <div className="mx-auto grid w-full max-w-md divide-y divide-forest/12 border-y border-forest/12 lg:hidden">
-        {["Free account first", "Provision only when ready", "Your runtime, your files"].map((item) => (
-          <div
-            key={item}
-            className="flex items-center gap-3 py-3 text-sm font-medium text-forest"
+      ) : (
+        <div className="mt-10 hidden border-t pt-6 lg:block" style={{ borderColor: c.border }}>
+          <p
+            className="mb-3 text-[10px] font-semibold uppercase tracking-[0.16em]"
+            style={{ color: c.subtle }}
           >
-            <CheckCircle2Icon className="size-4 text-ember" aria-hidden="true" />
-            {item}
+            Runs your agents
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {AGENTS.map((a) => (
+              <span
+                key={a}
+                className="rounded-full border px-3 py-1.5 text-[13px]"
+                style={{ color: c.deep, borderColor: c.border, backgroundColor: c.card }}
+              >
+                {a}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Mobile: compact proof list */}
+      <div
+        className="mx-auto mt-7 grid w-full max-w-md border-y lg:hidden"
+        style={{ borderColor: c.border }}
+      >
+        {AGENTS.map((a, i) => (
+          <div
+            key={a}
+            className="flex items-center gap-3 py-3 text-sm font-medium"
+            style={{
+              color: c.forest,
+              ...(i > 0 ? { borderTop: `1px solid ${c.border}` } : {}),
+            }}
+          >
+            <span className="size-1.5 rounded-full" style={{ backgroundColor: c.ember }} />
+            {a}
           </div>
         ))}
       </div>

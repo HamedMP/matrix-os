@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useAuth, RedirectToSignIn } from "@clerk/nextjs";
+import { palette as c, fonts, lightFg } from "@matrix-os/brand";
 import {
   AlertCircleIcon,
   CheckCircle2Icon,
@@ -240,10 +241,14 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
     case "plan_required":
       return (
         <BootShell activeStep="billing">
-          <h1 className="text-lg font-medium text-forest">Choose your plan</h1>
+          <h1 className="text-lg font-medium text-forest" style={{ fontFamily: fonts.display }}>Choose your plan</h1>
           <p className="max-w-sm text-sm">{state.detail}</p>
           {state.nextAction.url ? (
-            <a href={state.nextAction.url} className="rounded-md bg-ember px-4 py-2 text-sm font-medium text-white hover:opacity-90">
+            <a
+              href={state.nextAction.url}
+              className="rounded-md text-sm font-medium hover:opacity-90"
+              style={{ backgroundColor: c.deep, color: lightFg, padding: "0.5rem 1rem" }}
+            >
               View plans
             </a>
           ) : null}
@@ -292,10 +297,16 @@ function BootSequenceInner({ children }: { children: ReactNode }) {
       return (
         <BootShell activeStep="computer">
           <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
-          <h1 className="text-lg font-medium text-forest">Setup needs attention</h1>
+          <h1 className="text-lg font-medium text-forest" style={{ fontFamily: fonts.display }}>Setup needs attention</h1>
           <p className="max-w-sm text-sm">{state.detail}</p>
           {state.failure?.retryable ? (
-            <button type="button" disabled={working} onClick={() => void retryProvision()} className="inline-flex items-center gap-2 rounded-md bg-ember px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60">
+            <button
+              type="button"
+              disabled={working}
+              onClick={() => void retryProvision()}
+              className="inline-flex items-center gap-2 rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-60"
+              style={{ backgroundColor: c.deep, color: lightFg, padding: "0.5rem 1rem" }}
+            >
               {working ? <Spinner /> : <RefreshCwIcon className="size-4" aria-hidden="true" />} Retry setup
             </button>
           ) : (

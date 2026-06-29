@@ -250,6 +250,36 @@ export function createWorkspaceRoutes(options: {
 
   app.get("/api/github/status", async (c) => c.json(await projectManager.getGithubStatus()));
 
+  const GithubReposQuerySchema = z.object({
+    search: z.string().trim().min(1).max(100).optional(),
+    limit: z.coerce.number().int().min(1).default(50).transform((v) => Math.min(v, 50)),
+  });
+
+  app.get("/api/github/repos", async (c) => {
+    try {
+      getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const parsed = GithubReposQuerySchema.safeParse({
+      search: c.req.query("search"),
+      limit: c.req.query("limit"),
+    });
+    if (!parsed.success) {
+      return c.json(errorBody("invalid_query", "Invalid query parameters"), 400);
+    }
+    try {
+      const result = await projectManager.listGithubRepos({
+        search: parsed.data.search,
+        limit: parsed.data.limit,
+      });
+      return c.json(result);
+    } catch (err: unknown) {
+      console.error("[github/repos] list failed:", err instanceof Error ? err.message : typeof err);
+      return c.json({ error: "github_unavailable" }, 502);
+    }
+  });
+
   app.post("/api/projects", limited, async (c) => {
     const body = await parseJson(c, CreateProjectSchema);
     if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));

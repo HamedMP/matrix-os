@@ -96,8 +96,13 @@ services:
       - dev-home:/home/matrixos/home
       # AI CLI auth (shared across all branch containers)
       - ai-auth:/home/matrixos/.ai-auth
-      # .next is ephemeral — persistent volume causes stale Turbopack cache
-      # errors during HMR when host source files change
+      # Keep .next OFF the macOS bind mount. With ./shell bind-mounted and no
+      # volume here, .next lived on the virtualized host FS, so Turbopack's
+      # default filesystem cache (on by default since Next 16.1) + HMR thrashed
+      # the slow mount and went stale — breaking hot reload. An ANONYMOUS volume
+      # keeps it container-local and fast; the entrypoint clears .next/cache on
+      # each boot so it never goes stale across runs (a NAMED volume did).
+      - /app/shell/.next
     env_file:
       - .env.docker
     environment:

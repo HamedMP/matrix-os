@@ -511,6 +511,35 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
     </div>
   );
 
+  // In fullscreen the floating title bar can't sit above the window, so render a
+  // static header at the top of the window instead — same traffic lights + title
+  // as every other window, double-click to restore. This replaces the old
+  // near-invisible exit pill.
+  const fullscreenTitleBar = (
+    <div
+      className="shrink-0 flex items-center gap-2 px-3 h-9 bg-muted/90 border-b border-border/60 select-none backdrop-blur-xl"
+      onDoubleClick={() => useWindowManager.getState().toggleFullscreen(win.id)}
+    >
+      <TrafficLights
+        onClose={() => closeWindow(win.id)}
+        onMinimize={animateMinimize}
+        onFullscreen={() => useWindowManager.getState().toggleFullscreen(win.id)}
+      />
+      <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0">
+        {iconUrl ? (
+          // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image
+          <img src={iconUrl} alt="" className="size-4 rounded-md object-cover shrink-0" draggable={false} />
+        ) : (
+          <span className="size-4 rounded-md bg-muted flex items-center justify-center text-[9px] font-semibold text-muted-foreground shrink-0">
+            {win.title.charAt(0).toUpperCase()}
+          </span>
+        )}
+        <span className="text-xs font-medium text-foreground/70 truncate">{win.title}</span>
+      </div>
+      <div className="w-[42px] shrink-0" />
+    </div>
+  );
+
   // Zoomed-out preview: icon card with title bar above.
   // Skip preview if fullscreen — always render interactive content.
   const isPreview = !isInteractive && !isFullscreen;
@@ -576,6 +605,10 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         <TerminalApp
           mobile={isMobile}
           launchTargetId={win.id}
+          // Use the shared Canvas title bar (floating, like every other window)
+          // instead of the terminal's own dark chrome; split/theme move into the
+          // slim embedded toolbar.
+          embeddedChrome
           windowControls={{
             close: () => closeWindow(win.id),
             minimize: animateMinimize,
@@ -643,10 +676,10 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       style={{ ...wrapperStyle, ...windowMotionStyle }}
       onMouseDown={isFullscreen || terminalOwnsChrome ? undefined : () => focusWindow(win.id)}
     >
-      {!isFullscreen && !terminalOwnsChrome && titleBar}
+      {!isFullscreen && titleBar}
       <div
         className={isFullscreen
-          ? "bg-background overflow-hidden"
+          ? "bg-background overflow-hidden flex flex-col"
           : isPreview
             ? `rounded-lg bg-card overflow-hidden flex items-center justify-center transition-shadow duration-150 ${
                 isFocused ? "shadow-lg ring-1 ring-primary/30" : "shadow-md opacity-80"
@@ -663,7 +696,10 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
           focusWindow(win.id);
         }}
       >
-        {isPreview ? (
+        {isFullscreen && fullscreenTitleBar}
+        {isFullscreen ? (
+          <div className="relative flex-1 min-h-0 overflow-hidden">{appContent}</div>
+        ) : isPreview ? (
           <>
             {iconUrl ? (
               // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png with ?v=etag) that cannot be statically configured for next/image

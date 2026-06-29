@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useEffectEvent, useReducer, useRef } from "react";
+import { useCallback, useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AppRuntimeFrame from "@/components/AppRuntimeFrame";
+import { WindowHeader, WindowHeaderAction } from "@/components/WindowHeader";
 import { useGateway } from "../_layout";
 import { getAppSlug, getRuntimeSlug, slugFromParam, type MatrixAppEntry } from "@/lib/apps";
 import { colors, fonts, radius, spacing } from "@/lib/theme";
@@ -58,10 +60,12 @@ function runtimeReducer(state: RuntimeState, action: RuntimeAction): RuntimeStat
 
 export default function RuntimeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ slug?: string | string[] }>();
   const slug = slugFromParam(params.slug);
   const { client } = useGateway();
   const [state, dispatch] = useReducer(runtimeReducer, initialRuntimeState);
+  const [maximized, setMaximized] = useState(false);
   const { app, launchUrl, loading, sessionReady, sessionExpiresAt } = state;
   const shortSessionRefreshCountRef = useRef(0);
 
@@ -128,41 +132,27 @@ export default function RuntimeScreen() {
   const title = app?.name ?? slug;
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          title,
-          headerLeft: () => (
-            <Pressable
-              onPress={() => router.replace("/(tabs)/apps" as any)}
-              style={({ pressed }) => ({
-                minWidth: 34,
-                minHeight: 34,
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: pressed ? 0.65 : 1,
-              })}
-            >
-              <Ionicons name="home-outline" size={22} color={colors.light.foreground} />
-            </Pressable>
-          ),
-          headerRight: () => (
-            <Pressable
-              onPress={() => router.push({ pathname: "/apps/[...slug]", params: { slug: slug.split("/") } } as any)}
-              style={({ pressed }) => ({
-                minWidth: 34,
-                minHeight: 34,
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: pressed ? 0.65 : 1,
-              })}
-            >
-              <Ionicons name="information-circle-outline" size={22} color={colors.light.foreground} />
-            </Pressable>
-          ),
-        }}
+    <View style={{ flex: 1, backgroundColor: colors.light.background }}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <WindowHeader
+        paddingTop={insets.top + 8}
+        title={title}
+        subtitle={app?.category ?? "Matrix app"}
+        subtitleMono={false}
+        onBack={() => router.replace("/(tabs)/apps" as any)}
+        backIcon="home-outline"
+        backLabel="Home"
+        maximized={maximized}
+        onToggleMaximized={() => setMaximized((prev) => !prev)}
+        actions={
+          <WindowHeaderAction
+            icon="information-circle-outline"
+            label="App info"
+            onPress={() => router.push({ pathname: "/apps/[...slug]", params: { slug: slug.split("/") } } as any)}
+          />
+        }
       />
-      <View style={{ flex: 1, backgroundColor: colors.light.background }}>
+      <View style={{ flex: 1 }}>
         {loading ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
             <ActivityIndicator color={colors.light.primary} />
@@ -229,7 +219,7 @@ export default function RuntimeScreen() {
           </View>
         )}
       </View>
-    </>
+    </View>
   );
 }
 
