@@ -3,6 +3,10 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   setItem: jest.fn(),
 }));
 
+jest.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
+
 jest.mock("../app/_layout", () => ({
   useGateway: jest.fn(),
 }));
@@ -58,7 +62,8 @@ describe("AppsScreen", () => {
     render(<AppsScreen />);
 
     await waitFor(() => expect(screen.getByText("Chat")).toBeTruthy());
-    expect(screen.getByText("Apps")).toBeTruthy();
+    // "Apps" appears twice now: the screen title and the native Apps card.
+    expect(screen.getAllByText("Apps").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Tasks")).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
   });

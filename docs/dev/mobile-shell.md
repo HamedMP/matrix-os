@@ -10,6 +10,107 @@ The 075 mobile shell work makes the phone experience launcher-first while keepin
 - Canvas is reachable through an explicit launcher action, not as the default phone home.
 - Terminal uses Matrix-authenticated gateway sessions and WebSockets; users do not need SSH keys.
 
+## Local Dev Build
+
+Use the Expo development client for physical-device testing. Expo Go is not the
+supported local runtime for the Matrix OS mobile app because the app uses
+native modules and `expo-dev-client`; Expo Go can report SDK/runtime
+incompatibility even when the project is otherwise healthy.
+
+### Prerequisites
+
+- Run commands from the repository root unless noted otherwise.
+- `apps/mobile/.env` must define `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`.
+- The installed Xcode must include the iOS platform matching the test phone.
+  Check with `xcodebuild -showsdks`. If Xcode says an iOS version is not
+  installed, install it from Xcode Settings > Components or run
+  `xcodebuild -downloadPlatform iOS`.
+- The phone must appear under `== Devices ==`, not `== Devices Offline ==`:
+
+```bash
+xcrun xctrace list devices
+```
+
+If the phone is offline, unlock it, keep it on USB, accept Trust prompts, and
+confirm iOS Developer Mode is enabled.
+
+### Build and Install the Dev Client
+
+Only rebuild the native dev client when native dependencies, Expo plugins,
+`app.json`, iOS entitlements, bundle identifiers, or pods change. Normal JS and
+React Native changes only need Metro reload.
+
+```bash
+pnpm --filter matrix-os-mobile exec expo run:ios --device <device-udid-or-name>
+```
+
+Example for the current Matrix OS iPhone:
+
+```bash
+pnpm --filter matrix-os-mobile exec expo run:ios --device 00008120-00121C41119B401E
+```
+
+The app's iOS bundle identifier is `com.matrixos.mobile`, the Expo slug is
+`matrix-os-mobile`, and the custom URL scheme is `matrixos`.
+
+### Run Metro for the Installed Dev Client
+
+Start Metro over LAN:
+
+```bash
+pnpm --filter matrix-os-mobile exec expo start --dev-client --host lan --clear
+```
+
+Find the Mac's LAN IP:
+
+```bash
+ipconfig getifaddr en0
+```
+
+Open the installed Matrix OS dev build on the phone and connect to:
+
+```text
+http://<mac-lan-ip>:8081
+```
+
+The equivalent dev-client deep link is:
+
+```text
+exp+matrix-os-mobile://expo-development-client/?url=http%3A%2F%2F<mac-lan-ip>%3A8081
+```
+
+In normal terminals Expo prints a QR code. In non-interactive coding-agent
+terminals the QR may not render; use the URL above, or generate a QR for the
+deep link and scan it from the dev-client launcher. If the phone cannot reach
+the Mac on LAN, retry Metro with `--host tunnel`.
+
+### Clerk Redirects
+
+Google SSO depends on Clerk allowing the mobile redirect URI used by
+`apps/mobile/app/sign-in.tsx`:
+
+```text
+matrixos://sso-callback
+```
+
+In the Clerk dashboard for the same instance as `apps/mobile/.env`, enable the
+Native API and allowlist `matrixos://sso-callback` for the native application.
+Use Team ID `PX4JL74Y2K` and bundle ID `com.matrixos.mobile`.
+
+### Common Failures
+
+- `Project is incompatible with this version of Expo Go`: use the installed
+  dev client, not Expo Go.
+- `No device UDID or name matching ...`: Xcode does not currently see the
+  phone as an available device. Check `xcrun xctrace list devices`.
+- `iOS <version> is not installed`: install the matching iOS platform in Xcode
+  Settings > Components or run `xcodebuild -downloadPlatform iOS`.
+- `No apps connected` after pressing reload: Metro is running but the dev
+  client has not connected yet. Open the installed app and connect to the Metro
+  URL.
+- `redirect url ... does not match an authorized redirect URI`: add
+  `matrixos://sso-callback` to Clerk's native redirect allowlist.
+
 ## State
 
 Mobile resume state is intentionally small and validated before use.

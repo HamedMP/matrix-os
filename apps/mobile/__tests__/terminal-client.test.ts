@@ -9,6 +9,7 @@ import {
 import { jsonResponse } from "./mobile-shell-test-utils";
 
 const SESSION_ID = "c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9";
+const SHELL_NAME = "matrix-7af3c2e";
 
 class MockWebSocket {
   static OPEN = 1;
@@ -47,14 +48,14 @@ describe("mobile terminal client", () => {
     ]);
   });
 
-  it("fetches terminal sessions through the authenticated gateway", async () => {
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
-      { sessionId: SESSION_ID, cwd: "/home/matrix/home/projects", state: "running" },
-    ]));
+  it("fetches shell sessions (by name) through the authenticated gateway", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      sessions: [{ name: SHELL_NAME, visualStatus: "running", attachedClients: 1 }],
+    }));
 
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
     await expect(gateway.getTerminalSessions()).resolves.toEqual([
-      { sessionId: SESSION_ID, cwd: "/home/matrix/home/projects", state: "running" },
+      { sessionId: SHELL_NAME, cwd: "~", state: "running", visualStatus: "running", attachedClients: 1 },
     ]);
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -65,16 +66,16 @@ describe("mobile terminal client", () => {
     );
   });
 
-  it("deletes terminal sessions idempotently and rejects unsafe IDs locally", async () => {
+  it("deletes shell sessions by name (force) and rejects unsafe names locally", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({}, { status: 404 }));
 
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
-    await expect(gateway.deleteTerminalSession(SESSION_ID)).resolves.toBe(true);
+    await expect(gateway.deleteTerminalSession(SHELL_NAME)).resolves.toBe(true);
     await expect(gateway.deleteTerminalSession("../bad")).resolves.toBe(false);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      `https://app.matrix-os.test/api/terminal/sessions/${SESSION_ID}`,
+      `https://app.matrix-os.test/api/terminal/sessions/${SHELL_NAME}?force=1`,
       expect.objectContaining({ method: "DELETE" }),
     );
   });
@@ -87,13 +88,12 @@ describe("mobile terminal client", () => {
     expect(isSafeSessionId("../bad")).toBe(false);
   });
 
-  it("sends attach, resize, input, and detach frames over the terminal websocket", () => {
+  it("sends resize, input, and detach frames (no attach frame; name is in the query)", () => {
     const ws = new MockWebSocket() as unknown as WebSocket;
     const messages: unknown[] = [];
     const statuses: string[] = [];
     const connection = new MobileTerminalConnection(ws, {
-      sessionId: SESSION_ID,
-      cwd: "projects",
+      sessionId: SHELL_NAME,
       cols: 220,
       rows: 70,
       onMessage: (frame) => messages.push(frame),
@@ -109,7 +109,6 @@ describe("mobile terminal client", () => {
 
     expect(statuses).toEqual(["connecting", "open"]);
     expect((ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame))).toEqual([
-      { type: "attach", sessionId: SESSION_ID, cwd: "projects" },
       { type: "resize", cols: 220, rows: 70 },
       { type: "input", data: "pwd\r" },
       { type: "resize", cols: 500, rows: 200 },
@@ -127,13 +126,13 @@ describe("mobile terminal client", () => {
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
     const terminalClient = new MobileTerminalClient(gateway);
     const connection = await terminalClient.connect({
-      cwd: "projects",
+      sessionId: SHELL_NAME,
       onMessage: jest.fn(),
     });
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      "wss://app.matrix-os.test/ws/terminal?token=ws-token",
+      `wss://app.matrix-os.test/ws/terminal/session?session=${SHELL_NAME}&token=ws-token`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );
@@ -147,13 +146,13 @@ describe("mobile terminal client", () => {
     const gateway = new GatewayClient("https://app.matrix-os.test", "clerk-token");
     const terminalClient = new MobileTerminalClient(gateway);
     const connection = await terminalClient.connect({
-      cwd: "projects",
+      sessionId: SHELL_NAME,
       onMessage: jest.fn(),
     });
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      "wss://app.matrix-os.test/ws/terminal",
+      `wss://app.matrix-os.test/ws/terminal/session?session=${SHELL_NAME}`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );
