@@ -90,8 +90,8 @@ Several in-flight worktrees/branches touch the same area. Reconcile before start
 - Consider extracting switcher into `MobileAppSwitcher.tsx` to shrink the 24KB `MobileShell.tsx` (only if it lowers risk).
 
 ### A5. Built-in app interiors (Chat / Files / Settings)
-- Apply token + spacing pass inside the built-in app surfaces (not just OS chrome): consistent headers, list rows, empty states, touch targets.
-- Keep changes presentational; no behavior/data-flow changes.
+- **Bounded:** a *presentational* token + spacing + touch-target pass on exactly these three built-in apps — consistent headers, list rows, empty states. Enumerate the files up front; do not expand to other apps.
+- **No behavior, data-flow, or state changes.** If a change requires touching logic, it's out of scope for this task.
 
 ### A6. Toasts + drawers/sheets (new deps)
 - Add `sonner` for toasts; position above the bottom safe-area inset and theme to brand.
@@ -140,6 +140,20 @@ Several in-flight worktrees/branches touch the same area. Reconcile before start
 3. **B2–B4** (terminal mobile polish).
 4. **A2–A4** (chrome, launcher, transitions).
 5. **A6** (toasts/sheets), **A5** (app interiors), **A7** (PWA meta).
+
+## 11. Implementation Guardrails (reviewer addendum)
+
+These are correctness/process constraints surfaced in review; they bind implementation regardless of how work is parallelized.
+
+1. **File-ownership waves, not flat parallelism.** Several tasks edit the *same* files and must be serialized by file owner:
+   - `TerminalPane.tsx` — B1 (WebGL) then B2 (viewport) ⇒ same agent/sequence.
+   - `globals.css` — A1 tokens + the `dvh` check ⇒ one owner.
+   - `MobileShell.tsx` — A4 transitions + switcher + optional extraction ⇒ one owner.
+   File-disjoint groups (terminal/* vs mobile/* vs app interiors vs PWA meta) may run concurrently.
+2. **Client-only boundaries (Next 16 RSC).** `WebglAddon`, `vaul`, and `sonner` are browser-only — keep them in `"use client"` modules / dynamic client imports; never import into a server component. WebGL must instantiate only after mount.
+3. **Preserve the user's terminal theme.** Aligning the three themes (`light`/`matrix-dark`/`matrix`) to brand must keep the *active selection* working — do not hard-default to one theme.
+4. **PWA meta via Next metadata API**, not a raw `index.html` — use the shell's document head / `metadata`/`viewport` exports.
+5. **Verification gate per wave.** After each wave: `pnpm typecheck` (root) and `pnpm --dir shell lint` must pass; desktop path (`Desktop.tsx`) must not regress. The 102 worktree must have `pnpm install` run before any verification.
 
 ## 10. Open Questions
 - Real app icons for the launcher, or keep letter tiles styled up? (A3)

@@ -51,3 +51,21 @@ Legend: `[ ]` todo · est. = rough size (S/M/L) · ⚠️ = check branch overlap
 
 ### Suggested order
 `1.x` → `2.x` → `3.x` → `4.x` → `5.x` → `6.x`. Phases 1 and 2 can proceed in parallel; everything after depends on Phase 2 primitives.
+
+### Wave map (swarm orchestration — disjoint files per wave; typecheck between waves)
+All agents work in the `102-mobile-pwa-terminal-polish` worktree (deps installed). Group by file owner to avoid collisions:
+
+- **Wave 1 (parallel):**
+  - W1a — Phase 1 WebGL → `TerminalPane.tsx`, `terminal-cache.ts`
+  - W1b — Phase 0.2 + Phase 2 primitives → `package.json` (add `sonner`,`vaul`), `globals.css`, `lib/motion.ts`, `hooks/useVisualViewport.ts`
+  - *(verify: `pnpm install` if package.json changed, then `pnpm typecheck`)*
+- **Wave 2 (parallel, after W1):**
+  - W2a — Phase 3 terminal mobile → `TerminalKeyBar.tsx`, `TerminalPane.tsx` (needs W1a + W1b)
+  - W2b — Phase 4 mobile chrome → `MobileAppSurface.tsx`, `MobileLauncher.tsx`, `MobileShell.tsx` (needs W1b)
+- **Wave 3 (parallel, after W2):**
+  - W3a — Phase 5.1/5.2 `sonner`+`vaul` integration (after W2b owns MobileShell)
+  - W3b — Phase 5.3 app interiors → Chat/Files/Settings (disjoint files)
+  - W3c — Phase 5.4 PWA meta/manifest (disjoint: document head + `manifest.json`)
+- **Wave 4 (after W3):** Phase 6 screenshots + final `pnpm typecheck` + `pnpm --dir shell lint` + desktop regression check.
+
+Single owner per shared file: `TerminalPane.tsx` (W1a→W2a), `globals.css` (W1b), `MobileShell.tsx` (W2b→W3a).
