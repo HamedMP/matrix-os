@@ -8,7 +8,7 @@ import { colors, fonts } from "@/lib/theme";
 const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
   chat: { outline: "chatbubble-outline", filled: "chatbubble" },
   apps: { outline: "apps-outline", filled: "apps" },
-  "mission-control": { outline: "grid-outline", filled: "grid" },
+  terminal: { outline: "terminal-outline", filled: "terminal" },
   settings: { outline: "settings-outline", filled: "settings" },
 };
 
@@ -43,6 +43,7 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         tabBarStyle: styles.tabBar,
+        tabBarHideOnKeyboard: true,
         tabBarBackground: () => (
           <BlurView tint="light" intensity={88} style={styles.tabBarBackdrop} />
         ),
@@ -69,16 +70,23 @@ export default function TabsLayout() {
         name="apps"
         options={{
           title: "Apps",
+          headerShown: false,
           tabBarIcon: ({ focused }) => <TabIcon name="apps" focused={focused} />,
         }}
       />
       <Tabs.Screen
-        name="mission-control"
+        name="terminal"
         options={{
-          title: "Tasks",
-          tabBarIcon: ({ focused }) => <TabIcon name="mission-control" focused={focused} />,
+          title: "Terminal",
+          headerShown: false,
+          // Immersive terminal — hide the floating tab bar; the in-screen header
+          // back button returns to the launcher.
+          tabBarStyle: { display: "none" },
+          tabBarIcon: ({ focused }) => <TabIcon name="terminal" focused={focused} />,
         }}
       />
+      {/* Tasks removed from the tab bar; route kept but hidden. */}
+      <Tabs.Screen name="mission-control" options={{ href: null }} />
       <Tabs.Screen
         name="settings"
         options={{

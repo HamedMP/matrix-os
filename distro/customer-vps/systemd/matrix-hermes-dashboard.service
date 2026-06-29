@@ -1,0 +1,17 @@
+[Unit]
+Description=Matrix OS Hermes dashboard API (loopback)
+After=matrix-hermes.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/matrix/bin/matrix-hermes-dashboard
+
+[Service]
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+WorkingDirectory=/opt/matrix
+ExecStart=/opt/matrix/bin/matrix-hermes-dashboard
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

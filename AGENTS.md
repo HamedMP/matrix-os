@@ -42,6 +42,7 @@ Key principles:
 - **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Kysely/Postgres only**: never add alternative embedded databases or ORMs for new persistence
+- **Landing-adjacent UI uses `@matrix-os/brand`**: auth, onboarding, billing, provisioning, and related shell/www surfaces should consume tokens/primitives from `packages/brand/` instead of ad-hoc hex values or forked brand helpers
 - **Kernel prompt**: keep under 7K tokens
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
 - After major features: run `/update-docs` to sync all documentation
@@ -141,8 +142,10 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 | `packages/gateway/` | Hono HTTP/WS gateway, channel adapters, cron |
 | `packages/platform/` | Multi-tenant orchestrator (Clerk auth, per-user VPS provisioning and routing) |
 | `packages/proxy/` | Shared API proxy, usage tracking |
+| `packages/brand/` | Shared brand tokens/primitives consumed by `www` and shell auth/onboarding/billing UI |
 | `packages/ui/` | Shared UI components |
 | `shell/` | Next.js 16 desktop shell frontend |
+| `apps/mobile/` | Expo/React Native mobile shell |
 | `www/` | matrix-os.com website (Vercel) |
 | `home/` | File system template (copied to `~/matrixos/` on first boot) |
 | `specs/` | Architecture and feature specs |
@@ -157,14 +160,17 @@ bun run test:integration  # integration tests (needs ANTHROPIC_API_KEY, uses hai
 bun run test:coverage     # coverage report
 bun run test:e2e          # end-to-end tests
 bun run build:shell:production  # canonical production shell build (release-parity auth/shell build)
+bun run build:desktop     # Electron desktop production build
 
 bun run dev               # local dev: gateway + proxy + shell
 bun run dev:gateway       # gateway only
 bun run dev:shell         # shell only
+bun run dev:mobile-shell  # browser shell forced into the mobile launcher/runtime
 bun run dev:proxy         # proxy only
 bun run dev:platform      # platform only
 bun run dev:www           # matrix-os.com website only
 bun run dev:kernel        # kernel package only
+bun run dev:desktop       # Electron desktop shell
 
 bun run docker            # Legacy/local Docker dev only; not production customer runtime
 bun run docker:full       # + proxy, platform, conduit
@@ -179,6 +185,7 @@ bun run docker:build      # full rebuild (no cache)
 
 **IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
+**Native mobile shell**: Expo Go is not a supported runtime. Use the Expo dev client: rebuild/install with `pnpm --filter matrix-os-mobile exec expo run:ios --device <device-udid-or-name>` after native/plugin changes, then run Metro with `pnpm --filter matrix-os-mobile exec expo start --dev-client --host lan --clear`. Full prerequisites, Clerk redirect setup, and terminal validation live in `docs/dev/mobile-shell.md`.
 
 ## Release Procedure
 
@@ -297,6 +304,8 @@ capture routes like `http://localhost:3002/?launch=__terminal__`, but missing cu
 evidence still blocks review-readiness. Do not rely on verbal descriptions for visual changes when
 a screenshot is practical.
 
+**Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.
+
 ### Three Review Passes
 
 1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns` and fix all violations. The scanner checks: bare catch, fetch without signal, sync file I/O, unbounded Map/Set. Warnings (bodyLimit, path ops, external headers) require manual verification.
@@ -373,6 +382,7 @@ Read these on demand, not every session:
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
 - `docs/dev/stacked-prs.md` -- when splitting a feature into Graphite stacked PRs
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
+- `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS

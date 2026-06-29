@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -r /opt/matrix/env/host.env ]; then
+  source /opt/matrix/env/host.env
+fi
+if [ -r /opt/matrix/bin/matrix-owner-env ]; then
+  source /opt/matrix/bin/matrix-owner-env
+fi
+
+MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
+HERMES_HOME="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}"
+HERMES_BIN="${HERMES_BIN:-$MATRIX_RUNTIME_HOME/.local/bin/hermes}"
+
+if declare -F matrix_export_owner_env >/dev/null 2>&1; then
+  matrix_export_owner_env
+else
+  export HOME="$MATRIX_RUNTIME_HOME"
+  export HERMES_HOME="$HERMES_HOME"
+fi
+
+if [ ! -x "$HERMES_BIN" ]; then
+  echo "matrix-hermes-dashboard: hermes binary not found at $HERMES_BIN; exiting" >&2
+  exit 0
+fi
+
+exec "$HERMES_BIN" dashboard --host 127.0.0.1 --port 9119

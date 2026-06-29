@@ -1585,27 +1585,23 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   </Tooltip>
                 )}
                 {/* Terminal pinned in the controls row, between launcher and
-                    VS Code. Uses the green Terminal app icon and opens/focuses
-                    the terminal window (so it isn't duplicated in the apps row). */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-terminal"
+                    VS Code. Rendered via DockIcon so the green app icon fills
+                    the tile like the other app icons (not a tiny inset glyph),
+                    and isn't duplicated in the apps row below. */}
+                {(() => {
+                  const terminalApp = apps.find((a) => a.path === "__terminal__");
+                  const terminalActive = windows.some((w) => !w.minimized && (w.path === "__terminal__" || w.path.startsWith("__terminal__:")));
+                  return (
+                    <DockIcon
+                      name="Terminal"
+                      active={terminalActive}
                       onClick={() => focusOrOpen("Terminal", "__terminal__")}
-                      className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-                        windows.some((w) => !w.minimized && (w.path === "__terminal__" || w.path.startsWith("__terminal__:")))
-                          ? "bg-primary/10 border-primary"
-                          : "bg-card border-border/60"
-                      }`}
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                    >
-                      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- small static dock icon from /public; next/image is overkill for a 20px square */}
-                      <img src="/icons/terminal.png" alt="Terminal" className="size-5 rounded-[5px]" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side={tooltipSide} sideOffset={8}>Terminal</TooltipContent>
-                </Tooltip>
+                      iconSize={dock.iconSize}
+                      tooltipSide={tooltipSide}
+                      iconUrl={terminalApp?.iconUrl ?? "/icons/terminal.png"}
+                    />
+                  );
+                })()}
                 {!HERMES_CHAT_HIDDEN && (
                 <Tooltip>
                   <TooltipTrigger asChild>

@@ -6,7 +6,10 @@ export type TerminalConnectionStatus =
   | "ended"
   | "error";
 
+export type ShellVisualStatus = "running" | "waiting" | "finished" | "idle";
+
 export interface MobileTerminalSession {
+  /** The zellij session name (e.g. "matrix-7af3c2e"); the attach identifier. */
   sessionId: string;
   cwd: string;
   state: "running" | "exited" | "destroyed" | string;
@@ -14,6 +17,12 @@ export interface MobileTerminalSession {
   lastAttachedAt?: string;
   attachedClients?: number;
   exitCode?: number | null;
+  // Shell-sessions model (aligned with desktop, so tabs are continuable across clients).
+  /** Live UI status from the gateway: running | waiting (needs input) | finished | idle. */
+  visualStatus?: ShellVisualStatus;
+  updatedAt?: string;
+  unread?: boolean;
+  tabs?: Array<{ idx: number; name?: string; focused?: boolean }>;
 }
 
 export interface TerminalState {
@@ -35,9 +44,16 @@ export type TerminalControlKey =
   | "arrow-down"
   | "arrow-left"
   | "arrow-right"
+  | "ctrl-a"
   | "ctrl-c"
   | "ctrl-d"
-  | "ctrl-l";
+  | "ctrl-e"
+  | "ctrl-k"
+  | "ctrl-l"
+  | "ctrl-r"
+  | "ctrl-u"
+  | "ctrl-w"
+  | "ctrl-z";
 
 export type TerminalAction =
   | { type: "connection.changed"; status: TerminalConnectionStatus }
@@ -69,6 +85,21 @@ export const initialTerminalState: TerminalState = {
   fontScale: 1,
 };
 
+/* eslint-disable no-control-regex */
+const ANSI_OSC = /\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
+const ANSI_CSI = /[\u001B\u009B][[\]()#;?]*(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~]/g;
+const ANSI_ESC = /\u001B[@-_()][0-9A-Za-z]?/g;
+const C0_CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+
+export function stripTerminalControlSequences(input: string): string {
+  return input
+    .replace(ANSI_OSC, "")
+    .replace(ANSI_CSI, "")
+    .replace(ANSI_ESC, "")
+    .replace(/\r(?!\n)/g, "")
+    .replace(C0_CONTROL, "");
+}
+
 export function terminalReducer(
   state: TerminalState,
   action: TerminalAction,
@@ -98,13 +129,13 @@ export function terminalReducer(
         status: "attached",
         activeSessionId: action.sessionId,
         cwd: formatTerminalCwd(action.cwd ?? state.cwd),
-        output: action.replay ? trimTerminalOutput(action.replay) : state.output,
+        output: action.replay ? trimTerminalOutput(stripTerminalControlSequences(action.replay)) : state.output,
         error: null,
       };
     case "terminal.output":
       return {
         ...state,
-        output: trimTerminalOutput(`${state.output}${action.data}`),
+        output: trimTerminalOutput(`${state.output}${stripTerminalControlSequences(action.data)}`),
       };
     case "terminal.input":
       return { ...state, input: action.input.slice(0, MAX_TERMINAL_INPUT_CHARS) };
@@ -155,6 +186,65 @@ export function parseTerminalSessions(value: unknown): MobileTerminalSession[] {
   });
 }
 
+// Gateway shell-session names: lowercase, digits, hyphens, 1-31 chars (e.g. "matrix-7af3c2e", "main").
+const SAFE_SHELL_SESSION_NAME = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
+
+export function isSafeShellSessionName(value: string): boolean {
+  return SAFE_SHELL_SESSION_NAME.test(value);
+}
+
+function mapShellState(status: unknown, visual: unknown): MobileTerminalSession["state"] {
+  if (visual === "finished" || status === "exited") return "exited";
+  return "running";
+}
+
+/**
+ * Parse the gateway's shell-sessions response (`GET /api/terminal/sessions`,
+ * `ShellSessionSummary[]`). The session `name` is the attach identifier and is
+ * carried in `sessionId` so existing consumers keep working during migration.
+ */
+export function parseShellSessions(value: unknown): MobileTerminalSession[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const c = entry as Record<string, unknown>;
+    if (typeof c.name !== "string" || !isSafeShellSessionName(c.name)) return [];
+    const session: MobileTerminalSession = {
+      sessionId: c.name,
+      cwd: typeof c.cwd === "string" ? c.cwd : "~",
+      state: mapShellState(c.status, c.visualStatus),
+    };
+    if (
+      c.visualStatus === "running" ||
+      c.visualStatus === "waiting" ||
+      c.visualStatus === "finished" ||
+      c.visualStatus === "idle"
+    ) {
+      session.visualStatus = c.visualStatus;
+    }
+    if (typeof c.attachedClients === "number" && Number.isFinite(c.attachedClients)) {
+      session.attachedClients = c.attachedClients;
+    }
+    if (typeof c.updatedAt === "string") session.updatedAt = c.updatedAt;
+    if (typeof c.unread === "boolean") session.unread = c.unread;
+    if (Array.isArray(c.tabs)) {
+      const tabs: NonNullable<MobileTerminalSession["tabs"]> = [];
+      for (const tab of c.tabs) {
+        if (!tab || typeof tab !== "object") continue;
+        const t = tab as Record<string, unknown>;
+        if (!Number.isInteger(t.idx)) continue;
+        tabs.push({
+          idx: t.idx as number,
+          ...(typeof t.name === "string" ? { name: t.name } : {}),
+          ...(typeof t.focused === "boolean" ? { focused: t.focused } : {}),
+        });
+      }
+      if (tabs.length > 0) session.tabs = tabs;
+    }
+    return [session];
+  });
+}
+
 export function buildTerminalControlSequence(key: TerminalControlKey): string {
   switch (key) {
     case "escape":
@@ -171,12 +261,26 @@ export function buildTerminalControlSequence(key: TerminalControlKey): string {
       return "\x1b[C";
     case "arrow-left":
       return "\x1b[D";
+    case "ctrl-a":
+      return "\x01";
     case "ctrl-c":
       return "\x03";
     case "ctrl-d":
       return "\x04";
+    case "ctrl-e":
+      return "\x05";
+    case "ctrl-k":
+      return "\x0b";
     case "ctrl-l":
       return "\x0c";
+    case "ctrl-r":
+      return "\x12";
+    case "ctrl-u":
+      return "\x15";
+    case "ctrl-w":
+      return "\x17";
+    case "ctrl-z":
+      return "\x1a";
     default:
       return "";
   }
