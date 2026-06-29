@@ -262,29 +262,62 @@ exit 99
     expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
     );
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
     expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
       cloudInit.indexOf('systemctl start --no-block matrix-hermes.service'),
     );
+    expect(cloudInit.indexOf('systemctl start --no-block matrix-hermes.service')).toBeLessThan(
+      cloudInit.indexOf('systemctl start --no-block matrix-hermes-dashboard.service'),
+    );
     expect(cloudInit).not.toContain('\n    /opt/matrix/bin/matrix-install-hermes\n');
+  });
+
+  it('stages and enables the Hermes dashboard loopback service', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const buildScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const wrapper = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-hermes-dashboard'), 'utf8');
+    const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-hermes-dashboard.service'), 'utf8');
+
+    expect(wrapper).toContain('source /opt/matrix/env/host.env');
+    expect(wrapper).toContain('source /opt/matrix/bin/matrix-owner-env');
+    expect(wrapper).toContain('HERMES_BIN=');
+    expect(wrapper).toContain('dashboard --host 127.0.0.1 --port 9119');
+    expect(wrapper).toContain('exit 0');
+
+    expect(unit).toContain('Description=Matrix OS Hermes dashboard API (loopback)');
+    expect(unit).toContain('After=matrix-hermes.service network-online.target');
+    expect(unit).toContain('Wants=network-online.target');
+    expect(unit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-hermes-dashboard');
+    expect(unit).toContain('User=matrix');
+    expect(unit).toContain('Group=matrix');
+    expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-hermes-dashboard');
+    expect(unit).toContain('Restart=on-failure');
+
+    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-hermes-dashboard.service');
+    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-hermes-dashboard');
+
+    expect(buildScript).toContain('"$STAGE_DIR/bin/matrix-hermes-dashboard"');
   });
 
   it('loads the production customer VPS cloud-init template', async () => {
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
     expect(cloudInit).toContain('systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
     expect(cloudInit).toContain('messaging runtimes not installed; units installed but not enabled');
-    expect(cloudInit).toContain('for optional_bin in matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
+    expect(cloudInit).toContain('for optional_bin in matrix-hermes-dashboard matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
@@ -599,7 +632,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

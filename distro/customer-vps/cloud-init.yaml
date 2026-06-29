@@ -182,6 +182,27 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-hermes-dashboard.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS Hermes dashboard API (loopback)
+      After=matrix-hermes.service network-online.target
+      Wants=network-online.target
+      ConditionPathExists=/opt/matrix/bin/matrix-hermes-dashboard
+
+      [Service]
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      WorkingDirectory=/opt/matrix
+      ExecStart=/opt/matrix/bin/matrix-hermes-dashboard
+      Restart=on-failure
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
   - path: /etc/systemd/system/matrix-linux-tools.service
     owner: root:root
     permissions: "0644"
@@ -497,7 +518,7 @@ runcmd:
     for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
-    for optional_bin in matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
+    for optional_bin in matrix-hermes-dashboard matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"
       fi
@@ -535,9 +556,10 @@ runcmd:
     systemctl daemon-reload
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service
     systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2
+    systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2
     systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2
     systemctl start --no-block matrix-developer-tools.service || echo "matrix-host: optional developer tools install will retry via systemd" >&2
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
