@@ -5895,7 +5895,11 @@ function ShellCard({
         alignItems: "center",
         display: "grid",
         gap: 10,
-        gridTemplateColumns: "minmax(0, 1fr) 46px",
+        // Single full-width column: the hover action icons overlay the right
+        // edge (absolute, anchored to the inner grid row) and the inner row's
+        // paddingRight reserves their space, so no dead reserved column is
+        // needed here — that column only pushed the actions ~46px off the edge.
+        gridTemplateColumns: "minmax(0, 1fr)",
         height: 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
