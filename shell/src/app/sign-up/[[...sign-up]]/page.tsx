@@ -16,6 +16,7 @@ export default function SignUpPage() {
       body="Signup stays lightweight: no card until you actually provision a hosted Matrix computer. After signup, you land in the OS and can start the trial from the native billing panel."
     >
       <SignUp
+        forceRedirectUrl="/"
         fallbackRedirectUrl="/"
         appearance={{
           theme: shadcn,

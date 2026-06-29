@@ -16,6 +16,7 @@ export default function SignInPage() {
       body="Sign in once and the session carries across matrix-os.com and app.matrix-os.com. If your hosted trial is not active yet, the shell opens in preview mode with billing ready inside."
     >
       <SignIn
+        forceRedirectUrl="/"
         fallbackRedirectUrl="/"
         appearance={{
           theme: shadcn,
