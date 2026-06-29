@@ -454,6 +454,18 @@ function logPlatformRouteError(route: string, err: unknown): void {
   );
 }
 
+function logCodeDomainUpstreamFailure(opts: {
+  handle: string;
+  runtimeSlot?: string | null;
+  publicIPv4?: string | null;
+  path: string;
+  status: number;
+}): void {
+  console.warn(
+    `[platform] code-domain vps upstream 5xx handle=${opts.handle} runtimeSlot=${opts.runtimeSlot ?? 'unknown'} publicIPv4=${opts.publicIPv4 ?? 'unknown'} path=${JSON.stringify(opts.path)} status=${opts.status}`,
+  );
+}
+
 function isObjectNotFoundError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const candidate = err as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
@@ -3365,6 +3377,15 @@ export function createApp(deps: {
           body,
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent });
+        if (isCodeDomain && upstream.status >= 500) {
+          logCodeDomainUpstreamFailure({
+            handle: runningMachine.handle,
+            runtimeSlot: runningMachine.runtimeSlot,
+            publicIPv4: runningMachine.publicIPv4,
+            path,
+            status: upstream.status,
+          });
+        }
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
