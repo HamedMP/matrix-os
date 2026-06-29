@@ -14,7 +14,7 @@ export function ModeSwitcherBar() {
   const modes = useDesktopMode((s) => s.visibleModes)();
 
   return (
-    <div className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-foreground/[0.05] p-1">
+    <div className="inline-flex h-[22px] items-center gap-0.5 rounded-full border border-border/50 bg-foreground/[0.06] p-[2px]">
       {modes.map((m) => {
         const Icon = m.icon;
         const active = mode === m.id;
@@ -26,17 +26,13 @@ export function ModeSwitcherBar() {
             aria-label={`${m.label} mode`}
             onClick={() => setMode(m.id)}
             title={m.description}
-            className={`group inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-medium leading-none transition-all duration-150 ${
+            className={`inline-flex h-full items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium leading-none transition-colors ${
               active
-                ? "bg-card text-forest shadow-[0_1px_2px_rgba(50,53,46,0.16),0_0_0_1px_rgba(50,53,46,0.04)]"
-                : "text-muted-foreground hover:text-forest/80"
+                ? "bg-card !text-forest shadow-[0_1px_2px_rgba(50,53,46,0.14)]"
+                : "!text-muted-foreground hover:!text-forest/80"
             }`}
           >
-            <Icon
-              className={`size-4 transition-colors ${active ? "text-forest" : "text-muted-foreground group-hover:text-forest/70"}`}
-              strokeWidth={2}
-              aria-hidden="true"
-            />
+            <Icon className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
             {m.label}
           </button>
         );
