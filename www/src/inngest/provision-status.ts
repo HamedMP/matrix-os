@@ -28,6 +28,12 @@ export function getSignupFallbackRedirectUrl(env: NodeJS.ProcessEnv = process.en
     ?? DEFAULT_APP_URL;
 }
 
+export function getSigninFallbackRedirectUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return env.NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL
+    ?? env.NEXT_PUBLIC_MATRIX_APP_URL
+    ?? DEFAULT_APP_URL;
+}
+
 export function getMarketingAuthRedirectUrl(env: NodeJS.ProcessEnv = process.env): string {
   return env.NEXT_PUBLIC_MATRIX_APP_URL ?? DEFAULT_APP_URL;
 }

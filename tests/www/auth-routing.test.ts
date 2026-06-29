@@ -15,11 +15,21 @@ describe("www auth routing", () => {
     expect(existsSync(join(process.cwd(), "www/src/app/sign-up/[[...sign-up]]/page.tsx"))).toBe(true);
   });
 
+  it("preserves legacy login alias path segments and query params", () => {
+    const login = read("www/src/app/login/[[...login]]/page.tsx");
+
+    expect(login).toContain("params: Promise");
+    expect(login).toContain("searchParams: Promise");
+    expect(login).toContain("segments.map(encodeURIComponent).join");
+    expect(login).toContain('redirect(`/sign-in${suffix}${queryString ? `?${queryString}` : ""}`);');
+  });
+
   it("forces completed marketing Clerk flows to the app domain", () => {
     const signIn = read("www/src/app/sign-in/[[...sign-in]]/page.tsx");
     const signUp = read("www/src/app/sign-up/[[...sign-up]]/page.tsx");
 
     expect(signIn).toContain("forceRedirectUrl={getMarketingAuthRedirectUrl()}");
+    expect(signIn).toContain("fallbackRedirectUrl={getSigninFallbackRedirectUrl()}");
     expect(signUp).toContain("forceRedirectUrl={getMarketingAuthRedirectUrl()}");
   });
 

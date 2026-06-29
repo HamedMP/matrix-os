@@ -4,7 +4,10 @@ import { AuthLayout } from "@/components/auth/AuthLayout";
 import { PostHogIdentify } from "@/components/PostHogIdentify";
 import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
 import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
-import { getMarketingAuthRedirectUrl } from "@/inngest/provision-status";
+import {
+  getMarketingAuthRedirectUrl,
+  getSigninFallbackRedirectUrl,
+} from "@/inngest/provision-status";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -24,7 +27,7 @@ export default function SignInPage() {
         formContent={
           <SignIn
             forceRedirectUrl={getMarketingAuthRedirectUrl()}
-            fallbackRedirectUrl={getMarketingAuthRedirectUrl()}
+            fallbackRedirectUrl={getSigninFallbackRedirectUrl()}
             appearance={matrixClerkAppearance}
           />
         }

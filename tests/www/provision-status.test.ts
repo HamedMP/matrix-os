@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getMarketingAuthRedirectUrl,
   getProvisionVerificationTarget,
+  getSigninFallbackRedirectUrl,
   getSignupFallbackRedirectUrl,
   isCustomerVpsUsableStatus,
 } from "../../www/src/inngest/provision-status";
@@ -22,6 +23,13 @@ describe("www provisioning status helpers", () => {
     expect(getSignupFallbackRedirectUrl({
       NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: "https://preview.example",
     })).toBe("https://preview.example");
+  });
+
+  it("allows an explicit signin fallback override", () => {
+    expect(getSigninFallbackRedirectUrl({})).toBe("https://app.matrix-os.com");
+    expect(getSigninFallbackRedirectUrl({
+      NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "https://signin-preview.example",
+    })).toBe("https://signin-preview.example");
   });
 
   it("verifies customer VPS provisioning by machine status instead of legacy container port", () => {
