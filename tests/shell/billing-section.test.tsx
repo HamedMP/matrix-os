@@ -19,6 +19,7 @@ function installClerkMock() {
       userId: clerkState.userId,
       has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
     }),
+    useUser: () => ({ user: { publicMetadata: {} } }),
   }));
 }
 
