@@ -44,6 +44,15 @@ export interface BranchSummary {
   default?: boolean;
 }
 
+export interface GithubRepoSummary {
+  nameWithOwner: string;
+  url: string;
+  description: string | null;
+  primaryLanguage: string | null;
+  stargazerCount: number;
+  updatedAt: string;
+}
+
 export interface WorkspaceError {
   code: string;
   message: string;
@@ -394,6 +403,43 @@ export function createProjectManager(options: {
         if (err instanceof Error) console.warn("[project-manager] Failed to list branches:", err.message);
         return genericError(502, "git_request_failed", "Git request failed");
       }
+    },
+
+    async listGithubRepos(opts: { search?: string; limit: number }): Promise<{ repos: GithubRepoSummary[] }> {
+      const args = [
+        "repo", "list",
+        "--json", "nameWithOwner,url,description,primaryLanguage,stargazerCount,updatedAt",
+        "--limit", String(opts.limit),
+      ];
+      const result = await runCommand("gh", args, { cwd: homePath, timeout: DEFAULT_TIMEOUT_MS });
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(result.stdout);
+      } catch {
+        throw new Error("github_repos_unparseable");
+      }
+      const list = Array.isArray(parsed) ? parsed : [];
+      const term = opts.search?.toLowerCase();
+      const repos: GithubRepoSummary[] = list
+        .map((r: unknown) => {
+          const raw = r as Record<string, unknown>;
+          return {
+            nameWithOwner: String(raw.nameWithOwner ?? ""),
+            url: String(raw.url ?? ""),
+            description: raw.description != null ? String(raw.description) : null,
+            primaryLanguage:
+              raw.primaryLanguage != null && typeof raw.primaryLanguage === "object"
+                ? (String((raw.primaryLanguage as Record<string, unknown>).name ?? "") || null)
+                : typeof raw.primaryLanguage === "string"
+                  ? raw.primaryLanguage
+                  : null,
+            stargazerCount: Number(raw.stargazerCount ?? 0),
+            updatedAt: String(raw.updatedAt ?? ""),
+          };
+        })
+        .filter((r) => r.nameWithOwner && (!term || r.nameWithOwner.toLowerCase().includes(term)))
+        .slice(0, opts.limit);
+      return { repos };
     },
   };
 }
