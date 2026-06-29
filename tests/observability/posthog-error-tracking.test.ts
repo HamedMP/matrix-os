@@ -607,7 +607,7 @@ describe("PostHog error tracking", () => {
     expect(shellPostHogClient).not.toContain("__loaded");
 
     const wwwPostHogClient = await readFile("www/src/lib/posthog-client.ts", "utf8");
-    expect(wwwPostHogClient).toContain("ensurePostHogInitialized(config)");
+    expect(wwwPostHogClient).toContain("ensurePostHogInitialized(posthog, config)");
     expect(wwwPostHogClient).toContain("posthog.init(currentConfig.token");
     expect(wwwPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(wwwPostHogClient).not.toContain("__loaded");
