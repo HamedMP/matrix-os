@@ -11,6 +11,7 @@ COPY packages/gateway/package.json packages/gateway/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
 COPY packages/mcp-browser/package.json packages/mcp-browser/package.json
 COPY packages/observability/package.json packages/observability/package.json
+COPY packages/brand/package.json packages/brand/package.json
 COPY packages/platform/package.json packages/platform/package.json
 COPY packages/sync-client/package.json packages/sync-client/package.json
 COPY shell/package.json shell/package.json
@@ -42,6 +43,7 @@ ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 ENV NEXT_PUBLIC_POSTHOG_API_HOST=$NEXT_PUBLIC_POSTHOG_API_HOST
 ENV NEXT_PUBLIC_MATRIX_APP_URL=$NEXT_PUBLIC_MATRIX_APP_URL
 RUN pnpm --filter '@matrix-os/observability' build
+RUN pnpm --filter '@matrix-os/brand' build
 RUN pnpm --filter '@matrix-os/kernel' build
 RUN pnpm --filter '@matrix-os/gateway' build
 RUN pnpm --filter '@matrix-os/platform' build
@@ -66,6 +68,7 @@ COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/gate
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/kernel/package.json ./packages/kernel/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/mcp-browser/package.json ./packages/mcp-browser/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/observability/package.json ./packages/observability/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/brand/package.json ./packages/brand/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/platform/package.json ./packages/platform/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/sync-client/package.json ./packages/sync-client/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json
@@ -73,6 +76,7 @@ COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/clerk-
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/gateway/dist ./packages/gateway/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/kernel/dist ./packages/kernel/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/observability/dist ./packages/observability/dist
+COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/brand/dist ./packages/brand/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/platform/dist ./packages/platform/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/shell ./shell
 COPY --chown=matrix-platform:matrix-platform distro/customer-vps ./distro/customer-vps
