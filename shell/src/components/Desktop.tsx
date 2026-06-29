@@ -1898,7 +1898,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 onMouseDown={() => !isFullscreen && wmFocusWindow(win.id)}
               >
                 <CardHeader
-                  className="flex flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
+                  className={cn(
+                    "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
+                    // Terminal owns its chrome: the Card's light header bg + border
+                    // read as a white title bar over the dark terminal. Match the
+                    // terminal's dark drawer so the top is seamless, not framed.
+                    terminalOwnsChrome ? "border-b-0" : "border-b border-border",
+                  )}
+                  style={terminalOwnsChrome ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" } : undefined}
                   onPointerDown={(e) => onDragStart(win.id, e)}
                   onPointerMove={onDragMove}
                   onPointerUp={onDragEnd}
