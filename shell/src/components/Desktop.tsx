@@ -63,7 +63,7 @@ import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
-import { nameToSlug } from "@/lib/utils";
+import { cn, nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
@@ -555,28 +555,6 @@ function AoedeDockButton({
   );
 }
 
-function FullscreenExitPill({ onExit }: { onExit: () => void }) {
-  return (
-    <div
-      className="group/fsexit fixed top-0 left-0 w-14 h-3 hover:h-10 transition-all duration-300"
-      style={{ zIndex: SHELL_Z_INDEX.fullscreenExit }}
-    >
-      <button
-        type="button"
-        onClick={onExit}
-        className="ml-2.5 mt-0.5 group-hover/fsexit:mt-2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-foreground/[0.03] group-hover/fsexit:bg-foreground/5 backdrop-blur-md border border-foreground/[0.04] group-hover/fsexit:border-foreground/[0.08] text-foreground/20 group-hover/fsexit:text-foreground/50 hover:!text-foreground/70 hover:!bg-foreground/10 transition-all duration-300 cursor-pointer"
-        aria-label="Exit fullscreen"
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="opacity-40 group-hover/fsexit:opacity-100 transition-opacity duration-300">
-          <path d="M1 5h3.5V1.5" />
-          <path d="M11 7H7.5v3.5" />
-        </svg>
-        <span className="text-[10px] font-medium tracking-wide opacity-0 group-hover/fsexit:opacity-100 transition-opacity duration-300">Exit</span>
-      </button>
-    </div>
-  );
-}
-
 interface DesktopProps {
   launchAppPath?: string | null;
   onOpenCommandPalette?: () => void;
@@ -634,10 +612,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       !w.minimized && (best === undefined || w.zIndex > best.zIndex) ? w : best,
     undefined,
   );
-  const fullscreenWindow = fullscreenWindowId
-    ? windows.find((w) => w.id === fullscreenWindowId)
-    : undefined;
-  const fullscreenTerminalOwnsChrome = fullscreenWindow?.path.startsWith("__terminal__") ?? false;
 
   useEffect(() => {
     const timers = minimizeTimers.current!;
@@ -1965,7 +1939,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 data-window-id={win.id}
                 className={isFullscreen
                   ? "fixed inset-0 gap-0 rounded-none p-0 overflow-hidden border-0 bg-background"
-                  : "app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl"
+                  : cn(
+                      "app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl",
+                      // The terminal body is dark; the Card's default light border
+                      // reads as a stray white frame (Canvas omits it). Drop it.
+                      terminalOwnsChrome && "border-0",
+                    )
                 }
                 style={isFullscreen ? {
                   zIndex: SHELL_Z_INDEX.fullscreenWindow,
@@ -1994,12 +1973,16 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 } as React.CSSProperties}
                 onMouseDown={() => !isFullscreen && wmFocusWindow(win.id)}
               >
-                {!isFullscreen && !terminalOwnsChrome && (
                 <CardHeader
                   className="flex flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
                   onPointerDown={(e) => onDragStart(win.id, e)}
                   onPointerMove={onDragMove}
                   onPointerUp={onDragEnd}
+                  // Double-click the title bar to maximize/restore. Ignore the controls.
+                  onDoubleClick={(e) => {
+                    if (e.target instanceof Element && e.target.closest("button,[role='button'],input,a")) return;
+                    wmToggleFullscreen(win.id);
+                  }}
                 >
                   <TrafficLights
                     onClose={() => wmCloseWindow(win.id)}
@@ -2016,12 +1999,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     />
                   </div>
                 </CardHeader>
-                )}
 
                 <CardContent className="relative flex-1 p-0 min-h-0">
                   {win.path.startsWith("__terminal__") ? (
                     <TerminalApp
                       launchTargetId={win.id}
+                      // Always use the shared CardHeader above (windowed and
+                      // fullscreen), so the terminal drops its own dark chrome.
+                      embeddedChrome
                       windowControls={{
                         close: () => wmCloseWindow(win.id),
                         minimize: () => animateMinimize(win.id),
@@ -2104,9 +2089,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
           isn't unmounted when the viewport flips. */}
       <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
 
-      {fullscreenWindowId && !fullscreenTerminalOwnsChrome && (
-        <FullscreenExitPill onExit={wmExitFullscreen} />
-      )}
+      {/* No fullscreen exit pill: every maximized window keeps its own header
+          (Desktop CardHeader / Canvas in-window title bar) with traffic lights,
+          and Escape still exits fullscreen as a keyboard fallback. */}
     </TooltipProvider>
   );
 }

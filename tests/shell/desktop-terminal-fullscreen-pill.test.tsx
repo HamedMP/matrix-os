@@ -162,7 +162,7 @@ describe("Desktop terminal fullscreen chrome", () => {
     vi.unstubAllGlobals();
   });
 
-  it("hides the global fullscreen exit pill when a terminal window owns fullscreen", async () => {
+  it("shows no exit pill for a fullscreen terminal in Developer mode (header stays instead)", async () => {
     resetStores(terminalWindow);
 
     render(<Desktop />);
@@ -173,13 +173,26 @@ describe("Desktop terminal fullscreen chrome", () => {
     });
   });
 
-  it("keeps the global fullscreen exit pill for non-terminal fullscreen windows", async () => {
+  it("shows no exit pill for a fullscreen app window in Developer mode (header stays instead)", async () => {
     resetStores(appWindow);
 
     render(<Desktop />);
 
     await screen.findByText("App content");
-    expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeTruthy();
+    // Developer-mode windows keep their header (with traffic lights) when
+    // maximized, so the floating exit pill is gone.
+    expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
+  });
+
+  it("shows no global exit pill in Canvas mode (the window's own header handles exit)", async () => {
+    resetStores(appWindow);
+    useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });
+
+    render(<Desktop />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
+    });
   });
 
   it("lets the terminal-owned title bar double-click toggle window zoom", async () => {

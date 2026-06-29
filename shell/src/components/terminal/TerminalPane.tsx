@@ -1273,6 +1273,8 @@ export function TerminalPane({
       style={{
         outline: isFocused ? "1px solid var(--primary)" : "none",
         outlineOffset: "-1px",
+        // Left gutter so the prompt isn't jammed against the window edge.
+        paddingLeft: 12,
       }}
       onPointerDown={handleFocus}
       onClick={handleFocus}
