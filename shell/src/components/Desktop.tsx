@@ -47,7 +47,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, LayoutGridIcon, TerminalIcon } from "lucide-react";
+import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, LayoutGridIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -1583,20 +1583,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     </TooltipContent>
                   </Tooltip>
                 )}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      data-testid="dock-terminal"
-                      onClick={() => focusOrOpen("Terminal", "__terminal__")}
-                      className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
-                      style={{ width: dock.iconSize, height: dock.iconSize }}
-                    >
-                      <TerminalIcon className="size-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side={tooltipSide} sideOffset={8}>Terminal</TooltipContent>
-                </Tooltip>
                 {!HERMES_CHAT_HIDDEN && (
                 <Tooltip>
                   <TooltipTrigger asChild>
