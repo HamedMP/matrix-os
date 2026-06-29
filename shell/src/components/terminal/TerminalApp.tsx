@@ -36,6 +36,7 @@ import { DEFAULT_TERMINAL_APP_THEME_ID, useTerminalSettings, type ShellThemeId, 
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
+import { twoWordSessionName } from "./terminal-session-names";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 
 export { TERMINAL_INPUT_EVENT };
@@ -941,12 +942,17 @@ function genId() {
 }
 
 function terminalSessionName(prefix = "matrix") {
-  const safePrefix = prefix
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/^-+/, "")
-    .slice(0, 22) || "matrix";
-  return `${safePrefix}-${genId()}`.slice(0, 31);
+  const normalized = prefix.toLowerCase();
+  // A meaningful prefix (e.g. a project name) keeps the prefixed form; the
+  // default produces a friendly two-word handle instead of matrix-<random>.
+  if (normalized && normalized !== "matrix") {
+    const safePrefix = normalized
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/^-+/, "")
+      .slice(0, 22) || "matrix";
+    return `${safePrefix}-${genId()}`.slice(0, 31);
+  }
+  return twoWordSessionName();
 }
 
 function shellQuote(value: string) {
@@ -4711,7 +4717,6 @@ function LocalTerminalSidebar() {
         {!shellsLoading && (activeShells.length > 0 || creatingShell) && (
           <ShellSessionGroup
             label="Active"
-            meta={`${activeShells.length} attached`}
             shells={activeShells}
             pending={creatingShell}
             deletingShellNames={deletingShellNames}
@@ -4732,7 +4737,6 @@ function LocalTerminalSidebar() {
         {!shellsLoading && renderedShells.length > 0 && (
           <ShellSessionGroup
             label="Background"
-            meta={`${backgroundShells.length} detached`}
             shells={backgroundShells}
             deletingShellNames={deletingShellNames}
             foreground={false}
@@ -5588,7 +5592,6 @@ function CollapsedRailButton({
 
 function ShellSessionGroup({
   label,
-  meta,
   shells,
   pending = false,
   deletingShellNames,
@@ -5606,7 +5609,6 @@ function ShellSessionGroup({
   onDragEnd,
 }: {
   label: "Active" | "Background";
-  meta: string;
   shells: ShellSessionSummary[];
   pending?: boolean;
   deletingShellNames: string[];
@@ -5633,12 +5635,10 @@ function ShellSessionGroup({
             </svg>
           )}
           <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", lineHeight: "14px", textTransform: "uppercase" }}>
-            {label}
+            {label}{" "}
+            <span style={{ fontWeight: 600, opacity: 0.55 }}>({shells.length})</span>
           </span>
         </div>
-        <span style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 12, lineHeight: "14px" }}>
-          {meta}
-        </span>
       </div>
       {pending ? <ShellPendingCard /> : null}
       {shells.length === 0 && !pending ? (
@@ -6171,23 +6171,6 @@ function ShellCard({
           )}
         </div>
       </div>
-      <button
-        type="button"
-        aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle();
-        }}
-        onPointerDown={(event) => event.stopPropagation()}
-        onMouseDown={(event) => event.stopPropagation()}
-        style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
-      >
-        {foreground && <span style={{ background: "var(--terminal-drawer-toggle-knob)", borderRadius: 999, height: 12, width: 12 }} />}
-        <span style={{ flex: "1 1 auto", fontSize: 10, fontWeight: 800, lineHeight: "10px", textAlign: "center" }}>
-          {foreground ? "ON" : "BG"}
-        </span>
-        {!foreground && <span style={{ background: "var(--terminal-drawer-toggle-off-knob)", border: "1px solid var(--terminal-drawer-toggle-off-border)", borderRadius: 999, height: 12, width: 12 }} />}
-      </button>
     </div>
   );
 }
