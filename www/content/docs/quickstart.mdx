@@ -9,6 +9,30 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 
 This guide walks you through signing up, choosing a compute plan, completing billing, waiting for your Matrix computer to provision, and then authenticating GitHub and cloning a repository inside the web shell.
 
+## Fastest path: paste the setup prompt
+
+If you prefer to hand setup to an agent, paste this prompt into Claude Code, Codex, or another terminal agent after your Matrix computer is provisioned:
+
+```text
+Help me finish setting up my Matrix OS cloud computer.
+
+Steps:
+1. Install the CLI if it is not already present: npm install -g @finnaai/matrix or brew install finnaai/tap/matrix.
+2. Run matrix login --profile cloud and approve the device in the browser tab that opens.
+3. Verify with matrix doctor and matrix whoami.
+4. Use one persistent session: matrix shell connect -c setup.
+5. Authenticate GitHub inside Matrix: matrix run -it --session setup -- gh auth login --hostname github.com --web.
+6. For SSH repository access, use a Matrix-managed SSH key created inside the runtime. Register only the public key with GitHub. Do not use local private keys.
+7. Clone the repository under ~/projects after I confirm the repo URL.
+8. Start my preferred coding agent inside Matrix: matrix run -it --session setup -- claude or matrix run -it --session setup -- codex. Complete that tool's own login in the remote terminal.
+
+Do not scan my local machine for credentials. Do not upload local private keys. Everything authenticates through its own browser/device flow or a Matrix-managed key inside the runtime.
+```
+
+Use `Ctrl-\ Ctrl-\` to detach from an attached terminal session without killing the remote process.
+
+## Manual setup
+
 <Steps>
   <Step>
     ### Create your account
@@ -97,25 +121,3 @@ This guide walks you through signing up, choosing a compute plan, completing bil
     Learn Terminal tabs, Canvas mode, the app sidebar, and shell keyboard shortcuts.
   </Card>
 </Cards>
-
-## Let your coding agent drive setup
-
-If you prefer to hand setup to an agent, paste this prompt into Claude Code, Codex, or another terminal agent after your Matrix computer is provisioned:
-
-```text
-Help me finish setting up my Matrix OS cloud computer.
-
-Steps:
-1. Install the CLI if it is not already present: npm install -g @finnaai/matrix or brew install finnaai/tap/matrix.
-2. Run matrix login --profile cloud and approve the device in the browser tab that opens.
-3. Verify with matrix doctor and matrix whoami.
-4. Use one persistent session: matrix shell connect -c setup.
-5. Authenticate GitHub inside Matrix: matrix run -it --session setup -- gh auth login --hostname github.com --web.
-6. For SSH repository access, use a Matrix-managed key created inside the runtime. Register only the public key with GitHub. Do not use local private keys.
-7. Clone the repository under ~/projects after I confirm the repo URL.
-8. Start my preferred coding agent inside Matrix: matrix run -it --session setup -- claude or matrix run -it --session setup -- codex. Complete that tool's own login in the remote terminal.
-
-Do not scan my local machine for credentials. Do not upload local private keys. Everything authenticates through its own browser/device flow or a Matrix-managed key inside the runtime.
-```
-
-Use `Ctrl-\ Ctrl-\` to detach from an attached terminal session without killing the remote process.
