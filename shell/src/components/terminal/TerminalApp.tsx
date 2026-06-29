@@ -3210,19 +3210,6 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               Shell
             </ToolbarBtn>
             <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
-            <ToolbarBtn
-              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "horizontal"); }}
-              title="Split horizontally (Ctrl+Shift+D)"
-            >
-              <IconSplitH />
-            </ToolbarBtn>
-            <ToolbarBtn
-              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "vertical"); }}
-              title="Split vertically (Ctrl+Shift+E)"
-            >
-              <IconSplitV />
-            </ToolbarBtn>
-            <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
             <ThemePickerButton />
           </>
       </div>
