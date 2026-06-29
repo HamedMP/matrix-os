@@ -5419,17 +5419,29 @@ function CollapsedSessionsRail({
         style={{
           background: "var(--terminal-drawer-brand-bg)",
           borderRadius: 11,
-          color: "var(--terminal-drawer-brand-fg)",
           flexShrink: 0,
-          fontFamily: "Orbitron, system-ui, sans-serif",
-          fontSize: 15,
-          fontWeight: 800,
           height: COLLAPSED_RAIL_ITEM_SIZE,
           width: COLLAPSED_RAIL_ITEM_SIZE,
         }}
         title="matrix os"
       >
-        M
+        <span
+          aria-hidden="true"
+          style={{
+            background: "var(--terminal-drawer-brand-fg)",
+            WebkitMaskImage: "url('/matrix-logo.svg')",
+            maskImage: "url('/matrix-logo.svg')",
+            WebkitMaskRepeat: "no-repeat",
+            maskRepeat: "no-repeat",
+            WebkitMaskPosition: "center",
+            maskPosition: "center",
+            WebkitMaskSize: "contain",
+            maskSize: "contain",
+            display: "block",
+            height: 20,
+            width: 20,
+          }}
+        />
       </div>
       <CollapsedRailButton label="Expand sessions drawer" onClick={onExpand}>
         <ChevronsRightIcon data-testid="terminal-drawer-expand-icon" size={17} strokeWidth={2} />
