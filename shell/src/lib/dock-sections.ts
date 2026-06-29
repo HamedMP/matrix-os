@@ -20,6 +20,22 @@ export function isGameApp(path: string): boolean {
 }
 
 /**
+ * User apps explicitly promoted into the "Main" section alongside the system
+ * apps (instead of the generated-apps section). Keyed by app slug.
+ */
+export const MAIN_SECTION_USER_APP_SLUGS = new Set<string>(["resource-manager"]);
+
+/**
+ * Whether an app belongs in the "Main" launcher/dock section: every system app,
+ * plus a curated set of first-party user apps (e.g. Resource Manager).
+ */
+export function isMainSectionApp(path: string): boolean {
+  if (isSystemApp(path)) return true;
+  const slug = path.replace(/^apps\//, "").split("/")[0];
+  return MAIN_SECTION_USER_APP_SLUGS.has(slug);
+}
+
+/**
  * Apply a persisted user order to a list of apps. Apps not in the
  * persisted order get prepended (in launch-time-desc order) so freshly-
  * built apps land at the outer edge before the user has dragged them.

@@ -3,7 +3,7 @@
 import { useEffect, useEffectEvent, useState, useRef } from "react";
 import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
-import { isSystemApp, isGameApp, applyOrder } from "@/lib/dock-sections";
+import { isMainSectionApp, isGameApp, applyOrder } from "@/lib/dock-sections";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppTile } from "./AppTile";
@@ -200,7 +200,7 @@ function LauncherGrid({
     const gen: AppEntry[] = [];
     const games: AppEntry[] = [];
     for (const app of apps) {
-      if (isSystemApp(app.path)) main.push(app);
+      if (isMainSectionApp(app.path)) main.push(app);
       else if (isGameApp(app.path)) games.push(app);
       else gen.push(app);
     }
