@@ -155,6 +155,8 @@ export function ChatApp({
   const [model, setModel] = useState(() => getInitialHermesSetup().model);
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy useState initializer reading the same one-time cached Hermes setup (see model above); ref read is first-render-only.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
+  // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
+  const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the writeHermesSetup useEffect dependency array below; keep an explicit useMemo so the persisted-setup effect only re-runs when the channel set actually changes, not on every render.
   const selectedChannels = useMemo(() => Array.from(channels).sort(), [channels]);
@@ -196,7 +198,7 @@ export function ChatApp({
           <Button
             variant="ghost"
             size="icon"
-            className="size-8 text-muted-foreground hover:text-foreground"
+            className={`${touchIcon} text-muted-foreground hover:text-foreground`}
             onClick={() => setSidebarOpen(false)}
           >
             <PanelLeftIcon className="size-4" />
@@ -204,7 +206,7 @@ export function ChatApp({
           <Button
             variant="ghost"
             size="icon"
-            className="size-8 text-muted-foreground hover:text-foreground"
+            className={`${touchIcon} text-muted-foreground hover:text-foreground`}
             onClick={onNewChat}
             title="New chat"
           >
@@ -214,7 +216,7 @@ export function ChatApp({
 
         {/* Search */}
         <div className="px-3 pb-2">
-          <div className="flex items-center gap-2 rounded-lg bg-background/60 px-2.5 py-1.5 text-xs">
+          <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
             <SearchIcon className="size-3.5 text-muted-foreground" />
             <input
               type="text"
@@ -240,7 +242,7 @@ export function ChatApp({
                     key={conv.id}
                     type="button"
                     onClick={() => onSwitchConversation(conv.id)}
-                    className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors ${
+                    className={`group flex w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors ${mobile ? "py-3" : "py-2"} ${
                       conv.id === sessionId
                         ? "bg-accent/50 text-foreground"
                         : "text-foreground/70 hover:bg-accent/30 hover:text-foreground"
@@ -256,8 +258,11 @@ export function ChatApp({
               </div>
             ))}
             {conversations.length === 0 && (
-              <div className="px-3 py-8 text-center text-xs text-muted-foreground/50">
-                No conversations yet
+              <div className="flex flex-col items-center gap-2 px-3 py-10 text-center">
+                <span className="inline-flex size-9 items-center justify-center rounded-full bg-foreground/5 text-muted-foreground/60">
+                  <MessageSquareIcon className="size-4" aria-hidden="true" />
+                </span>
+                <p className="text-xs text-muted-foreground/60">No conversations yet</p>
               </div>
             )}
           </div>
@@ -267,13 +272,13 @@ export function ChatApp({
       {/* Main content */}
       <main className="flex flex-1 flex-col min-w-0">
         {/* Top bar */}
-        <header className="flex min-h-12 items-center gap-2 border-b border-border/30 px-3">
+        <header className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
           {!sidebarOpen && (
             <>
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-8 text-muted-foreground hover:text-foreground"
+                className={`${touchIcon} text-muted-foreground hover:text-foreground`}
                 onClick={() => setSidebarOpen(true)}
               >
                 <PanelLeftIcon className="size-4" />
@@ -281,7 +286,7 @@ export function ChatApp({
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-8 text-muted-foreground hover:text-foreground"
+                className={`${touchIcon} text-muted-foreground hover:text-foreground`}
                 onClick={onNewChat}
                 title="New chat"
               >
@@ -433,7 +438,7 @@ function EmptyState({
                 key={s}
                 type="button"
                 onClick={() => onSubmit(s)}
-                className="rounded-full border border-border/60 bg-card/50 px-3.5 py-1.5 text-xs text-foreground/70 transition-all hover:bg-accent/40 hover:text-foreground hover:border-border"
+                className={`rounded-full border border-border/60 bg-card/50 px-3.5 text-xs text-foreground/70 transition-all hover:bg-accent/40 hover:text-foreground hover:border-border ${mobile ? "py-2.5" : "py-1.5"}`}
               >
                 {s}
               </button>

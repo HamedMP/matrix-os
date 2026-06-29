@@ -8,8 +8,8 @@
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "any",
-  "background_color": "#3f4a3a",
-  "theme_color": "#3f4a3a",
+  "background_color": "#434E3F",
+  "theme_color": "#434E3F",
   "categories": ["productivity", "developer", "utilities"],
   "lang": "en",
   "dir": "ltr",
@@ -39,21 +39,21 @@
       "short_name": "Terminal",
       "description": "Open the Matrix OS terminal",
       "url": "/?launch=__terminal__",
-      "icons": [{ "src": "/icons/terminal.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "Chat",
       "short_name": "Chat",
       "description": "Open the chat with Aoede",
       "url": "/?launch=__chat__",
-      "icons": [{ "src": "/icons/aoede.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
       "name": "Files",
       "short_name": "Files",
       "description": "Browse files",
       "url": "/?launch=__file-browser__",
-      "icons": [{ "src": "/icons/finder.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ],
   "prefer_related_applications": false

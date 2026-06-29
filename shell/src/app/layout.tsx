@@ -13,6 +13,7 @@ import "./globals.css";
 import { PwaRegister } from "@/components/pwa/PwaRegister";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { PostHogIdentify } from "@/components/PostHogIdentify";
+import { Toaster } from "@/components/ui/sonner";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -43,7 +44,20 @@ const orbitron = Orbitron({
 });
 
 export async function generateMetadata(): Promise<Metadata> {
-  return buildShellMetadata(process.env.GATEWAY_URL);
+  const metadata = await buildShellMetadata(process.env.GATEWAY_URL);
+  return {
+    ...metadata,
+    // apple-touch-icon for iOS home-screen install. Next emits this from
+    // icons.apple; reuse the existing app icon (iOS scales 192px down to its
+    // expected 180px target).
+    icons: {
+      icon: [
+        { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+        { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      ],
+      apple: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    },
+  };
 }
 
 export const viewport: Viewport = {
@@ -51,10 +65,15 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  // Cover the notch/safe-area; let the layout opt into safe-area insets.
   viewportFit: "cover",
+  // On-screen keyboard resizes the layout viewport instead of overlaying it,
+  // so keyboard-aware UI (terminal key bar, toasts) tracks the real height.
+  interactiveWidget: "resizes-content",
+  // Brand-aligned status-bar tint: cream surface in light, forest in dark.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f4ede0" },
-    { media: "(prefers-color-scheme: dark)", color: "#3f4a3a" },
+    { media: "(prefers-color-scheme: light)", color: "#E0E1CA" },
+    { media: "(prefers-color-scheme: dark)", color: "#434E3F" },
   ],
 };
 
@@ -84,6 +103,7 @@ export default async function RootLayout({
           <PostHogIdentify />
           <PwaRegister />
           <InstallPrompt />
+          <Toaster />
         </body>
       </html>
     </ClerkProvider>
