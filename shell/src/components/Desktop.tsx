@@ -417,100 +417,6 @@ function DockIcon({
   );
 }
 
-function ModeSwitcher({
-  iconSize,
-  tooltipSide,
-  onSelectMode,
-}: {
-  iconSize: number;
-  tooltipSide: "left" | "right" | "top";
-  onSelectMode: (mode: DesktopMode) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const mode = useDesktopMode((s) => s.mode);
-  const visibleModes = useDesktopMode((s) => s.visibleModes);
-  const getModeConfig = useDesktopMode((s) => s.getModeConfig);
-  const modeConfig = getModeConfig(mode);
-  const modes = visibleModes();
-  const ref = useRef<HTMLDivElement>(null);
-
-  // Close on click outside
-  useEffect(() => {
-    if (!open) return;
-    const onClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onClickOutside);
-    return () => document.removeEventListener("pointerdown", onClickOutside);
-  }, [open]);
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      {/* Suppress hover tooltip while the mode menu is open so it
-          doesn't overlap the dropdown panel. */}
-      <Tooltip open={open ? false : undefined}>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={() => setOpen((prev) => !prev)}
-            className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-              open ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/60"
-            }`}
-            style={{ width: iconSize, height: iconSize }}
-            aria-label={`${modeConfig.label} mode`}
-          >
-            <MonitorIcon className="size-4" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side={tooltipSide} sideOffset={8}>{modeConfig.label}</TooltipContent>
-      </Tooltip>
-      {open && (
-        <div
-          className={[
-            "absolute flex flex-col min-w-[160px] py-1 rounded-lg bg-card border border-border shadow-xl z-[60]",
-            tooltipSide === "right" && "left-full top-0 ml-2",
-            tooltipSide === "left" && "right-full top-0 mr-2",
-            tooltipSide === "top" && "bottom-full left-1/2 -translate-x-1/2 mb-2",
-          ].filter(Boolean).join(" ")}
-        >
-          {modes.map((m) => (
-            <button
-              type="button"
-              key={m.id}
-              onClick={() => {
-                onSelectMode(m.id);
-                setOpen(false);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-muted ${
-                mode === m.id ? "text-foreground font-medium" : "text-muted-foreground"
-              }`}
-            >
-              {mode === m.id ? (
-                <CheckIcon className="size-3 shrink-0" />
-              ) : (
-                <span className="size-3 shrink-0" />
-              )}
-              <span>{m.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /**
  * Aoede's dock entrypoint. Uses the `.aoede-dock-button` class (defined
  * in globals.css) for the shimmer ring + fill sweep shared with the
@@ -1700,9 +1606,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
                 </Tooltip>
-                )}
-                <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} onSelectMode={selectDesktopMode} />
-                <Tooltip>
+                )}                <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
@@ -1779,9 +1683,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               >
                 <KanbanSquareIcon className="size-4" />
               </button>
-            )}
-            <ModeSwitcher iconSize={36} tooltipSide="top" onSelectMode={selectDesktopMode} />
-            <button
+            )}            <button
               type="button"
               onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
