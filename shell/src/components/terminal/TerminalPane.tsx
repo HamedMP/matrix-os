@@ -8,6 +8,7 @@ import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
+import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
@@ -337,6 +338,10 @@ export function TerminalPane({
   const terminalCursorStyle = useTerminalSettings((s) => s.cursorStyle);
   const terminalSmoothScroll = useTerminalSettings((s) => s.smoothScroll);
   const cursorBlink = useTerminalSettings((s) => s.cursorBlink);
+  // Visual-viewport state drives keyboard-aware re-fitting on mobile: when the
+  // iOS soft keyboard opens the layout viewport doesn't shrink, so the terminal
+  // host must re-fit to the visible band or the prompt hides behind the keyboard.
+  const { height: viewportHeight, offsetTop: viewportOffsetTop, keyboardOpen } = useVisualViewport();
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<unknown>(null);
@@ -1360,6 +1365,32 @@ export function TerminalPane({
     }
   }, [isFocused]);
 
+  // Re-fit the terminal whenever the visual viewport changes (soft keyboard
+  // open/close, URL-bar collapse, orientation). The container also shrinks via
+  // the --terminal-keyboard-height var so its ResizeObserver fires, but an
+  // explicit fit here covers the cases where the host height is unchanged yet
+  // the visible band moved (iOS keyboard over a full-height layout viewport).
+  useEffect(() => {
+    const fit = fitAddonRef.current as { fit?: () => void } | null;
+    if (!fit?.fit) return;
+    const id = requestAnimationFrame(() => {
+      try {
+        fit.fit?.();
+        sendTerminalResize(
+          wsRef.current,
+          termRef.current as Parameters<typeof sendTerminalResize>[1],
+          allowRemoteResizeRef.current,
+        );
+        if (isFocusedRef.current) {
+          (termRef.current as { focus?: () => void } | null)?.focus?.();
+        }
+      } catch (err: unknown) {
+        console.warn("Terminal viewport re-fit failed:", err instanceof Error ? err.message : err);
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [viewportHeight, viewportOffsetTop, keyboardOpen]);
+
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
     <div
@@ -1372,6 +1403,11 @@ export function TerminalPane({
         outlineOffset: "-1px",
         // Left gutter so the prompt isn't jammed against the window edge.
         paddingLeft: 12,
+        // Pin the terminal host to the visible band: the var is 0px until the
+        // mobile soft keyboard opens (published by TerminalKeyBar), so this is a
+        // no-op on desktop. When the keyboard opens the host shrinks and its
+        // ResizeObserver re-fits the grid above the keyboard.
+        height: "calc(100% - var(--terminal-keyboard-height, 0px))",
       }}
       onPointerDown={handleFocus}
       onClick={handleFocus}

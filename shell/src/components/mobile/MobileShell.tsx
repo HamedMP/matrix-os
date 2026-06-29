@@ -20,6 +20,14 @@
 
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, MotionConfig, type PanInfo } from "framer-motion";
+import {
+  appTransition,
+  EASE_EMPHASIZED,
+  fadeUp,
+  staggerContainer,
+  tapScale,
+} from "@/lib/motion";
 import { useChatContext } from "@/stores/chat-context";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -80,15 +88,20 @@ const LAUNCHER_APP_LABEL_STYLE: CSSProperties = {
 };
 
 const SWITCHER_CLOSE_BUTTON_STYLE: CSSProperties = {
-  background: "transparent",
-  border: "1px solid rgba(244,237,224,0.18)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  background: "color-mix(in srgb, var(--foreground) 6%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--foreground) 14%, transparent)",
   color: "inherit",
   borderRadius: 999,
-  width: 28,
-  height: 28,
+  width: 44,
+  height: 44,
   cursor: "pointer",
-  opacity: 0.75,
-  fontSize: 12,
+  opacity: 0.85,
+  fontSize: 20,
+  lineHeight: 1,
 };
 
 const SWITCHER_RESUME_BUTTON_STYLE: CSSProperties = {
@@ -287,6 +300,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
   }, []);
 
   return (
+    <MotionConfig reducedMotion="user">
     <div
       data-testid="mobile-shell"
       className="flex h-full w-full flex-col"
@@ -327,53 +341,82 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
           const isTop = i === openStack.length - 1;
           const visible = view === "app" && isTop;
           return (
-            <div
+            <motion.div
               key={o.id}
               aria-hidden={!visible}
+              // Kept mounted (never unmounted) to preserve live app state such as
+              // terminal sessions; we animate opacity/transform instead of
+              // toggling `visibility`, so foregrounding an app slides + fades in.
+              initial={false}
+              animate={
+                visible
+                  ? { opacity: 1, y: 0, scale: 1 }
+                  : { opacity: 0, y: 16, scale: 0.985 }
+              }
+              transition={{ duration: 0.32, ease: EASE_EMPHASIZED }}
               style={{
                 position: "absolute",
                 inset: 0,
-                display: "block",
-                visibility: visible ? "visible" : "hidden",
                 pointerEvents: visible ? "auto" : "none",
                 background: "var(--background)",
               }}
             >
               <MobileAppFrame app={o.app} openId={o.id} chat={chat} />
-            </div>
+            </motion.div>
           );
         })}
 
-        {view === "launcher" && (
-          <Launcher
-            apps={apps}
-            onOpen={openApp}
-            onOpenSettings={() => setSettingsOpen(true)}
-            openStackCount={openStack.length}
-            onShowSwitcher={showSwitcher}
-          />
-        )}
+        <AnimatePresence initial={false}>
+          {view === "launcher" && (
+            <motion.div
+              key="launcher"
+              className="absolute inset-0"
+              style={{ background: "var(--background)" }}
+              variants={appTransition}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <Launcher
+                apps={apps}
+                onOpen={openApp}
+                onOpenSettings={() => setSettingsOpen(true)}
+                openStackCount={openStack.length}
+                onShowSwitcher={showSwitcher}
+              />
+            </motion.div>
+          )}
 
-        {view === "switcher" && (
-          <AppSwitcher
-            open={openStack}
-            onResume={() => setView("app")}
-            onSelect={(id) => {
-              setOpenStack((prev) => {
-                const idx = prev.findIndex((o) => o.id === id);
-                if (idx < 0) return prev;
-                const next = prev.slice();
-                const [taken] = next.splice(idx, 1);
-                next.push(taken);
-                return next;
-              });
-              setView("app");
-            }}
-            onClose={closeApp}
-            onCloseAll={closeAll}
-            onBack={() => setView(top ? "app" : "launcher")}
-          />
-        )}
+          {view === "switcher" && (
+            <motion.div
+              key="switcher"
+              className="absolute inset-0"
+              variants={appTransition}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <AppSwitcher
+                open={openStack}
+                onResume={() => setView("app")}
+                onSelect={(id) => {
+                  setOpenStack((prev) => {
+                    const idx = prev.findIndex((o) => o.id === id);
+                    if (idx < 0) return prev;
+                    const next = prev.slice();
+                    const [taken] = next.splice(idx, 1);
+                    next.push(taken);
+                    return next;
+                  });
+                  setView("app");
+                }}
+                onClose={closeApp}
+                onCloseAll={closeAll}
+                onBack={() => setView(top ? "app" : "launcher")}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
 
       <nav
@@ -423,6 +466,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
 
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
+    </MotionConfig>
   );
 }
 
@@ -534,8 +578,11 @@ function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher
           </button>
         </div>
       </div>
-      <div
+      <motion.div
         className="flex-1 overflow-y-auto"
+        variants={staggerContainer()}
+        initial="initial"
+        animate="animate"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(4, minmax(0,1fr))",
@@ -545,17 +592,19 @@ function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher
         }}
       >
         {apps.map((app) => (
-          <button
+          <motion.button
             key={app.id}
             type="button"
             onClick={() => onOpen(app)}
+            variants={fadeUp}
+            {...tapScale}
             style={LAUNCHER_APP_BUTTON_STYLE}
           >
             <AppIcon slug={app.iconSlug} size={56} />
             <span style={LAUNCHER_APP_LABEL_STYLE}>{app.name}</span>
-          </button>
+          </motion.button>
         ))}
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -606,7 +655,10 @@ function AppSwitcher({
           Close all
         </button>
       </div>
-      <div
+      <motion.div
+        variants={staggerContainer(0.05)}
+        initial="initial"
+        animate="animate"
         style={{
           flex: 1,
           overflowY: "auto",
@@ -620,16 +672,26 @@ function AppSwitcher({
           .slice()
           .reverse()
           .map((o) => (
-            <div
+            <motion.div
               key={o.id}
+              layout
+              variants={fadeUp}
+              // Swipe a card left/right to dismiss the app (≥96px throw).
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.12}
+              onDragEnd={(_, info: PanInfo) => {
+                if (Math.abs(info.offset.x) > 96) onClose(o.id);
+              }}
+              whileDrag={{ scale: 0.98, cursor: "grabbing" }}
+              className="surface-glass elevation-2 border"
               style={{
-                background: "var(--card, rgba(244,237,224,0.06))",
-                border: "1px solid rgba(244,237,224,0.12)",
                 borderRadius: 18,
                 padding: 14,
                 display: "flex",
                 gap: 12,
                 alignItems: "center",
+                touchAction: "pan-y",
               }}
             >
               <AppIcon slug={o.app.iconSlug} size={44} />
@@ -651,22 +713,38 @@ function AppSwitcher({
                   Opened {new Date(o.openedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </div>
               </button>
-              <button
+              <motion.button
                 onClick={() => onClose(o.id)}
                 type="button"
                 aria-label={`Close ${o.app.name}`}
+                whileTap={{ scale: 0.85 }}
+                whileHover={{ rotate: 90 }}
+                transition={{ duration: 0.18, ease: EASE_EMPHASIZED }}
                 style={SWITCHER_CLOSE_BUTTON_STYLE}
               >
                 ×
-              </button>
-            </div>
+              </motion.button>
+            </motion.div>
           ))}
         {open.length > 0 && (
-          <button onClick={onResume} type="button" style={SWITCHER_RESUME_BUTTON_STYLE}>
-            Resume foreground app
-          </button>
+          <>
+            <p
+              aria-hidden
+              style={{ fontSize: 11, textAlign: "center", opacity: 0.4, marginTop: 2 }}
+            >
+              Swipe a card aside to close
+            </p>
+            <motion.button
+              onClick={onResume}
+              type="button"
+              {...tapScale}
+              style={SWITCHER_RESUME_BUTTON_STYLE}
+            >
+              Resume foreground app
+            </motion.button>
+          </>
         )}
-      </div>
+      </motion.div>
     </div>
   );
 }
