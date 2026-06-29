@@ -20,6 +20,8 @@ function expectSecurityHeaders(response: Response) {
   expect(csp).toContain("https://*.clerk.com");
   expect(csp).toContain("https://*.clerk.accounts.dev");
   expect(csp).toContain("https://eu-assets.i.posthog.com");
+  expect(csp).toContain("script-src 'self' 'unsafe-inline' https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://eu-assets.i.posthog.com https://tally.so");
+  expect(csp).toContain("frame-src 'self' https://app.matrix-os.com https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://tally.so");
   expect(csp).not.toContain("'nonce-");
   expect(csp).not.toContain("'strict-dynamic'");
   expect(csp).toContain("connect-src 'self'");

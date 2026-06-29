@@ -31,9 +31,9 @@ function buildContentSecurityPolicy(): string {
     img-src 'self' blob: data: https:;
     font-src 'self' data:;
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'unsafe-inline' https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://eu-assets.i.posthog.com${devScriptPolicy};
+    script-src 'self' 'unsafe-inline' https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://eu-assets.i.posthog.com https://tally.so${devScriptPolicy};
     connect-src 'self' https://app.matrix-os.com https://api.matrix-os.com https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://eu.i.posthog.com https://eu-assets.i.posthog.com;
-    frame-src 'self' https://app.matrix-os.com https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev;
+    frame-src 'self' https://app.matrix-os.com https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://tally.so;
     worker-src 'self' blob:;
     upgrade-insecure-requests;
   `);
