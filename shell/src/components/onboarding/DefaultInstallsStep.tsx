@@ -14,7 +14,7 @@ import {
 function DeveloperToolLogo({ logoPath }: { logoPath: string }) {
   return (
     <span
-      className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-forest/10 bg-white p-2 shadow-sm"
+      className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/15 bg-[#2F392C] p-1.5 shadow-sm"
       aria-hidden="true"
     >
       <Image src={logoPath} alt="" width={20} height={20} className="size-full object-contain" draggable={false} />
