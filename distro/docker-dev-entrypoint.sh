@@ -4,12 +4,22 @@ set -e
 cd /app
 export PATH="/app/node_modules/.bin:$PATH"
 
-# Install deps as root (volume may be root-owned)
-if [ ! -d "node_modules/.pnpm" ] || [ "pnpm-lock.yaml" -nt "node_modules/.pnpm-lock-hash" ]; then
-  echo "[matrix-os-dev] Installing dependencies..."
+# Install deps as root (volume may be root-owned).
+#
+# Content-hash based, NOT mtime based: git operations (checkout/cherry-pick/
+# rebase/pull) don't reliably bump pnpm-lock.yaml's mtime, so an mtime check
+# (`-nt`) can silently skip a reinstall after deps actually changed — the shell
+# then breaks with "Module not found" even after a restart. md5sum -c compares
+# the real content, so a restart always reinstalls iff the lockfile changed.
+ensure_deps() {
+  if [ -d "node_modules/.pnpm" ] && md5sum --status -c node_modules/.pnpm-lock-hash 2>/dev/null; then
+    return 0
+  fi
+  echo "[matrix-os-dev] Installing dependencies (lockfile changed)..."
   pnpm install --frozen-lockfile
   md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
-fi
+}
+ensure_deps
 
 echo "[matrix-os-dev] Building observability package..."
 pnpm --filter @matrix-os/observability build
@@ -162,6 +172,28 @@ chown matrixos:matrixos "$MATRIX_HOME/.zshrc" "$MATRIX_HOME/.p10k.zsh" 2>/dev/nu
 # Set zsh as default shell for matrixos user (for PTY sessions)
 if command -v zsh >/dev/null 2>&1; then
   export SHELL=/bin/zsh
+fi
+
+# Auto-heal dependencies while the stack is running. Without this, changing deps
+# on a running container (branch switch, cherry-pick, git pull, adding a package)
+# leaves the named-volume node_modules stale and the shell breaks with "Module
+# not found" until a manual restart. Poll the lockfile and reinstall in the
+# background so HMR just picks up new modules. Disable with MATRIX_DEV_DEP_WATCH=0.
+if [ "${MATRIX_DEV_DEP_WATCH:-1}" != "0" ]; then
+  (
+    while true; do
+      sleep 5
+      md5sum --status -c node_modules/.pnpm-lock-hash 2>/dev/null && continue
+      echo "[matrix-os-dev] Lockfile changed -- reinstalling dependencies..."
+      if pnpm install --frozen-lockfile; then
+        md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
+        echo "[matrix-os-dev] Dependencies synced; HMR will pick up changes."
+      else
+        echo "[matrix-os-dev] pnpm install failed; will retry on next lockfile change."
+      fi
+    done
+  ) &
+  echo "[matrix-os-dev] Dependency watcher running (auto-reinstall on lockfile change)."
 fi
 
 echo "[matrix-os-dev] Starting gateway + shell as matrixos user..."
