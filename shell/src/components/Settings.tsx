@@ -43,6 +43,19 @@ const sections = [
 
 type SectionId = typeof sections[number]["id"];
 
+// Sections temporarily hidden from the Settings nav for the paid-beta scope.
+// The section components and render branches below are intentionally kept so a
+// section can be re-enabled by removing its id here. See AGENTS.md "Deferred work".
+const HIDDEN_SECTION_IDS = new Set<SectionId>([
+  "agent",
+  "channels",
+  "skills",
+  "security",
+  "cron",
+  "plugins",
+]);
+const visibleSections = sections.filter((section) => !HIDDEN_SECTION_IDS.has(section.id));
+
 function TrafficLights({ onClose, closeDisabled = false }: { onClose: () => void; closeDisabled?: boolean }) {
   return (
     <div className="group/traffic flex items-center gap-1.5">
@@ -200,9 +213,9 @@ export function Settings({
         }}
       />
 
-      <div className="relative z-10 flex h-full items-center justify-center overflow-hidden sm:p-4">
+      <div className="pointer-events-none relative z-10 flex h-full items-center justify-center overflow-hidden sm:p-4">
         <div
-          className="flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl xl:h-[760px] xl:w-[1180px]"
+          className="pointer-events-auto flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl xl:h-[760px] xl:w-[1180px]"
           style={{
             opacity: visible ? 1 : 0,
             transform: visible ? "scale(1) translateY(0)" : "scale(0.96) translateY(8px)",
@@ -221,7 +234,7 @@ export function Settings({
                 aria-label="Settings sections"
                 className="flex gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0"
               >
-                {sections.map((section) => {
+                {visibleSections.map((section) => {
                   const Icon = section.icon;
                   const active = activeSection === section.id;
                   const locked = Boolean(lockedSection && section.id !== lockedSection);

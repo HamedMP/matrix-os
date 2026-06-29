@@ -205,7 +205,9 @@ describe("BillingSection", () => {
     render(<BillingSection />);
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
 
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
     fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany/ }));
     fireEvent.click(screen.getByRole("button", { name: "Annual" }));
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("true");
@@ -223,6 +225,32 @@ describe("BillingSection", () => {
         }),
       ),
     );
+  });
+
+  it("closes only the picker on Escape without dismissing the Settings panel", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
+    expect(screen.getByRole("button", { name: /Builder/ })).toBeTruthy();
+
+    // The Settings panel registers a window-level Escape handler; it must not
+    // receive the event once the picker has handled and stopped it.
+    const settingsEscape = vi.fn();
+    window.addEventListener("keydown", settingsEscape);
+    try {
+      fireEvent.keyDown(document, { key: "Escape" });
+    } finally {
+      window.removeEventListener("keydown", settingsEscape);
+    }
+
+    expect(screen.queryByRole("button", { name: /Builder/ })).toBeNull();
+    expect(settingsEscape).not.toHaveBeenCalled();
   });
 
   it("includes a safe return path when checkout is launched from CLI device setup", async () => {
@@ -273,12 +301,18 @@ describe("BillingSection", () => {
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
     expect(screen.getByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
     expect(screen.getAllByText("Computer").length).toBeGreaterThanOrEqual(1);
+
+    // Computer options live in a click-to-open dropdown now.
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     expect(screen.getByText("CPX22")).toBeTruthy();
     expect(screen.getByText("$14")).toBeTruthy();
     expect(screen.getAllByText("CPX32").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("$19").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("CPX52")).toBeTruthy();
     expect(screen.getByText("$49")).toBeTruthy();
+
+    // Region options live in their own dropdown (opening it closes the computer one).
+    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
     expect(screen.getAllByText("Region").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Closest location is selected automatically")).toBeTruthy();
     expect(screen.getAllByText("🇩🇪").length).toBeGreaterThanOrEqual(2);

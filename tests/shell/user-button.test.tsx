@@ -146,7 +146,7 @@ describe("UserButton", () => {
     vi.useFakeTimers();
     fireEvent.click(signOutItem);
 
-    const pendingSignOutItem = screen.getByRole("menuitem", { name: "Signing out..." });
+    const pendingSignOutItem = screen.getByRole("menuitem", { name: "Signing out…" });
     expect(pendingSignOutItem.getAttribute("aria-disabled")).toBe("true");
     expect(pendingSignOutItem.getAttribute("aria-busy")).toBe("true");
     expect(pendingSignOutItem.querySelector("svg.animate-spin")).toBeTruthy();
