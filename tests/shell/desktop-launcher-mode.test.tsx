@@ -185,13 +185,13 @@ describe("Desktop launcher dock button by mode", () => {
     expect(await screen.findByTestId("dock-tasks")).toBeTruthy();
   });
 
-  it("hides the launcher in developer mode", async () => {
+  it("keeps the launcher visible in developer mode", async () => {
     resetShellMode("dev", true);
 
     render(<DesktopComponent />);
 
     await waitFor(() => {
-      expect(screen.queryByTestId("dock-tasks")).toBeNull();
+      expect(screen.getByTestId("dock-tasks")).toBeTruthy();
       expect(screen.getByTestId("dock-settings")).toBeTruthy();
     });
   });
