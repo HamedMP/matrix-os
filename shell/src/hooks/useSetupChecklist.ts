@@ -33,7 +33,7 @@ export function useSetupChecklist() {
 
   useEffect(() => {
     try {
-      setDismissed(sessionStorage.getItem(DISMISS_KEY) === "1");
+      setDismissed(localStorage.getItem(DISMISS_KEY) === "1");
     } catch (err: unknown) {
       logStorageFailure("read", err);
     }
@@ -43,7 +43,7 @@ export function useSetupChecklist() {
   const dismiss = useCallback(() => {
     setDismissed(true);
     try {
-      sessionStorage.setItem(DISMISS_KEY, "1");
+      localStorage.setItem(DISMISS_KEY, "1");
     } catch (err: unknown) {
       logStorageFailure("write", err);
     }
