@@ -15,17 +15,25 @@ function expectSecurityHeaders(response: Response) {
   const csp = response.headers.get("Content-Security-Policy");
   expect(csp).toBeTruthy();
   expect(csp).toContain("default-src 'self'");
-  expect(csp).toContain("script-src 'self' 'nonce-");
-  expect(csp).toContain("'strict-dynamic'");
+  expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+  expect(csp).toContain("https://clerk.matrix-os.com");
+  expect(csp).toContain("https://*.clerk.com");
+  expect(csp).toContain("https://*.clerk.accounts.dev");
+  expect(csp).toContain("https://eu-assets.i.posthog.com");
+  expect(csp).toContain("script-src 'self' 'unsafe-inline' https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://eu-assets.i.posthog.com https://tally.so");
+  expect(csp).toContain("connect-src 'self' https://app.matrix-os.com https://api.matrix-os.com https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://eu.i.posthog.com https://eu-assets.i.posthog.com https://tally.so");
+  expect(csp).toContain("frame-src 'self' https://app.matrix-os.com https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://tally.so");
+  expect(csp).not.toContain("'nonce-");
+  expect(csp).not.toContain("'strict-dynamic'");
   expect(csp).toContain("connect-src 'self'");
   expect(csp).not.toContain("Content-Security-Policy-Report-Only");
-  expect(csp).not.toContain("'unsafe-inline' 'unsafe-eval'");
+  expect(csp).not.toContain("'unsafe-eval'");
   expect(response.headers.get("Cross-Origin-Opener-Policy")).toBe("same-origin");
   expect(response.headers.get("Permissions-Policy")).toBe("browsing-topics=(), interest-cohort=()");
 }
 
 describe("www Lighthouse security headers", () => {
-  it("sets an enforced nonce CSP and COOP on public route responses", async () => {
+  it("sets an enforced cache-safe CSP and COOP on public route responses", async () => {
     const authorizeProtectedRoute = vi.fn();
     const response = await proxyWithSecurity(
       makeRequest("/"),
@@ -34,7 +42,7 @@ describe("www Lighthouse security headers", () => {
     );
 
     expectSecurityHeaders(response);
-    expect(response.headers.get("x-middleware-request-x-nonce")).toBeTruthy();
+    expect(response.headers.get("x-middleware-request-x-nonce")).toBeNull();
     expect(response.headers.get("x-middleware-request-content-security-policy")).toBeNull();
     expect(authorizeProtectedRoute).not.toHaveBeenCalled();
   });
@@ -57,13 +65,12 @@ describe("www Lighthouse security headers", () => {
     expect(authorizeProtectedRoute).toHaveBeenCalledOnce();
     expect(response.headers.get("x-clerk-checked")).toBe("1");
     expectSecurityHeaders(response);
-    expect(response.headers.get("x-middleware-request-x-nonce")).toBeTruthy();
+    expect(response.headers.get("x-middleware-request-x-nonce")).toBeNull();
     expect(response.headers.get("x-middleware-request-x-clerk-auth-status")).toBe("signed-in");
     expect(response.headers.get("x-middleware-request-x-clerk-auth-token")).toBe("token");
     expect(response.headers.get("x-middleware-override-headers")?.split(",")).toEqual([
       "x-clerk-auth-status",
       "x-clerk-auth-token",
-      "x-nonce",
     ]);
     expect(response.headers.get("x-middleware-request-content-security-policy")).toBeNull();
   });
