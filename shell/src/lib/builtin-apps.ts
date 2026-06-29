@@ -1,9 +1,11 @@
 import type { LayoutWindow } from "@/hooks/useWindowManager";
 
 const BUILT_IN_APP_VALUES = [
+  "__workspace__",
   "__terminal__",
   "__file-browser__",
   "__chat__",
+  "__activity-monitor__",
 ] as const;
 
 export const DEFAULT_PINNED_APPS = Object.freeze([] as string[]);
@@ -11,6 +13,9 @@ export const TERMINAL_MIN_WINDOW_WIDTH = 1040;
 export const TERMINAL_MIN_WINDOW_HEIGHT = 680;
 
 const BUILT_IN_APP_ALIASES = new Map<string, string>([
+  ["workspace", "__workspace__"],
+  ["apps/workspace/index.html", "__workspace__"],
+  ["/files/apps/workspace/index.html", "__workspace__"],
   ["terminal", "__terminal__"],
   ["apps/terminal/index.html", "__terminal__"],
   ["/files/apps/terminal/index.html", "__terminal__"],
@@ -21,12 +26,19 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["chat", "__chat__"],
   ["apps/chat/index.html", "__chat__"],
   ["/files/apps/chat/index.html", "__chat__"],
+  ["activity", "__activity-monitor__"],
+  ["activity-monitor", "__activity-monitor__"],
+  ["system-activity", "__activity-monitor__"],
+  ["apps/activity-monitor/index.html", "__activity-monitor__"],
+  ["/files/apps/activity-monitor/index.html", "__activity-monitor__"],
 ]);
 
 const BUILT_IN_APP_TITLES = new Map<string, string>([
+  ["__workspace__", "Workspace"],
   ["__terminal__", "Terminal"],
   ["__file-browser__", "Files"],
   ["__chat__", "Hermes"],
+  ["__activity-monitor__", "Activity Monitor"],
 ]);
 
 export function normalizeBuiltInAppPath(path: string): string {
