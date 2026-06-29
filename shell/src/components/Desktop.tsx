@@ -65,6 +65,7 @@ import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { cn, nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
+import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -954,7 +955,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       addApp("Terminal", "__terminal__", "terminal", iconForSlug("terminal"));
       addApp("Workspace", "__workspace__", "workspace", iconForSlug("workspace"));
       addApp("Files", "__file-browser__", "files", iconForSlug("files"));
-      addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
+      if (!HERMES_CHAT_HIDDEN) {
+        addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
+      }
       addApp("Activity Monitor", "__activity-monitor__", "chart", iconForSlug("chart"));
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
@@ -1671,6 +1674,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {!HERMES_CHAT_HIDDEN && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1696,6 +1700,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
                 </Tooltip>
+                )}
                 <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} onSelectMode={selectDesktopMode} />
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1741,6 +1746,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         {/* Mobile dock (bottom tab bar) */}
         {modeConfig.showDock && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
+            {!HERMES_CHAT_HIDDEN && (
             <button
               type="button"
               data-testid="dock-chat-mobile"
@@ -1760,6 +1766,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 />
               )}
             </button>
+            )}
             {modeConfig.showLauncher && (
               <button
                 type="button"
