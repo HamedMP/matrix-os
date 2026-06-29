@@ -1055,7 +1055,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const modeConfig = getModeConfig(desktopMode);
   const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
-  const developerDashboardVisible = shouldShowDeveloperDashboard(firstRunStatus, desktopMode, visibleWindowCount);
+  // Developer Fast Path dashboard removed (off-brand + redundant with the
+  // new Set up your workspace checklist). Dev mode opens to the terminal.
+  void shouldShowDeveloperDashboard;
+  const developerDashboardVisible = false;
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
   const selectDesktopMode = (mode: DesktopMode) => {
     setDesktopMode(mode);
