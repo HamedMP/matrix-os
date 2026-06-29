@@ -1,6 +1,6 @@
-// Friendly two-word session names (e.g. "swift-falcon") instead of
-// "matrix-<random>". Both lists are lowercase, slug-safe single words so the
-// result always matches SHELL_SESSION_NAME_PATTERN.
+// Friendly session names (e.g. "swift-falcon-3k9qm") instead of
+// "matrix-<random>". Both word lists are lowercase, slug-safe single words so
+// the result always matches SHELL_SESSION_NAME_PATTERN.
 
 const ADJECTIVES = [
   "swift", "calm", "bright", "bold", "brave", "clever", "cosmic", "crisp",
@@ -20,7 +20,11 @@ function pick<T>(list: readonly T[]): T {
   return list[Math.floor(Math.random() * list.length)]!;
 }
 
-/** Returns a friendly two-word session handle like "swift-falcon". */
+function entropySuffix(): string {
+  return Math.floor(Math.random() * 36 ** 5).toString(36).padStart(5, "0");
+}
+
+/** Returns a friendly session handle like "swift-falcon-3k9qm". */
 export function twoWordSessionName(): string {
-  return `${pick(ADJECTIVES)}-${pick(NOUNS)}`;
+  return `${pick(ADJECTIVES)}-${pick(NOUNS)}-${entropySuffix()}`;
 }

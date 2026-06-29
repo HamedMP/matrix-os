@@ -344,6 +344,17 @@ const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
   zIndex: 1,
 };
 
+const SHELL_ROW_BUTTON_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  borderRadius: 10,
+  cursor: "pointer",
+  inset: 0,
+  padding: 0,
+  position: "absolute",
+  zIndex: 0,
+};
+
 const SHELL_ROW_DRAG_HANDLE_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
@@ -5917,16 +5928,7 @@ function ShellCard({
           aria-label={`Show ${displayName} session`}
           data-selected={selected ? "true" : "false"}
           onClick={handleCardClick}
-          style={{
-            background: "transparent",
-            border: 0,
-            borderRadius: 10,
-            cursor: "pointer",
-            inset: 0,
-            padding: 0,
-            position: "absolute",
-            zIndex: 0,
-          }}
+          style={SHELL_ROW_BUTTON_STYLE}
         />
       )}
       <div
@@ -6118,6 +6120,31 @@ function ShellCard({
           )}
         </div>
       </div>
+      {!renaming && !deleting && (
+        <button
+          type="button"
+          aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
+          title={foreground ? "Move to background" : "Make active"}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+          style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              background: foreground ? "var(--terminal-drawer-toggle-knob)" : "var(--terminal-drawer-toggle-off-knob)",
+              borderRadius: "50%",
+              display: "block",
+              height: 14,
+              width: 14,
+            }}
+          />
+        </button>
+      )}
     </div>
   );
 }

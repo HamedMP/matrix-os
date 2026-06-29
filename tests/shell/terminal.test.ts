@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   isCanonicalShellSessionId,
   terminalWebSocketPathForSession,
 } from "../../shell/src/components/terminal/terminal-session-id.js";
+import { twoWordSessionName } from "../../shell/src/components/terminal/terminal-session-names.js";
 
 class MockTerminalWebSocket {
   static instances: MockTerminalWebSocket[] = [];
@@ -30,6 +31,10 @@ class MockTerminalWebSocket {
 }
 
 describe("Terminal WebSocket protocol", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("sends input messages with correct shape", () => {
     const ws = new MockTerminalWebSocket("ws://localhost:4000/ws/terminal");
     ws.send(JSON.stringify({ type: "input", data: "ls\r" }));
@@ -93,5 +98,14 @@ describe("Terminal WebSocket protocol", () => {
     expect(terminalWebSocketPathForSession("term_observe_abc123")).toBe("/ws/terminal");
     expect(terminalWebSocketPathForSession("550e8400-e29b-41d4-a716-446655440000")).toBe("/ws/terminal");
     expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal");
+  });
+
+  it("adds an entropy suffix to friendly terminal session names", () => {
+    vi.spyOn(Math, "random")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0);
+
+    expect(twoWordSessionName()).toBe("swift-falcon-00000");
   });
 });
