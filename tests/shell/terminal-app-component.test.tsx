@@ -4,6 +4,8 @@ import React from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
+const CANONICAL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+
 const paneGridSpy = vi.fn();
 const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
   saveThemeSpy: vi.fn(async () => {}),
@@ -60,8 +62,6 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
-
-const CANONICAL_SESSION_NAME_PATTERN = /^(matrix-[a-z0-9]+|[a-z]+-[a-z]+-[a-z0-9]+)$/;
 
 class ResizeObserverMock {
   observe() {}
@@ -344,7 +344,7 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.queryByRole("tablist", { name: "Terminal tabs" })).toBeNull();
-    expect(screen.getByText("matrix-os")).toBeTruthy();
+    expect(screen.getByText("matrix os")).toBeTruthy();
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByText("Active")).toBeTruthy();
     expect(screen.getByText("Background")).toBeTruthy();

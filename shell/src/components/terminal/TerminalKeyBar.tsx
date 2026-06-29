@@ -238,6 +238,7 @@ export function TerminalKeyBar({
     };
   }, [viewportHeight, keyboardOpen]);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount cleanup must clear the latest long-press timeout ref; capturing the initial value would leak timers created after mount
   useEffect(() => {
     return () => {
       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
