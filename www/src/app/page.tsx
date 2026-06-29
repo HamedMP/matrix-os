@@ -11,6 +11,7 @@ import { TemplatesShowcase } from "@/components/landing/TemplatesShowcase";
 import { SymphonySection } from "@/components/landing/SymphonySection";
 import { QuoteStats } from "@/components/landing/QuoteStats";
 import { HermesSection } from "@/components/landing/HermesSection";
+import { BlogPreviewSection } from "@/components/landing/BlogPreviewSection";
 import { PilotBand } from "@/components/landing/PilotBand";
 import { FaqSection } from "@/components/landing/FaqSection";
 import { FinalCtaSection } from "@/components/landing/FinalCtaSection";
@@ -34,7 +35,7 @@ const jsonLd = JSON.stringify({
 export const metadata: Metadata = {
   title: "Matrix OS - A cloud computer for background AI agents",
   description:
-    "Matrix gives background agents their own computer. Run Claude, Codex, Cursor, OpenCode, and Hermes in a private hosted workspace with persistent terminals, repos, previews, and workflows that keep going after your laptop closes.",
+    "Give AI agents their own cloud computer. Run Claude, Codex, Cursor, and more in a persistent hosted workspace, even when your laptop sleeps.",
 };
 
 export default function LandingPage() {
@@ -60,6 +61,7 @@ export default function LandingPage() {
         <QuoteStats />
         <HermesSection exploreHref="/hermes" />
         <LandingBilling />
+        <BlogPreviewSection />
         <PilotBand />
         <FaqSection />
         <FinalCtaSection />

@@ -15,6 +15,7 @@ const footerColumns: ReadonlyArray<{ title: string; links: readonly FooterLinkIt
       { label: "Pricing", href: "/#pricing" },
       { label: "Releases", href: "/releases" },
       { label: "Whitepaper", href: "/whitepaper" },
+      { label: "Blog", href: "/blog" },
     ],
   },
   {
@@ -33,6 +34,7 @@ const footerColumns: ReadonlyArray<{ title: string; links: readonly FooterLinkIt
       { label: "Quickstart", href: "/docs/quickstart" },
       { label: "Agent skill", href: "/skills.md" },
       { label: "Technical", href: "/technical" },
+      { label: "Blog", href: "/blog" },
       { label: "Early access", href: "/early-access" },
     ],
   },
