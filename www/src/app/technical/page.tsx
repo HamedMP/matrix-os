@@ -68,7 +68,7 @@ function Nav() {
         </div>
 
         <Link
-          href="/signup"
+          href="/sign-up"
           className="inline-flex items-center gap-1.5 bg-[var(--forest)] text-[var(--stone)] text-sm px-4 py-2 rounded-full hover:bg-[var(--ink)] transition-colors"
         >
           Join the waitlist

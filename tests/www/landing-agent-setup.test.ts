@@ -28,12 +28,15 @@ describe("www landing agent setup", () => {
       readRepoFile("www/src/components/landing/FinalCtaSection.tsx"),
     ]);
 
-    for (const source of [header, hero, finalCta]) {
+    for (const source of [hero, finalCta]) {
       expect(source).not.toContain("@clerk/nextjs");
       expect(source).not.toContain("SignedIn");
       expect(source).not.toContain("SignedOut");
     }
 
+    expect(header).toContain("@clerk/nextjs");
+    expect(header).toContain("SignedIn");
+    expect(header).toContain("SignedOut");
     expect(header).toContain("Get started");
     expect(hero).toContain("Get started");
     expect(finalCta).toContain("Get started");

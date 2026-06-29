@@ -3,6 +3,7 @@ import { ArrowRightIcon } from "lucide-react";
 import { palette as c, fonts } from "./theme";
 import { CtaButton, SectionShell } from "./primitives";
 import { Reveal } from "./Reveal";
+import { SIGN_UP_HREF } from "./links";
 
 export function FinalCtaSection() {
   return (
@@ -19,7 +20,7 @@ export function FinalCtaSection() {
             Start with one cloud workspace. Add agents, tools, workflows, and teammates as the work grows.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
-            <CtaButton href="https://app.matrix-os.com" large phLocation="final_cta" phTarget="start_cloud_dev">
+            <CtaButton href={SIGN_UP_HREF} large phLocation="final_cta" phTarget="start_cloud_dev">
               Get started <ArrowRightIcon className="size-4" />
             </CtaButton>
             <CtaButton href="/contact" variant="outline" large>

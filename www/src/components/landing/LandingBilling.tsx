@@ -6,6 +6,7 @@ import { capturePostHogEvent } from "@/lib/posthog-client";
 import { palette as c, fonts } from "./theme";
 import { SectionCard, SectionShell, SectionTitle } from "./primitives";
 import { Reveal } from "./Reveal";
+import { SIGN_UP_HREF } from "./links";
 
 const plans = [
   {
@@ -148,7 +149,7 @@ export function LandingBilling() {
               </p>
 
               <a
-                href="https://app.matrix-os.com/"
+                href={SIGN_UP_HREF}
                 data-ph-event="marketing_billing_cta_clicked"
                 data-ph-location="pricing_section"
                 data-ph-target="choose_plan"

@@ -2,6 +2,7 @@ import { ArrowRightIcon, BriefcaseBusinessIcon, CheckCircle2Icon, CloudIcon } fr
 import { palette as c, cardShadow, cardShadowSmall, fonts } from "./theme";
 import { CtaButton, SectionShell, SectionTitle } from "./primitives";
 import { Reveal } from "./Reveal";
+import { SIGN_UP_HREF } from "./links";
 
 const hostedMatrixPoints = [
   "Choose region and power during signup",
@@ -50,7 +51,7 @@ export function DeploymentSection() {
               ))}
             </ul>
             <div className="mt-auto pt-8">
-              <CtaButton href="https://app.matrix-os.com" phLocation="deployment" phTarget="start_hosted">
+              <CtaButton href={SIGN_UP_HREF} phLocation="deployment" phTarget="start_hosted">
                 Start hosted <ArrowRightIcon className="size-4" />
               </CtaButton>
             </div>
