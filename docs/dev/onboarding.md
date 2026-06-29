@@ -70,7 +70,16 @@ bun run docker
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | [clerk.com](https://clerk.com) -- create a dev instance | Shell + www auth |
 | `CLERK_SECRET_KEY` | Same Clerk dashboard | Shell + www server-side auth |
 
-The Docker image has Clerk baked in at build time, so you don't need Clerk keys for Docker-based development. You only need these if you run the shell or www locally with `bun run dev:shell` or `bun run dev:www`.
+You only need these if you run the shell or www locally with `bun run dev:shell` or `bun run dev:www`.
+
+#### Clerk in Docker dev
+
+The **production** images (`Dockerfile`, `Dockerfile.platform`) bake `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` at build time. The **dev** image (`Dockerfile.dev`), which `bun run docker` builds, does **not** bake a Clerk key. With no key, `@clerk/nextjs` enters Keyless mode and auto-provisions a throwaway instance whose browser and server halves do not agree, so the shell redirect-loops on `/sign-in`. For `bun run docker`, pick one:
+
+- **Skip auth (fastest, for exploring the shell):** add `E2E_TEST_BYPASS=1`, `NEXT_PUBLIC_E2E_TEST_BYPASS=1`, and `MATRIX_AUTH_ALLOW_INSECURE_DEV=1` to `.env.docker`, then recreate the container with `docker compose -f docker-compose.dev.yml up -d`. Note that `bun run docker:restart` (which wraps `docker compose restart`) does **not** reload `env_file` -- the container must be recreated. `NEXT_PUBLIC_E2E_TEST_BYPASS` takes effect here because the dev image runs `next dev`, which recompiles on startup; against a pre-built or static shell bundle it must be set at build time instead (see the Playwright section). This is the same set the `dev:mobile-shell` script uses, and you land on the desktop with no login.
+- **Real login:** create a free Clerk dev instance at [clerk.com](https://clerk.com), add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` to `.env.docker`, then recreate the container.
+
+Do not set the bypass flags outside local dev.
 
 ### Optional
 
