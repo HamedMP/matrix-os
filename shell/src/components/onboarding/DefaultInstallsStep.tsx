@@ -84,12 +84,12 @@ export function DefaultInstallsStep({
   return (
     <div className="flex w-full max-w-4xl flex-col gap-4 text-left">
       <section className="rounded-[22px] border border-forest/15 bg-[#fbf7ed] p-4 shadow-[0_24px_80px_rgba(50,53,46,0.12)] sm:p-5">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">Default installs</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">Optional · Coding agents</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-deep sm:text-3xl">
-          Choose what Matrix installs first
+          Preinstall coding agents?
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-forest/70">
-          Choose command-line agents to preinstall on this VPS.
+          Pick any to have ready on your VPS — or skip and install them later anytime from the terminal’s + menu.
         </p>
       </section>
 
@@ -101,23 +101,33 @@ export function DefaultInstallsStep({
         </p>
       ) : null}
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-forest/55">
-          CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.
+          You can install or sign into agents anytime from the terminal’s + menu after the VPS is ready.
         </p>
-        <button
-          type="button"
-          onClick={() => onBuild(selectedTools)}
-          disabled={loading}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-forest px-5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(63,74,58,0.18)] transition hover:bg-forest/90 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {loading ? (
-            <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <ServerIcon className="size-4" aria-hidden="true" />
-          )}
-          Build VPS
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onBuild([])}
+            disabled={loading}
+            className="inline-flex h-11 items-center justify-center rounded-xl border border-forest/15 bg-white px-4 text-sm font-semibold text-forest transition hover:bg-cream/60 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Skip for now
+          </button>
+          <button
+            type="button"
+            onClick={() => onBuild(selectedTools)}
+            disabled={loading}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-forest px-5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(63,74,58,0.18)] transition hover:bg-forest/90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? (
+              <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <ServerIcon className="size-4" aria-hidden="true" />
+            )}
+            {selectedTools.length > 0 ? "Install & build" : "Build VPS"}
+          </button>
+        </div>
       </div>
     </div>
   );
