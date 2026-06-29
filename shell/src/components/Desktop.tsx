@@ -1535,6 +1535,12 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 ? "flex flex-row items-center gap-1"
                 : "flex flex-col items-center gap-1"
               }>
+                {/* Apps render BELOW the launcher/settings controls (order:10
+                    pushes this group after the default-order system buttons). */}
+                <div
+                  className={isHorizontal ? "flex flex-row items-center gap-1" : "flex flex-col items-center gap-1"}
+                  style={{ order: 10 }}
+                >
                 {systemApps.map((app) => {
                   const hasAny = hasVisibleWindow(app.path);
                   return (
@@ -1552,6 +1558,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     />
                   );
                 })}
+                </div>
                 {modeConfig.showLauncher && (
                   <Tooltip>
                     <TooltipTrigger asChild>
