@@ -23,7 +23,6 @@ import { WorkspaceApp } from "./workspace/WorkspaceApp";
 import { FileBrowser } from "./file-browser/FileBrowser";
 import { PreviewWindow } from "./preview-window/PreviewWindow";
 import { ActivityMonitorApp } from "./system-activity/ActivityMonitorApp";
-import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
 import { Settings } from "./Settings";
@@ -1529,7 +1528,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             const hasVisibleWindow = (appPath: string) =>
               visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
             const systemAppsRaw = apps.filter(
-              (a) => isMainSectionApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
+              // Terminal is pinned as a control button above; keep it out of
+              // the apps row so it isn't shown twice.
+              (a) => a.path !== "__terminal__" && isMainSectionApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
             );
             const systemApps = applyOrder(systemAppsRaw, dockOrder?.systemApps, appLaunchTimes);
             return (
@@ -1583,6 +1584,28 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {/* Terminal pinned in the controls row, between launcher and
+                    VS Code. Uses the green Terminal app icon and opens/focuses
+                    the terminal window (so it isn't duplicated in the apps row). */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="dock-terminal"
+                      onClick={() => focusOrOpen("Terminal", "__terminal__")}
+                      className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                        windows.some((w) => !w.minimized && (w.path === "__terminal__" || w.path.startsWith("__terminal__:")))
+                          ? "bg-primary/10 border-primary"
+                          : "bg-card border-border/60"
+                      }`}
+                      style={{ width: dock.iconSize, height: dock.iconSize }}
+                    >
+                      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- small static dock icon from /public; next/image is overkill for a 20px square */}
+                      <img src="/icons/terminal.png" alt="Terminal" className="size-5 rounded-[5px]" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>Terminal</TooltipContent>
+                </Tooltip>
                 {!HERMES_CHAT_HIDDEN && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1923,12 +1946,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   <CardTitle className="text-xs font-medium truncate flex-1 text-center">
                     {win.title}
                   </CardTitle>
-                  <div className="w-[78px] flex items-center justify-end gap-1">
-                    <AIButton
-                      appName={win.title}
-                      appPath={win.path}
-                    />
-                  </div>
+                  {/* Spacer balances the traffic lights so the title stays
+                      centered. (The old AI sparkle button was removed.) */}
+                  <div className="w-[78px]" aria-hidden />
                 </CardHeader>
 
                 <CardContent className="relative flex-1 p-0 min-h-0">
