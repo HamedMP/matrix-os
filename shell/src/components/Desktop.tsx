@@ -47,7 +47,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
+import { KanbanSquareIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
