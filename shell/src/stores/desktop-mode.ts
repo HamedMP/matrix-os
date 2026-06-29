@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { TerminalIcon, LayoutGridIcon, MonitorIcon, AudioWaveformIcon, type LucideIcon } from "lucide-react";
 
 export type DesktopMode = "desktop" | "canvas" | "ambient" | "dev";
 
@@ -7,6 +8,7 @@ export interface ModeConfig {
   id: DesktopMode;
   label: string;
   description: string;
+  icon: LucideIcon;
   showDock: boolean;
   showWindows: boolean;
   showBottomPanel: boolean;
@@ -23,6 +25,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     id: "canvas",
     label: "Canvas",
     description: "Spatial canvas with zoom, pan, and app grouping",
+    icon: LayoutGridIcon,
     showDock: true,
     showWindows: true,
     showBottomPanel: false,
@@ -33,6 +36,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     id: "desktop",
     label: "Desktop",
     description: "Full desktop with dock, windows, and sidebar chat",
+    icon: MonitorIcon,
     showDock: true,
     showWindows: true,
     showBottomPanel: false,
@@ -44,6 +48,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     id: "ambient",
     label: "Ambient",
     description: "Minimal mode with clock and centered chat",
+    icon: AudioWaveformIcon,
     showDock: false,
     showWindows: false,
     showBottomPanel: false,
@@ -55,6 +60,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     id: "dev",
     label: "Developer",
     description: "Terminal-first setup with Symphony and Canvas one click away",
+    icon: TerminalIcon,
     showDock: true,
     showWindows: true,
     showBottomPanel: true,

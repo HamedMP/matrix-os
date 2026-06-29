@@ -8,6 +8,7 @@ import { SearchIcon, UserIcon } from "lucide-react";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton } from "./UserButton";
+import { ModeSwitcherBar } from "./ModeSwitcherBar";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
 
@@ -282,8 +283,9 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
           <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
         </div>
 
-        {/* Center: contextual toolbar controls — always centered via grid */}
+        {/* Center: mode switcher + contextual toolbar controls — always centered via grid */}
         <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
+          <ModeSwitcherBar />
           {children}
         </div>
 
