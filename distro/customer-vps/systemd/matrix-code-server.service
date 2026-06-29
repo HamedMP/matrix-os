@@ -1,0 +1,21 @@
+[Unit]
+Description=Install Matrix OS code-server runtime
+After=network-online.target matrix-restore.service
+Wants=network-online.target
+Requires=matrix-restore.service
+ConditionPathExists=/opt/matrix/restore-complete
+ConditionPathExists=/opt/matrix/bin/matrix-install-tool-pack
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/opt/matrix/env/host.env
+ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server
+ExecStartPost=-/bin/systemctl start matrix-code.service
+Restart=on-failure
+RestartSec=10m
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

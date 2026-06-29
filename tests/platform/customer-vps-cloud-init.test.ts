@@ -260,13 +260,20 @@ exit 99
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-hermes.service');
     expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-hermes');
     expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
+    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-code-server.service');
+    expect(cloudInit).toContain('Description=Install Matrix OS code-server runtime');
+    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
+      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
+    );
+    expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
     );
+    expect(cloudInit).toContain('systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
     expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
@@ -311,7 +318,7 @@ exit 99
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
@@ -503,9 +510,14 @@ exit 99
     const code = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-code'), 'utf8');
 
     expect(cloudInit).toContain('Description=Matrix OS customer code editor');
+    expect(cloudInit).toContain('After=matrix-restore.service matrix-code-server.service');
+    expect(cloudInit).toContain('Wants=matrix-code-server.service');
     expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-code');
     expect(cloudInit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
     expect(cloudInit).toContain('ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server');
+    expect(cloudInit).toContain('Description=Install Matrix OS code-server runtime');
+    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(code).toContain('MATRIX_CODE_PROXY_TOKEN');
     expect(code).toContain('code-server');
     expect(code).toContain('crypto.timingSafeEqual');
@@ -632,7 +644,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

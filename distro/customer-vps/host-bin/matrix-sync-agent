@@ -298,6 +298,11 @@ apply_update() {
     sudo find "$extract_dir/systemd" -maxdepth 1 -name 'matrix-*.service' -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
     sudo systemctl daemon-reload
     log "Installed systemd units"
+    if [ -f "$extract_dir/systemd/matrix-code-server.service" ]; then
+      sudo systemctl enable matrix-code-server.service
+      sudo systemctl start --no-block matrix-code-server.service || true
+      log "Code-server runtime service enabled"
+    fi
     if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
       sudo systemctl enable matrix-symphony.service
       sudo systemctl start --no-block matrix-symphony.service || true

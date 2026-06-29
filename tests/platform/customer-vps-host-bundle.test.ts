@@ -158,6 +158,7 @@ describe('customer VPS host bundle', () => {
   it('packages an asynchronous developer tools first-boot service', () => {
     const root = process.cwd();
     const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-developer-tools.service'), 'utf8');
+    const codeServerUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code-server.service'), 'utf8');
     const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
@@ -170,6 +171,9 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('optional developer tool ${tool} already installed; skipping');
     expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
     expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
+    expect(codeServerUnit).toContain('Description=Install Matrix OS code-server runtime');
+    expect(codeServerUnit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(codeServerUnit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
   });
 
   it('owner env canonicalizes Hermes home and migrates legacy Hermes data', () => {
@@ -758,6 +762,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('rm -f "$temp_file"');
     expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-code-server.service');
+    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
+    expect(syncAgent).toContain('Code-server runtime service enabled');
     expect(syncAgent).toContain('Messaging runtimes missing; units installed but not enabled');
     expect(syncAgent).toContain('sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
   });

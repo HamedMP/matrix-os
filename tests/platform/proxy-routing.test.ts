@@ -1294,6 +1294,87 @@ describe("platform proxy routing", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.dispatcher).toBeDefined();
   });
 
+  it("logs sanitized VPS upstream 5xx metadata for code-domain routing", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff116",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123460,
+      publicIPv4: "203.0.113.14",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("Editor unavailable", { status: 502 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/?folder=/home/matrix/home", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(502);
+    expect(await res.text()).toBe("Editor unavailable");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[platform] code-domain vps upstream 5xx handle=alice runtimeSlot=primary publicIPv4=203.0.113.14 path=\"/\" status=502",
+    );
+    expect(warnSpy.mock.calls.join("\n")).not.toContain("clerk-session");
+    expect(warnSpy.mock.calls.join("\n")).not.toContain("platform-secret-123");
+    expect(warnSpy.mock.calls.join("\n")).not.toContain("folder=/home/matrix/home");
+  });
+
+  it("does not log code-domain upstream metadata for successful VPS responses", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff117",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "primary",
+      status: "running",
+      hetznerServerId: 123461,
+      publicIPv4: "203.0.113.15",
+      imageVersion: "matrix-os-host-2026.04.26-1",
+      provisionedAt: "2026-04-26T12:00:00.000Z",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("editor", { status: 200 }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/", {
+      headers: {
+        host: "code.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("editor");
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it("ignores stale legacy containers on app.matrix-os.com when VPS-native routing is configured", async () => {
     await updateContainerStatus(db, "alice", "stopped", "stale-container-id");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
