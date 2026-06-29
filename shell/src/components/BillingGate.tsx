@@ -3,13 +3,14 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertCircleIcon, CircleDollarSignIcon, Loader2Icon, LogInIcon } from "lucide-react";
+import { AlertCircleIcon, Loader2Icon } from "lucide-react";
 import {
   getMatrixBillingSuccessRedirectUrl,
 } from "@/lib/billing";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { MatrixBootMark } from "@/components/MatrixBootMark";
 import {
   DefaultInstallsStep,
 } from "@/components/onboarding/DefaultInstallsStep";
@@ -133,9 +134,7 @@ function SignInRedirecting() {
           }}
           aria-hidden="true"
         />
-        <div className="relative flex size-14 items-center justify-center rounded-2xl border border-forest/15 bg-cream/50 shadow-sm">
-          <LogInIcon className="size-6 text-ember" aria-hidden="true" />
-        </div>
+        <MatrixBootMark size={60} className="relative" />
         <div className="relative space-y-2">
           <h1 className="text-xl font-semibold tracking-tight text-deep">
             Opening Matrix OS sign in
@@ -178,15 +177,14 @@ function SubscriptionConfirmationPending({
         />
 
         <div className="relative flex flex-col items-center gap-5 p-8 text-center">
-          <div className="flex size-14 items-center justify-center rounded-2xl border border-forest/15 bg-white shadow-sm">
-            {failed ? (
-              <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
-            ) : (
-              <Loader2Icon className="size-6 animate-spin text-ember" aria-hidden="true" />
-            )}
-          </div>
+          <MatrixBootMark size={64} />
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
+            <p className="flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
+              {failed ? (
+                <AlertCircleIcon className="size-3.5 text-ember" aria-hidden="true" />
+              ) : (
+                <Loader2Icon className="size-3.5 animate-spin text-ember" aria-hidden="true" />
+              )}
               Matrix OS · Billing
             </p>
             <h1 className="text-2xl font-semibold tracking-tight text-deep">
@@ -245,9 +243,7 @@ function BillingStatusLoading() {
         className="flex w-full max-w-md flex-col items-center gap-4 rounded-lg border border-forest/15 bg-white/85 p-6 text-center shadow-[0_24px_80px_rgba(50,53,46,0.16)]"
         aria-live="polite"
       >
-        <span className="flex size-12 items-center justify-center rounded-md border border-forest/15 bg-cream/60">
-          <CircleDollarSignIcon className="size-5 text-ember" aria-hidden="true" />
-        </span>
+        <MatrixBootMark size={56} />
         <span className="flex items-center gap-2 text-sm font-medium text-forest">
           <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
           Loading billing status
