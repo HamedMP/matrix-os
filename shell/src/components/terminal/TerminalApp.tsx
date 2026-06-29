@@ -4843,7 +4843,9 @@ function NewSessionMenu({
           ? { right: -48, top: "calc(100% + 8px)" }
           : { left: "calc(100% + 8px)", top: 0 }),
         width: 300,
-        zIndex: 70,
+        // Sits above the collapsed rail's right divider and the terminal
+        // content so the NEW TAB menu never paints behind that edge.
+        zIndex: 120,
       }}
     >
       <div style={{ paddingBottom: 2 }}>
