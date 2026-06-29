@@ -147,21 +147,170 @@ localhost:<shellPort>   -> VPS/dev instance shell
 localhost:<gatewayPort> -> VPS/dev instance gateway
 ```
 
+Forwarders must bind only to `127.0.0.1` on the local machine unless the user explicitly asks for a public preview. The VPS-side dev shell and gateway should remain reachable only from the Matrix CLI transport, the Docker network, or loopback-bound host mappings selected by the implementation. No local-mode command should bind `0.0.0.0` or create an unauthenticated public listener.
+
 This avoids public exposure, avoids Cloudflare credentials, and gives contributors a fast local loop.
 
 ## Public Preview Model
 
 Public preview should be opt-in through `mos dev expose <name>`.
 
-Recommended public URL shape:
+Preferred public URL shape, subject to platform routing confirmation:
 
 ```text
 https://<instance>.<machine-id>.dev.matrix-os.com
 ```
 
-The parent Matrix app should remain the launcher/control plane at `https://app.matrix-os.com/dev`. Routes are good for launch/control. Subdomains are better for full shell previews because they give clean browser origin isolation for cookies, localStorage, service workers, CSP, OAuth redirects, assets, and WebSockets.
+This is intentionally scoped under `.dev.matrix-os.com`, not `<handle>.matrix-os.com`. Matrix OS currently does not support per-handle root-domain subdomains, and this design must not generate or assume them. Before implementation, platform owners must confirm that wildcard DNS/TLS and Cloudflare routing for `*.dev.matrix-os.com` can coexist with existing Workers, preview environments, and app routing. If that is not true, public previews should fall back to a platform-owned path route such as:
+
+```text
+https://dev.matrix-os.com/i/<opaque-instance-id>
+```
+
+The path-route fallback is acceptable for public preview launch, but implementers should treat it as less ideal for full shell hosting because it weakens browser-origin isolation and makes assets, redirects, service workers, OAuth callbacks, and WebSockets more fragile.
+
+The parent Matrix app should remain the launcher/control plane at `https://app.matrix-os.com/dev`. Routes are good for launch/control. Subdomains are better for full shell previews when the platform can support them safely.
 
 Contributors should not manually copy `.cloudflared/*.json` files. The platform should own tunnel provisioning and route cleanup.
+
+## Security Architecture
+
+### Auth Matrix
+
+| Surface | Caller | Authn | Authz | Exposure | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `mos dev up` | Local Matrix CLI user | Existing Matrix CLI profile/session | User must own or have write access to the target VPS/session | Local command | Starts or reconciles a named dev instance. |
+| VPS instance metadata files | Matrix CLI over VPS session | Existing Matrix CLI transport | Same user/session that owns the VPS dev workspace | VPS filesystem | Stored under `~/.matrix/dev/instances/`; never served directly. |
+| Docker compose control | Matrix CLI command executor on VPS | Existing VPS shell/session principal | Same user/session; future gateway-managed path requires owner/admin principal | VPS-local IPC | Must not be exposed over HTTP. |
+| Local shell forward | Local browser on contributor machine | Loopback-only local access plus Matrix CLI transport | Local OS user with access to the forwarded port | `127.0.0.1` only | No public bind in local mode. |
+| Local gateway forward | Local browser/tools on contributor machine | Loopback-only local access plus Matrix CLI transport | Local OS user with access to the forwarded port | `127.0.0.1` only | No public bind in local mode. |
+| `mos dev expose` | Local Matrix CLI user | Existing Matrix CLI profile/session plus platform auth | VPS owner or authorized team member | Public HTTPS | Must provision platform-owned authz before route activation. |
+| Public preview URL | Browser user | Platform preview auth, not local bypass | Owner/team/share policy | Public HTTPS | Must reject if instance is in local-auth-bypass mode without a public auth wrapper. |
+
+### Local Auth Bypass Gate
+
+A development auth bypass may exist only for local mode, and only when all of these conditions are true:
+
+1. The dev instance is marked `exposure=local` in instance metadata.
+2. The shell/gateway are reachable through Matrix CLI forwarding or loopback-only host mappings.
+3. The local forward binds `127.0.0.1`, not `0.0.0.0`.
+4. The bypass token is generated per instance, stored in the instance metadata with owner-only file permissions, and injected as an HTTP-only local session or request header by the CLI forwarder.
+5. `mos dev expose` refuses to expose an instance while local bypass is enabled unless it first switches the instance to public auth mode and restarts the shell/gateway.
+
+Public preview mode must never rely on the local bypass. It must use platform-owned authz, or the command must fail closed.
+
+### Input Validation Plan
+
+- Repo paths must resolve to an absolute path under the user allowed workspace roots on the VPS.
+- Repo detection must validate required Matrix OS markers before running compose.
+- Instance names must be normalized to `[a-z0-9][a-z0-9-]{0,62}` and rejected if normalization changes semantics ambiguously.
+- Port values must be integers within configured dev ranges and must not collide with known production/customer ports.
+- Compose project names, DB names, and bucket names must be derived from the validated slug only.
+- Public preview hostnames must use either a platform-confirmed `*.dev.matrix-os.com` wildcard or opaque IDs generated by the platform.
+
+### Error Policy
+
+- CLI errors should be actionable but must not print secrets, tunnel credentials, auth tokens, or full env files.
+- Public preview errors should be generic to browsers and detailed only in owner-visible logs.
+- Docker/compose failures should preserve command exit status and include bounded log excerpts.
+- Missing credentials should be reported as missing capability, not by printing expected secret contents.
+
+### Credential Handling
+
+- Cloudflare or platform tunnel credentials are platform-owned and must not be checked into repos or copied manually by contributors.
+- Per-instance bypass tokens must be generated locally, stored with owner-only permissions, and rotated on `mos dev rm`, `mos dev expose`, and explicit `mos dev doctor --rotate-token`.
+- Env files must be generated outside the repo by default and redacted in logs.
+
+## Integration Wiring
+
+### Startup Sequence
+
+`mos dev up --path <repo> --name <name>` should execute this sequence:
+
+1. Resolve the target repo path on the VPS.
+2. Validate Matrix OS repo markers.
+3. Normalize or derive the instance name.
+4. Acquire the global dev-instance allocation lock.
+5. Load existing instance metadata, if any.
+6. Allocate or reuse a shell/gateway port pair.
+7. Write instance metadata and env files atomically.
+8. Release the allocation lock.
+9. Start Docker compose with `-p matrix-dev-<name>` and the generated env file.
+10. Poll gateway health with a bounded timeout.
+11. Start or refresh local Matrix CLI forwards for shell and gateway.
+12. Print the local URLs and health state.
+
+`mos dev expose <name>` should execute this sequence:
+
+1. Load instance metadata.
+2. Verify the caller owns or can administer the instance.
+3. Verify the instance is healthy locally or start it.
+4. Refuse exposure if local auth bypass is enabled and public auth cannot be configured.
+5. Ask the platform to provision a tunnel/route.
+6. Persist public exposure metadata only after platform route creation succeeds.
+7. Verify the public URL returns an authenticated shell response.
+
+### Cross-Package Communication
+
+The first implementation can drive Docker directly from the CLI over the existing Matrix shell/session transport. A future app-driven implementation should call a gateway or sync-agent capability with explicit dependencies; it must not use `globalThis` or hidden process state. Platform-owned tunnel provisioning should be exposed through a typed platform API rather than direct Cloudflare CLI calls from customer code.
+
+### Config Injection
+
+Runtime config flows from generated per-instance env files into compose and then into shell/gateway processes. Production/customer systemd units remain the source of truth for installed Matrix OS and keep `3000/4000` unless explicitly changed by deployment code.
+
+## Failure Modes
+
+| Failure | Required behavior |
+| --- | --- |
+| Two `mos dev up` commands race | Allocation lock serializes metadata/port selection; losing command reloads metadata and retries. |
+| Metadata write fails midway | Write to temp file then rename; never leave partially-written JSON as canonical state. |
+| Env write fails midway | Write to temp file then rename; compose is not started until env and metadata are durable. |
+| Compose start fails | Keep metadata with `status=failed`; surface bounded logs; `mos dev rm` can clean up. |
+| Gateway health times out | Mark instance degraded; keep logs available; do not start public exposure. |
+| Local forward fails | Instance may remain healthy; CLI reports forwarding failure and suggests a new port or cleanup. |
+| Public route provisioning fails | Local mode remains usable; no public metadata is committed unless route verification succeeds. |
+| CLI crashes after metadata write but before compose | Next `mos dev up` reconciles metadata with actual Docker state. |
+| VPS reboots | `mos dev list` reconciles metadata, Docker state, and forwarded sessions; stale forwards are dropped. |
+
+Default timeouts:
+
+- Docker compose start: 120 seconds before degraded status.
+- Gateway health polling: 60 seconds, 2 second interval.
+- Local forward establishment: 10 seconds.
+- Public route verification: 30 seconds.
+
+Errors must propagate to the CLI caller. Implementation must not swallow compose, filesystem, or platform-route errors silently.
+
+## Atomic Port Allocation
+
+Port allocation must be protected by an exclusive lock file under the instance metadata directory, for example:
+
+```text
+~/.matrix/dev/instances/.allocation.lock
+```
+
+The implementation should acquire the lock using exclusive file creation (`open` with `flag: 'wx'`) and write lock owner metadata including PID, hostname, command, and timestamp. If the lock exists, the CLI waits with a bounded timeout and treats stale locks as recoverable only after verifying the owning process is gone or the timestamp exceeds the stale-lock threshold.
+
+After acquiring the lock, the CLI must:
+
+1. Reload all instance metadata.
+2. Probe candidate ports.
+3. Reserve the selected pair in metadata.
+4. Write metadata atomically via temp file + rename.
+5. Release the lock.
+
+This avoids the check-then-write race where two concurrent commands pick the same first free port.
+
+## Resource Management
+
+- `mos dev stop <name>` stops containers and forwards but preserves metadata, volumes, and generated env.
+- `mos dev rm <name>` removes local forwards, compose containers, compose network, generated env, metadata, and public exposure metadata after confirmation.
+- Volume deletion should require either `--volumes` or an interactive confirmation because it can delete workspace state.
+- `mos dev prune` can remove stopped instances older than a TTL, but must default to dry-run.
+- Metadata files should be small JSON documents; log commands should stream bounded tails by default.
+- Public preview routes should have owner, instance, created-at, last-used-at, and TTL metadata for cleanup.
+- VPS deprovisioning must revoke public routes and remove platform-owned tunnel credentials.
+- Local forwards should be closed on CLI exit and reconciled by `mos dev list` if the CLI crashes.
 
 ## CLI Surface
 
@@ -262,7 +411,7 @@ The terminal should support named session attach, dev logs/shells, `mos dev up`,
 - Should public preview default to opaque instance IDs or human-readable slugs? Proposed answer: human-readable locally, opaque or owner-scoped publicly.
 - Should instance metadata live on the local machine, the VPS, or both? Proposed answer: VPS is source of truth; local CLI caches active forwards.
 - Should `mos dev up` create containers directly or ask the gateway/sync-agent to do it? Proposed answer: CLI can drive the first version; gateway-managed orchestration is better long term for app UI control.
-- Should the dev instance reuse user-level Clerk auth or have an insecure local-only bypass? Proposed answer: local-only bypass can exist for development; public preview must use real auth.
+- Should the dev instance reuse user-level Clerk auth or have an insecure local-only bypass? Proposed answer: local-only bypass may exist only under the explicit gate in Security Architecture; public preview must use platform auth and must fail closed if that gate cannot be disabled.
 - How should multiple repo checkouts share or isolate package cache and Docker build cache? Proposed answer: share caches, isolate runtime state.
 - What terminal surface should become the default for contributors who do not have a polished terminal installed?
 
