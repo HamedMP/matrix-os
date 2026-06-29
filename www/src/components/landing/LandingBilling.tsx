@@ -1,39 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
-import { CheckCircle2Icon, CreditCardIcon, ShieldCheckIcon } from "lucide-react";
+import { ArrowRightIcon, CheckCircle2Icon, CreditCardIcon, ShieldCheckIcon } from "lucide-react";
 import { capturePostHogEvent } from "@/lib/posthog-client";
+import { LANDING_PLANS, specLine } from "@/lib/billing-plans";
 import { palette as c, fonts } from "./theme";
 import { SectionCard, SectionShell, SectionTitle } from "./primitives";
 import { Reveal } from "./Reveal";
 import { SIGN_UP_HREF } from "./links";
-
-const plans = [
-  {
-    name: "Starter",
-    monthly: "$14",
-    annual: "$140",
-    machine: "CPX22",
-    specs: "2 vCPU / 4 GB RAM / 80 GB disk",
-    popular: false,
-  },
-  {
-    name: "Builder",
-    monthly: "$19",
-    annual: "$190",
-    machine: "CPX32",
-    specs: "4 vCPU / 8 GB RAM / 160 GB disk",
-    popular: true,
-  },
-  {
-    name: "Max",
-    monthly: "$49",
-    annual: "$490",
-    machine: "CPX52",
-    specs: "12 vCPU / 24 GB RAM / 480 GB disk",
-    popular: false,
-  },
-] as const;
 
 const valueProps = [
   {
@@ -101,10 +75,16 @@ export function LandingBilling() {
 
             <div className="px-7 py-9 md:px-12 md:py-12">
               <div className="overflow-hidden rounded-xl" style={{ border: `1px solid ${c.border}` }}>
-                {plans.map((plan, index) => (
-                  <div
-                    key={plan.name}
-                    className={`flex items-center justify-between gap-4 px-5 py-5 ${index < plans.length - 1 ? "border-b" : ""}`}
+                {LANDING_PLANS.map((plan, index) => (
+                  <a
+                    key={plan.planSlug}
+                    href={`/sign-up?plan=${plan.urlSlug}`}
+                    data-ph-event="marketing_billing_plan_clicked"
+                    data-ph-location="pricing_section"
+                    data-ph-target={plan.urlSlug}
+                    className={`group flex items-center justify-between gap-4 px-5 py-5 transition-colors hover:bg-[rgba(67,78,63,0.05)] ${
+                      index < LANDING_PLANS.length - 1 ? "border-b" : ""
+                    }`}
                     style={{
                       borderColor: c.border,
                       backgroundColor: plan.popular ? "rgba(67,78,63,0.04)" : undefined,
@@ -113,7 +93,7 @@ export function LandingBilling() {
                     <div>
                       <div className="flex items-center gap-2.5">
                         <h3 className="text-[1.0625rem] font-medium" style={{ color: c.deep, fontFamily: fonts.sans }}>
-                          {plan.name}
+                          {plan.label}
                         </h3>
                         {plan.popular ? (
                           <span
@@ -125,21 +105,28 @@ export function LandingBilling() {
                         ) : null}
                       </div>
                       <p className="mt-1 text-[0.8125rem]" style={{ color: c.subtle }}>
-                        {plan.machine} · {plan.specs}
+                        {plan.machine} · {specLine(plan)}
                       </p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-[2rem] leading-none" style={{ fontFamily: fonts.display, color: c.forest }}>
-                        {plan.monthly}
-                        <span className="ml-1 text-[0.8125rem]" style={{ color: c.subtle, fontFamily: fonts.sans }}>
-                          /mo
-                        </span>
-                      </p>
-                      <p className="mt-1 text-[0.8125rem]" style={{ color: c.subtle }}>
-                        {plan.annual}/yr
-                      </p>
+                    <div className="flex items-center gap-3 text-right">
+                      <div>
+                        <p className="text-[2rem] leading-none" style={{ fontFamily: fonts.display, color: c.forest }}>
+                          {plan.monthly}
+                          <span className="ml-1 text-[0.8125rem]" style={{ color: c.subtle, fontFamily: fonts.sans }}>
+                            /mo
+                          </span>
+                        </p>
+                        <p className="mt-1 text-[0.8125rem]" style={{ color: c.subtle }}>
+                          {plan.annual}/yr
+                        </p>
+                      </div>
+                      <ArrowRightIcon
+                        className="size-4 shrink-0 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100"
+                        style={{ color: c.forest }}
+                        aria-hidden="true"
+                      />
                     </div>
-                  </div>
+                  </a>
                 ))}
               </div>
 
