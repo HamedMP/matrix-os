@@ -6,12 +6,17 @@ export function createMockHetznerClient(overrides: Partial<HetznerClient> = {}):
   const defaultServer: HetznerServer = {
     id: 123456,
     status: 'running',
+    serverType: 'cpx22',
     publicIPv4: '203.0.113.10',
     publicIPv6: '2001:db8::/64',
   };
   return {
     createServer: vi.fn().mockResolvedValue(defaultServer),
     getServer: vi.fn().mockResolvedValue(defaultServer),
+    shutdownServer: vi.fn().mockResolvedValue(undefined),
+    powerOffServer: vi.fn().mockResolvedValue(undefined),
+    powerOnServer: vi.fn().mockResolvedValue(undefined),
+    resizeServer: vi.fn().mockResolvedValue(undefined),
     deleteServer: vi.fn().mockResolvedValue(undefined),
     listServersByLabel: vi.fn().mockResolvedValue([]),
     ...overrides,

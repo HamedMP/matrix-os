@@ -25,9 +25,15 @@ export interface CreateHetznerServerInput {
   serverType?: string;
 }
 
+export interface ResizeHetznerServerInput {
+  serverType: string;
+  upgradeDisk: boolean;
+}
+
 export interface HetznerServer {
   id: number;
   status: string;
+  serverType?: string;
   publicIPv4?: string;
   publicIPv6?: string;
   labels?: Record<string, string>;
@@ -36,6 +42,10 @@ export interface HetznerServer {
 export interface HetznerClient {
   createServer(input: CreateHetznerServerInput): Promise<HetznerServer>;
   getServer(serverId: number): Promise<HetznerServer | null>;
+  shutdownServer(serverId: number): Promise<void>;
+  powerOffServer(serverId: number): Promise<void>;
+  powerOnServer(serverId: number): Promise<void>;
+  resizeServer(serverId: number, input: ResizeHetznerServerInput): Promise<void>;
   deleteServer(serverId: number): Promise<void>;
   listServersByLabel?(labelSelector: string): Promise<HetznerServer[]>;
 }
@@ -50,6 +60,7 @@ function requireToken(config: CustomerVpsConfig): string {
 function mapServer(server: {
   id?: unknown;
   status?: unknown;
+  server_type?: { name?: unknown };
   public_net?: { ipv4?: { ip?: unknown }; ipv6?: { ip?: unknown } };
   labels?: unknown;
 }): HetznerServer {
@@ -59,6 +70,7 @@ function mapServer(server: {
   return {
     id: server.id,
     status: server.status,
+    serverType: typeof server.server_type?.name === 'string' ? server.server_type.name : undefined,
     publicIPv4: typeof server.public_net?.ipv4?.ip === 'string' ? server.public_net.ipv4.ip : undefined,
     publicIPv6: typeof server.public_net?.ipv6?.ip === 'string' ? server.public_net.ipv6.ip : undefined,
     labels: server.labels && typeof server.labels === 'object'
@@ -156,6 +168,56 @@ export function createHetznerClient(
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       return parseServer(await parseJson(res));
+    },
+
+    async shutdownServer(serverId) {
+      const res = await request(`/servers/${serverId}/actions/shutdown`, { method: 'POST' });
+      if (res.status === 429) {
+        throw new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable');
+      }
+      if (!res.ok) {
+        await logProviderRejection('shutdownServer', res);
+        throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+      }
+    },
+
+    async powerOffServer(serverId) {
+      const res = await request(`/servers/${serverId}/actions/poweroff`, { method: 'POST' });
+      if (res.status === 429) {
+        throw new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable');
+      }
+      if (!res.ok) {
+        await logProviderRejection('powerOffServer', res);
+        throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+      }
+    },
+
+    async powerOnServer(serverId) {
+      const res = await request(`/servers/${serverId}/actions/poweron`, { method: 'POST' });
+      if (res.status === 429) {
+        throw new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable');
+      }
+      if (!res.ok) {
+        await logProviderRejection('powerOnServer', res);
+        throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+      }
+    },
+
+    async resizeServer(serverId, input) {
+      const res = await request(`/servers/${serverId}/actions/change_type`, {
+        method: 'POST',
+        body: JSON.stringify({
+          server_type: input.serverType,
+          upgrade_disk: input.upgradeDisk,
+        }),
+      });
+      if (res.status === 429) {
+        throw new CustomerVpsError(429, 'quota_exceeded', 'Provisioning capacity unavailable');
+      }
+      if (!res.ok) {
+        await logProviderRejection('resizeServer', res);
+        throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+      }
     },
 
     async deleteServer(serverId) {

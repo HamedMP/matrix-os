@@ -13,12 +13,15 @@ import {
   listPendingProviderDeletions,
   listAllUserMachines,
   listRunningUserMachines,
+  listStaleResizingUserMachines,
   listStaleUserMachines,
   lockUserMachineProvisioning,
   retireUserMachine,
   markProviderDeletionCompleted,
   markProviderDeletionFailed,
   runInPlatformTransaction,
+  claimRunningUserMachineResize,
+  completeUserMachineResize,
   updateUserMachine,
 } from './db.js';
 import type { CustomerVpsConfig } from './customer-vps-config.js';
@@ -45,6 +48,7 @@ import type {
   ProvisionRequest,
   RegisterRequest,
   RecoverRequest,
+  ResizeMachineRequest,
 } from './customer-vps-schema.js';
 import {
   getRuntimeAccessDecision,
@@ -82,6 +86,12 @@ export interface RecoverResponse {
   etaSeconds: number;
 }
 
+export interface ResizeResponse {
+  machineId: string;
+  serverType: string;
+  status: 'running';
+}
+
 export interface StatusResponse {
   machineId: string;
   clerkUserId: string;
@@ -114,6 +124,7 @@ export interface CustomerVpsService {
   provision(input: ProvisionRequest): Promise<ProvisionResponse>;
   register(token: string | undefined, input: RegisterRequest): Promise<RegisterResponse>;
   recover(input: RecoverRequest): Promise<RecoverResponse>;
+  resize(input: ResizeMachineRequest & { machineId: string }): Promise<ResizeResponse>;
   status(machineId: string): Promise<StatusResponse>;
   delete(machineId: string): Promise<DeleteResponse>;
   deploy(target?: DeployTarget): Promise<DeployResult>;
@@ -184,6 +195,8 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
 
 const PROVIDER_DELETION_RETRY_BASE_MS = 60_000;
 const PROVIDER_DELETION_RETRY_MAX_MS = 60 * 60_000;
+const RESIZE_STATUS_POLL_INTERVAL_MS = 1_000;
+const RESIZE_STATUS_POLL_TIMEOUT_MS = 90_000;
 
 function activeProvisionResponse(row: UserMachineRecord, etaSeconds: number): ProvisionResponse {
   if (row.status !== 'provisioning' && row.status !== 'running') {
@@ -361,11 +374,66 @@ async function resolveBillingRecoveryContext(
   return { serverType };
 }
 
+async function assertBillingResizeAllowed(
+  deps: CustomerVpsServiceDeps,
+  clerkUserId: string,
+  serverType: string,
+  now: Date,
+): Promise<void> {
+  if (!deps.resolveBillingEntitlement) {
+    return;
+  }
+  const entitlement = await deps.resolveBillingEntitlement(clerkUserId);
+  const access = getRuntimeAccessDecision(entitlement, now);
+  if (!entitlement || !access.runtimeProxyAllowed || !entitlement.allowedServerTypes.includes(serverType)) {
+    throw billingUpgradeRequired();
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function createCustomerVpsService(deps: CustomerVpsServiceDeps): CustomerVpsService {
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
   const tokenFactory = deps.tokenFactory ?? createRegistrationToken;
   const postgresPasswordFactory = deps.postgresPasswordFactory ?? (() => randomBytes(24).toString('base64url'));
   const now = deps.now ?? (() => new Date());
+
+  async function waitForServerStatus(
+    serverId: number,
+    expectedStatus: string,
+    context: string,
+  ): Promise<void> {
+    const deadline = Date.now() + RESIZE_STATUS_POLL_TIMEOUT_MS;
+    for (;;) {
+      let server: Awaited<ReturnType<typeof deps.hetzner.getServer>>;
+      try {
+        server = await deps.hetzner.getServer(serverId);
+      } catch (err: unknown) {
+        if (Date.now() >= deadline) {
+          throw new CustomerVpsError(500, 'provider_timeout', 'Provisioning provider unavailable');
+        }
+        logCustomerVpsError(`resize ${context} server read failed serverId=${serverId}`, err);
+        await sleep(RESIZE_STATUS_POLL_INTERVAL_MS);
+        continue;
+      }
+      if (!server) {
+        throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
+      }
+      if (server.status === expectedStatus) {
+        return;
+      }
+      if (Date.now() >= deadline) {
+        throw new CustomerVpsError(500, 'provider_timeout', 'Provisioning provider unavailable');
+      }
+      logCustomerVpsError(
+        `resize ${context} waiting for serverId=${serverId}`,
+        new Error(`expected ${expectedStatus}, got ${server.status}`),
+      );
+      await sleep(RESIZE_STATUS_POLL_INTERVAL_MS);
+    }
+  }
 
   async function queueProviderDeletion(input: {
     providerServerId: number;
@@ -712,6 +780,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (active.status === 'recovering') {
         throw new CustomerVpsError(409, 'invalid_state', 'Recovery already in progress');
       }
+      if (active.status === 'resizing') {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot recover');
+      }
       // This R2 check is an advisory fast-fail before the DB claim. The
       // claimUserMachineRecovery WHERE clause below remains the authoritative
       // concurrency guard; keeping the backup check before the claim avoids
@@ -844,6 +915,159 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       };
     },
 
+    async resize(input) {
+      const row = await getUserMachine(deps.db, input.machineId);
+      if (!row || row.deletedAt) {
+        throw new CustomerVpsError(404, 'not_found', 'Machine not found');
+      }
+      if (row.status !== 'running' || row.hetznerServerId === null) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resize');
+      }
+      if (row.serverType === input.serverType) {
+        return {
+          machineId: row.machineId,
+          serverType: input.serverType,
+          status: 'running',
+        };
+      }
+
+      await assertBillingResizeAllowed(deps, row.clerkUserId, input.serverType, now());
+      const claimed = await claimRunningUserMachineResize(
+        deps.db,
+        row.machineId,
+        row.hetznerServerId,
+        now().toISOString(),
+        input.serverType,
+      );
+      if (!claimed) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resize');
+      }
+
+      let serverConfirmedOff = false;
+      let resizeAccepted = false;
+      let powerOffAccepted = false;
+      let powerOnAccepted = false;
+      try {
+        try {
+          await deps.hetzner.shutdownServer(claimed.hetznerServerId!);
+          await waitForServerStatus(claimed.hetznerServerId!, 'off', 'shutdown');
+        } catch (shutdownErr: unknown) {
+          logCustomerVpsError(`resize graceful shutdown failed machineId=${claimed.machineId}`, shutdownErr);
+          await deps.hetzner.powerOffServer(claimed.hetznerServerId!);
+          powerOffAccepted = true;
+          await waitForServerStatus(claimed.hetznerServerId!, 'off', 'poweroff');
+        }
+        serverConfirmedOff = true;
+        await deps.hetzner.resizeServer(claimed.hetznerServerId!, {
+          serverType: input.serverType,
+          upgradeDisk: false,
+        });
+        resizeAccepted = true;
+        await waitForServerStatus(claimed.hetznerServerId!, 'off', 'resize');
+        await deps.hetzner.powerOnServer(claimed.hetznerServerId!);
+        serverConfirmedOff = false;
+        powerOnAccepted = true;
+        await waitForServerStatus(claimed.hetznerServerId!, 'running', 'poweron');
+        const updated = await completeUserMachineResize(
+          deps.db,
+          claimed.machineId,
+          claimed.hetznerServerId!,
+          {
+            status: 'running',
+            serverType: input.serverType,
+            failureCode: null,
+            failureAt: null,
+            resizeStartedAt: null,
+            resizeTargetServerType: null,
+          },
+        );
+        if (!updated) {
+          logCustomerVpsError(
+            `resize completion lost machineId=${claimed.machineId} hetznerServerId=${claimed.hetznerServerId}`,
+            new Error('resizing row no longer matched guarded completion update'),
+          );
+          throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resize');
+        }
+        return {
+          machineId: updated.machineId,
+          serverType: updated.serverType ?? input.serverType,
+          status: 'running',
+        };
+      } catch (err: unknown) {
+        const mapped = genericProviderError(err);
+        if (powerOnAccepted) {
+          logCustomerVpsError(
+            `resize poweron pending machineId=${claimed.machineId}`,
+            new Error('poweron accepted but running status was not confirmed'),
+          );
+          throw mapped;
+        }
+        if (powerOffAccepted && !serverConfirmedOff) {
+          logCustomerVpsError(
+            `resize poweroff pending machineId=${claimed.machineId}`,
+            new Error('poweroff accepted but off status was not confirmed'),
+          );
+          throw mapped;
+        }
+        if (resizeAccepted && serverConfirmedOff) {
+          logCustomerVpsError(
+            `resize provider change pending machineId=${claimed.machineId}`,
+            new Error('resize accepted but settled off status was not confirmed'),
+          );
+          throw mapped;
+        }
+        let restoredRunning = !serverConfirmedOff;
+        if (serverConfirmedOff) {
+          let rollbackPowerOnAccepted = false;
+          try {
+            await deps.hetzner.powerOnServer(claimed.hetznerServerId!);
+            rollbackPowerOnAccepted = true;
+            await waitForServerStatus(claimed.hetznerServerId!, 'running', 'rollback-poweron');
+            restoredRunning = true;
+          } catch (powerOnErr: unknown) {
+            logCustomerVpsError(`resize rollback poweron failed machineId=${claimed.machineId}`, powerOnErr);
+            if (rollbackPowerOnAccepted) {
+              logCustomerVpsError(
+                `resize rollback poweron pending machineId=${claimed.machineId}`,
+                new Error('rollback poweron accepted but running status was not confirmed'),
+              );
+              throw mapped;
+            }
+          }
+        }
+
+        const restored = await completeUserMachineResize(
+          deps.db,
+          claimed.machineId,
+          claimed.hetznerServerId!,
+          restoredRunning
+            ? {
+                status: 'running',
+                serverType: resizeAccepted ? input.serverType : row.serverType,
+                failureCode: null,
+                failureAt: null,
+                resizeStartedAt: null,
+                resizeTargetServerType: null,
+              }
+            : {
+                status: 'failed',
+                serverType: resizeAccepted ? input.serverType : row.serverType,
+                failureCode: toFailureCode(err),
+                failureAt: now().toISOString(),
+                resizeStartedAt: null,
+                resizeTargetServerType: null,
+              },
+        );
+        if (!restored) {
+          logCustomerVpsError(
+            `resize rollback lost machineId=${claimed.machineId} hetznerServerId=${claimed.hetznerServerId}`,
+            new Error('resizing row no longer matched guarded rollback update'),
+          );
+        }
+        throw mapped;
+      }
+    },
+
     async status(machineId) {
       const row = await getUserMachine(deps.db, machineId);
       if (!row) {
@@ -855,6 +1079,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     async delete(machineId) {
       const row = await claimUserMachineDelete(deps.db, machineId, now().toISOString());
       if (!row) {
+        const existing = await getUserMachine(deps.db, machineId);
+        if (existing && !existing.deletedAt) {
+          throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot delete');
+        }
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
       if (row.hetznerServerId) {
@@ -935,6 +1163,11 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         staleBefore,
         deps.config.reconciliationBatchSize,
       );
+      const resizingRows = await listStaleResizingUserMachines(
+        deps.db,
+        staleBefore,
+        deps.config.reconciliationBatchSize,
+      );
       let failed = 0;
       let running = 0;
       for (const row of rows) {
@@ -997,9 +1230,108 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           running += 1;
         }
       }
+      for (const row of resizingRows) {
+        if (!row.hetznerServerId) {
+          await updateUserMachine(deps.db, row.machineId, {
+            status: 'failed',
+            failureCode: 'provider_unavailable',
+            failureAt: now().toISOString(),
+            resizeStartedAt: null,
+            resizeTargetServerType: null,
+          });
+          failed += 1;
+          continue;
+        }
+        const server = await deps.hetzner.getServer(row.hetznerServerId);
+        if (!server) {
+          await updateUserMachine(deps.db, row.machineId, {
+            status: 'failed',
+            failureCode: 'not_found',
+            failureAt: now().toISOString(),
+            resizeStartedAt: null,
+            resizeTargetServerType: null,
+          });
+          failed += 1;
+          continue;
+        }
+        if (server.status === 'off') {
+          try {
+            await deps.hetzner.powerOnServer(row.hetznerServerId);
+            await waitForServerStatus(row.hetznerServerId, 'running', 'reconcile-resize-poweron');
+          } catch (err: unknown) {
+            logCustomerVpsError(`resize reconcile poweron failed machineId=${row.machineId}`, err);
+            continue;
+          }
+        } else if (server.status !== 'running') {
+          logCustomerVpsError(
+            `resize reconcile waiting machineId=${row.machineId}`,
+            new Error(`server status ${server.status}`),
+          );
+          continue;
+        }
+        let latestServer = server.status === 'running' ? server : null;
+        if (!latestServer) {
+          try {
+            latestServer = await deps.hetzner.getServer(row.hetznerServerId);
+          } catch (err: unknown) {
+            logCustomerVpsError(`resize reconcile server refresh failed machineId=${row.machineId}`, err);
+            continue;
+          }
+        }
+        if (!latestServer || latestServer.status !== 'running') {
+          continue;
+        }
+        const targetServerType = row.resizeTargetServerType;
+        if (targetServerType && !latestServer.serverType) {
+          logCustomerVpsError(
+            `resize reconcile missing server type machineId=${row.machineId}`,
+            new Error(`target ${targetServerType}`),
+          );
+          continue;
+        }
+        if (targetServerType && latestServer.serverType !== targetServerType) {
+          const completed = await completeUserMachineResize(
+            deps.db,
+            row.machineId,
+            row.hetznerServerId,
+            {
+              status: 'running',
+              serverType: latestServer.serverType,
+              publicIPv4: latestServer.publicIPv4 ?? row.publicIPv4,
+              publicIPv6: latestServer.publicIPv6 ?? row.publicIPv6,
+              failureCode: 'resize_interrupted',
+              failureAt: now().toISOString(),
+              resizeStartedAt: null,
+              resizeTargetServerType: null,
+            },
+          );
+          if (completed) {
+            failed += 1;
+          }
+          continue;
+        }
+        const completed = await completeUserMachineResize(
+          deps.db,
+          row.machineId,
+          row.hetznerServerId,
+          {
+            status: 'running',
+            serverType: latestServer.serverType ?? row.resizeTargetServerType ?? row.serverType,
+            publicIPv4: latestServer.publicIPv4 ?? row.publicIPv4,
+            publicIPv6: latestServer.publicIPv6 ?? row.publicIPv6,
+            failureCode: null,
+            failureAt: null,
+            resizeStartedAt: null,
+            resizeTargetServerType: null,
+          },
+        );
+        if (completed) {
+          running += 1;
+        }
+      }
       await retryProviderDeletions();
       await retryRunningMachineMetadata();
-      return { checked: rows.length, failed, running };
+      return { checked: rows.length + resizingRows.length, failed, running };
     },
   };
 }
