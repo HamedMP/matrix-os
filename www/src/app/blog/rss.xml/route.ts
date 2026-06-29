@@ -11,6 +11,10 @@ function escapeXml(value: string) {
     .replaceAll("'", "&apos;");
 }
 
+function escapeCdata(value: string) {
+  return value.replaceAll("]]>", "]]]]><![CDATA[>");
+}
+
 export async function GET() {
   const posts = getBlogPosts();
   const items = await Promise.all(
@@ -26,7 +30,7 @@ export async function GET() {
         `<author>${escapeXml(post.author)}</author>`,
         `<category>${escapeXml(post.category)}</category>`,
         `<pubDate>${new Date(post.publishedAt).toUTCString()}</pubDate>`,
-        `<content:encoded><![CDATA[${markdown}]]></content:encoded>`,
+        `<content:encoded><![CDATA[${escapeCdata(markdown)}]]></content:encoded>`,
         "</item>",
       ].join("\n");
     }),

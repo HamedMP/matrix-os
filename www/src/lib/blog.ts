@@ -40,5 +40,9 @@ export function formatBlogDate(value: string) {
 }
 
 export async function getBlogPostMarkdown(post: BlogPost) {
-  return post.getText('processed').catch(() => post.getText('raw'));
+  return post.getText('processed').catch((err: unknown) => {
+    const reason = err instanceof Error ? err.name : typeof err;
+    console.warn(`[blog] processed markdown unavailable (${reason}); falling back to raw`);
+    return post.getText('raw');
+  });
 }

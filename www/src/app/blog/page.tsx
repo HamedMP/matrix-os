@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { BlogCard, BlogIndexHero, BlogShell } from "@/components/blog/BlogChrome";
-import { getBlogPosts } from "@/lib/blog";
+import { getBlogPostCanonicalUrl, getBlogPosts } from "@/lib/blog";
 import { palette as c } from "@/components/landing/theme";
 
 export const metadata: Metadata = {
@@ -54,7 +54,7 @@ export default async function BlogIndexPage() {
       datePublished: post.publishedAt,
       dateModified: post.updatedAt ?? post.publishedAt,
       author: { "@type": "Organization", name: post.author },
-      url: `https://matrix-os.com/blog/${post.info.path.replace(/\.mdx$/, "")}`,
+      url: getBlogPostCanonicalUrl(post),
     })),
   });
 

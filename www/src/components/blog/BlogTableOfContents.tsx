@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ListTreeIcon } from "lucide-react";
 import type { TOCItemType } from "fumadocs-core/toc";
 import { palette as c } from "@/components/landing/theme";
@@ -10,10 +10,10 @@ function getItemId(item: TOCItemType) {
 }
 
 export function BlogTableOfContents({ items }: { items: TOCItemType[] }) {
-  const ids = useMemo(() => items.map(getItemId), [items]);
-  const [activeId, setActiveId] = useState(ids[0] ?? "");
+  const [activeId, setActiveId] = useState(() => (items[0] ? getItemId(items[0]) : ""));
 
   useEffect(() => {
+    const ids = items.map(getItemId);
     if (ids.length === 0) return;
 
     const headings = ids
@@ -34,14 +34,28 @@ export function BlogTableOfContents({ items }: { items: TOCItemType[] }) {
           }
         }
 
+        let nextActiveId = "";
         if (visible.size > 0) {
-          const [nextId] = [...visible.entries()].sort((a, b) => a[1] - b[1])[0];
-          setActiveId(nextId);
-          return;
+          let nearestTop = Number.POSITIVE_INFINITY;
+          for (const [id, top] of visible) {
+            if (top < nearestTop) {
+              nextActiveId = id;
+              nearestTop = top;
+            }
+          }
+        } else {
+          for (let index = headings.length - 1; index >= 0; index -= 1) {
+            const heading = headings[index];
+            if (heading && heading.getBoundingClientRect().top < 140) {
+              nextActiveId = heading.id;
+              break;
+            }
+          }
         }
 
-        const previous = [...headings].reverse().find((heading) => heading.getBoundingClientRect().top < 140);
-        if (previous) setActiveId(previous.id);
+        if (nextActiveId) {
+          setActiveId((current) => (current === nextActiveId ? current : nextActiveId));
+        }
       },
       {
         rootMargin: "-112px 0px -62% 0px",
@@ -54,7 +68,7 @@ export function BlogTableOfContents({ items }: { items: TOCItemType[] }) {
     }
 
     return () => observer.disconnect();
-  }, [ids]);
+  }, [items]);
 
   if (items.length === 0) return null;
 
