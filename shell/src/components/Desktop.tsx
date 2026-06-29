@@ -58,7 +58,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
-import { ManualSetupStickers } from "./onboarding/ManualSetupStickers";
+import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
@@ -1881,15 +1881,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
           {modeConfig.showWindows && desktopMode === "canvas" && (
             <CanvasRenderer>
               {manualSetupVisible && (
-                <ManualSetupStickers
-                  onOpenTerminal={openSetupTerminal}
-                  onAskHermes={() => {
-                    focusOrOpen("Hermes", "__chat__");
-                    setTaskBoardOpen(false);
-                    setSettingsOpen(false);
-                  }}
-                  onClose={() => setManualSetupVisible(false)}
-                />
+                <SetupChecklist onOpenTerminal={openSetupTerminal} />
               )}
             </CanvasRenderer>
           )}
