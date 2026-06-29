@@ -11,13 +11,13 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.3",
-    "tsx": "^4.21.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
     "@matrix-os/observability": "workspace:*",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^12.11.1",
     "hono": "^4.11.9",
     "prom-client": "^15.1.3"
   }
