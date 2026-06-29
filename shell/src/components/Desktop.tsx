@@ -47,7 +47,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, Code2Icon } from "lucide-react";
+import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, Code2Icon, LayoutGridIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -1572,7 +1572,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                         }`}
                         style={{ width: dock.iconSize, height: dock.iconSize }}
                       >
-                        <KanbanSquareIcon className="size-4" />
+                        <LayoutGridIcon className="size-4" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side={tooltipSide} sideOffset={8}>
@@ -1700,7 +1700,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     : "bg-card border-border/60"
                 }`}
               >
-                <KanbanSquareIcon className="size-4" />
+                <LayoutGridIcon className="size-4" />
               </button>
             )}            <button
               type="button"
