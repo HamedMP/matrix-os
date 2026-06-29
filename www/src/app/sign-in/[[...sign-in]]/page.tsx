@@ -17,8 +17,8 @@ export default function SignInPage() {
       <AuthLayout
         featureContent={
           <FeatureShowcase
-            heading="Welcome back"
-            subheading="Sign in to your Matrix account, then continue to your cloud computer when it is provisioned."
+            variant="roster"
+            subheading="Welcome back. Your machine and agents are right where you left them."
           />
         }
         formContent={

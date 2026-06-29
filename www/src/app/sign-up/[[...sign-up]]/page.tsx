@@ -20,8 +20,8 @@ export default function SignUpPage() {
       <AuthLayout
         featureContent={
           <FeatureShowcase
-            heading="Start with a free account"
-            subheading="Create your Matrix identity first. The 3-day hosted trial starts only when you provision a cloud computer."
+            variant="product"
+            subheading="Create your free account. Your private machine spins up only when you provision it."
           />
         }
         formContent={
