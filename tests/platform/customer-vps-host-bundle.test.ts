@@ -105,6 +105,8 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
     expect(installer).toContain('run_npm_install()');
     expect(installer).toContain('run_as_root()');
+    expect(installer).toContain('[ -x "$MATRIX_RUNTIME_DIR/code-server/bin/code-server" ]');
+    expect(installer).not.toContain('command -v code-server >/dev/null 2>&1');
     expect(installer).toContain('run_as_root rm -rf "$MATRIX_RUNTIME_DIR/code-server"');
     expect(installer).toContain('run_as_root mv "$tmp_dir/$CODE_SERVER_DIST" "$MATRIX_RUNTIME_DIR/code-server"');
     expect(installer).not.toContain('sudo rm -rf "$MATRIX_RUNTIME_DIR/code-server"');

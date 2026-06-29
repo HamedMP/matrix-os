@@ -220,7 +220,7 @@ install_coding_agents() {
 }
 
 install_code_server() {
-  if command -v code-server >/dev/null 2>&1; then
+  if [ -x "$MATRIX_RUNTIME_DIR/code-server/bin/code-server" ]; then
     log "code-server is already installed"
     return
   fi
