@@ -4832,7 +4832,6 @@ function NewSessionMenu({
       </div>
       <NewSessionMenuItem
         label="Shell"
-        shortcut="⌘T"
         active
         icon={(
           <TerminalIcon
@@ -4850,7 +4849,6 @@ function NewSessionMenu({
           <NewSessionMenuItem
             key={option.id}
             label={option.label}
-            shortcut={installed ? option.shortcut : undefined}
             install={!installed}
             icon={<TerminalAgentLogo muted={!installed} option={option} />}
             onClick={() => onCreateAgent(option, installed)}
@@ -4887,14 +4885,12 @@ function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; mut
 
 function NewSessionMenuItem({
   label,
-  shortcut,
   icon,
   active = false,
   install = false,
   onClick,
 }: {
   label: string;
-  shortcut?: string;
   icon: React.ReactNode;
   active?: boolean;
   install?: boolean;
@@ -4941,17 +4937,15 @@ function NewSessionMenuItem({
       >
         {label}
       </span>
-      <span
-        style={{
-          color: "var(--terminal-drawer-subtle)",
-          alignItems: "center",
-          display: "flex",
-          flex: "0 0 62px",
-          justifyContent: "flex-end",
-          minWidth: 62,
-        }}
-      >
-        {install ? (
+      {install ? (
+        <span
+          style={{
+            alignItems: "center",
+            display: "flex",
+            flexShrink: 0,
+            justifyContent: "flex-end",
+          }}
+        >
           <span
             data-testid="terminal-agent-install-pill"
             style={{
@@ -4972,32 +4966,8 @@ function NewSessionMenuItem({
           >
             Install
           </span>
-        ) : (
-          <span
-            style={{
-              alignItems: "center",
-              background: shortcut ? "var(--terminal-drawer-action-bg)" : "transparent",
-              border: shortcut ? "1px solid var(--terminal-drawer-action-border)" : "1px solid transparent",
-              borderRadius: 6,
-              boxSizing: "border-box",
-              color: "var(--terminal-drawer-action-fg)",
-              display: "inline-flex",
-              fontFamily: "Inter, system-ui, sans-serif",
-              fontSize: 11,
-              fontWeight: 800,
-              height: 22,
-              justifyContent: "center",
-              letterSpacing: "0.02em",
-              lineHeight: "14px",
-              minWidth: shortcut ? 38 : 0,
-              padding: shortcut ? "0 6px" : 0,
-              textAlign: "center",
-            }}
-          >
-            {shortcut ?? ""}
-          </span>
-        )}
-      </span>
+        </span>
+      ) : null}
     </button>
   );
 }
