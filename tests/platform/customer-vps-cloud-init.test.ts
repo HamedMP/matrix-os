@@ -256,13 +256,19 @@ exit 99
   it('starts Matrix services before optional Hermes install work', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const codeServerBlock = cloudInit.slice(
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-sync-agent.service'),
+    );
 
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-hermes.service');
     expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-hermes');
     expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-code-server.service');
-    expect(cloudInit).toContain('Description=Install Matrix OS code-server runtime');
-    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(codeServerBlock).toContain('Description=Install Matrix OS code-server runtime');
+    expect(codeServerBlock).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeServerBlock).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
       'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
@@ -509,17 +515,27 @@ exit 99
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const code = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-code'), 'utf8');
+    const codeUnitBlock = cloudInit.slice(
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-code.service'),
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
+    );
+    const codeServerBlock = cloudInit.slice(
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-sync-agent.service'),
+    );
 
-    expect(cloudInit).toContain('Description=Matrix OS customer code editor');
-    expect(cloudInit).toContain('After=matrix-restore.service matrix-code-server.service');
-    expect(cloudInit).toContain('Wants=matrix-code-server.service');
-    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-code');
-    expect(cloudInit).toContain('TimeoutStartSec=1800');
-    expect(cloudInit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
-    expect(cloudInit).not.toContain('ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server');
-    expect(cloudInit).toContain('Description=Install Matrix OS code-server runtime');
-    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
-    expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
+    expect(codeUnitBlock).toContain('Description=Matrix OS customer code editor');
+    expect(codeUnitBlock).toContain('After=matrix-restore.service');
+    expect(codeUnitBlock).not.toContain('After=matrix-restore.service matrix-code-server.service');
+    expect(codeUnitBlock).not.toContain('Wants=matrix-code-server.service');
+    expect(codeUnitBlock).toContain('ExecStart=/opt/matrix/bin/matrix-code');
+    expect(codeUnitBlock).toContain('TimeoutStartSec=1800');
+    expect(codeUnitBlock).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
+    expect(codeUnitBlock).not.toContain('ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeServerBlock).toContain('Description=Install Matrix OS code-server runtime');
+    expect(codeServerBlock).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(codeServerBlock).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(code).toContain('MATRIX_CODE_PROXY_TOKEN');
     expect(code).toContain('matrix-code: code-server is missing; attempting install');
     expect(code).toContain('sudo -n /opt/matrix/bin/matrix-install-tool-pack code-server');
