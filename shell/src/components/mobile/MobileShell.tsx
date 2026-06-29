@@ -21,6 +21,8 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, MotionConfig, type PanInfo } from "framer-motion";
+import { toast } from "sonner";
+import { MobileQuickActions } from "@/components/mobile/MobileQuickActions";
 import {
   appTransition,
   EASE_EMPHASIZED,
@@ -248,6 +250,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
   }, [apps, launchAppPath, openApp]);
 
   const closeApp = (openId: string) => {
+    const closed = stackRef.current.find((o) => o.id === openId);
     setOpenStack((prev) => {
       const next = prev.filter((o) => o.id !== openId);
       if (next.length === 0) {
@@ -255,11 +258,14 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
       }
       return next;
     });
+    if (closed) toast(`Closed ${closed.app.name}`);
   };
 
   const closeAll = () => {
+    const count = stackRef.current.length;
     setOpenStack([]);
     setView("launcher");
+    if (count > 0) toast(`Closed ${count} app${count === 1 ? "" : "s"}`);
   };
 
   const showSwitcher = () => {
@@ -383,6 +389,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
                 onOpenSettings={() => setSettingsOpen(true)}
                 openStackCount={openStack.length}
                 onShowSwitcher={showSwitcher}
+                onCloseAll={closeAll}
               />
             </motion.div>
           )}
@@ -532,9 +539,10 @@ interface LauncherProps {
   onOpenSettings: () => void;
   openStackCount: number;
   onShowSwitcher: () => void;
+  onCloseAll: () => void;
 }
 
-function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher }: LauncherProps) {
+function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher, onCloseAll }: LauncherProps) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
@@ -544,39 +552,12 @@ function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher
             {apps.length} installed{openStackCount > 0 ? ` · ${openStackCount} open` : ""}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {openStackCount > 0 && (
-            <button
-              onClick={onShowSwitcher}
-              type="button"
-              style={{
-                background: "rgba(244,237,224,0.08)",
-                color: "inherit",
-                border: "1px solid rgba(244,237,224,0.12)",
-                borderRadius: 999,
-                padding: "6px 12px",
-                fontSize: 12,
-              }}
-            >
-              Switcher
-            </button>
-          )}
-          <button
-            onClick={onOpenSettings}
-            type="button"
-            aria-label="Settings"
-            style={{
-              background: "rgba(244,237,224,0.08)",
-              color: "inherit",
-              border: "1px solid rgba(244,237,224,0.12)",
-              borderRadius: 999,
-              padding: "6px 10px",
-              fontSize: 12,
-            }}
-          >
-            ⚙
-          </button>
-        </div>
+        <MobileQuickActions
+          openStackCount={openStackCount}
+          onOpenSettings={onOpenSettings}
+          onShowSwitcher={onShowSwitcher}
+          onCloseAll={onCloseAll}
+        />
       </div>
       <motion.div
         className="flex-1 overflow-y-auto"
