@@ -33,6 +33,15 @@ describe("www auth routing", () => {
     expect(signUp).toContain("forceRedirectUrl={getMarketingAuthRedirectUrl()}");
   });
 
+  it("routes preselected sign-ups through the metadata handoff", () => {
+    const signUp = read("www/src/app/sign-up/[[...sign-up]]/page.tsx");
+
+    expect(signUp).toContain("parsePlanUrlSlug");
+    expect(signUp).toContain("/welcome?plan=");
+    // falls back to the app domain when no plan is chosen
+    expect(signUp).toContain("getMarketingAuthRedirectUrl()");
+  });
+
   it("wraps the marketing app in ClerkProvider from the root layout", () => {
     const layout = read("www/src/app/layout.tsx");
 
