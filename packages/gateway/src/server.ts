@@ -1653,8 +1653,22 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
+  // Dev-only escape hatch. Apps render in a null-origin sandboxed srcdoc iframe,
+  // so their /apps/{slug}/assets/* sub-resources are cross-site from origin
+  // "null" and a SameSite=Strict app-session cookie can never be delivered over
+  // plain-HTTP localhost — assets 401 and surface as CORS errors, so no app
+  // loads. When MATRIX_DEV_APP_AUTH_BYPASS=1, reflect the "null" origin and skip
+  // the app-session gate so apps load locally. NEVER set this in production
+  // (only docker-compose.dev.yml sets it).
+  const APP_AUTH_DEV_BYPASS = process.env.MATRIX_DEV_APP_AUTH_BYPASS === "1";
+  if (APP_AUTH_DEV_BYPASS) {
+    console.warn(
+      "[gateway] MATRIX_DEV_APP_AUTH_BYPASS=1 — null-origin CORS + app-session auth relaxed for LOCAL DEV ONLY. Never enable in production.",
+    );
+  }
   app.use("*", cors({
     origin: (origin) => {
+      if (APP_AUTH_DEV_BYPASS && origin === "null") return "null";
       return allowedOriginController.resolve(origin);
     },
   }));
@@ -1967,13 +1981,18 @@ export async function createGateway(config: GatewayConfig) {
     });
   });
 
-  // Mount app-session middleware on /apps/:slug/* (verifies signed cookie)
-  app.use(
-    "/apps/:slug/*",
-    appSessionMiddleware((slug) =>
-      deriveAppSessionKey(appSessionMasterSecret, slug),
-    ),
-  );
+  // Mount app-session middleware on /apps/:slug/* (verifies signed cookie).
+  // Dev bypass (MATRIX_DEV_APP_AUTH_BYPASS, see above): a null-origin srcdoc app
+  // iframe can't carry the SameSite=Strict cookie over http localhost, so skip
+  // the gate in local dev. Prod always mounts it.
+  if (!APP_AUTH_DEV_BYPASS) {
+    app.use(
+      "/apps/:slug/*",
+      appSessionMiddleware((slug) =>
+        deriveAppSessionKey(appSessionMasterSecret, slug),
+      ),
+    );
+  }
 
   // Create process manager for node-runtime apps
   const portPool = new PortPool({ min: 40000, max: 49999, cap: 100 });
