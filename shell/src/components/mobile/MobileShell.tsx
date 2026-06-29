@@ -24,6 +24,7 @@ import { useChatContext } from "@/stores/chat-context";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
+import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { ChatApp } from "@/components/ChatApp";
@@ -51,7 +52,9 @@ const MAX_TERMINAL_INSTANCES = 5;
 const BUILT_IN_APPS: MobileApp[] = [
   { id: "terminal", name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
-  { id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" },
+  ...(HERMES_CHAT_HIDDEN
+    ? []
+    : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
 ];
 
 const LAUNCHER_APP_BUTTON_STYLE: CSSProperties = {

@@ -47,7 +47,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, MonitorIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, CheckIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
+import { KanbanSquareIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -58,13 +58,14 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { ChatApp } from "./ChatApp";
 import { ChatPopover } from "./ChatPopover";
-import { ManualSetupStickers } from "./onboarding/ManualSetupStickers";
+import { SetupChecklist } from "./onboarding/SetupChecklist";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { cn, nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
+import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -413,100 +414,6 @@ function DockIcon({
         )}
       </ContextMenuContent>
     </ContextMenu>
-  );
-}
-
-function ModeSwitcher({
-  iconSize,
-  tooltipSide,
-  onSelectMode,
-}: {
-  iconSize: number;
-  tooltipSide: "left" | "right" | "top";
-  onSelectMode: (mode: DesktopMode) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const mode = useDesktopMode((s) => s.mode);
-  const visibleModes = useDesktopMode((s) => s.visibleModes);
-  const getModeConfig = useDesktopMode((s) => s.getModeConfig);
-  const modeConfig = getModeConfig(mode);
-  const modes = visibleModes();
-  const ref = useRef<HTMLDivElement>(null);
-
-  // Close on click outside
-  useEffect(() => {
-    if (!open) return;
-    const onClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onClickOutside);
-    return () => document.removeEventListener("pointerdown", onClickOutside);
-  }, [open]);
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      {/* Suppress hover tooltip while the mode menu is open so it
-          doesn't overlap the dropdown panel. */}
-      <Tooltip open={open ? false : undefined}>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={() => setOpen((prev) => !prev)}
-            className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
-              open ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border/60"
-            }`}
-            style={{ width: iconSize, height: iconSize }}
-            aria-label={`${modeConfig.label} mode`}
-          >
-            <MonitorIcon className="size-4" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side={tooltipSide} sideOffset={8}>{modeConfig.label}</TooltipContent>
-      </Tooltip>
-      {open && (
-        <div
-          className={[
-            "absolute flex flex-col min-w-[160px] py-1 rounded-lg bg-card border border-border shadow-xl z-[60]",
-            tooltipSide === "right" && "left-full top-0 ml-2",
-            tooltipSide === "left" && "right-full top-0 mr-2",
-            tooltipSide === "top" && "bottom-full left-1/2 -translate-x-1/2 mb-2",
-          ].filter(Boolean).join(" ")}
-        >
-          {modes.map((m) => (
-            <button
-              type="button"
-              key={m.id}
-              onClick={() => {
-                onSelectMode(m.id);
-                setOpen(false);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs transition-colors hover:bg-muted ${
-                mode === m.id ? "text-foreground font-medium" : "text-muted-foreground"
-              }`}
-            >
-              {mode === m.id ? (
-                <CheckIcon className="size-3 shrink-0" />
-              ) : (
-                <span className="size-3 shrink-0" />
-              )}
-              <span>{m.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -954,7 +861,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       addApp("Terminal", "__terminal__", "terminal", iconForSlug("terminal"));
       addApp("Workspace", "__workspace__", "workspace", iconForSlug("workspace"));
       addApp("Files", "__file-browser__", "files", iconForSlug("files"));
-      addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
+      if (!HERMES_CHAT_HIDDEN) {
+        addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
+      }
       addApp("Activity Monitor", "__activity-monitor__", "chart", iconForSlug("chart"));
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
@@ -1671,6 +1580,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {!HERMES_CHAT_HIDDEN && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1696,8 +1606,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
                 </Tooltip>
-                <ModeSwitcher iconSize={dock.iconSize} tooltipSide={tooltipSide} onSelectMode={selectDesktopMode} />
-                <Tooltip>
+                )}                <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
@@ -1741,6 +1650,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         {/* Mobile dock (bottom tab bar) */}
         {modeConfig.showDock && (
           <nav className="flex md:hidden items-center gap-1 px-2 py-1.5 border-t border-border/40 bg-card/80 backdrop-blur-sm order-last overflow-x-auto z-[55]">
+            {!HERMES_CHAT_HIDDEN && (
             <button
               type="button"
               data-testid="dock-chat-mobile"
@@ -1760,6 +1670,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 />
               )}
             </button>
+            )}
             {modeConfig.showLauncher && (
               <button
                 type="button"
@@ -1772,9 +1683,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               >
                 <KanbanSquareIcon className="size-4" />
               </button>
-            )}
-            <ModeSwitcher iconSize={36} tooltipSide="top" onSelectMode={selectDesktopMode} />
-            <button
+            )}            <button
               type="button"
               onClick={() => { setSettingsOpen((prev) => !prev); setTaskBoardOpen(false); setChatOpen(false); }}
               className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
@@ -1874,15 +1783,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
           {modeConfig.showWindows && desktopMode === "canvas" && (
             <CanvasRenderer>
               {manualSetupVisible && (
-                <ManualSetupStickers
-                  onOpenTerminal={openSetupTerminal}
-                  onAskHermes={() => {
-                    focusOrOpen("Hermes", "__chat__");
-                    setTaskBoardOpen(false);
-                    setSettingsOpen(false);
-                  }}
-                  onClose={() => setManualSetupVisible(false)}
-                />
+                <SetupChecklist onOpenTerminal={openSetupTerminal} />
               )}
             </CanvasRenderer>
           )}

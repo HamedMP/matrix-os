@@ -22,6 +22,7 @@ import {
   ShieldCheckIcon,
   XCircleIcon,
 } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
 import {
   MATRIX_BILLING_REGIONS,
   MATRIX_BILLING_SERVER_PROFILES,
@@ -31,6 +32,15 @@ import type {
   BillingEntitlementSummary,
 } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
+
+function preselectedFeatureSlug(selectedPlan: unknown): string | null {
+  if (typeof selectedPlan !== "string") return null;
+  return (
+    MATRIX_BILLING_SERVER_PROFILES.find(
+      (profile) => profile.planSlug === selectedPlan,
+    )?.featureSlug ?? null
+  );
+}
 
 export type BillingPanelMode = "settings" | "provisioning" | "device-setup";
 type BillingInterval = "monthly" | "annual";
@@ -917,8 +927,11 @@ export function BillingPanel({
   onCheckoutIntent?: () => void;
   checkoutReturnPath?: string;
 }) {
+  const { user } = useUser();
   const [selectedProfileSlug, setSelectedProfileSlug] = useState<string>(
-    MATRIX_BILLING_SERVER_PROFILES[1]?.featureSlug ??
+    () =>
+      preselectedFeatureSlug(user?.publicMetadata?.selectedPlan) ??
+      MATRIX_BILLING_SERVER_PROFILES[1]?.featureSlug ??
       MATRIX_BILLING_SERVER_PROFILES[0]?.featureSlug ??
       "",
   );

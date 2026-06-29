@@ -61,6 +61,8 @@ vi.mock("@/stores/terminal-settings", () => {
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
 
+const CANONICAL_SESSION_NAME_PATTERN = /^(matrix-[a-z0-9]+|[a-z]+-[a-z]+-[a-z0-9]+)$/;
+
 class ResizeObserverMock {
   observe() {}
   disconnect() {}
@@ -341,7 +343,7 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.queryByRole("tablist", { name: "Terminal tabs" })).toBeNull();
-    expect(screen.getByText("matrixos")).toBeTruthy();
+    expect(screen.getByText("matrix-os")).toBeTruthy();
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByText("Active")).toBeTruthy();
     expect(screen.getByText("Background")).toBeTruthy();
@@ -1347,8 +1349,6 @@ describe("TerminalApp", () => {
     const idle = screen.getByTestId("terminal-session-status-idle");
     const waiting = screen.getByTestId("terminal-session-status-waiting");
 
-    expect(screen.getByText("3 attached")).toBeTruthy();
-    expect(screen.getByText("1 detached")).toBeTruthy();
     expect(running.style.background).toBe("rgb(95, 184, 95)");
     expect(running.style.boxShadow).toContain("rgba(95,184,95,0.24)");
     expect(running.classList.contains("terminal-session-status-dot--running")).toBe(true);
@@ -1520,7 +1520,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("matrixos")).toBeTruthy();
+    expect(screen.getByText("matrix-os")).toBeTruthy();
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Move matrix-main to background" })).toBeTruthy();
@@ -1606,11 +1606,14 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
     await act(async () => {
       await chooseNewSessionMenuItem(/Shell/);
     });
 
-    const createCalls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
+    const createCalls = fetchMock.mock.calls
       .filter(([input, init]: [RequestInfo | URL, RequestInit | undefined]) => (
         String(input).endsWith("/api/terminal/sessions") &&
         init?.method === "POST" &&
@@ -1618,10 +1621,11 @@ describe("TerminalApp", () => {
       ))
       .map(([, init]: [RequestInfo | URL, RequestInit]) => JSON.parse(String(init.body)) as { name: string });
 
-    expect(createCalls.some((body) => /^matrix-/.test(body.name))).toBe(true);
+    const createdShell = createCalls.find((body) => CANONICAL_SESSION_NAME_PATTERN.test(body.name));
+    expect(createdShell).toBeTruthy();
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^matrix-/),
+        sessionId: createdShell?.name,
       },
     });
   });
@@ -2054,7 +2058,7 @@ describe("TerminalApp", () => {
 
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
-        sessionId: expect.stringMatching(/^matrix-/),
+        sessionId: expect.stringMatching(CANONICAL_SESSION_NAME_PATTERN),
       },
     });
   });
@@ -2454,12 +2458,12 @@ describe("TerminalApp", () => {
       String(input).includes("/api/terminal/sessions") &&
       init?.method === "POST" &&
       typeof init.body === "string" &&
-      JSON.parse(init.body).name.startsWith("matrix-")
+      CANONICAL_SESSION_NAME_PATTERN.test(JSON.parse(init.body).name)
     ));
     expect(createCall).toBeTruthy();
     const body = JSON.parse(createCall?.[1]?.body as string) as { name: string; cwd: string };
     expect(body).toMatchObject({ cwd: "projects" });
-    expect(body.name).toMatch(/^matrix-[a-z0-9]+$/);
+    expect(body.name).toMatch(CANONICAL_SESSION_NAME_PATTERN);
 
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string; startupCommand?: string };

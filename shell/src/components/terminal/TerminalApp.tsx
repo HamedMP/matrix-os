@@ -36,6 +36,7 @@ import { DEFAULT_TERMINAL_APP_THEME_ID, useTerminalSettings, type ShellThemeId, 
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
+import { twoWordSessionName } from "./terminal-session-names";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import {
   applyShellRefreshFailure,
@@ -341,6 +342,17 @@ const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
   position: "relative",
   width: 44,
   zIndex: 1,
+};
+
+const SHELL_ROW_BUTTON_STYLE: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  borderRadius: 10,
+  cursor: "pointer",
+  inset: 0,
+  padding: 0,
+  position: "absolute",
+  zIndex: 0,
 };
 
 const SHELL_ROW_DRAG_HANDLE_STYLE: CSSProperties = {
@@ -965,12 +977,17 @@ function genId() {
 }
 
 function terminalSessionName(prefix = "matrix") {
-  const safePrefix = prefix
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/^-+/, "")
-    .slice(0, 22) || "matrix";
-  return `${safePrefix}-${genId()}`.slice(0, 31);
+  const normalized = prefix.toLowerCase();
+  // A meaningful prefix (e.g. a project name) keeps the prefixed form; the
+  // default produces a friendly two-word handle instead of matrix-<random>.
+  if (normalized && normalized !== "matrix") {
+    const safePrefix = normalized
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/^-+/, "")
+      .slice(0, 22) || "matrix";
+    return `${safePrefix}-${genId()}`.slice(0, 31);
+  }
+  return twoWordSessionName();
 }
 
 function shellQuote(value: string) {
@@ -3228,19 +3245,6 @@ function LocalTerminalTabBar({ defaultCwd }: { defaultCwd: string }) {
               Shell
             </ToolbarBtn>
             <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
-            <ToolbarBtn
-              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "horizontal"); }}
-              title="Split horizontally (Ctrl+Shift+D)"
-            >
-              <IconSplitH />
-            </ToolbarBtn>
-            <ToolbarBtn
-              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "vertical"); }}
-              title="Split vertically (Ctrl+Shift+E)"
-            >
-              <IconSplitV />
-            </ToolbarBtn>
-            <div style={{ width: 1, height: 18, background: "var(--border)", margin: "0 4px" }} />
             <ThemePickerButton />
           </>
       </div>
@@ -4491,19 +4495,31 @@ function LocalTerminalSidebar() {
               style={{
                 background: "var(--terminal-drawer-brand-bg)",
                 borderRadius: ctx.mobile ? 12 : 9,
-                color: "var(--terminal-drawer-brand-fg)",
-                fontFamily: "Orbitron, system-ui, sans-serif",
-                fontSize: ctx.mobile ? 17 : 15,
-                fontWeight: 800,
                 height: ctx.mobile ? 40 : 30,
                 width: ctx.mobile ? 40 : 30,
               }}
             >
-              M
+              <span
+                aria-hidden="true"
+                style={{
+                  background: "var(--terminal-drawer-brand-fg)",
+                  WebkitMaskImage: "url('/matrix-logo.svg')",
+                  maskImage: "url('/matrix-logo.svg')",
+                  WebkitMaskRepeat: "no-repeat",
+                  maskRepeat: "no-repeat",
+                  WebkitMaskPosition: "center",
+                  maskPosition: "center",
+                  WebkitMaskSize: "contain",
+                  maskSize: "contain",
+                  display: "block",
+                  height: ctx.mobile ? 22 : 17,
+                  width: ctx.mobile ? 22 : 17,
+                }}
+              />
             </div>
             <div className="min-w-0">
-              <div style={{ color: "var(--terminal-drawer-fg)", fontFamily: "Orbitron, system-ui, sans-serif", fontSize: 20, fontWeight: 800, lineHeight: "24px" }}>
-                matrixos
+              <div style={{ color: "var(--terminal-drawer-fg)", fontFamily: "var(--font-sans), system-ui, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: "24px" }}>
+                matrix os
               </div>
               {!ctx.mobile ? (
                 <div className="truncate" style={{ color: "var(--terminal-drawer-muted)", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
@@ -4655,7 +4671,6 @@ function LocalTerminalSidebar() {
         {!shellsLoading && (activeShells.length > 0 || creatingShell) && (
           <ShellSessionGroup
             label="Active"
-            meta={`${activeShells.length} attached`}
             shells={activeShells}
             pending={creatingShell}
             deletingShellNames={deletingShellNames}
@@ -4676,7 +4691,6 @@ function LocalTerminalSidebar() {
         {!shellsLoading && renderedShells.length > 0 && (
           <ShellSessionGroup
             label="Background"
-            meta={`${backgroundShells.length} detached`}
             shells={backgroundShells}
             deletingShellNames={deletingShellNames}
             foreground={false}
@@ -5372,17 +5386,29 @@ function CollapsedSessionsRail({
         style={{
           background: "var(--terminal-drawer-brand-bg)",
           borderRadius: 11,
-          color: "var(--terminal-drawer-brand-fg)",
           flexShrink: 0,
-          fontFamily: "Orbitron, system-ui, sans-serif",
-          fontSize: 15,
-          fontWeight: 800,
           height: COLLAPSED_RAIL_ITEM_SIZE,
           width: COLLAPSED_RAIL_ITEM_SIZE,
         }}
-        title="matrixos"
+        title="matrix os"
       >
-        M
+        <span
+          aria-hidden="true"
+          style={{
+            background: "var(--terminal-drawer-brand-fg)",
+            WebkitMaskImage: "url('/matrix-logo.svg')",
+            maskImage: "url('/matrix-logo.svg')",
+            WebkitMaskRepeat: "no-repeat",
+            maskRepeat: "no-repeat",
+            WebkitMaskPosition: "center",
+            maskPosition: "center",
+            WebkitMaskSize: "contain",
+            maskSize: "contain",
+            display: "block",
+            height: 20,
+            width: 20,
+          }}
+        />
       </div>
       <CollapsedRailButton label="Expand sessions drawer" onClick={onExpand}>
         <ChevronsRightIcon data-testid="terminal-drawer-expand-icon" size={17} strokeWidth={2} />
@@ -5532,7 +5558,6 @@ function CollapsedRailButton({
 
 function ShellSessionGroup({
   label,
-  meta,
   shells,
   pending = false,
   deletingShellNames,
@@ -5550,7 +5575,6 @@ function ShellSessionGroup({
   onDragEnd,
 }: {
   label: "Active" | "Background";
-  meta: string;
   shells: ShellSessionSummary[];
   pending?: boolean;
   deletingShellNames: string[];
@@ -5577,12 +5601,10 @@ function ShellSessionGroup({
             </svg>
           )}
           <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", lineHeight: "14px", textTransform: "uppercase" }}>
-            {label}
+            {label}{" "}
+            <span style={{ fontWeight: 600, opacity: 0.55 }}>({shells.length})</span>
           </span>
         </div>
-        <span style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 12, lineHeight: "14px" }}>
-          {meta}
-        </span>
       </div>
       {pending ? <ShellPendingCard /> : null}
       {shells.length === 0 && !pending ? (
@@ -5906,16 +5928,7 @@ function ShellCard({
           aria-label={`Show ${displayName} session`}
           data-selected={selected ? "true" : "false"}
           onClick={handleCardClick}
-          style={{
-            background: "transparent",
-            border: 0,
-            borderRadius: 10,
-            cursor: "pointer",
-            inset: 0,
-            padding: 0,
-            position: "absolute",
-            zIndex: 0,
-          }}
+          style={SHELL_ROW_BUTTON_STYLE}
         />
       )}
       <div
@@ -6107,23 +6120,31 @@ function ShellCard({
           )}
         </div>
       </div>
-      <button
-        type="button"
-        aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle();
-        }}
-        onPointerDown={(event) => event.stopPropagation()}
-        onMouseDown={(event) => event.stopPropagation()}
-        style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
-      >
-        {foreground && <span style={{ background: "var(--terminal-drawer-toggle-knob)", borderRadius: 999, height: 12, width: 12 }} />}
-        <span style={{ flex: "1 1 auto", fontSize: 10, fontWeight: 800, lineHeight: "10px", textAlign: "center" }}>
-          {foreground ? "ON" : "BG"}
-        </span>
-        {!foreground && <span style={{ background: "var(--terminal-drawer-toggle-off-knob)", border: "1px solid var(--terminal-drawer-toggle-off-border)", borderRadius: 999, height: 12, width: 12 }} />}
-      </button>
+      {!renaming && !deleting && (
+        <button
+          type="button"
+          aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
+          title={foreground ? "Move to background" : "Make active"}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+          style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              background: foreground ? "var(--terminal-drawer-toggle-knob)" : "var(--terminal-drawer-toggle-off-knob)",
+              borderRadius: "50%",
+              display: "block",
+              height: 14,
+              width: 14,
+            }}
+          />
+        </button>
+      )}
     </div>
   );
 }
