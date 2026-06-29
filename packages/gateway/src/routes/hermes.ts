@@ -48,7 +48,8 @@ export function validateHermesDashboardUrl(rawUrl: string): void {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
-  } catch {
+  } catch (err) {
+    console.error("[hermes-proxy] invalid HERMES_DASHBOARD_URL:", err instanceof Error ? err.message : typeof err);
     throw new Error(`HERMES_DASHBOARD_URL is not a valid URL: ${rawUrl}`);
   }
 
@@ -131,6 +132,10 @@ function upstreamError(c: any, status: 502 | 503 = 502) {
   return c.json({ error: "upstream_error" }, status) as Response;
 }
 
+function logIgnoredHermesError(context: string, err: unknown): void {
+  console.warn(`[hermes-proxy] ${context}:`, err instanceof Error ? err.message : typeof err);
+}
+
 // ---------------------------------------------------------------------------
 // Auth helper
 // ---------------------------------------------------------------------------
@@ -206,8 +211,14 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
 
     try {
       const [statusRes, infoRes] = await Promise.all([
-        hermesFetch("/api/status").catch(() => null),
-        hermesFetch("/api/model/info").catch(() => null),
+        hermesFetch("/api/status").catch((err: unknown) => {
+          logIgnoredHermesError("/status upstream status probe failed", err);
+          return null;
+        }),
+        hermesFetch("/api/model/info").catch((err: unknown) => {
+          logIgnoredHermesError("/status upstream model info probe failed", err);
+          return null;
+        }),
       ]);
 
       if (!statusRes || !statusRes.ok) {
@@ -215,11 +226,19 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
       }
 
       let statusData: Record<string, unknown> = {};
-      try { statusData = await statusRes.json() as Record<string, unknown>; } catch { /* ignore */ }
+      try {
+        statusData = await statusRes.json() as Record<string, unknown>;
+      } catch (err) {
+        logIgnoredHermesError("/status upstream status JSON parse failed", err);
+      }
 
       let infoData: Record<string, unknown> = {};
       if (infoRes && infoRes.ok) {
-        try { infoData = await infoRes.json() as Record<string, unknown>; } catch { /* ignore */ }
+        try {
+          infoData = await infoRes.json() as Record<string, unknown>;
+        } catch (err) {
+          logIgnoredHermesError("/status upstream model info JSON parse failed", err);
+        }
       }
 
       const running = Boolean(statusData.gateway_running);
@@ -306,7 +325,8 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
     let raw: unknown;
     try {
       raw = await c.req.json();
-    } catch {
+    } catch (err) {
+      logIgnoredHermesError("POST /model/set invalid JSON", err);
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
@@ -358,7 +378,8 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
     let raw: unknown;
     try {
       raw = await c.req.json();
-    } catch {
+    } catch (err) {
+      logIgnoredHermesError("PUT /env invalid JSON", err);
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
@@ -415,7 +436,8 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
     let raw: unknown;
     try {
       raw = await c.req.json();
-    } catch {
+    } catch (err) {
+      logIgnoredHermesError("PUT /messaging/platforms/:id invalid JSON", err);
       return c.json({ error: "Invalid JSON" }, 400);
     }
 
@@ -490,7 +512,8 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
       try {
         const text = await c.req.text();
         if (text.trim()) raw = JSON.parse(text);
-      } catch {
+      } catch (err) {
+        logIgnoredHermesError("POST /messaging/telegram/onboarding invalid JSON", err);
         return c.json({ error: "Invalid JSON" }, 400);
       }
 
@@ -565,7 +588,8 @@ export function createHermesRoutes(_deps: HermesRouteDeps = {}): Hono {
       let raw: unknown;
       try {
         raw = await c.req.json();
-      } catch {
+      } catch (err) {
+        logIgnoredHermesError("POST /messaging/telegram/onboarding/:pairingId/apply invalid JSON", err);
         return c.json({ error: "Invalid JSON" }, 400);
       }
 
