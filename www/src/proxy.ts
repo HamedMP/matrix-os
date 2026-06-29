@@ -20,7 +20,7 @@ function normalizeCsp(policy: string): string {
   return policy.replace(/\s{2,}/g, " ").trim();
 }
 
-function buildContentSecurityPolicy(nonce: string): string {
+function buildContentSecurityPolicy(): string {
   const devScriptPolicy = process.env.NODE_ENV === "development" ? " 'unsafe-eval' http:" : "";
   return normalizeCsp(`
     default-src 'self';
@@ -31,7 +31,7 @@ function buildContentSecurityPolicy(nonce: string): string {
     img-src 'self' blob: data: https:;
     font-src 'self' data:;
     style-src 'self' 'unsafe-inline';
-    script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https:${devScriptPolicy};
+    script-src 'self' 'unsafe-inline' https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://eu-assets.i.posthog.com${devScriptPolicy};
     connect-src 'self' https://app.matrix-os.com https://api.matrix-os.com https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev https://eu.i.posthog.com https://eu-assets.i.posthog.com;
     frame-src 'self' https://app.matrix-os.com https://clerk.matrix-os.com https://*.clerk.com https://*.clerk.accounts.dev;
     worker-src 'self' blob:;
@@ -39,17 +39,9 @@ function buildContentSecurityPolicy(nonce: string): string {
   `);
 }
 
-function createSecurityResponse(request: ProxyRequest) {
-  const nonce = btoa(crypto.randomUUID());
-  const requestHeaders = new Headers(request.headers);
-  const csp = buildContentSecurityPolicy(nonce);
-  requestHeaders.set("x-nonce", nonce);
-
-  const response = NextResponse.next({
-    request: {
-      headers: requestHeaders,
-    },
-  });
+function createSecurityResponse() {
+  const csp = buildContentSecurityPolicy();
+  const response = NextResponse.next();
   return applySecurityHeaders(response, csp);
 }
 
@@ -91,7 +83,7 @@ export async function proxyWithSecurity(
   event: ProxyEvent,
   authorizeProtectedRoute: ProtectedRouteAuthorizer = withClerk,
 ) {
-  const securityResponse = createSecurityResponse(request);
+  const securityResponse = createSecurityResponse();
   if (isProtectedRoute(request)) {
     const clerkResponse = await authorizeProtectedRoute(request, event);
     return applySecurityResponseHeaders(clerkResponse ?? NextResponse.next(), securityResponse);
