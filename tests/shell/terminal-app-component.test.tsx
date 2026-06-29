@@ -601,10 +601,9 @@ describe("TerminalApp", () => {
     const actions = screen.getByTestId("terminal-session-actions-main");
     const copyButton = screen.getByTestId("terminal-session-copy-button-main");
     expect(row!.style.display).toBe("grid");
-    expect(row!.style.gridTemplateColumns).toBe("minmax(0, 1fr) 46px");
-    expect(actions.style.width).toBe("58px");
+    expect(row!.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
     expect(actions.style.position).toBe("absolute");
-    expect(actions.style.right).toBe("0px");
+    expect(actions.style.right).toBe("-8px");
     expect(actions.style.top).toBe("50%");
     expect(actions.style.transform).toBe("translateY(-50%)");
     expect(copyButton.style.width).toBe("24px");
@@ -1572,9 +1571,9 @@ describe("TerminalApp", () => {
 
     const menu = screen.getByRole("menu", { name: "New session menu" });
     expect(within(menu).getByText("NEW TAB")).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Shell.*⌘T/i })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Claude Code.*⌘⇧C/i })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: /Codex.*⌘⇧X/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /^Claude Code(?:\s+⌘⇧C)?$/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /^Codex(?:\s+⌘⇧X)?$/i })).toBeTruthy();
     expect(fetchMock.mock.calls.some(([input, init]) => (
       String(input).endsWith("/api/terminal/sessions") &&
       init?.method === "POST"
@@ -1687,7 +1686,7 @@ describe("TerminalApp", () => {
     const menu = screen.getByRole("menu", { name: "New session menu" });
 
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: /Shell.*⌘T/i }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i }));
       await Promise.resolve();
     });
 

@@ -52,7 +52,7 @@ describe("Desktop Mode Store", () => {
     expect(config.showBottomPanel).toBe(true);
     expect(config.chatPosition).toBe("sidebar");
     expect(config.terminalProminent).toBe(true);
-    expect(config.showLauncher).toBe(false);
+    expect(config.showLauncher).toBe(true);
     expect(config.hidden).toBeUndefined();
   });
 

@@ -64,7 +64,7 @@ const MODE_CONFIGS: Record<DesktopMode, ModeConfig> = {
     showDock: true,
     showWindows: true,
     showBottomPanel: true,
-    showLauncher: false,
+    showLauncher: true,
     chatPosition: "sidebar",
     terminalProminent: true,
   },

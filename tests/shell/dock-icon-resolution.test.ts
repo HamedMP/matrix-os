@@ -23,12 +23,15 @@ describe("dock icon resolution", () => {
   });
 
   it("uses dedicated raster slugs for built-in launcher apps", async () => {
-    const source = await readFile("shell/src/components/Desktop.tsx", "utf8");
+    const [desktopSource, builtInSource] = await Promise.all([
+      readFile("shell/src/components/Desktop.tsx", "utf8"),
+      readFile("shell/src/lib/builtin-apps.ts", "utf8"),
+    ]);
 
-    expect(source).toContain("addApp(\"Terminal\", \"__terminal__\", \"terminal\", iconForSlug(\"terminal\"))");
-    expect(source).toContain("addApp(\"Workspace\", \"__workspace__\", \"workspace\", iconForSlug(\"workspace\"))");
-    expect(source).toContain("addApp(\"Files\", \"__file-browser__\", \"files\", iconForSlug(\"files\"))");
-    expect(source).toContain("addApp(\"Hermes\", \"__chat__\", \"chat\", iconForSlug(\"chat\"))");
+    expect(desktopSource).toContain("addApp(\"Terminal\", \"__terminal__\", \"terminal\", iconForSlug(\"terminal\"))");
+    expect(builtInSource).toContain("[\"__workspace__\", \"Workspace\"]");
+    expect(desktopSource).toContain("addApp(\"Files\", \"__file-browser__\", \"files\", iconForSlug(\"files\"))");
+    expect(desktopSource).toContain("addApp(\"Hermes\", \"__chat__\", \"chat\", iconForSlug(\"chat\"))");
   });
 
   it("preserves versioned desktop icon URLs when app registration refreshes", async () => {

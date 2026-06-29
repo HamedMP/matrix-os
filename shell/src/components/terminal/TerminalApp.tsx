@@ -36,7 +36,7 @@ import { DEFAULT_TERMINAL_APP_THEME_ID, useTerminalSettings, type ShellThemeId, 
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
-import { twoWordSessionName } from "./terminal-session-names";
+import { sessionAccent, twoWordSessionName } from "./terminal-session-names";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import {
   applyShellRefreshFailure,
@@ -789,11 +789,13 @@ const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
 const SESSION_ACTIONS_STYLE: CSSProperties = {
   gap: 6,
   position: "absolute",
-  right: 0,
+  // Anchored to the grid row, whose right edge is inset by the card's 12px
+  // padding; a small negative right pulls the actions flush to the card edge.
+  right: -8,
   top: "50%",
   transform: "translateY(-50%)",
   transition: "opacity 120ms ease",
-  width: 58,
+  justifyContent: "flex-end",
 };
 const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
   background: "var(--terminal-drawer-action-bg)",
@@ -1335,10 +1337,16 @@ interface TerminalAppProps {
    * embedded toolbar so nothing is lost.
    */
   embeddedChrome?: boolean;
+  /**
+   * CSS transform scale applied to the canvas ancestor. Forwarded to each
+   * TerminalPane so its pointer-event correction can unscale xterm's
+   * mouse-to-cell mapping. Defaults to 1 (no correction needed).
+   */
+  canvasZoom?: number;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive core terminal shell component; extraction tracked separately. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
-export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false }: TerminalAppProps = {}) {
+export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1 }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);
@@ -1736,12 +1744,17 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    // Read the live value via ref (not a dep) so the observer is created once.
+    // Depending on `sidebarOpen` recreated the observer on every toggle, and a
+    // fresh observe() fires an immediate callback that snapped a just-expanded
+    // sidebar shut in a narrow terminal — making the expand/minimize toggle
+    // appear broken. Now it only collapses on an actual narrow resize.
     const observer = new ResizeObserver((entries) => {
-      if ((entries[0]?.contentRect.width ?? 0) < 500 && sidebarOpen) setSidebarOpen(false);
+      if ((entries[0]?.contentRect.width ?? 0) < 500 && sidebarOpenRef.current) setSidebarOpen(false);
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [sidebarOpen]);
+  }, []);
 
   const closeTab = (tabId: string) => {
     const closingTab = tabsRef.current.find((tab) => tab.id === tabId);
@@ -2012,6 +2025,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                   shouldDestroyPane={shouldDestroyPane}
                   allowRemoteResize={!mobile}
                   suppressNativeKeyboard={mobile}
+                  canvasZoom={canvasZoom}
                 />
                 {mobile && (
                   <>
@@ -4796,7 +4810,9 @@ function NewSessionMenu({
           ? { right: -48, top: "calc(100% + 8px)" }
           : { left: "calc(100% + 8px)", top: 0 }),
         width: 300,
-        zIndex: 70,
+        // Sits above the collapsed rail's right divider and the terminal
+        // content so the NEW TAB menu never paints behind that edge.
+        zIndex: 120,
       }}
     >
       <div style={{ paddingBottom: 2 }}>
@@ -5456,6 +5472,7 @@ function CollapsedRailGroup({
         const displayName = formatShellDisplayName(shell.name);
         const label = formatCollapsedShellLabel(shell.name);
         const selected = shell.name === selectedShellName;
+        const accent = sessionAccent(shell.name);
         return (
           <button
             key={shell.name}
@@ -5467,11 +5484,11 @@ function CollapsedRailGroup({
             onClick={() => onOpen(shell)}
             className="relative flex items-center justify-center"
             style={{
-              background: selected ? "var(--terminal-drawer-card-bg)" : muted ? "var(--terminal-drawer-card-muted-bg)" : "var(--terminal-drawer-card-bg)",
-              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : muted ? "var(--terminal-drawer-card-muted-border)" : "var(--terminal-drawer-card-border)"}`,
+              background: accent.bg,
+              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : accent.border}`,
               borderRadius: 11,
               boxShadow: selected ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
-              color: muted ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
+              color: accent.fg,
               cursor: "pointer",
               flexShrink: 0,
               fontFamily: "var(--font-mono, ui-monospace, monospace)",
@@ -5880,7 +5897,11 @@ function ShellCard({
         alignItems: "center",
         display: "grid",
         gap: 10,
-        gridTemplateColumns: "minmax(0, 1fr) 46px",
+        // Single full-width column: the hover action icons overlay the right
+        // edge (absolute, anchored to the inner grid row) and the inner row's
+        // paddingRight reserves their space, so no dead reserved column is
+        // needed here — that column only pushed the actions ~46px off the edge.
+        gridTemplateColumns: "minmax(0, 1fr)",
         height: 52,
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
@@ -5988,7 +6009,6 @@ function ShellCard({
           gap: 6,
           gridTemplateColumns: renaming ? "minmax(0, 1fr)" : foreground ? "minmax(0, 1fr) 22px" : "minmax(0, 1fr)",
           paddingRight: renaming ? 0 : 64,
-          position: "relative",
         }}
       >
           {renaming ? (

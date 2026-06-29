@@ -23,7 +23,6 @@ import { WorkspaceApp } from "./workspace/WorkspaceApp";
 import { FileBrowser } from "./file-browser/FileBrowser";
 import { PreviewWindow } from "./preview-window/PreviewWindow";
 import { ActivityMonitorApp } from "./system-activity/ActivityMonitorApp";
-import { AIButton } from "./AIButton";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
 import { Settings } from "./Settings";
@@ -47,7 +46,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
+import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, LayoutGridIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -65,8 +64,8 @@ import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { cn, nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
-import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
-import { isSystemApp, applyOrder } from "@/lib/dock-sections";
+import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, VSCODE_URL } from "@/lib/feature-flags";
+import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
@@ -859,12 +858,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
       // Register built-in apps
       addApp("Terminal", "__terminal__", "terminal", iconForSlug("terminal"));
-      addApp("Workspace", "__workspace__", "workspace", iconForSlug("workspace"));
       addApp("Files", "__file-browser__", "files", iconForSlug("files"));
       if (!HERMES_CHAT_HIDDEN) {
         addApp("Hermes", "__chat__", "chat", iconForSlug("chat"));
       }
-      addApp("Activity Monitor", "__activity-monitor__", "chart", iconForSlug("chart"));
       const savedBuiltIns = savedWindows.filter((w) => isBuiltInAppPath(w.path));
       for (const saved of savedBuiltIns) {
         queueSavedLayout(saved);
@@ -1057,7 +1054,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   const getModeConfig = useDesktopMode((s) => s.getModeConfig);
   const modeConfig = getModeConfig(desktopMode);
   const visibleWindowCount = windows.reduce((count, w) => count + (w.minimized ? 0 : 1), 0);
-  const developerDashboardVisible = shouldShowDeveloperDashboard(firstRunStatus, desktopMode, visibleWindowCount);
+  // Developer Fast Path dashboard removed (off-brand + redundant with the
+  // new Set up your workspace checklist). Dev mode opens to the terminal.
+  void shouldShowDeveloperDashboard;
+  const developerDashboardVisible = false;
   const openPrCanvas = useWorkspaceCanvasStore((s) => s.openPrCanvas);
   const selectDesktopMode = (mode: DesktopMode) => {
     setDesktopMode(mode);
@@ -1156,13 +1156,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         group: "Actions",
         keywords: ["files", "finder", "browse", "explorer"],
         execute: () => openWindow("Files", "__file-browser__"),
-      },
-      {
-        id: "action:open-activity-monitor",
-        label: "Open Activity Monitor",
-        group: "Actions",
-        keywords: ["activity", "monitor", "cpu", "memory", "disk", "processes"],
-        execute: () => openWindow("Activity Monitor", "__activity-monitor__"),
       },
       {
         id: "action:toggle-vocal",
@@ -1410,7 +1403,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
 
             const userAppsRaw = apps.filter(
-              (a) => !isSystemApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
+              (a) => !isMainSectionApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
             );
             const userApps = applyOrder(userAppsRaw, dockOrder?.userApps, appLaunchTimes);
             if (userApps.length === 0) return null;
@@ -1426,6 +1419,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   : "flex flex-col items-center gap-1"
                 }
                 data-dock-section="user"
+                style={{ order: 2 }}
               >
                 {userApps.map((app) => {
                   const hasAny = hasVisibleWindow(app.path);
@@ -1480,7 +1474,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               <div className={isHorizontal
                 ? "flex flex-row items-center gap-1"
                 : "flex flex-col items-center gap-1"
-              }>
+              } style={{ order: 2 }}>
                 <div
                   className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"}
                   style={{ animation: "dock-sep-in 300ms ease-out both" }}
@@ -1518,6 +1512,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               : "w-8 h-px bg-border/60 my-1"
             }
             aria-hidden
+            style={{ order: 1 }}
           />
 
           {/* System cluster: built-in apps (Terminal, Files, Preview if
@@ -1533,14 +1528,22 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             const hasVisibleWindow = (appPath: string) =>
               visibleWindowPaths.some((wp) => wp === appPath || wp.startsWith(appPath + ":"));
             const systemAppsRaw = apps.filter(
-              (a) => isSystemApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
+              // Terminal is pinned as a control button above; keep it out of
+              // the apps row so it isn't shown twice.
+              (a) => a.path !== "__terminal__" && isMainSectionApp(a.path) && (pinnedSet.has(a.path) || hasVisibleWindow(a.path)),
             );
             const systemApps = applyOrder(systemAppsRaw, dockOrder?.systemApps, appLaunchTimes);
             return (
               <div className={isHorizontal
                 ? "flex flex-row items-center gap-1"
                 : "flex flex-col items-center gap-1"
-              }>
+              } style={{ order: 0 }}>
+                {/* Apps render BELOW the launcher/settings controls (order:10
+                    pushes this group after the default-order system buttons). */}
+                <div
+                  className={isHorizontal ? "flex flex-row items-center gap-1" : "flex flex-col items-center gap-1"}
+                  style={{ order: 10 }}
+                >
                 {systemApps.map((app) => {
                   const hasAny = hasVisibleWindow(app.path);
                   return (
@@ -1558,6 +1561,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     />
                   );
                 })}
+                </div>
                 {modeConfig.showLauncher && (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1572,7 +1576,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                         }`}
                         style={{ width: dock.iconSize, height: dock.iconSize }}
                       >
-                        <KanbanSquareIcon className="size-4" />
+                        <LayoutGridIcon className="size-4" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side={tooltipSide} sideOffset={8}>
@@ -1580,6 +1584,28 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {/* Terminal pinned in the controls row, between launcher and
+                    VS Code. Uses the green Terminal app icon and opens/focuses
+                    the terminal window (so it isn't duplicated in the apps row). */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="dock-terminal"
+                      onClick={() => focusOrOpen("Terminal", "__terminal__")}
+                      className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
+                        windows.some((w) => !w.minimized && (w.path === "__terminal__" || w.path.startsWith("__terminal__:")))
+                          ? "bg-primary/10 border-primary"
+                          : "bg-card border-border/60"
+                      }`}
+                      style={{ width: dock.iconSize, height: dock.iconSize }}
+                    >
+                      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- small static dock icon from /public; next/image is overkill for a 20px square */}
+                      <img src="/icons/terminal.png" alt="Terminal" className="size-5 rounded-[5px]" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>Terminal</TooltipContent>
+                </Tooltip>
                 {!HERMES_CHAT_HIDDEN && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1606,7 +1632,23 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
                 </Tooltip>
-                )}                <Tooltip>
+                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="dock-vscode"
+                      onClick={() => window.open(VSCODE_URL, "_blank", "noopener,noreferrer")}
+                      className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
+                      style={{ width: dock.iconSize, height: dock.iconSize }}
+                    >
+                      {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- small static dock icon from /public; next/image is overkill for a 20px square */}
+                      <img src="/vscode.png" alt="VS Code" className="size-5 rounded-[5px]" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>Code editor</TooltipContent>
+                </Tooltip>
+                <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
@@ -1635,14 +1677,18 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               ride on top of any mode, so it gets a distinct circular
               shape and a primary-glow halo instead of the square dock
               icons. The active state breathes to echo the vocal overlay. */}
-          <div
-            className={isHorizontal
-              ? "h-6 w-px bg-border/40 mx-1.5"
-              : "w-6 h-px bg-border/40 my-1.5"
-            }
-            aria-hidden
-          />
-          <AoedeDockButton size={dock.iconSize} variant="desktop" tooltipSide={tooltipSide} />
+          {!VOICE_HIDDEN && (
+            <>
+              <div
+                className={isHorizontal
+                  ? "h-6 w-px bg-border/40 mx-1.5"
+                  : "w-6 h-px bg-border/40 my-1.5"
+                }
+                aria-hidden
+              />
+              <AoedeDockButton size={dock.iconSize} variant="desktop" tooltipSide={tooltipSide} />
+            </>
+          )}
 
         </aside>
         </div>}
@@ -1681,7 +1727,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     : "bg-card border-border/60"
                 }`}
               >
-                <KanbanSquareIcon className="size-4" />
+                <LayoutGridIcon className="size-4" />
               </button>
             )}            <button
               type="button"
@@ -1696,7 +1742,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               <SettingsIcon className="size-4" />
             </button>
             <div className="h-6 w-px bg-border/40 mx-0.5 shrink-0" aria-hidden />
-            <AoedeDockButton size={36} variant="mobile" />
+            {!VOICE_HIDDEN && <AoedeDockButton size={36} variant="mobile" />}
             <div className="shrink-0">
               <UserButton />
             </div>
@@ -1875,7 +1921,14 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 onMouseDown={() => !isFullscreen && wmFocusWindow(win.id)}
               >
                 <CardHeader
-                  className="flex flex-row items-center gap-0 px-3 py-2 border-b border-border md:cursor-grab md:active:cursor-grabbing select-none space-y-0"
+                  className={cn(
+                    "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
+                    // Terminal owns its chrome: the Card's light header bg + border
+                    // read as a white title bar over the dark terminal. Match the
+                    // terminal's dark drawer so the top is seamless, not framed.
+                    terminalOwnsChrome ? "border-b-0" : "border-b border-border",
+                  )}
+                  style={terminalOwnsChrome ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" } : undefined}
                   onPointerDown={(e) => onDragStart(win.id, e)}
                   onPointerMove={onDragMove}
                   onPointerUp={onDragEnd}
@@ -1893,12 +1946,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   <CardTitle className="text-xs font-medium truncate flex-1 text-center">
                     {win.title}
                   </CardTitle>
-                  <div className="w-[78px] flex items-center justify-end gap-1">
-                    <AIButton
-                      appName={win.title}
-                      appPath={win.path}
-                    />
-                  </div>
+                  {/* Spacer balances the traffic lights so the title stays
+                      centered. (The old AI sparkle button was removed.) */}
+                  <div className="w-[78px]" aria-hidden />
                 </CardHeader>
 
                 <CardContent className="relative flex-1 p-0 min-h-0">
@@ -1987,7 +2037,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
       {/* Single ChatPopover instance shared by desktop + mobile dock
           buttons. Lives outside both dock-orientation branches so it
-          isn't unmounted when the viewport flips. */}
+          isn't unmounted when the viewport orientation flips. */}
       <ChatPopover open={chatOpen} onOpenChange={setChatOpen} />
 
       {/* No fullscreen exit pill: every maximized window keeps its own header

@@ -609,6 +609,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
           // instead of the terminal's own dark chrome; split/theme move into the
           // slim embedded toolbar.
           embeddedChrome
+          canvasZoom={isFullscreen ? 1 : zoom}
           windowControls={{
             close: () => closeWindow(win.id),
             minimize: animateMinimize,
