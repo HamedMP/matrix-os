@@ -1701,12 +1701,17 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    // Read the live value via ref (not a dep) so the observer is created once.
+    // Depending on `sidebarOpen` recreated the observer on every toggle, and a
+    // fresh observe() fires an immediate callback that snapped a just-expanded
+    // sidebar shut in a narrow terminal — making the expand/minimize toggle
+    // appear broken. Now it only collapses on an actual narrow resize.
     const observer = new ResizeObserver((entries) => {
-      if ((entries[0]?.contentRect.width ?? 0) < 500 && sidebarOpen) setSidebarOpen(false);
+      if ((entries[0]?.contentRect.width ?? 0) < 500 && sidebarOpenRef.current) setSidebarOpen(false);
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [sidebarOpen]);
+  }, []);
 
   const closeTab = (tabId: string) => {
     const closingTab = tabsRef.current.find((tab) => tab.id === tabId);
