@@ -274,6 +274,7 @@ exit 99
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
     );
     expect(cloudInit).toContain('systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
     expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
@@ -513,12 +514,17 @@ exit 99
     expect(cloudInit).toContain('After=matrix-restore.service matrix-code-server.service');
     expect(cloudInit).toContain('Wants=matrix-code-server.service');
     expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-code');
+    expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
-    expect(cloudInit).toContain('ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server');
+    expect(cloudInit).not.toContain('ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server');
     expect(cloudInit).toContain('Description=Install Matrix OS code-server runtime');
     expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
     expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(code).toContain('MATRIX_CODE_PROXY_TOKEN');
+    expect(code).toContain('matrix-code: code-server is missing; attempting install');
+    expect(code).toContain('sudo -n /opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(code).toContain('matrix-code: code-server install already running; waiting');
+    expect(code).toContain('for _ in $(seq 1 180); do');
     expect(code).toContain('code-server');
     expect(code).toContain('crypto.timingSafeEqual');
   });
