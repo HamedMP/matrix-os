@@ -47,7 +47,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, LayoutGridIcon } from "lucide-react";
+import { SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, LayoutGridIcon, TerminalIcon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -1420,6 +1420,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   : "flex flex-col items-center gap-1"
                 }
                 data-dock-section="user"
+                style={{ order: 2 }}
               >
                 {userApps.map((app) => {
                   const hasAny = hasVisibleWindow(app.path);
@@ -1474,7 +1475,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               <div className={isHorizontal
                 ? "flex flex-row items-center gap-1"
                 : "flex flex-col items-center gap-1"
-              }>
+              } style={{ order: 2 }}>
                 <div
                   className={isHorizontal ? "h-6 border-l border-border/40" : "w-6 border-t border-border/40"}
                   style={{ animation: "dock-sep-in 300ms ease-out both" }}
@@ -1512,6 +1513,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               : "w-8 h-px bg-border/60 my-1"
             }
             aria-hidden
+            style={{ order: 1 }}
           />
 
           {/* System cluster: built-in apps (Terminal, Files, Preview if
@@ -1534,7 +1536,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               <div className={isHorizontal
                 ? "flex flex-row items-center gap-1"
                 : "flex flex-col items-center gap-1"
-              }>
+              } style={{ order: 0 }}>
                 {/* Apps render BELOW the launcher/settings controls (order:10
                     pushes this group after the default-order system buttons). */}
                 <div
@@ -1581,6 +1583,20 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     </TooltipContent>
                   </Tooltip>
                 )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="dock-terminal"
+                      onClick={() => focusOrOpen("Terminal", "__terminal__")}
+                      className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
+                      style={{ width: dock.iconSize, height: dock.iconSize }}
+                    >
+                      <TerminalIcon className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>Terminal</TooltipContent>
+                </Tooltip>
                 {!HERMES_CHAT_HIDDEN && (
                 <Tooltip>
                   <TooltipTrigger asChild>
