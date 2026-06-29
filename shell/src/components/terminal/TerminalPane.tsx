@@ -312,6 +312,15 @@ interface TerminalPaneProps {
   shouldDestroyOnUnmount?: (paneId: string) => boolean;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
+  /**
+   * The CSS transform scale applied to the canvas ancestor. When the canvas is
+   * zoomed via `transform: scale(z)`, xterm's mouse-to-cell mapping breaks
+   * because getBoundingClientRect() returns scaled screen pixels while
+   * cssCellWidth is measured at the unscaled font size. Providing the live zoom
+   * factor allows TerminalPane to correct pointer events before xterm sees them.
+   * Defaults to 1 (no correction).
+   */
+  canvasZoom?: number;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/no-many-boolean-props -- cohesive xterm lifecycle owner: terminal creation, WS attach/replay, fit/resize, addon wiring, and caching are one tightly-coupled effect graph that cannot be split without leaking refs across components; the boolean props (isFocused, isClosing, allowRemoteResize, suppressNativeKeyboard) are independent terminal modes, not a hidden variant enum, so collapsing them into an options object would obscure call sites.
@@ -330,6 +339,7 @@ export function TerminalPane({
   shouldDestroyOnUnmount,
   allowRemoteResize = true,
   suppressNativeKeyboard = false,
+  canvasZoom = 1,
 }: TerminalPaneProps) {
   const terminalThemeId = useTerminalSettings((s) => s.themeId);
   const terminalFontSize = useTerminalSettings((s) => s.fontSize);
@@ -388,6 +398,112 @@ export function TerminalPane({
   isFocusedRef.current = isFocused;
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   allowRemoteResizeRef.current = allowRemoteResize;
+
+  // Keep a stable ref to the current canvasZoom so the effect below can read
+  // the latest value without being re-run (and re-registering listeners) on
+  // every zoom change.
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
+  const canvasZoomRef = useRef(canvasZoom);
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
+  canvasZoomRef.current = canvasZoom;
+
+  // Canvas-zoom pointer correction.
+  //
+  // xterm maps pointer→cell as:
+  //   col = (clientX − rect.left) / cssCellWidth
+  // where rect = element.getBoundingClientRect() and cssCellWidth is measured
+  // from the font at the unscaled element size.
+  //
+  // When a CSS `transform: scale(z)` is applied to a canvas ancestor the
+  // element appears z× larger on screen. getBoundingClientRect() reflects the
+  // scaled visual bounds, so `clientX − rect.left` is in *screen* pixels
+  // (scaled by z). But cssCellWidth stays at the *unscaled* font metrics.
+  // The division therefore gives col = truecol × z — off by the zoom factor.
+  //
+  // Fix: in capture phase, before xterm's own listeners see the event, emit a
+  // synthetic MouseEvent whose clientX/Y are corrected to unscaled element
+  // space: correctedClientX = rect.left + (clientX − rect.left) / zoom.
+  // The original event is stopped so xterm never processes the scaled coords.
+  //
+  // Only active when zoom ≠ 1; at 1 no events are intercepted.
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- cleanup is returned explicitly at the end of the effect body
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const MOUSE_EVENTS = ["mousedown", "mousemove", "mouseup"] as const;
+
+    const correct = (e: MouseEvent) => {
+      const zoom = canvasZoomRef.current;
+      if (zoom === 1) return;
+
+      // Find the actual xterm element — it is the direct child element that
+      // xterm appended inside our container div (has class "xterm" or is the
+      // first child element). Use the event target's closest xterm root.
+      const xtermEl = container.querySelector(".xterm") as HTMLElement | null;
+      const el = xtermEl ?? container;
+      const rect = el.getBoundingClientRect();
+
+      // Unscale: move the pointer back into element-space coordinates.
+      const correctedX = rect.left + (e.clientX - rect.left) / zoom;
+      const correctedY = rect.top + (e.clientY - rect.top) / zoom;
+
+      // Stop xterm from processing the original (scaled) event.
+      e.stopImmediatePropagation();
+
+      // Dispatch a corrected synthetic event on the same target so xterm's
+      // own capture listener (registered on the element, not window) sees it.
+      // We must use `bubbles: false` + dispatch on the exact target xterm
+      // registered on, which is the element the pointer landed on.
+      const target = e.target instanceof Element ? e.target : el;
+      const synthetic = new MouseEvent(e.type, {
+        bubbles: e.bubbles,
+        cancelable: e.cancelable,
+        composed: e.composed,
+        detail: e.detail,
+        view: e.view ?? window,
+        screenX: e.screenX,
+        screenY: e.screenY,
+        clientX: correctedX,
+        clientY: correctedY,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey,
+        button: e.button,
+        buttons: e.buttons,
+        relatedTarget: e.relatedTarget,
+        movementX: e.movementX,
+        movementY: e.movementY,
+      });
+      // Mark the event so our own handler ignores it and does not re-correct.
+      Object.defineProperty(synthetic, "_xtermZoomCorrected", { value: true });
+      target.dispatchEvent(synthetic);
+    };
+
+    const handler = (e: MouseEvent) => {
+      // Skip synthetic events we already corrected to avoid infinite loops.
+      if ((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected) return;
+      const zoom = canvasZoomRef.current;
+      if (zoom === 1) return;
+      correct(e);
+    };
+
+    for (const type of MOUSE_EVENTS) {
+      // Capture phase so we intercept before xterm's own listeners.
+      container.addEventListener(type, handler, { capture: true });
+    }
+
+    return () => {
+      for (const type of MOUSE_EVENTS) {
+        container.removeEventListener(type, handler, { capture: true });
+      }
+    };
+  // Effect wires once and reads zoom through the ref — no dependency on
+  // canvasZoom directly, which avoids tearing down/re-registering listeners
+  // on every zoom change while the user is actively zooming the canvas.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFocus = () => {
     onFocus?.(paneId);
