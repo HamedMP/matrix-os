@@ -44,7 +44,6 @@ export default function LandingPage() {
       <script
         id="landing-json-ld"
         type="application/ld+json"
-        suppressHydrationWarning
         dangerouslySetInnerHTML={{ __html: jsonLd }}
       />
       <LandingTelemetry />
