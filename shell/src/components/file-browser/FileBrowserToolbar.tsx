@@ -47,14 +47,21 @@ export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
   };
 
   const pathSegments = currentPath ? currentPath.split("/") : [];
+  // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
+  const navBtn = mobile ? "size-9" : "size-7";
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-background/80 overflow-x-auto">
+    <div
+      className={cn(
+        "flex items-center gap-2 border-b overflow-x-auto",
+        mobile ? "surface-glass px-3 py-2" : "px-3 py-1.5 border-border bg-background/80",
+      )}
+    >
       <div className="flex items-center gap-0.5">
         <Button
           variant="ghost"
           size="icon"
-          className="size-7"
+          className={navBtn}
           disabled={historyIndex <= 0}
           onClick={goBack}
           aria-label="Go back"
@@ -64,7 +71,7 @@ export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
         <Button
           variant="ghost"
           size="icon"
-          className="size-7"
+          className={navBtn}
           disabled={historyIndex >= history.length - 1}
           onClick={goForward}
           aria-label="Go forward"
@@ -108,7 +115,8 @@ export function FileBrowserToolbar({ mobile = false }: { mobile?: boolean }) {
             variant="ghost"
             size="icon"
             className={cn(
-              "size-7 rounded-none first:rounded-l-md last:rounded-r-md",
+              navBtn,
+              "rounded-none first:rounded-l-md last:rounded-r-md",
               viewMode === mode && "bg-accent",
             )}
             onClick={() => setViewMode(mode)}

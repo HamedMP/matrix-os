@@ -247,7 +247,7 @@ export function Settings({
                       }}
                       disabled={locked}
                       aria-label={locked ? `${section.label} Locked until billing is active` : section.label}
-                      className={`flex shrink-0 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
+                      className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2.5 text-[13px] transition-colors sm:px-2.5 sm:py-1.5 ${
                         active
                           ? "bg-ember/12 text-deep font-semibold"
                           : locked

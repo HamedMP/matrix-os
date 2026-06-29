@@ -4,6 +4,8 @@ import React from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
+const CANONICAL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
+
 const paneGridSpy = vi.fn();
 const { saveThemeSpy, terminalSettingsState } = vi.hoisted(() => ({
   saveThemeSpy: vi.fn(async () => {}),
@@ -60,8 +62,6 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
-
-const CANONICAL_SESSION_NAME_PATTERN = /^(matrix-[a-z0-9]+|[a-z]+-[a-z]+-[a-z0-9]+)$/;
 
 class ResizeObserverMock {
   observe() {}
@@ -312,10 +312,11 @@ describe("TerminalApp", () => {
 
     const keyBar = screen.getByTestId("terminal-key-bar");
     expect(keyBar.style.position).toBe("sticky");
-    expect(keyBar.style.bottom).toBe("var(--matrix-terminal-keybar-bottom)");
-    expect(keyBar.style.getPropertyValue("--matrix-terminal-keybar-bottom")).toBe("env(keyboard-inset-height, 0px)");
-    expect(keyBar.style.background).toContain("21, 24, 15");
-    expect(screen.getByRole("button", { name: "Control C" }).style.color).toContain("201, 199, 183");
+    expect(keyBar.style.bottom).toBe("var(--terminal-keyboard-height, 0px)");
+    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("0px");
+    expect(keyBar.style.background).toBe("var(--mtk-bg)");
+    expect(keyBar.style.getPropertyValue("--mtk-bg")).toBe("#15180F");
+    expect(keyBar.style.getPropertyValue("--mtk-fg")).toBe("#C9C7B7");
     expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy();
   });
 
@@ -343,7 +344,7 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.queryByRole("tablist", { name: "Terminal tabs" })).toBeNull();
-    expect(screen.getByText("matrix-os")).toBeTruthy();
+    expect(screen.getByText("matrix os")).toBeTruthy();
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByText("Active")).toBeTruthy();
     expect(screen.getByText("Background")).toBeTruthy();
