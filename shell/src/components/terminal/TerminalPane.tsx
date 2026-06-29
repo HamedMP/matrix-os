@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
@@ -21,6 +21,11 @@ import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-
 import { applyTerminalAppearance } from "./terminal-appearance";
 import { buildTerminalFontStack } from "./terminal-fonts";
 import { sendTerminalResize } from "./terminal-remote-resize";
+import {
+  clipboardDataHasImage,
+  pasteClipboardDataIntoTerminal,
+  pasteClipboardIntoTerminal,
+} from "./terminal-rich-paste";
 import {
   isCanonicalShellSessionId,
   isLegacyPtySessionId,
@@ -47,10 +52,6 @@ function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
   };
 }
 
-const BRACKETED_PASTE_OPEN = "\x1b[200~";
-const BRACKETED_PASTE_CLOSE = "\x1b[201~";
-const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
-const MAX_TERMINAL_INPUT = 65_536;
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
 const TERMINAL_SCROLLBACK_LINES = 10_000;
@@ -388,6 +389,21 @@ export function TerminalPane({
     (termRef.current as { focus?: () => void } | null)?.focus?.();
   };
 
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    if (!clipboardDataHasImage(event.clipboardData)) {
+      return;
+    }
+    event.preventDefault();
+    handleFocus();
+    pasteClipboardDataIntoTerminal({
+      clipboardData: event.clipboardData,
+      gatewayUrl: getGatewayUrl(),
+      ws: wsRef.current,
+    }).catch((err: unknown) => {
+      console.warn("Clipboard image paste failed:", err instanceof Error ? err.message : err);
+    });
+  };
+
   useEffect(() => {
     isClosingRef.current = !!isClosing;
   }, [isClosing]);
@@ -411,22 +427,10 @@ export function TerminalPane({
         return;
       }
       if (detail.action === "paste") {
-        // navigator.clipboard is undefined on insecure-origin mobile browsers
-        // and WebViews with a denied clipboard policy; reading it without a
-        // guard throws synchronously before .catch() can attach. Degrade quietly.
-        const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
-        if (!clipboard?.readText) {
-          console.warn("Clipboard paste unavailable: navigator.clipboard.readText is not supported in this context");
-          return;
-        }
-        clipboard.readText().then((text) => {
-          const ws = wsRef.current;
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            const safe = text.replace(/\x1b\[20[01]~/g, "");
-            const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
-            const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
-            ws.send(JSON.stringify({ type: "input", data: bracketed }));
-          }
+        pasteClipboardIntoTerminal({
+          clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+          gatewayUrl: getGatewayUrl(),
+          ws: wsRef.current,
         }).catch((err: unknown) => {
           console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
         });
@@ -1104,14 +1108,10 @@ export function TerminalPane({
         }
 
         if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
-          navigator.clipboard.readText().then((text) => {
-            const ws = wsRef.current;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              const safe = text.replace(/\x1b\[20[01]~/g, "");
-              const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
-              const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
-              ws.send(JSON.stringify({ type: "input", data: bracketed }));
-            }
+          pasteClipboardIntoTerminal({
+            clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+            gatewayUrl: getGatewayUrl(),
+            ws: wsRef.current,
           }).catch((err: unknown) => {
             console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
           });
@@ -1276,6 +1276,7 @@ export function TerminalPane({
       }}
       onPointerDown={handleFocus}
       onClick={handleFocus}
+      onPasteCapture={handlePaste}
     >
       {authUrl && (
         <div

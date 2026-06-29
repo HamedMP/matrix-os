@@ -1,15 +1,22 @@
+import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import { defineCommand } from "citty";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
 import { createShellClient } from "../shell-client.js";
-import type { ShellAttachOptions } from "../shell-client.js";
+import type { ShellAttachOptions, ShellSendInputOptions } from "../shell-client.js";
 import { requireCliAuthToken } from "../auth-state.js";
+import { uploadLocalFile } from "../file-transfer-client.js";
 
-const SHELL_USAGE = "Usage: mos shell list|new|attach|rm|tab|pane|layout";
+const SHELL_USAGE = "Usage: mos shell list|new|attach|paste-file|rm|tab|pane|layout";
+const BRACKETED_PASTE_OPEN = "\x1b[200~";
+const BRACKETED_PASTE_CLOSE = "\x1b[201~";
+const TERMINAL_PASTE_FILE_DIR = "data/terminal-paste";
 const SHELL_SUBCOMMANDS = new Set([
   "ls", "list",
   "new",
   "attach", "connect",
+  "paste-file",
   "rm",
   "tab", "pane", "layout",
 ]);
@@ -147,6 +154,22 @@ function sessionCreateInput(args: Record<string, unknown>) {
     layout: typeof args.layout === "string" ? args.layout : undefined,
     cmd: typeof args.cmd === "string" ? args.cmd : undefined,
   };
+}
+
+function bracketTerminalPaste(text: string): string {
+  const safe = text.replace(/\x1b\[20[01]~/g, "");
+  const capped = safe.slice(0, 65_536 - BRACKETED_PASTE_OPEN.length - BRACKETED_PASTE_CLOSE.length);
+  return `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
+}
+
+function safeRemotePasteBasename(localPath: string): string {
+  const clean = basename(localPath).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return clean.length > 0 ? clean.slice(0, 96) : "pasted-file";
+}
+
+function defaultRemotePastePath(localPath: string): string {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  return `${TERMINAL_PASTE_FILE_DIR}/${stamp}-${randomUUID().slice(0, 8)}-${safeRemotePasteBasename(localPath)}`;
 }
 
 function listCommand(name: string, description: string) {
@@ -289,6 +312,50 @@ export const shellCommand = defineCommand({
     }),
     attach: attachCommand("attach", "Attach to a shell session"),
     connect: attachCommand("connect", "Connect to a shell session"),
+    "paste-file": defineCommand({
+      meta: { name: "paste-file", description: "Upload a local file and paste its Matrix path into a shell session" },
+      args: {
+        session: { type: "positional", required: true },
+        local: { type: "positional", required: true },
+        remote: { type: "string", required: false },
+        enter: { type: "boolean", required: false, default: false },
+        force: { type: "boolean", required: false, default: false },
+        ...commonArgs,
+      },
+      run: async ({ args }) => {
+        const json = args.json === true;
+        try {
+          const profile = await resolveCliProfile(args);
+          const token = await requireCliAuthToken(profile);
+          const remotePath = typeof args.remote === "string" && args.remote.trim().length > 0
+            ? args.remote.trim()
+            : defaultRemotePastePath(String(args.local));
+          const result = await uploadLocalFile(
+            { gatewayUrl: profile.gatewayUrl, token },
+            String(args.local),
+            remotePath,
+            { force: args.force === true },
+          );
+          const client = createShellClient({ gatewayUrl: profile.gatewayUrl, token });
+          const sendInputOptions: ShellSendInputOptions = typeof args.WebSocketImpl === "function"
+            ? { WebSocketImpl: args.WebSocketImpl as ShellSendInputOptions["WebSocketImpl"] }
+            : {};
+          await client.sendInput(
+            String(args.session),
+            `${bracketTerminalPaste(`~/${result.path}`)}${args.enter === true ? "\r" : ""}`,
+            sendInputOptions,
+          );
+          console.log(
+            json
+              ? formatCliSuccess({ path: result.path, size: result.size, session: String(args.session) })
+              : `Pasted ~/${result.path} into shell session ${args.session}`,
+          );
+        } catch (err) {
+          writeError(err, json);
+          process.exitCode = 1;
+        }
+      },
+    }),
     rm: defineCommand({
       meta: { name: "rm", description: "Remove a shell session" },
       args: {
