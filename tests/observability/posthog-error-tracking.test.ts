@@ -877,7 +877,11 @@ describe("PostHog error tracking", () => {
 
     for (const file of consumerPackages) {
       const packageJson = JSON.parse(await readFile(file, "utf8")) as { scripts: Record<string, string> };
-      expect(packageJson.scripts.build, file).toContain("@matrix-os/observability' build &&");
+      const buildScript = packageJson.scripts.build;
+      const observabilityBuildIndex = buildScript.indexOf("--filter '@matrix-os/observability'");
+      const consumerBuildIndex = buildScript.indexOf("&&");
+      expect(observabilityBuildIndex, file).toBeGreaterThanOrEqual(0);
+      expect(consumerBuildIndex, file).toBeGreaterThan(observabilityBuildIndex);
     }
 
     const rootPackage = JSON.parse(await readFile("package.json", "utf8")) as {

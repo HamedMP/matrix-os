@@ -18,12 +18,21 @@ import {
   SearchIcon,
   MessageSquareIcon,
   SquareIcon,
+  XIcon,
 } from "lucide-react";
 import { useChatContext } from "@/stores/chat-context";
 import { useVocalStore } from "@/stores/vocal";
 import { RichContent } from "@/components/ui-blocks";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/lib/chat";
+import {
+  type ChatPopoverOffset,
+  ZERO_OFFSET,
+  clampOffset,
+  isDragged,
+  loadOffset,
+  saveOffset,
+} from "@/lib/chat-popover-position";
 
 interface ChatPopoverProps {
   /** Open state. ChatPopover is fully controlled now -- the dock button
@@ -73,6 +82,21 @@ export function ChatPopover({
   // flicker (useChatState lines 113-134) re-fires the rising-edge
   // auto-open below and snaps the popup back open after every close.
   const userClosedDuringBusyRef = useRef(false);
+
+  // Drag-to-move state. `offset` is an additional translate applied on top of
+  // the bottom-center anchor; persisted to localStorage so the popup reopens
+  // where the user left it. offsetRef mirrors it for event handlers that must
+  // read the latest value without re-subscribing window listeners.
+  const [offset, setOffset] = useState<ChatPopoverOffset>(() => loadOffset());
+  const offsetRef = useRef(offset);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
 
   // Scroll-to-bottom ref callback: fires the moment the scroll container
   // is attached to the DOM, which is before the entrance animation starts
@@ -126,6 +150,81 @@ export function ChatPopover({
     if (!next && busy) userClosedDuringBusyRef.current = true;
     setOpen(next);
   };
+
+  // Clamp an offset against the live popup size + viewport so the surface can
+  // never be dragged off-screen. Reads refs/window at call time, so a stale
+  // closure inside event handlers is harmless.
+  const clampToViewport = (next: ChatPopoverOffset): ChatPopoverOffset => {
+    const rect = contentRef.current?.getBoundingClientRect();
+    if (!rect || typeof window === "undefined") return next;
+    return clampOffset(
+      next,
+      { width: window.innerWidth, height: window.innerHeight },
+      { width: rect.width, height: rect.height },
+    );
+  };
+
+  const applyOffset = (next: ChatPopoverOffset) => {
+    offsetRef.current = next;
+    setOffset(next);
+  };
+
+  const handleDragStart = (event: React.PointerEvent<HTMLElement>) => {
+    // Don't start a drag from interactive header controls.
+    const target = event.target as HTMLElement;
+    if (target.closest("button,a,input,textarea,select,[role='combobox']")) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: offsetRef.current.x,
+      originY: offsetRef.current.y,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  // Double-click the header to snap the popup back to its bottom-center home.
+  const handleResetPosition = (event: React.MouseEvent<HTMLElement>) => {
+    if ((event.target as HTMLElement).closest("button,a,input,textarea,select")) return;
+    applyOffset({ ...ZERO_OFFSET });
+    saveOffset(ZERO_OFFSET);
+  };
+
+  // Window-level pointer + resize listeners. Mounted once; the move/up
+  // handlers no-op until a drag is in flight (dragRef set by handleDragStart).
+  useEffect(() => {
+    const handleMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      applyOffset(
+        clampToViewport({
+          x: drag.originX + event.clientX - drag.startX,
+          y: drag.originY + event.clientY - drag.startY,
+        }),
+      );
+    };
+    const handleUp = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      dragRef.current = null;
+      saveOffset(offsetRef.current);
+    };
+    const handleResize = () => {
+      if (!isDragged(offsetRef.current)) return;
+      applyOffset(clampToViewport(offsetRef.current));
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+      window.removeEventListener("resize", handleResize);
+    };
+    // react-doctor-disable-next-line react-doctor/exhaustive-deps -- handlers read live values via refs (dragRef/offsetRef/contentRef) and window; the listener set is mounted once for the component's lifetime and must not re-subscribe on every offset change.
+  }, []);
 
   const handleSwitchConversation = (id: string) => {
     chat?.switchConversation(id);
@@ -196,10 +295,16 @@ export function ChatPopover({
             height: "min(56vh, 460px)",
             width: popupWidth,
             transformOrigin: "bottom center",
+            // Drag offset rides the independent `translate` property so it
+            // composes with the keyframe `transform` (which bakes in the
+            // -50% centering + open/close animation) instead of fighting it.
+            translate: isDragged(offset) ? `${offset.x}px ${offset.y}px` : undefined,
             // react-doctor-disable-next-line react-doctor/no-permanent-will-change -- intentional ambient GPU promotion: this popover surface only mounts while open, animates on open/close + width transitions, and is deliberately layer-promoted (see transform-gpu above) so streaming text below does not repaint the whole surface; toggling will-change per-animation here would reintroduce the streaming flicker this optimization fixes.
             willChange: "transform, opacity",
           }}
           aria-describedby={undefined}
+          ref={contentRef}
+          data-testid="chat-popover"
         >
           <DialogPrimitive.Title className="sr-only">Hermes</DialogPrimitive.Title>
 
@@ -221,6 +326,8 @@ export function ChatPopover({
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onNewChat={handleNewChat}
               onClose={() => handleOpenChange(false)}
+              onDragStart={handleDragStart}
+              onResetPosition={handleResetPosition}
             />
             <ChatMessages
               messages={chat.messages}
@@ -397,6 +504,8 @@ function ChatHeader({
   onToggleSidebar,
   onNewChat,
   onClose,
+  onDragStart,
+  onResetPosition,
 }: {
   busy: boolean;
   connected: boolean;
@@ -405,9 +514,19 @@ function ChatHeader({
   onToggleSidebar: () => void;
   onNewChat: () => void;
   onClose: () => void;
+  onDragStart: (event: React.PointerEvent<HTMLElement>) => void;
+  onResetPosition: (event: React.MouseEvent<HTMLElement>) => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center justify-between border-b border-border/30 px-2.5 py-2">
+    // The header doubles as the drag handle (pointer-down anywhere that isn't
+    // a control moves the popup; double-click snaps it home). touch-none keeps
+    // a touch drag from scrolling the page underneath.
+    <div
+      className="flex shrink-0 cursor-grab touch-none select-none items-center justify-between border-b border-border/30 px-2.5 py-2 active:cursor-grabbing"
+      onPointerDown={onDragStart}
+      onDoubleClick={onResetPosition}
+      data-testid="chat-popover-drag-handle"
+    >
       <div className="flex items-center gap-1">
         <button
           type="button"
@@ -451,14 +570,19 @@ function ChatHeader({
         >
           <PlusIcon className="size-3" />
         </button>
+        {/* esc keycap makes the keyboard close path discoverable; the X is
+            the unambiguous click target. */}
+        <kbd className="hidden h-5 select-none items-center rounded border border-border/50 bg-muted/50 px-1.5 font-mono text-[9px] tracking-wider text-muted-foreground/70 sm:flex">
+          esc
+        </kbd>
         <button
           type="button"
           onClick={onClose}
-          className="flex h-6 items-center justify-center rounded-md px-1.5 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+          className="flex size-6 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
           title="Close (Esc)"
           aria-label="Close"
         >
-          <span className="font-mono text-[9px] tracking-wider">esc</span>
+          <XIcon className="size-3.5" />
         </button>
       </div>
     </div>
