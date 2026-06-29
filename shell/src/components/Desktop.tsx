@@ -47,7 +47,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { KanbanSquareIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon } from "lucide-react";
+import { KanbanSquareIcon, SettingsIcon, PinOffIcon, RefreshCwIcon, PencilIcon, XCircleIcon, MessageSquareIcon, MicIcon, Code2Icon } from "lucide-react";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { AmbientClock } from "./AmbientClock";
@@ -65,7 +65,7 @@ import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { cn, nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
-import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
+import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, VSCODE_URL } from "@/lib/feature-flags";
 import { isSystemApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -1606,7 +1606,22 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   </TooltipTrigger>
                   <TooltipContent side={tooltipSide} sideOffset={8}>Hermes</TooltipContent>
                 </Tooltip>
-                )}                <Tooltip>
+                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="dock-vscode"
+                      onClick={() => window.open(VSCODE_URL, "_blank", "noopener,noreferrer")}
+                      className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
+                      style={{ width: dock.iconSize, height: dock.iconSize }}
+                    >
+                      <Code2Icon className="size-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side={tooltipSide} sideOffset={8}>Code editor</TooltipContent>
+                </Tooltip>
+                <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       type="button"
@@ -1635,14 +1650,18 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               ride on top of any mode, so it gets a distinct circular
               shape and a primary-glow halo instead of the square dock
               icons. The active state breathes to echo the vocal overlay. */}
-          <div
-            className={isHorizontal
-              ? "h-6 w-px bg-border/40 mx-1.5"
-              : "w-6 h-px bg-border/40 my-1.5"
-            }
-            aria-hidden
-          />
-          <AoedeDockButton size={dock.iconSize} variant="desktop" tooltipSide={tooltipSide} />
+          {!VOICE_HIDDEN && (
+            <>
+              <div
+                className={isHorizontal
+                  ? "h-6 w-px bg-border/40 mx-1.5"
+                  : "w-6 h-px bg-border/40 my-1.5"
+                }
+                aria-hidden
+              />
+              <AoedeDockButton size={dock.iconSize} variant="desktop" tooltipSide={tooltipSide} />
+            </>
+          )}
 
         </aside>
         </div>}
@@ -1696,7 +1715,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               <SettingsIcon className="size-4" />
             </button>
             <div className="h-6 w-px bg-border/40 mx-0.5 shrink-0" aria-hidden />
-            <AoedeDockButton size={36} variant="mobile" />
+            {!VOICE_HIDDEN && <AoedeDockButton size={36} variant="mobile" />}
             <div className="shrink-0">
               <UserButton />
             </div>
