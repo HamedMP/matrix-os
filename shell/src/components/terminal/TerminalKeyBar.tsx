@@ -269,7 +269,8 @@ export function TerminalKeyBar({
           setPasteFallbackOpen(true);
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        console.warn("[TerminalKeyBar] clipboard read failed:", err instanceof Error ? err.message : typeof err);
         setPasteFallbackOpen(true);
       });
   };
