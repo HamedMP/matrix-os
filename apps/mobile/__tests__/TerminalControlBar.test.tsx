@@ -6,23 +6,33 @@ import {
 import { buildTerminalControlSequence } from "../lib/terminal-state";
 
 describe("TerminalControlBar", () => {
-  it("exposes the expected mobile terminal control keys", () => {
+  it("exposes the ctrl-combo keys for the touch keyboard pad", () => {
     expect(TERMINAL_CONTROL_KEYS.map((entry) => entry.label)).toEqual([
-      "Esc",
-      "Tab",
-      "Enter",
-      "Ctrl-C",
-      "Ctrl-D",
-      "Ctrl-L",
+      "^C",
+      "^D",
+      "^Z",
+      "^L",
+      "^R",
+      "^A",
+      "^E",
+      "^U",
+      "^K",
+      "^W",
     ]);
     expect(TERMINAL_CONTROL_KEYS.map((entry) => buildTerminalControlSequence(entry.key))).toEqual([
-      "\x1b",
-      "\t",
-      "\r",
       "\x03",
       "\x04",
+      "\x1a",
       "\x0c",
+      "\x12",
+      "\x01",
+      "\x05",
+      "\x15",
+      "\x0b",
+      "\x17",
     ]);
+    // every pad key carries a human caption for discoverability
+    expect(TERMINAL_CONTROL_KEYS.every((entry) => entry.caption.length > 0)).toBe(true);
   });
 
   it("sends clipboard text through the terminal paste action", async () => {

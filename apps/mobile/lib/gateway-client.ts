@@ -1,9 +1,17 @@
 import { encodeAppSlugPath } from "@/lib/app-slugs";
 import {
-  isSafeSessionId,
-  parseTerminalSessions,
+  isSafeShellSessionName,
+  parseShellSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
+
+function randomShellSuffix(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c && typeof c.randomUUID === "function") {
+    return c.randomUUID().replace(/-/g, "").slice(0, 7);
+  }
+  return Math.random().toString(36).slice(2, 9).padEnd(7, "0").slice(0, 7);
+}
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
@@ -122,7 +130,8 @@ export class GatewayClient {
 
   get terminalWsUrl(): string {
     const url = this.baseUrl.replace(/^http/, "ws");
-    return `${url}/ws/terminal`;
+    // Shell-sessions endpoint: attach by session name passed in the query.
+    return `${url}/ws/terminal/session`;
   }
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
@@ -308,13 +317,16 @@ export class GatewayClient {
     };
   }
 
-  openTerminalWebSocket(token?: string | null): WebSocket {
+  openTerminalWebSocket(token?: string | null, sessionName?: string, fromSeq?: number): WebSocket {
     if (token || this.token) {
       assertSecureTokenTransport(this.baseUrl);
     }
-    const wsUrl = token
-      ? `${this.terminalWsUrl}?token=${encodeURIComponent(token)}`
-      : this.terminalWsUrl;
+    const params = new URLSearchParams();
+    if (sessionName) params.set("session", sessionName);
+    if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
+    if (token) params.set("token", token);
+    const query = params.toString();
+    const wsUrl = query ? `${this.terminalWsUrl}?${query}` : this.terminalWsUrl;
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
     return new WebSocketWithOptions(
       wsUrl,
@@ -453,18 +465,41 @@ export class GatewayClient {
         console.warn("[mobile] /api/terminal/sessions unavailable", res.status);
         return [];
       }
-      return parseTerminalSessions(await res.json());
+      const body = (await res.json()) as { sessions?: unknown };
+      return parseShellSessions(body?.sessions ?? body);
     } catch {
       console.warn("[mobile] /api/terminal/sessions unavailable");
       return [];
     }
   }
 
-  async deleteTerminalSession(sessionId: string): Promise<boolean> {
-    if (!isSafeSessionId(sessionId)) return false;
+  /** Create a new shell session and return its zellij name, or null on failure. */
+  async createTerminalSession(): Promise<string | null> {
+    const name = `matrix-${randomShellSuffix()}`;
+    try {
+      const res = await this.fetchGateway("/api/terminal/sessions", {
+        method: "POST",
+        body: JSON.stringify({ name, cwd: "projects" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        console.warn("[mobile] terminal session create failed", res.status);
+        return null;
+      }
+      const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
+      const created = typeof body?.name === "string" ? body.name : name;
+      return isSafeShellSessionName(created) ? created : null;
+    } catch {
+      console.warn("[mobile] terminal session create unavailable");
+      return null;
+    }
+  }
+
+  async deleteTerminalSession(name: string): Promise<boolean> {
+    if (!isSafeShellSessionName(name)) return false;
     try {
       const res = await this.fetchGateway(
-        `/api/terminal/sessions/${encodeURIComponent(sessionId)}`,
+        `/api/terminal/sessions/${encodeURIComponent(name)}?force=1`,
         { method: "DELETE" },
       );
       if (res.ok || res.status === 404) return true;

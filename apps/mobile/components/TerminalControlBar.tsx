@@ -1,7 +1,13 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { buildTerminalControlSequence } from "@/lib/terminal-state";
-import { TERMINAL_CONTROL_KEYS, sendTerminalClipboardPaste } from "@/lib/terminal-controls";
+import { useCallback, useMemo } from "react";
+import { FlatList, type ListRenderItem, Pressable, StyleSheet, Text, View } from "react-native";
+import { buildTerminalControlSequence, type TerminalControlKey } from "@/lib/terminal-state";
+import {
+  TERMINAL_ARROW_KEYS,
+  TERMINAL_CONTROL_KEYS,
+  TERMINAL_SPECIAL_KEYS,
+  TERMINAL_SYMBOL_KEYS,
+  sendTerminalClipboardPaste,
+} from "@/lib/terminal-controls";
 import { colors, fonts } from "@/lib/theme";
 
 interface TerminalControlBarProps {
@@ -10,134 +16,119 @@ interface TerminalControlBarProps {
   onClear: () => void;
 }
 
+const light = colors.light;
+
+type BarItem =
+  | { id: string; label: string; kind: "seq"; seq: TerminalControlKey; danger?: boolean }
+  | { id: string; label: string; kind: "text"; value: string }
+  | { id: string; label: string; kind: "font"; delta: number }
+  | { id: string; label: string; kind: "paste" }
+  | { id: string; label: string; kind: "clear" }
+  | { id: string; kind: "divider" };
+
+const keyExtractor = (item: BarItem) => item.id;
+
+/**
+ * Single compact accessory row (Termius-style) that floats just above the OS
+ * keyboard. One horizontal strip keeps the terminal surface tall instead of a
+ * multi-row pad eating half the screen.
+ */
 export function TerminalControlBar({ onSend, onFontScale, onClear }: TerminalControlBarProps) {
-  return (
-    <View style={styles.container}>
-      <View style={styles.arrowRow}>
-        <IconButton icon="remove" label="Smaller text" onPress={() => onFontScale(-0.05)} />
-        <ArrowPad onSend={onSend} />
-        <IconButton icon="add" label="Larger text" onPress={() => onFontScale(0.05)} />
-      </View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.keyRow}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* react-doctor-disable-next-line react-doctor/rn-no-scrollview-mapped-list -- fixed, short control bar (8 buttons); FlatList virtualization would add overhead with no benefit */}
-        {TERMINAL_CONTROL_KEYS.map((entry) => (
-          <KeyButton
-            key={entry.key}
-            label={entry.label}
-            onPress={() => onSend(buildTerminalControlSequence(entry.key))}
-          />
-        ))}
-        <KeyButton label="Paste" onPress={() => sendTerminalClipboardPaste(onSend)} />
-        <KeyButton label="Clear" onPress={onClear} />
-      </ScrollView>
-    </View>
-  );
-}
+  const items = useMemo<BarItem[]>(() => {
+    const list: BarItem[] = [];
+    for (const k of TERMINAL_SPECIAL_KEYS) {
+      if (k.key === "enter") continue;
+      list.push({ id: k.key, label: k.label, kind: "seq", seq: k.key });
+    }
+    for (const k of TERMINAL_CONTROL_KEYS) {
+      list.push({ id: k.key, label: k.label, kind: "seq", seq: k.key, danger: k.key === "ctrl-c" });
+    }
+    for (const k of TERMINAL_ARROW_KEYS) {
+      list.push({ id: k.key, label: k.label, kind: "seq", seq: k.key });
+    }
+    list.push({ id: "div-sym", kind: "divider" });
+    for (const s of TERMINAL_SYMBOL_KEYS) {
+      list.push({ id: `sym-${s.value}`, label: s.label, kind: "text", value: s.value });
+    }
+    list.push({ id: "div", kind: "divider" });
+    list.push({ id: "font-", label: "A−", kind: "font", delta: -0.05 });
+    list.push({ id: "font+", label: "A+", kind: "font", delta: 0.05 });
+    list.push({ id: "paste", label: "Paste", kind: "paste" });
+    list.push({ id: "clear", label: "Clear", kind: "clear" });
+    return list;
+  }, []);
 
-function ArrowPad({ onSend }: { onSend: (data: string) => void }) {
-  return (
-    <View style={styles.arrowPad}>
-      <ArrowButton icon="chevron-up" label="Up" onPress={() => onSend(buildTerminalControlSequence("arrow-up"))} />
-      <View style={styles.arrowPadBottom}>
-        <ArrowButton icon="chevron-back" label="Left" onPress={() => onSend(buildTerminalControlSequence("arrow-left"))} />
-        <ArrowButton icon="chevron-down" label="Down" onPress={() => onSend(buildTerminalControlSequence("arrow-down"))} />
-        <ArrowButton icon="chevron-forward" label="Right" onPress={() => onSend(buildTerminalControlSequence("arrow-right"))} />
-      </View>
-    </View>
+  const renderItem = useCallback<ListRenderItem<BarItem>>(
+    ({ item }) => {
+      if (item.kind === "divider") return <View style={styles.divider} />;
+      let onPress: () => void;
+      if (item.kind === "seq") onPress = () => onSend(buildTerminalControlSequence(item.seq));
+      else if (item.kind === "text") onPress = () => onSend(item.value);
+      else if (item.kind === "font") onPress = () => onFontScale(item.delta);
+      else if (item.kind === "paste") onPress = () => sendTerminalClipboardPaste(onSend);
+      else onPress = onClear;
+      const danger = item.kind === "seq" && item.danger;
+      return (
+        <Pressable accessibilityRole="button" accessibilityLabel={item.label} onPress={onPress} style={styles.key}>
+          <Text style={danger ? styles.keyLabelDanger : styles.keyLabel}>{item.label}</Text>
+        </Pressable>
+      );
+    },
+    [onSend, onFontScale, onClear],
   );
-}
 
-function KeyButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={styles.keyButton}>
-      <Text style={styles.keyText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function ArrowButton({ icon, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={styles.arrowButton}>
-      <Ionicons name={icon} size={16} color={colors.dark.foreground} />
-    </Pressable>
-  );
-}
-
-function IconButton({ icon, label, onPress }: { icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={styles.iconButton}>
-      <Ionicons name={icon} size={16} color={colors.dark.foreground} />
-    </Pressable>
+    <FlatList
+      horizontal
+      data={items}
+      keyExtractor={keyExtractor}
+      renderItem={renderItem}
+      showsHorizontalScrollIndicator={false}
+      keyboardShouldPersistTaps="always"
+      style={styles.bar}
+      contentContainerStyle={styles.content}
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    gap: 10,
-    paddingTop: 10,
-    paddingBottom: 8,
+  bar: {
+    flexGrow: 0,
     borderTopWidth: 1,
-    borderTopColor: "rgba(154, 164, 140, 0.16)",
-    backgroundColor: "#0f120f",
+    borderTopColor: light.line,
+    backgroundColor: light.paper,
   },
-  arrowRow: {
-    flexDirection: "row",
+  content: {
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingHorizontal: 14,
+    gap: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  arrowPad: {
-    alignItems: "center",
-    gap: 4,
-  },
-  arrowPadBottom: {
-    flexDirection: "row",
-    gap: 4,
-  },
-  keyRow: {
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingBottom: 2,
-  },
-  keyButton: {
-    minWidth: 62,
+  key: {
+    minWidth: 42,
     height: 38,
+    paddingHorizontal: 12,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "rgba(154, 164, 140, 0.18)",
-    backgroundColor: "rgba(234, 236, 234, 0.08)",
+    borderColor: light.line,
+    backgroundColor: light.field,
   },
-  keyText: {
+  keyLabel: {
     fontFamily: fonts.monoBold,
-    color: colors.dark.foreground,
-    fontSize: 12,
+    fontSize: 14,
+    color: light.ink,
   },
-  arrowButton: {
-    width: 44,
-    height: 34,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(154, 164, 140, 0.18)",
-    backgroundColor: "rgba(234, 236, 234, 0.08)",
+  keyLabelDanger: {
+    fontFamily: fonts.monoBold,
+    fontSize: 14,
+    color: light.glow,
   },
-  iconButton: {
-    width: 44,
-    height: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "rgba(154, 164, 140, 0.18)",
-    backgroundColor: "rgba(234, 236, 234, 0.08)",
+  divider: {
+    width: 1,
+    height: 24,
+    marginHorizontal: 3,
+    backgroundColor: light.line,
   },
 });
