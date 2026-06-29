@@ -227,6 +227,32 @@ describe("BillingSection", () => {
     );
   });
 
+  it("closes only the picker on Escape without dismissing the Settings panel", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
+    expect(screen.getByRole("button", { name: /Builder/ })).toBeTruthy();
+
+    // The Settings panel registers a window-level Escape handler; it must not
+    // receive the event once the picker has handled and stopped it.
+    const settingsEscape = vi.fn();
+    window.addEventListener("keydown", settingsEscape);
+    try {
+      fireEvent.keyDown(document, { key: "Escape" });
+    } finally {
+      window.removeEventListener("keydown", settingsEscape);
+    }
+
+    expect(screen.queryByRole("button", { name: /Builder/ })).toBeNull();
+    expect(settingsEscape).not.toHaveBeenCalled();
+  });
+
   it("includes a safe return path when checkout is launched from CLI device setup", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;

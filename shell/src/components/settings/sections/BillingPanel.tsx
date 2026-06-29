@@ -782,7 +782,13 @@ function SelectionTriggerCards({
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseEvent();
+      if (event.key === "Escape") {
+        // Stop the event from bubbling to the Settings panel's window-level
+        // Escape handler, which would otherwise dismiss the entire panel and
+        // discard the in-progress plan/region selection.
+        event.stopPropagation();
+        onCloseEvent();
+      }
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
