@@ -36,7 +36,7 @@ import { DEFAULT_TERMINAL_APP_THEME_ID, useTerminalSettings, type ShellThemeId, 
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
-import { twoWordSessionName } from "./terminal-session-names";
+import { sessionAccent, twoWordSessionName } from "./terminal-session-names";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import {
   applyShellRefreshFailure,
@@ -5461,6 +5461,7 @@ function CollapsedRailGroup({
         const displayName = formatShellDisplayName(shell.name);
         const label = formatCollapsedShellLabel(shell.name);
         const selected = shell.name === selectedShellName;
+        const accent = sessionAccent(shell.name);
         return (
           <button
             key={shell.name}
@@ -5472,11 +5473,11 @@ function CollapsedRailGroup({
             onClick={() => onOpen(shell)}
             className="relative flex items-center justify-center"
             style={{
-              background: selected ? "var(--terminal-drawer-card-bg)" : muted ? "var(--terminal-drawer-card-muted-bg)" : "var(--terminal-drawer-card-bg)",
-              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : muted ? "var(--terminal-drawer-card-muted-border)" : "var(--terminal-drawer-card-border)"}`,
+              background: accent.bg,
+              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : accent.border}`,
               borderRadius: 11,
               boxShadow: selected ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
-              color: muted ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
+              color: accent.fg,
               cursor: "pointer",
               flexShrink: 0,
               fontFamily: "var(--font-mono, ui-monospace, monospace)",
