@@ -99,9 +99,9 @@ function XLogoIcon({ className }: { className?: string }) {
 
 export default function TeamPage() {
   return (
-    <div style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: fonts.sans }}>
+    <div className="flex min-h-dvh flex-col" style={{ backgroundColor: c.pageBg, color: c.deep, fontFamily: fonts.sans }}>
       <SiteHeader />
-      <main>
+      <main className="flex-1">
         <SectionShell className="pt-10 pb-16 md:pt-20 md:pb-24">
           <section aria-labelledby="team-heading" className="mx-auto max-w-[50rem] text-center">
             <p

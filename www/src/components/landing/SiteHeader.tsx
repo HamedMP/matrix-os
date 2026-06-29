@@ -29,6 +29,7 @@ const navItems: NavItem[] = [
         { label: "Hermes", desc: "The resident agent for everything else", href: "/hermes" },
         { label: "Every screen", desc: "Web, CLI, mobile, and desktop", href: "/#surfaces" },
         { label: "Whitepaper", desc: "How Matrix works under the hood", href: "/whitepaper" },
+        { label: "Blog", desc: "Field notes from the Matrix team", href: "/blog" },
       ],
       featured: {
         title: "Agents that keep working after your laptop closes",
@@ -57,6 +58,7 @@ const navItems: NavItem[] = [
     },
   },
   { label: "Pricing", href: "/#pricing" },
+  { label: "Blog", href: "/blog" },
   { label: "About us", href: "/team" },
   { label: "Docs", href: "/docs" },
 ];
