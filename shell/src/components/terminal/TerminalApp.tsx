@@ -4491,19 +4491,31 @@ function LocalTerminalSidebar() {
               style={{
                 background: "var(--terminal-drawer-brand-bg)",
                 borderRadius: ctx.mobile ? 12 : 9,
-                color: "var(--terminal-drawer-brand-fg)",
-                fontFamily: "Orbitron, system-ui, sans-serif",
-                fontSize: ctx.mobile ? 17 : 15,
-                fontWeight: 800,
                 height: ctx.mobile ? 40 : 30,
                 width: ctx.mobile ? 40 : 30,
               }}
             >
-              M
+              <span
+                aria-hidden="true"
+                style={{
+                  background: "var(--terminal-drawer-brand-fg)",
+                  WebkitMaskImage: "url('/matrix-logo.svg')",
+                  maskImage: "url('/matrix-logo.svg')",
+                  WebkitMaskRepeat: "no-repeat",
+                  maskRepeat: "no-repeat",
+                  WebkitMaskPosition: "center",
+                  maskPosition: "center",
+                  WebkitMaskSize: "contain",
+                  maskSize: "contain",
+                  display: "block",
+                  height: ctx.mobile ? 22 : 17,
+                  width: ctx.mobile ? 22 : 17,
+                }}
+              />
             </div>
             <div className="min-w-0">
-              <div style={{ color: "var(--terminal-drawer-fg)", fontFamily: "Orbitron, system-ui, sans-serif", fontSize: 20, fontWeight: 800, lineHeight: "24px" }}>
-                matrixos
+              <div style={{ color: "var(--terminal-drawer-fg)", fontFamily: "var(--font-sans), system-ui, sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: "24px" }}>
+                matrix os
               </div>
               {!ctx.mobile ? (
                 <div className="truncate" style={{ color: "var(--terminal-drawer-muted)", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13, lineHeight: "17px" }}>
@@ -5380,7 +5392,7 @@ function CollapsedSessionsRail({
           height: COLLAPSED_RAIL_ITEM_SIZE,
           width: COLLAPSED_RAIL_ITEM_SIZE,
         }}
-        title="matrixos"
+        title="matrix os"
       >
         M
       </div>
