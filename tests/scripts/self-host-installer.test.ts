@@ -58,8 +58,14 @@ describe("self-host server installer", () => {
     expect(script).not.toContain("MATRIX_INSTALL_HANDLE\",\"");
 
     expect(route).toContain("MAX_BODY_BYTES = 4096");
+    expect(route).toContain("readBoundedJson");
+    expect(route).toContain("request.body?.getReader()");
+    expect(route).toContain("totalBytes > MAX_BODY_BYTES");
+    expect(route).toContain("await reader.cancel()");
     expect(route).toContain("installTelemetrySchema");
-    expect(route).toContain("getPostHogClient().capture");
+    expect(route).toContain("const posthog = getPostHogClient()");
+    expect(route).toContain("posthog.capture");
+    expect(route).toContain("await shutdownPostHog()");
     expect(route).toContain("matrix_manual_install_completed");
     expect(route).toContain("install_surface: 'linux_vps_script'");
     expect(route).toContain("$ip: '0.0.0.0'");
