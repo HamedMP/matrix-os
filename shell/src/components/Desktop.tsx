@@ -105,6 +105,11 @@ function sameIconAsset(left: string | undefined, right: string | undefined): boo
   return iconAssetPath(left) === iconAssetPath(right);
 }
 
+function gatewayFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
 const MATRIX_FIRST_RUN_LOGO_STYLE: CSSProperties = {
   WebkitMaskImage: "url('/matrix-logo.svg')",
   WebkitMaskRepeat: "no-repeat",
@@ -836,11 +841,26 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   }, [apps, focusOrOpen, launchAppPath]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
-  const loadModules = useCallback(async () => {
+  const loadModules = useCallback(async (signal?: AbortSignal) => {
+    const isLoadAborted = () => signal?.aborted === true;
+    const fetchForLoad = async (input: RequestInfo | URL): Promise<Response | null> => {
+      if (isLoadAborted()) return null;
+      const response = await fetch(input, {
+        signal: gatewayFetchSignal(signal),
+      });
+      return isLoadAborted() ? null : response;
+    };
+    const readJsonForLoad = async <T,>(response: Response): Promise<T | null> => {
+      if (isLoadAborted()) return null;
+      const data = await response.json() as T;
+      return isLoadAborted() ? null : data;
+    };
     const applyBootstrap = async (
       bootstrap: ShellBootstrap,
       options: { resolveModuleMetadata: boolean },
     ) => {
+      if (isLoadAborted()) return;
+
       const iconForSlug = (slug: string | undefined): string | undefined => {
         if (!slug) return undefined;
         return bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug);
@@ -874,6 +894,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (Array.isArray(bootstrap.apps)) {
         const appsList = bootstrap.apps;
         for (const app of appsList) {
+          if (isLoadAborted()) return;
           // path from API is like "/files/apps/calculator/index.html"
           // strip leading "/files/" to get relative path for AppViewer
           const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
@@ -891,6 +912,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         const registry = bootstrap.modules;
 
         for (const mod of registry) {
+          if (isLoadAborted()) return;
           if (mod.status !== "active") continue;
           if (!options.resolveModuleMetadata) {
             const relativeBasePath = registryPathToRelativePath(mod.path);
@@ -922,9 +944,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             let metaRes: Response | undefined;
             for (const candidate of metaCandidates) {
               // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design priority fallback: tries the candidate manifest filenames in order and breaks on the first that exists; parallelizing would always fire every request and lose the priority semantics
-              const res = await fetch(candidate, {
-                signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-              });
+              const res = await fetchForLoad(candidate);
+              if (!res) return;
               if (res.ok) {
                 metaRes = res;
                 break;
@@ -944,7 +965,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               continue;
             }
 
-            const meta: ModuleMeta = await metaRes.json();
+            const meta = await readJsonForLoad<ModuleMeta>(metaRes);
+            if (!meta) return;
             const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
             path = normalizeBuiltInAppPath(`${relativeBasePath}/${entryFile}`);
             appName = meta.name ?? mod.name;
@@ -958,11 +980,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
               openWindow(appName, path);
             }
           } catch (err) {
+            if (isLoadAborted()) return;
             console.warn(`[desktop] Failed to load module "${mod.name}":`, err);
           }
         }
       }
 
+      if (isLoadAborted()) return;
       if (layoutToLoad.length > 0) {
         wmLoadLayout(layoutToLoad);
       }
@@ -974,22 +998,26 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
         await applyBootstrap(cachedBootstrap, { resolveModuleMetadata: false });
       }
 
-      const bootstrapRes = await fetch(`${GATEWAY_URL}/api/shell/bootstrap`, {
-        signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-      }).catch((err) => {
+      const bootstrapRes = await fetchForLoad(`${GATEWAY_URL}/api/shell/bootstrap`).catch((err) => {
+        if (isLoadAborted()) return null;
         console.warn("[desktop] Failed to fetch shell bootstrap:", err);
-        return null;
+        return undefined;
       });
-      const bootstrap: ShellBootstrap = bootstrapRes?.ok ? await bootstrapRes.json() : {};
+      if (bootstrapRes === null) return;
+      const bootstrap = bootstrapRes?.ok ? await readJsonForLoad<ShellBootstrap>(bootstrapRes) : {};
+      if (bootstrap === null) return;
       if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
       await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
     } catch (err) {
+      if (isLoadAborted()) return;
       console.warn("[desktop] Failed to load desktop modules:", err);
     }
   }, [addApp, cacheScope, openWindow, wmLoadLayout]);
 
   useEffect(() => {
-    loadModules();
+    const controller = new AbortController();
+    void loadModules(controller.signal);
+    return () => controller.abort();
   }, [loadModules]);
 
   useFileWatcher((path: string, event: string) => {

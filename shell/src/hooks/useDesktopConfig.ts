@@ -229,5 +229,5 @@ export async function saveDesktopConfigPatch(
   if (!putRes.ok) {
     throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
   }
-  saveShellSnapshot(options.cacheScope, { desktopConfig: nextConfig as DesktopConfig });
+  saveShellSnapshot(options.cacheScope, { desktopConfig: nextConfig as unknown as DesktopConfig });
 }

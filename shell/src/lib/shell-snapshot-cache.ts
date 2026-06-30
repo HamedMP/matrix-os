@@ -246,7 +246,7 @@ function normalizeBackground(value: unknown): DesktopConfig["background"] {
   return fallback;
 }
 
-function normalizeAppPaths(value: unknown, fallback: string[]): string[] {
+function normalizeAppPaths(value: unknown, fallback: readonly string[]): string[] {
   if (!Array.isArray(value)) return [...fallback];
   const seen = new Set<string>();
   const paths: string[] = [];
@@ -322,7 +322,10 @@ function safeImageUrl(value: unknown): string | undefined {
       return `${url.pathname}${url.search}`;
     }
     return url.toString();
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) {
+      console.warn("[shell-snapshot-cache] unexpected image URL parse failure:", err);
+    }
     return undefined;
   }
 }
