@@ -31,6 +31,11 @@ describe("self-host server installer", () => {
     expect(script).toContain("validate_config");
     expect(script).toContain("MATRIX_HOST_BUNDLE_URL must be https");
     expect(script).toContain("MATRIX_HOME must stay under /home/matrix");
+    expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret");
+    expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret");
+    expect(script).toContain("read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret");
+    expect(script).toContain("cleanup_install_tmp");
+    expect(script).toContain("trap cleanup_install_tmp EXIT");
   });
 
   it("protects the public surface with nginx basic auth and keeps services loopback", () => {
@@ -39,12 +44,16 @@ describe("self-host server installer", () => {
     expect(script).toContain("auth_basic \"Matrix OS\"");
     expect(script).toContain("auth_basic_user_file /opt/matrix/env/nginx.htpasswd");
     expect(script).toContain("openssl passwd -apr1");
+    expect(script).toContain("code-proxy-token.conf");
+    expect(script).toContain("chmod 0600 /opt/matrix/env/code-proxy-token.conf");
+    expect(script).toContain("include /opt/matrix/env/code-proxy-token.conf");
     expect(script).toContain("proxy_pass http://127.0.0.1:3000");
     expect(script).toContain("proxy_pass http://127.0.0.1:4000");
     expect(script).toContain("proxy_pass http://127.0.0.1:8787");
-    expect(script).toContain("proxy_set_header X-Matrix-Code-Proxy-Token");
+    expect(script).toContain("proxy_set_header X-Matrix-Code-Proxy-Token \"%s\"");
     expect(script).toContain("-p 127.0.0.1:5432:5432");
     expect(script).not.toContain("-p 5432:5432");
+    expect(script).not.toContain("grep '^MATRIX_CODE_PROXY_TOKEN='");
   });
 
   it("installs the core Matrix services without enabling managed-cloud backup requirements", () => {
@@ -58,6 +67,8 @@ describe("self-host server installer", () => {
     expect(script).toContain("systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server");
     expect(script).toContain("systemctl enable --now docker");
     expect(script).not.toContain("systemctl restart docker");
+    expect(script).not.toContain("write_postgres_compose");
+    expect(script).not.toContain("postgres-compose.yml");
     expect(script).not.toContain("NOPASSWD:ALL");
     expect(script).not.toContain("systemctl enable matrix-db-backup");
     expect(script).not.toContain("systemctl enable matrix-sync-agent");

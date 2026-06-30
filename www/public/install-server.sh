@@ -11,6 +11,14 @@ MATRIX_INSTALL_HANDLE="${MATRIX_INSTALL_HANDLE:-matrix}"
 MATRIX_DOMAIN="${MATRIX_DOMAIN:-_}"
 MATRIX_HOME_DIR="${MATRIX_HOME:-/home/matrix/home}"
 MATRIX_DEVELOPER_TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"
+INSTALL_TMP_BUNDLE=""
+INSTALL_TMP_SUM=""
+
+cleanup_install_tmp() {
+  [ -z "$INSTALL_TMP_BUNDLE" ] || rm -f "$INSTALL_TMP_BUNDLE"
+  [ -z "$INSTALL_TMP_SUM" ] || rm -f "$INSTALL_TMP_SUM"
+}
+trap cleanup_install_tmp EXIT
 
 log() {
   printf 'matrix-server-install: %s\n' "$*"
@@ -99,11 +107,21 @@ random_secret() {
   openssl rand -base64 32 | tr -d '\n'
 }
 
+read_env_value() {
+  local file key value
+  file="$1"
+  key="$2"
+  [ -f "$file" ] || return 1
+  value="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$file")"
+  [ -n "$value" ] || return 1
+  printf '%s\n' "$value"
+}
+
 write_env() {
   local auth_token code_token postgres_password
-  auth_token="$(random_secret)"
-  code_token="$(random_secret)"
-  postgres_password="$(random_secret | tr '/+' 'ab')"
+  auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret)"
+  code_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret)"
+  postgres_password="$(read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret | tr '/+' 'ab')"
 
   cat >/opt/matrix/env/postgres.env <<EOF
 POSTGRES_DB=matrix
@@ -138,8 +156,10 @@ EOF
 
 install_bundle() {
   local tmp_bundle tmp_sum expected actual
-  tmp_bundle="/tmp/matrix-host-bundle.tar.gz"
-  tmp_sum="/tmp/matrix-host-bundle.tar.gz.sha256"
+  tmp_bundle="$(mktemp /tmp/matrix-host-bundle.XXXXXX.tar.gz)"
+  tmp_sum="$(mktemp /tmp/matrix-host-bundle.XXXXXX.tar.gz.sha256)"
+  INSTALL_TMP_BUNDLE="$tmp_bundle"
+  INSTALL_TMP_SUM="$tmp_sum"
 
   log "downloading host bundle"
   curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
@@ -157,25 +177,9 @@ install_bundle() {
   log "extracting host bundle"
   tar -xzf "$tmp_bundle" -C /opt/matrix
   chmod 0755 /opt/matrix/bin/matrix-* /opt/matrix/bin/zellij 2>/dev/null || true
-}
-
-write_postgres_compose() {
-  cat >/opt/matrix/postgres-compose.yml <<'EOF'
-services:
-  postgres:
-    image: postgres:16
-    restart: unless-stopped
-    env_file:
-      - /opt/matrix/env/postgres.env
-    volumes:
-      - matrix-postgres:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5432:5432"
-
-volumes:
-  matrix-postgres:
-EOF
-  chmod 0644 /opt/matrix/postgres-compose.yml
+  cleanup_install_tmp
+  INSTALL_TMP_BUNDLE=""
+  INSTALL_TMP_SUM=""
 }
 
 write_self_host_restore_service() {
@@ -217,9 +221,10 @@ install_systemd_units() {
 }
 
 configure_nginx() {
-  local password hash server_name
+  local code_proxy_token password hash server_name
   password="$(openssl rand -base64 18 | tr -d '\n')"
   hash="$(openssl passwd -apr1 "$password")"
+  code_proxy_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN)" || fail "MATRIX_CODE_PROXY_TOKEN is missing from host.env"
   server_name="$MATRIX_DOMAIN"
 
   printf 'matrix:%s\n' "$hash" >/opt/matrix/env/nginx.htpasswd
@@ -227,6 +232,9 @@ configure_nginx() {
   chown root:www-data /opt/matrix/env/nginx.htpasswd
   printf '%s\n' "$password" >/opt/matrix/env/initial-ui-password
   chmod 0600 /opt/matrix/env/initial-ui-password
+  printf 'proxy_set_header X-Matrix-Code-Proxy-Token "%s";\n' "$code_proxy_token" >/opt/matrix/env/code-proxy-token.conf
+  chmod 0600 /opt/matrix/env/code-proxy-token.conf
+  chown root:root /opt/matrix/env/code-proxy-token.conf
 
   cat >/etc/nginx/sites-available/matrix-self-host <<EOF
 server {
@@ -260,7 +268,7 @@ server {
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
-    proxy_set_header X-Matrix-Code-Proxy-Token "$(grep '^MATRIX_CODE_PROXY_TOKEN=' /opt/matrix/env/host.env | cut -d= -f2-)";
+    include /opt/matrix/env/code-proxy-token.conf;
     rewrite ^/code/?(.*)\$ /\$1 break;
     proxy_pass http://127.0.0.1:8787;
   }
@@ -333,7 +341,6 @@ main() {
   ensure_matrix_user
   write_env
   install_bundle
-  write_postgres_compose
   install_systemd_units
   configure_nginx
   start_services
