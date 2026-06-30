@@ -18,11 +18,15 @@ protection is also updated when the shard list changes.
 - `React Doctor`
 - `Sync Client Package (Node 20)`
 - `Unit Tests`
+- `Docs Contract Tests`
 - `E2E Tests`
 
 The aggregate job writes a summary table and fails when any required internal
 job fails or is cancelled. Internal jobs may still be inspected directly for
 logs and artifacts.
+
+Docs-only changes still run targeted docs contract tests through `Docs Contract Tests`.
+Expensive jobs remain path-aware.
 
 ## Workflow Ownership
 

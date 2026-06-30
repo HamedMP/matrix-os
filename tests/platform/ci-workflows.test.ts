@@ -21,7 +21,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, docs-contract, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -29,8 +29,24 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.react-doctor.result');
     expect(workflow).toContain('needs.sync-client.result');
     expect(workflow).toContain('needs.unit.result');
+    expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.e2e.result');
     expect(workflow).toContain('Branch protection should require this aggregate job');
+  });
+
+  it('runs lightweight docs contract tests for docs-only CI changes', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const readme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
+
+    expect(workflow).toContain('docs-contract:');
+    expect(workflow).toContain('name: Docs Contract Tests');
+    expect(workflow).toContain('docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}');
+    expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
+    expect(workflow).toContain('pnpm exec vitest run tests/www/self-host-docs.test.ts');
+    expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');
+    expect(readme).toContain('- `Docs Contract Tests`');
+    expect(readme).toContain('Docs-only changes still run targeted docs contract tests');
   });
 
   it('documents workflow ownership and required checks', () => {
@@ -43,6 +59,7 @@ describe('CI workflows', () => {
     expect(readme).toContain('Host Bundle Release');
     expect(readme).toContain('host bundle release tests are blocking');
     expect(readme).toContain('React Doctor');
+    expect(readme).toContain('Docs Contract Tests');
     expect(readme).toContain('Screenshot workflow removed');
   });
 
