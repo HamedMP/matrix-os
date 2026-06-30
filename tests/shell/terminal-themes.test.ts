@@ -29,7 +29,7 @@ describe("Terminal Themes", () => {
       background: "#11161C",
       foreground: "#D6D8DD",
       cursor: "#0AD18B",
-      selectionBackground: "#30363D",
+      selectionBackground: "#30363DAA",
       cyan: "#00E5C0",
       blue: "#6AA0FF",
     });
@@ -176,7 +176,7 @@ describe("Terminal Themes", () => {
       background: "#101418",
       foreground: "#E6E8EC",
       cursor: "#F8F8F2",
-      selectionBackground: "#30363D",
+      selectionBackground: "#30363DAA",
     });
     assertCompleteAnsiPalette(xtermTheme);
   });

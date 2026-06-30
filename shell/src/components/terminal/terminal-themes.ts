@@ -272,7 +272,7 @@ const terminalThemePresets = {
     background: "#11161C",
     foreground: "#D6D8DD",
     cursor: "#0AD18B",
-    selectionBackground: "#30363D",
+    selectionBackground: "#30363DAA",
   },
   "light": {
     label: "Light",
@@ -420,7 +420,7 @@ export function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId):
   const cursor = theme.colors.primary || "#c2703a";
   const slug = (theme as { slug?: string }).slug ?? "";
   const ansi = getAnsiPalette(slug, background);
-  const selectionBackground = inferMode(background) === "dark" ? "#30363D" : `${cursor}44`;
+  const selectionBackground = inferMode(background) === "dark" ? "#30363DAA" : `${cursor}44`;
 
   return {
     background,
