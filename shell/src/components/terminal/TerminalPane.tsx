@@ -13,7 +13,7 @@ import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
-import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
+import { buildXtermTheme } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
@@ -28,25 +28,6 @@ import {
   terminalWebSocketPathForSession,
 } from "./terminal-session-id";
 import { createXtermLogger } from "./xterm-logger";
-
-function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
-  if (terminalThemeId !== "system") {
-    return getTerminalThemePreset(terminalThemeId);
-  }
-
-  const bg = theme.colors.background || "#1a1a2e";
-  const fg = theme.colors.foreground || "#e0e0e0";
-  const slug = (theme as { slug?: string }).slug ?? "";
-  const ansi = getAnsiPalette(slug, bg);
-
-  return {
-    background: bg,
-    foreground: fg,
-    cursor: theme.colors.primary || "#c2703a",
-    selectionBackground: (theme.colors.primary || "#c2703a") + "44",
-    ...ansi,
-  };
-}
 
 const BRACKETED_PASTE_OPEN = "\x1b[200~";
 const BRACKETED_PASTE_CLOSE = "\x1b[201~";

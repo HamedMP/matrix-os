@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
   DEFAULT_TERMINAL_APP_THEME_ID,
+  DEFAULT_TERMINAL_FONT_SIZE,
   DEFAULT_TERMINAL_THEME_ID,
   type ShellThemeId,
   type TerminalAppThemeId,
@@ -10,6 +11,7 @@ import {
 
 export {
   DEFAULT_TERMINAL_APP_THEME_ID,
+  DEFAULT_TERMINAL_FONT_SIZE,
   DEFAULT_TERMINAL_THEME_ID,
   type ShellThemeId,
   type TerminalAppThemeId,
@@ -44,7 +46,7 @@ export const useTerminalSettings = create<TerminalSettings>()(
     (set) => ({
       appThemeId: DEFAULT_TERMINAL_APP_THEME_ID,
       themeId: DEFAULT_TERMINAL_THEME_ID,
-      fontSize: 13,
+      fontSize: DEFAULT_TERMINAL_FONT_SIZE,
       fontFamily: "MesloLGS NF",
       ligatures: true,
       cursorStyle: "block",

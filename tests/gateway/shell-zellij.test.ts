@@ -204,6 +204,7 @@ describe("zellij adapter", () => {
           COLORTERM: "truecolor",
           CLICOLOR: "1",
           FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
           LANG: "fr_FR.UTF-8",
           XDG_RUNTIME_DIR: "/run/user/999",
           ZELLIJ_CONFIG_DIR: "/home/matrix/.config/zellij",
@@ -279,6 +280,7 @@ describe("zellij adapter", () => {
           COLORTERM: "truecolor",
           CLICOLOR: "1",
           FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
         }),
       }),
     );
@@ -558,6 +560,7 @@ describe("zellij adapter", () => {
           COLORTERM: "truecolor",
           CLICOLOR: "1",
           FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
         }),
       }));
     }
