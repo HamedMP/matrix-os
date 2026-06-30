@@ -139,6 +139,7 @@ async function openSessionContextMenu(name: string, displayName = `matrix-${name
   revealSessionActions(name);
   fireEvent.click(screen.getByRole("button", { name: `More actions for ${displayName}` }));
   await Promise.resolve();
+  await Promise.resolve();
   return screen.getByRole("menu", { name: `Actions for ${displayName}` });
 }
 
@@ -408,7 +409,7 @@ describe("TerminalApp", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByTestId("terminal-session-card-docs")).toBeNull();
     expect(screen.queryByText("Nothing running in background")).toBeNull();
-    expect(screen.getByTestId("terminal-session-background-chevron").style.transform).toBe("rotate(-90deg)");
+    expect(screen.getByTestId("terminal-session-background-chevron").style.transform).toBe("rotate(0deg)");
 
     fireEvent.click(toggle);
 
@@ -707,19 +708,30 @@ describe("TerminalApp", () => {
     expect(within(actions).queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
     expect(within(actions).queryByRole("button", { name: "Close matrix-main" })).toBeNull();
 
-    const menu = await openSessionContextMenu("main");
-    const copyButton = within(menu).getByRole("menuitem", { name: "Copy connect command for matrix-main" });
-    expect(within(menu).getByRole("menuitem", { name: "Move matrix-main to background" })).toBeTruthy();
+    let menu = await openSessionContextMenu("main");
+    const moveButton = within(menu).getByRole("menuitem", { name: "Move matrix-main to background" });
+    expect(moveButton).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: "Close matrix-main" })).toBeTruthy();
+    expect(document.activeElement).toBe(moveButton);
 
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
+    expect(document.activeElement).toBe(within(actions).getByRole("button", { name: "More actions for matrix-main" }));
+
+    menu = await openSessionContextMenu("main");
+    const copyButton = within(menu).getByRole("menuitem", { name: "Copy connect command for matrix-main" });
     await act(async () => {
       fireEvent.click(copyButton);
       await Promise.resolve();
     });
 
     expect(writeText).toHaveBeenCalledWith("matrix shell connect main");
-    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Copied");
-    expect(screen.getByTestId("terminal-session-copy-toast-main").className).toContain("sr-only");
+    expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
+    expect(document.activeElement).toBe(within(actions).getByRole("button", { name: "More actions for matrix-main" }));
+    const copyFeedback = screen.getByTestId("terminal-session-copy-toast-main");
+    expect(copyFeedback.textContent).toContain("Copied");
+    expect(copyFeedback.className).not.toContain("sr-only");
+    expect(copyFeedback.style.display).toBe("inline-flex");
     expect(within(actions).queryByText("matrix shell connect")).toBeNull();
   });
 

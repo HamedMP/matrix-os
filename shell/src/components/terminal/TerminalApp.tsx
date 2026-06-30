@@ -813,6 +813,24 @@ const SESSION_CONTEXT_MENU_ITEM_STYLE: CSSProperties = {
   whiteSpace: "nowrap",
   width: "100%",
 };
+const SESSION_COPY_FEEDBACK_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "var(--terminal-drawer-action-bg)",
+  border: "1px solid var(--terminal-drawer-action-border)",
+  borderRadius: 999,
+  color: "var(--terminal-drawer-action-fg)",
+  display: "inline-flex",
+  flexShrink: 0,
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 12,
+  fontWeight: 750,
+  gap: 5,
+  height: 24,
+  lineHeight: "14px",
+  padding: "0 8px",
+  pointerEvents: "none",
+  whiteSpace: "nowrap",
+};
 const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
@@ -5521,7 +5539,7 @@ function ShellSessionGroup({
               size={12}
               strokeWidth={2.5}
               style={{
-                transform: expanded ? "rotate(90deg)" : "rotate(-90deg)",
+                transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
                 transition: "transform 140ms ease",
               }}
             />
@@ -5667,9 +5685,11 @@ function ShellCard({
   const [renameSaving, setRenameSaving] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommittingRef = useRef(false);
   const copiedTimerRef = useRef<number | null>(null);
+  const restoreFocusAfterMenuCloseRef = useRef(false);
   const showActions = actionsVisible || copyFeedback !== null || contextMenuOpen;
   const showRenameControl = actionsVisible && !renaming;
   const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
@@ -5688,14 +5708,21 @@ function ShellCard({
     renameInputRef.current?.select();
   }, [renaming]);
 
+  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- menu close reason is intentionally held in a mutable ref so Escape/menu-item closes restore focus while outside-pointer closes do not; making it render state would add an extra close render and stale-focus edge cases
   useEffect(() => {
     if (!contextMenuOpen) return;
+    const firstMenuItem = contextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
+    firstMenuItem?.focus();
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setContextMenuOpen(false);
+      if (event.key === "Escape") {
+        restoreFocusAfterMenuCloseRef.current = true;
+        setContextMenuOpen(false);
+      }
     };
     const onPointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && cardRef.current?.contains(target)) return;
+      restoreFocusAfterMenuCloseRef.current = false;
       setContextMenuOpen(false);
     };
     document.addEventListener("keydown", onKeyDown);
@@ -5703,8 +5730,17 @@ function ShellCard({
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown, true);
+      if (restoreFocusAfterMenuCloseRef.current) {
+        moreButtonRef.current?.focus();
+        restoreFocusAfterMenuCloseRef.current = false;
+      }
     };
   }, [contextMenuOpen]);
+
+  const closeContextMenuWithFocusReturn = () => {
+    restoreFocusAfterMenuCloseRef.current = true;
+    setContextMenuOpen(false);
+  };
 
   const copyAttachCommand = async () => {
     try {
@@ -6020,8 +6056,9 @@ function ShellCard({
               >
                 <PencilIcon size={12} strokeWidth={2} />
               </button>
-              <div ref={contextMenuRef} style={{ position: "relative" }}>
+              <div style={{ position: "relative" }}>
                 <button
+                  ref={moreButtonRef}
                   type="button"
                   aria-label={`More actions for ${displayName}`}
                   aria-haspopup="menu"
@@ -6029,6 +6066,7 @@ function ShellCard({
                   tabIndex={showActions ? 0 : -1}
                   onClick={(event) => {
                     event.stopPropagation();
+                    restoreFocusAfterMenuCloseRef.current = true;
                     setContextMenuOpen((open) => !open);
                   }}
                   onPointerDown={(event) => event.stopPropagation()}
@@ -6043,6 +6081,7 @@ function ShellCard({
                 </button>
                 {contextMenuOpen ? (
                   <div
+                    ref={contextMenuRef}
                     role="menu"
                     aria-label={`Actions for ${displayName}`}
                     tabIndex={-1}
@@ -6053,7 +6092,7 @@ function ShellCard({
                     <SessionContextMenuItem
                       label={toggleMenuLabel}
                       onClick={() => {
-                        setContextMenuOpen(false);
+                        closeContextMenuWithFocusReturn();
                         onToggle();
                       }}
                     >
@@ -6063,7 +6102,7 @@ function ShellCard({
                       label={`Copy connect command for ${displayName}`}
                       onClick={() => {
                         void copyAttachCommand();
-                        setContextMenuOpen(false);
+                        closeContextMenuWithFocusReturn();
                       }}
                     >
                       <LinkIcon size={13} strokeWidth={2} />
@@ -6073,7 +6112,7 @@ function ShellCard({
                       disabled={deleting}
                       onClick={() => {
                         if (deleting) return;
-                        setContextMenuOpen(false);
+                        closeContextMenuWithFocusReturn();
                         onDelete();
                       }}
                     >
@@ -6083,8 +6122,22 @@ function ShellCard({
                 ) : null}
               </div>
               {copyFeedback ? (
-                <output data-testid={`terminal-session-copy-toast-${shell.name}`} aria-live="polite" className="sr-only">
-                  {copyFeedback === "copied" ? "Copied" : "Copy failed"}
+                <output
+                  data-testid={`terminal-session-copy-toast-${shell.name}`}
+                  aria-live="polite"
+                  style={{
+                    ...SESSION_COPY_FEEDBACK_STYLE,
+                    color: copyFeedback === "copied"
+                      ? "var(--terminal-drawer-selected-stripe)"
+                      : "var(--terminal-drawer-danger-fg)",
+                  }}
+                >
+                  {copyFeedback === "copied" ? (
+                    <CheckIcon aria-hidden="true" size={12} strokeWidth={2.4} />
+                  ) : (
+                    <span aria-hidden="true" style={{ fontSize: 12, fontWeight: 900 }}>!</span>
+                  )}
+                  <span>{copyFeedback === "copied" ? "Copied" : "Copy failed"}</span>
                 </output>
               ) : null}
             </div>
