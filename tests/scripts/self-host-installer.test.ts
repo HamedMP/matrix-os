@@ -39,6 +39,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("MATRIX_HOME must stay under /home/matrix");
     expect(script).toContain("[ \"${#MATRIX_DOMAIN}\" -le 253 ]");
     expect(script).toContain("[[ \"$MATRIX_DOMAIN\" =~ ^[A-Za-z0-9]");
+    expect(script).toContain("openssl rand -hex 32");
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret");
     expect(script).toContain("read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret");
     expect(script).toContain("read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret");
@@ -137,7 +138,9 @@ describe("self-host server installer", () => {
     expect(script).toContain("auth_basic off");
     expect(script).toContain("rewrite ^/cli/?(.*)\\$ /\\$1 break");
     expect(script).toContain("CLI gateway: ${ui_url%/}/cli");
-    expect(script).toContain("matrix status --gateway ${ui_url%/}/cli --token \"\\$MATRIX_TOKEN\"");
+    expect(script).toContain("MATRIX_TOKEN=\\$(sudo sed -n 's/^MATRIX_AUTH_TOKEN=//p' /opt/matrix/env/host.env)");
+    expect(script).toContain("matrix shell ls --gateway ${ui_url%/}/cli --token \"\\$MATRIX_TOKEN\"");
+    expect(script).not.toContain("MATRIX_TOKEN=\\$(sudo awk -F=");
     expect(script).not.toContain("-p 5432:5432");
     expect(script).not.toContain("grep '^MATRIX_CODE_PROXY_TOKEN='");
   });
