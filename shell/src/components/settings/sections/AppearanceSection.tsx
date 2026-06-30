@@ -1,36 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useId } from "react";
-import { saveTheme, useTheme, DEFAULT_THEME, type Theme } from "@/hooks/useTheme";
-import { RETRO_THEME } from "@/lib/theme-presets";
+import { useTheme } from "@/hooks/useTheme";
 import { saveDesktopConfig, useDesktopConfig, buildMeshGradient, type DesktopConfig } from "@/hooks/useDesktopConfig";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { getGatewayUrl } from "@/lib/gateway";
-import { CheckIcon, UploadIcon, XIcon, ImageIcon, PaletteIcon } from "lucide-react";
+import { UploadIcon, XIcon, ImageIcon, PaletteIcon } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-
-/* ── Theme Presets ─────────────────────────────── */
-
-const PRESETS: { id: string; label: string; theme: Theme | null; gradient: string[] }[] = [
-  {
-    id: "sage",
-    label: "Sage",
-    theme: DEFAULT_THEME,
-    gradient: ["#323D2E", "#9AA48C", "#B8C4A8", "#6a8a7a"],
-  },
-  {
-    id: "retro",
-    label: "Retro",
-    theme: RETRO_THEME,
-    gradient: ["#B0B0B0", "#C8C8C8", "#D4D4D4", "#008080"],
-  },
-  {
-    id: "midnight",
-    label: "Midnight",
-    theme: null, // coming soon
-    gradient: ["#1a1a2e", "#16213e", "#0f3460", "#533483"],
-  },
-];
 
 /* ── Background Type ───────────────────────────── */
 
@@ -38,8 +14,8 @@ type BgMode = "pattern" | "solid" | "image";
 
 /* ── Component ─────────────────────────────────── */
 
-// react-doctor-disable-next-line react-doctor/prefer-useReducer -- preset/background-mode/color/wallpaper inputs are independent appearance controls, not a single cohesive state machine; a reducer would not simplify them
-// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-purpose appearance panel (theme, background, dock) whose JSX sections share local state and handlers; splitting would scatter that state across props/context without reducing complexity. Real decomposition is out of scope for this behavior-preserving pass.
+// react-doctor-disable-next-line react-doctor/prefer-useReducer -- background-mode/color/wallpaper inputs are independent appearance controls, not a single cohesive state machine; a reducer would not simplify them
+// react-doctor-disable-next-line react-doctor/no-giant-component -- cohesive single-purpose appearance panel (background, dock) whose JSX sections share local state and handlers; splitting would scatter that state across props/context without reducing complexity. Real decomposition is out of scope for this behavior-preserving pass.
 export function AppearanceSection() {
   useTheme(); // keep theme applied
   const config = useDesktopConfig();
@@ -47,7 +23,6 @@ export function AppearanceSection() {
   const solidColorId = useId();
   const dockSizeId = useId();
 
-  const [activePreset, setActivePreset] = useState("sage");
   const [bgMode, setBgMode] = useState<BgMode>(
     config.background.type === "wallpaper" || config.background.type === "image"
       ? "image"
@@ -119,23 +94,6 @@ export function AppearanceSection() {
     await saveDesktopConfig({ ...config, background });
   };
 
-  async function applyPreset(id: string) {
-    const preset = PRESETS.find((p) => p.id === id);
-    if (!preset?.theme) return;
-    setActivePreset(id);
-    await saveTheme(preset.theme);
-    // Auto-set background to match theme style
-    if (preset.theme.style === "neumorphic") {
-      setBgMode("solid");
-      const bgColor = preset.theme.colors.background || "#D4D4D4";
-      setSolidColor(bgColor);
-      await saveBg({ type: "solid", color: bgColor });
-    } else {
-      setBgMode("pattern");
-      await saveBg({ type: "pattern" });
-    }
-  }
-
   async function selectBgMode(mode: BgMode) {
     setBgMode(mode);
     if (mode === "pattern") await saveBg({ type: "pattern" });
@@ -193,48 +151,6 @@ export function AppearanceSection() {
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-8">
       <h2 className="text-lg font-semibold">Appearance</h2>
-
-      {/* ── Theme Presets ──────────────────────── */}
-      <section className="space-y-3">
-        <h3 className="text-sm font-medium text-muted-foreground">Theme</h3>
-        <div className="grid grid-cols-3 gap-3">
-          {PRESETS.map((preset) => {
-            const isActive = activePreset === preset.id;
-            const isAvailable = preset.theme !== null;
-            return (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() => isAvailable && applyPreset(preset.id)}
-                disabled={!isAvailable}
-                className={`relative flex flex-col rounded-xl border-2 p-3 transition-all ${
-                  isActive
-                    ? "border-primary bg-primary/5"
-                    : isAvailable
-                      ? "border-border hover:border-primary/40"
-                      : "border-border/50 opacity-50 cursor-not-allowed"
-                }`}
-              >
-                {/* Color swatch row */}
-                <div className="flex h-8 w-full rounded-lg overflow-hidden mb-2">
-                  {preset.gradient.map((color, i) => (
-                    <div key={i} className="flex-1" style={{ backgroundColor: color }} />
-                  ))}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">{preset.label}</span>
-                  {isActive && (
-                    <CheckIcon className="size-4 text-primary" />
-                  )}
-                  {!isAvailable && (
-                    <span className="text-[10px] text-muted-foreground">Coming soon</span>
-                  )}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </section>
 
       {/* ── Background ─────────────────────────── */}
       <section className="space-y-3">
