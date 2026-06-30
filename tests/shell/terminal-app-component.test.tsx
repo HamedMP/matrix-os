@@ -407,6 +407,9 @@ describe("TerminalApp", () => {
     fireEvent.click(toggle);
 
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const controlledRegion = document.getElementById("terminal-session-group-background-content");
+    expect(controlledRegion).toBeTruthy();
+    expect(controlledRegion?.hidden).toBe(true);
     expect(screen.queryByTestId("terminal-session-card-docs")).toBeNull();
     expect(screen.queryByText("Nothing running in background")).toBeNull();
     expect(screen.getByTestId("terminal-session-background-chevron").style.transform).toBe("rotate(0deg)");
@@ -1894,9 +1897,21 @@ describe("TerminalApp", () => {
     const menu = await openSessionContextMenu("main");
     expect(menu.style.minWidth).toBe("152px");
     expect(menu.style.padding).toBe("5px");
-    expect(within(menu).getByRole("menuitem", { name: "Move to Background" }).style.height).toBe("28px");
-    expect(within(menu).getByRole("menuitem", { name: "Copy Command" })).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: "Close" })).toBeTruthy();
+    const moveItem = within(menu).getByRole("menuitem", { name: "Move to Background" });
+    const copyItem = within(menu).getByRole("menuitem", { name: "Copy Command" });
+    const closeItem = within(menu).getByRole("menuitem", { name: "Close" });
+    expect(moveItem.style.height).toBe("28px");
+    expect(document.activeElement).toBe(moveItem);
+    fireEvent.keyDown(moveItem, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(copyItem);
+    fireEvent.keyDown(copyItem, { key: "End" });
+    expect(document.activeElement).toBe(closeItem);
+    fireEvent.keyDown(closeItem, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(moveItem);
+    fireEvent.keyDown(moveItem, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(closeItem);
+    fireEvent.keyDown(closeItem, { key: "Home" });
+    expect(document.activeElement).toBe(moveItem);
     expect(screen.queryByRole("menuitem", { name: "Move matrix-main to background" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Copy connect command for matrix-main" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Close matrix-main" })).toBeNull();

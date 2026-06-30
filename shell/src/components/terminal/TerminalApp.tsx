@@ -5590,8 +5590,13 @@ function ShellSessionGroup({
           </span>
         </button>
       </div>
-      {expanded ? (
-        <div id={contentId} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div
+        id={contentId}
+        hidden={!expanded}
+        style={{ display: expanded ? "flex" : "none", flexDirection: "column", gap: 10 }}
+      >
+        {expanded ? (
+          <>
           {pending ? <ShellPendingCard /> : null}
           {shells.length === 0 && !pending ? (
             <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 12, padding: "8px 0 6px" }}>
@@ -5616,8 +5621,9 @@ function ShellSessionGroup({
               onDragEnd={onDragEnd}
             />
           ))}
-        </div>
-      ) : null}
+          </>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -5751,12 +5757,41 @@ function ShellCard({
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- menu close reason is intentionally held in a mutable ref so Escape/menu-item closes restore focus while outside-pointer closes do not; making it render state would add an extra close render and stale-focus edge cases
   useEffect(() => {
     if (!contextMenuOpen) return;
-    const firstMenuItem = contextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
+    const getMenuItems = () => Array.from(
+      contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
+    );
+    const focusMenuItem = (nextIndex: number) => {
+      const items = getMenuItems();
+      if (items.length === 0) return;
+      const normalizedIndex = (nextIndex + items.length) % items.length;
+      items[normalizedIndex]?.focus();
+    };
+    const firstMenuItem = getMenuItems()[0];
     firstMenuItem?.focus();
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         restoreFocusAfterMenuCloseRef.current = true;
         setContextMenuOpen(false);
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Node) || !contextMenuRef.current?.contains(target)) return;
+      const items = getMenuItems();
+      if (items.length === 0) return;
+      const currentIndex = items.findIndex((item) => item === document.activeElement);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        focusMenuItem(currentIndex < 0 ? 0 : currentIndex + 1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        focusMenuItem(currentIndex < 0 ? items.length - 1 : currentIndex - 1);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        focusMenuItem(0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        focusMenuItem(items.length - 1);
       }
     };
     const onPointerDown = (event: globalThis.PointerEvent) => {
