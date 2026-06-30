@@ -17,6 +17,10 @@ import {
   JetBrainsMono_400Regular,
   JetBrainsMono_700Bold,
 } from "@expo-google-fonts/jetbrains-mono";
+import {
+  BricolageGrotesque_600SemiBold,
+  BricolageGrotesque_700Bold,
+} from "@expo-google-fonts/bricolage-grotesque";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
@@ -81,6 +85,8 @@ export default function RootLayout() {
     Inter_700Bold,
     JetBrainsMono_400Regular,
     JetBrainsMono_700Bold,
+    BricolageGrotesque_600SemiBold,
+    BricolageGrotesque_700Bold,
   });
 
   const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
@@ -335,8 +341,8 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.background,
   },
   loadingTitle: {
-    fontFamily: theme.fonts.sansBold,
-    fontSize: 28,
+    fontFamily: theme.fonts.display,
+    fontSize: 30,
     color: theme.colors.foreground,
     letterSpacing: -0.5,
   },

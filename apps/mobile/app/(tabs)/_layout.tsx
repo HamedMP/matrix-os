@@ -47,7 +47,7 @@ export default function TabsLayout() {
         tabBarStyle: styles.tabBar,
         tabBarHideOnKeyboard: true,
         tabBarBackground: () => (
-          <BlurView tint="light" intensity={88} style={styles.tabBarBackdrop} />
+          <BlurView tint="light" intensity={theme.glass.blurIntensity} style={styles.tabBarBackdrop} />
         ),
         tabBarActiveTintColor: theme.colors.forest,
         tabBarInactiveTintColor: theme.colors.moss,
@@ -113,14 +113,14 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 26,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: "rgba(50, 61, 46, 0.10)",
-    backgroundColor: "rgba(250, 250, 249, 0.86)",
+    borderColor: theme.glass.border,
+    backgroundColor: theme.glass.tint,
     overflow: "hidden",
-    boxShadow: "0 14px 34px rgba(50, 61, 46, 0.16)",
+    boxShadow: theme.shadows.nav,
   },
   tabBarBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(250, 250, 249, 0.78)",
+    backgroundColor: theme.glass.tint,
   },
   tabBarItem: {
     borderRadius: 20,

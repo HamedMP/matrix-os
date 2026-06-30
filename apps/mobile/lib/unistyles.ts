@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native-unistyles";
-import { colors, fonts, radius, shadows, spacing, type } from "@/lib/theme";
+import { colors, fonts, glass, radius, shadows, spacing, type } from "@/lib/theme";
 
 // Shared, theme-independent token groups. Typography, radii, spacing, fonts and
 // the terminal console palette are identical across color schemes, so they are
@@ -10,6 +10,7 @@ const shared = {
   spacing,
   type,
   shadows,
+  glass,
   // The terminal is always a dark console regardless of the shell color scheme.
   terminal: colors.terminal,
 } as const;

@@ -191,8 +191,9 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing.lg,
   },
   title: {
-    fontFamily: theme.fonts.sansBold,
-    fontSize: 34,
+    fontFamily: theme.fonts.display,
+    fontSize: 36,
+    letterSpacing: -0.8,
     color: theme.colors.foreground,
     marginBottom: theme.spacing.sm,
     textAlign: "center",

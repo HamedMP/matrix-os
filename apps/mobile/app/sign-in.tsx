@@ -128,8 +128,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    boxShadow: "0 12px 28px rgba(50, 61, 46, 0.10)",
+    borderColor: theme.glass.border,
+    boxShadow: theme.shadows.raised,
     marginBottom: theme.spacing.lg,
   },
   logo: {
@@ -144,8 +144,9 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing.lg,
   },
   title: {
-    fontFamily: theme.fonts.sansBold,
-    fontSize: 30,
+    fontFamily: theme.fonts.display,
+    fontSize: 32,
+    letterSpacing: -0.6,
     color: theme.colors.foreground,
     marginBottom: 8,
     textAlign: "center",
