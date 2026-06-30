@@ -145,6 +145,38 @@ export TERM=xterm-256color
 
 If you are already the `matrix` user, skip `sudo -iu matrix`. The `matrix` user is not a sudoer by default. If `zellij` is not found, use `/opt/matrix/bin/zellij` or run `matrix_export_owner_env` to put `/opt/matrix/bin` on `PATH`.
 
+### AI agent handoff prompt
+
+If you install Claude Code, Codex, or another coding agent on the VPS, you can paste this prompt into the agent from the Matrix terminal or an SSH session. It asks the agent to verify the instance without leaking secrets:
+
+```text
+You are helping me finish and verify a standalone Matrix OS self-host install on this Linux VPS.
+
+Rules:
+- Do not print secret values. Redact MATRIX_AUTH_TOKEN, MATRIX_CODE_PROXY_TOKEN, Postgres passwords, Basic Auth passwords, private keys, and cookies.
+- Do not expose ports 3000, 4000, 8787, 8788, or 5432 publicly.
+- Do not rotate credentials, edit nginx, install TLS, or change firewall rules without asking me first.
+- Prefer read-only checks first, then propose the smallest safe fix if something is broken.
+
+Tasks:
+1. Inspect /opt/matrix/release.json or /opt/matrix/app/BUNDLE_VERSION and tell me the installed Matrix OS version.
+2. Check systemd health for matrix-gateway, matrix-shell, matrix-code, matrix-code-server, matrix-restore, docker, and nginx.
+3. Verify local HTTP health:
+   - curl http://127.0.0.1/health
+   - curl http://127.0.0.1:4000/health
+4. Read MATRIX_AUTH_TOKEN from /opt/matrix/env/host.env without printing it, then verify:
+   - curl -H "Authorization: Bearer <redacted>" http://127.0.0.1:4000/api/terminal/sessions
+   - curl -H "Authorization: Bearer <redacted>" http://127.0.0.1/cli/api/terminal/sessions
+5. Verify the matrix user shell environment:
+   - source /opt/matrix/env/host.env
+   - source /opt/matrix/bin/matrix-owner-env
+   - matrix_export_owner_env
+   - /opt/matrix/bin/zellij list-sessions
+6. Tell me the exact browser URL, code-server URL, CLI gateway URL, and the commands I should run from my laptop. Keep tokens redacted and show placeholders.
+7. If I provide a custom domain, explain the DNS/TLS/security changes needed before making them.
+8. Summarize what works, what is risky, and what still needs manual setup for mobile or desktop login.
+```
+
 ### Security hardening
 
 The preview installer is intentionally minimal: nginx Basic Auth protects the browser UI, the gateway and code-server stay loopback-only behind nginx, and `/cli` requires the bearer token. Before long-term use on the public internet:
