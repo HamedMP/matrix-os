@@ -93,13 +93,23 @@ describe("TerminalApp mobile actions", () => {
 
     render(<TerminalApp mobile />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "New session" })).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    const newSession = await screen.findByRole("button", { name: "New session" });
+    expect(newSession.getAttribute("aria-haspopup")).toBe("menu");
+    expect(newSession.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(newSession);
 
     const menu = await screen.findByRole("menu", { name: "New session menu" });
+    expect(newSession.getAttribute("aria-expanded")).toBe("true");
     expect(menu.textContent).toContain("NEW TAB");
     expect(screen.getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i })).toBeTruthy();
 
+    fireEvent.click(newSession);
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull());
+    expect(newSession.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(newSession);
+    await screen.findByRole("menu", { name: "New session menu" });
     fireEvent.click(screen.getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i }));
 
     await waitFor(() => {

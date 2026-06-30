@@ -3220,6 +3220,7 @@ function MobileTerminalActions({
   const ctx = useTerminalAppContext();
   const [newSessionMenuOpen, setNewSessionMenuOpen] = useState(false);
   const [agentStatuses, setAgentStatuses] = useState<Record<TerminalAgentId, boolean> | null>(null);
+  const newSessionDisclosureRef = useRef<HTMLDivElement | null>(null);
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
   const focusedPaneId = ctx.focusedPaneId;
   const actionBackground = `color-mix(in srgb, ${foreground} 9%, transparent)`;
@@ -3248,6 +3249,10 @@ function MobileTerminalActions({
       return !open;
     });
   };
+
+  const closeNewSessionMenu = useCallback(() => {
+    setNewSessionMenuOpen(false);
+  }, []);
 
   const createShellSession = () => {
     setNewSessionMenuOpen(false);
@@ -3285,10 +3290,12 @@ function MobileTerminalActions({
         flexShrink: 0,
       }}
     >
-      <div style={{ position: "relative", flex: "0 0 auto" }}>
+      <div ref={newSessionDisclosureRef} style={{ position: "relative", flex: "0 0 auto" }}>
         <MobileActionButton
           label="+ Session"
           ariaLabel="New session"
+          ariaHasPopup="menu"
+          ariaExpanded={newSessionMenuOpen}
           title="New session"
           icon={<PlusIcon size={14} strokeWidth={1.8} />}
           onClick={toggleNewSessionMenu}
@@ -3300,10 +3307,11 @@ function MobileTerminalActions({
         {newSessionMenuOpen ? (
           <NewSessionMenu
             align="mobile"
-            onClose={() => setNewSessionMenuOpen(false)}
+            onClose={closeNewSessionMenu}
             onCreateShell={createShellSession}
             onCreateAgent={createAgentSession}
             agentStatuses={agentStatuses}
+            ignoreLightDismissRef={newSessionDisclosureRef}
           />
         ) : null}
       </div>
@@ -3334,6 +3342,8 @@ function MobileTerminalActions({
 function MobileActionButton({
   label,
   ariaLabel,
+  ariaHasPopup,
+  ariaExpanded,
   title,
   icon,
   onClick,
@@ -3344,6 +3354,8 @@ function MobileActionButton({
 }: {
   label: string;
   ariaLabel?: string;
+  ariaHasPopup?: "menu";
+  ariaExpanded?: boolean;
   title: string;
   icon: React.ReactNode;
   onClick: () => void;
@@ -3356,6 +3368,8 @@ function MobileActionButton({
     <button
       type="button"
       aria-label={ariaLabel ?? label}
+      aria-haspopup={ariaHasPopup}
+      aria-expanded={ariaExpanded}
       title={title}
       onClick={onClick}
       style={{
@@ -4757,12 +4771,14 @@ function NewSessionMenu({
   onCreateShell,
   onCreateAgent,
   agentStatuses,
+  ignoreLightDismissRef,
 }: {
   align: "left" | "right" | "mobile";
   onClose: () => void;
   onCreateShell: () => void;
   onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
   agentStatuses: Record<TerminalAgentId, boolean> | null;
+  ignoreLightDismissRef?: React.RefObject<HTMLElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -4773,6 +4789,7 @@ function NewSessionMenu({
     const onPointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && menuRef.current?.contains(target)) return;
+      if (target instanceof Node && ignoreLightDismissRef?.current?.contains(target)) return;
       onClose();
     };
     document.addEventListener("keydown", onKeyDown);
@@ -4781,7 +4798,7 @@ function NewSessionMenu({
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown, true);
     };
-  }, [onClose]);
+  }, [ignoreLightDismissRef, onClose]);
 
   return (
     <div
