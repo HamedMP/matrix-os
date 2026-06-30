@@ -11,6 +11,7 @@ import { TemplatesShowcase } from "@/components/landing/TemplatesShowcase";
 import { SymphonySection } from "@/components/landing/SymphonySection";
 import { QuoteStats } from "@/components/landing/QuoteStats";
 import { HermesSection } from "@/components/landing/HermesSection";
+import { DeploymentSection } from "@/components/landing/DeploymentSection";
 import { BlogPreviewSection } from "@/components/landing/BlogPreviewSection";
 import { PilotBand } from "@/components/landing/PilotBand";
 import { FaqSection } from "@/components/landing/FaqSection";
@@ -60,6 +61,7 @@ export default function LandingPage() {
         <SymphonySection exploreHref="/symphony" />
         <QuoteStats />
         <HermesSection exploreHref="/hermes" />
+        <DeploymentSection />
         <LandingBilling />
         <BlogPreviewSection />
         <PilotBand />
