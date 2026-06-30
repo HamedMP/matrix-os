@@ -1811,10 +1811,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 completeOnboarding();
                 focusOrOpen("Terminal", "__terminal__");
               }}
-              onOpenSymphony={() => {
-                completeOnboarding();
-                focusOrOpen("Symphony", "apps/symphony/index.html");
-              }}
               onSwitchCanvas={() => {
                 setDesktopMode("canvas");
                 setManualSetupVisible(true);

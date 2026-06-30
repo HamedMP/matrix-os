@@ -85,5 +85,7 @@ describe("T1420-T1427: Pre-installed games", () => {
       expect(shared).toContain(slug);
     }
     expect(shared).toContain("gameCards");
+    expect(shared).toContain("window.MatrixOS?.openApp");
+    expect(shared).toContain("apps/${id}/index.html");
   });
 });
