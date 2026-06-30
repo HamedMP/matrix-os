@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "main": "expo-router/entry",
+  "expo": {
+    "autolinking": {
+      "exclude": ["@expo/dom-webview"]
+    }
+  },
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
