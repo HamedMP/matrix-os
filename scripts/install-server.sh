@@ -486,20 +486,25 @@ install_systemd_units() {
 }
 
 configure_nginx() {
-  local auth_token code_proxy_token password hash server_name
+  local auth_token code_proxy_token password hash server_name htpasswd_file legacy_htpasswd_file
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN)" || fail "MATRIX_AUTH_TOKEN is missing from host.env"
   code_proxy_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN)" || fail "MATRIX_CODE_PROXY_TOKEN is missing from host.env"
   server_name="$MATRIX_DOMAIN"
+  htpasswd_file="/etc/nginx/matrix-self-host.htpasswd"
+  legacy_htpasswd_file="/opt/matrix/env/nginx.htpasswd"
 
-  if [ ! -f /opt/matrix/env/nginx.htpasswd ]; then
+  if [ ! -f "$htpasswd_file" ] && [ -f "$legacy_htpasswd_file" ]; then
+    install -m 0640 -o root -g www-data "$legacy_htpasswd_file" "$htpasswd_file"
+  fi
+  if [ ! -f "$htpasswd_file" ]; then
     password="$(openssl rand -base64 18 | tr -d '\n')"
     hash="$(openssl passwd -apr1 "$password")"
-    printf 'matrix:%s\n' "$hash" >/opt/matrix/env/nginx.htpasswd
+    printf 'matrix:%s\n' "$hash" >"$htpasswd_file"
     printf '%s\n' "$password" >/opt/matrix/env/initial-ui-password
     chmod 0600 /opt/matrix/env/initial-ui-password
   fi
-  chmod 0640 /opt/matrix/env/nginx.htpasswd
-  chown root:www-data /opt/matrix/env/nginx.htpasswd
+  chmod 0640 "$htpasswd_file"
+  chown root:www-data "$htpasswd_file"
   printf 'proxy_set_header Authorization "Bearer %s";\n' "$auth_token" >/opt/matrix/env/gateway-auth-token.conf
   chmod 0600 /opt/matrix/env/gateway-auth-token.conf
   chown root:root /opt/matrix/env/gateway-auth-token.conf
@@ -514,7 +519,7 @@ server {
 
   client_max_body_size 10m;
   auth_basic "Matrix OS";
-  auth_basic_user_file /opt/matrix/env/nginx.htpasswd;
+  auth_basic_user_file ${htpasswd_file};
 
   proxy_set_header Host \$host;
   proxy_set_header X-Forwarded-Host \$host;
@@ -602,8 +607,8 @@ verify_services() {
   wait_http_ok "Matrix gateway" "http://127.0.0.1:4000/health" "Check: journalctl -u matrix-gateway -n 200 --no-pager"
   wait_http_ok "Matrix shell" "http://127.0.0.1:3000/" "Check: journalctl -u matrix-shell -n 200 --no-pager"
   password="$(cat /opt/matrix/env/initial-ui-password)"
-  wait_http_ok_auth "nginx shell" "http://127.0.0.1/" "$password" "Check: journalctl -u nginx -n 120 --no-pager; journalctl -u matrix-shell -n 200 --no-pager"
-  wait_http_ok_auth "nginx gateway API" "http://127.0.0.1/api/identity" "$password" "Check: journalctl -u nginx -n 120 --no-pager; journalctl -u matrix-gateway -n 200 --no-pager"
+  wait_http_ok_auth "nginx shell" "http://127.0.0.1/" "$password" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-shell -n 200 --no-pager"
+  wait_http_ok_auth "nginx gateway API" "http://127.0.0.1/api/identity" "$password" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-gateway -n 200 --no-pager"
 }
 
 print_summary() {

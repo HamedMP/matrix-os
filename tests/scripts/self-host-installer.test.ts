@@ -91,12 +91,15 @@ describe("self-host server installer", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
     expect(script).toContain("auth_basic \"Matrix OS\"");
-    expect(script).toContain("auth_basic_user_file /opt/matrix/env/nginx.htpasswd");
+    expect(script).toContain("htpasswd_file=\"/etc/nginx/matrix-self-host.htpasswd\"");
+    expect(script).toContain("legacy_htpasswd_file=\"/opt/matrix/env/nginx.htpasswd\"");
+    expect(script).toContain('install -m 0640 -o root -g www-data "$legacy_htpasswd_file" "$htpasswd_file"');
+    expect(script).toContain("auth_basic_user_file ${htpasswd_file}");
     expect(script).toContain("location = /health");
     expect(script).toContain("auth_basic off");
     expect(script).toContain("return 200 '{\"ok\":true}'");
     expect(script).toContain("openssl passwd -apr1");
-    expect(script).toContain("if [ ! -f /opt/matrix/env/nginx.htpasswd ]; then");
+    expect(script).toContain('if [ ! -f "$htpasswd_file" ]; then');
     expect(script).toContain("existing nginx Basic Auth credentials");
     expect(script).toContain("gateway-auth-token.conf");
     expect(script).toContain("proxy_set_header Authorization \"Bearer %s\"");
@@ -135,7 +138,7 @@ describe("self-host server installer", () => {
     expect(script).toContain('wait_http_ok_auth "nginx shell"');
     expect(script).toContain('wait_http_ok_auth "nginx gateway API"');
     expect(script).toContain("journalctl -u matrix-shell -n 200 --no-pager");
-    expect(script).toContain("journalctl -u nginx -n 120 --no-pager");
+    expect(script).toContain("tail -120 /var/log/nginx/error.log");
     expect(script).toContain("http://127.0.0.1:3000/");
     expect(script).toContain("http://127.0.0.1:4000/health");
     expect(script).toContain("http://127.0.0.1/api/identity");
