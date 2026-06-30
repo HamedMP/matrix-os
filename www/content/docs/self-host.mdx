@@ -80,19 +80,132 @@ The self-host installer is for developers comfortable operating a VPS. Matrix Cl
     matrix shell ls --gateway http://<server-ip>/cli --token "$MATRIX_TOKEN"
     ```
 
-    From your laptop, set `MATRIX_GATEWAY` to the printed CLI gateway URL and pass the same token explicitly:
-
-    ```bash
-    export MATRIX_GATEWAY="http://<server-ip>/cli"
-    export MATRIX_TOKEN="$(ssh root@<server-ip> 'sudo sed -n "s/^MATRIX_AUTH_TOKEN=//p" /opt/matrix/env/host.env')"
-
-    matrix shell ls --gateway "$MATRIX_GATEWAY" --token "$MATRIX_TOKEN"
-    matrix run --gateway "$MATRIX_GATEWAY" --token "$MATRIX_TOKEN" -- echo "hello from Matrix OS"
-    ```
-
-    Browser login is for Matrix Cloud; standalone self-host CLI access currently uses this bearer token.
+    For laptop access, use the canonical commands in [CLI access from your laptop](#cli-access-from-your-laptop). Browser login is for Matrix Cloud; standalone self-host CLI access currently uses this bearer token.
   </Step>
 </Steps>
+
+## Using Your Self-hosted VPS
+
+### What works automatically
+
+After the installer completes, the browser shell, gateway, code-server proxy, local Postgres, nginx, and the default `main` zellij shell session are started by systemd. You do not need to run extra commands for the web UI: open the printed URL, sign in with the generated nginx Basic Auth username and password, and use the shell.
+
+The CLI and direct SSH workflows are different. They are power-user access paths and currently need the standalone bearer token or the Matrix owner environment.
+
+### CLI access from your laptop
+
+Standalone self-host installs do not use the Matrix Cloud browser login flow yet. `matrix login` and Clerk device auth are for managed Matrix Cloud profiles. For self-host, point the CLI at the printed `/cli` gateway and pass the token from the VPS:
+
+```bash
+export MATRIX_GATEWAY="http://<server-ip>/cli"
+export MATRIX_TOKEN="$(ssh root@<server-ip> 'sudo sed -n "s/^MATRIX_AUTH_TOKEN=//p" /opt/matrix/env/host.env')"
+
+matrix shell ls --gateway "$MATRIX_GATEWAY" --token "$MATRIX_TOKEN"
+matrix run --gateway "$MATRIX_GATEWAY" --token "$MATRIX_TOKEN" -- echo "hello from Matrix OS"
+```
+
+If you want to avoid repeating the gateway URL, save a local profile for the URL and keep passing the token explicitly:
+
+```bash
+matrix profile set selfhost \
+  --platform "http://<server-ip>" \
+  --gateway "http://<server-ip>/cli"
+
+matrix shell ls --profile selfhost --token "$MATRIX_TOKEN"
+```
+
+Treat `MATRIX_TOKEN` like a password. It grants CLI access to the standalone gateway.
+
+### Zellij sessions over SSH
+
+The web terminal and SSH can share the same zellij sessions when both run as the `matrix` user with the Matrix owner environment. Root's zellij sessions are separate.
+
+From an SSH session as `root`, first switch to the owner user:
+
+```bash
+sudo -iu matrix
+```
+
+Then run these commands inside the new `matrix` shell:
+
+```bash
+source /opt/matrix/env/host.env
+source /opt/matrix/bin/matrix-owner-env
+matrix_export_owner_env
+export TERM=xterm-256color
+
+/opt/matrix/bin/zellij list-sessions
+/opt/matrix/bin/zellij attach main
+```
+
+If you are already the `matrix` user, skip `sudo -iu matrix`. The `matrix` user is not a sudoer by default. If `zellij` is not found, use `/opt/matrix/bin/zellij` or run `matrix_export_owner_env` to put `/opt/matrix/bin` on `PATH`.
+
+### AI agent handoff prompt
+
+If you install Claude Code, Codex, or another coding agent on the VPS, you can paste this prompt into the agent from the Matrix terminal or an SSH session. It asks the agent to verify the instance without leaking secrets:
+
+```text
+You are helping me finish and verify a standalone Matrix OS self-host install on this Linux VPS.
+
+Rules:
+- Do not print secret values. Redact MATRIX_AUTH_TOKEN, MATRIX_CODE_PROXY_TOKEN, Postgres passwords, Basic Auth passwords, private keys, and cookies.
+- Do not expose ports 3000, 4000, 8787, 8788, or 5432 publicly.
+- Do not rotate credentials, edit nginx, install TLS, or change firewall rules without asking me first.
+- Prefer read-only checks first, then propose the smallest safe fix if something is broken.
+
+Tasks:
+1. Inspect /opt/matrix/release.json or /opt/matrix/app/BUNDLE_VERSION and tell me the installed Matrix OS version.
+2. Check systemd health for matrix-gateway, matrix-shell, matrix-code, matrix-code-server, matrix-restore, docker, and nginx.
+3. Verify local HTTP health:
+   - curl http://127.0.0.1/health
+   - curl http://127.0.0.1:4000/health
+4. Read MATRIX_AUTH_TOKEN from /opt/matrix/env/host.env without printing it, then verify:
+   - curl -H "Authorization: Bearer <redacted>" http://127.0.0.1:4000/api/terminal/sessions
+   - curl -H "Authorization: Bearer <redacted>" http://127.0.0.1/cli/api/terminal/sessions
+5. Verify the matrix user shell environment:
+   - source /opt/matrix/env/host.env
+   - source /opt/matrix/bin/matrix-owner-env
+   - matrix_export_owner_env
+   - /opt/matrix/bin/zellij list-sessions
+6. Tell me the exact browser URL, code-server URL, CLI gateway URL, and the commands I should run from my laptop. Keep tokens redacted and show placeholders.
+7. If I provide a custom domain, explain the DNS/TLS/security changes needed before making them.
+8. Summarize what works, what is risky, and what still needs manual setup for mobile or desktop login.
+```
+
+### Security hardening
+
+The preview installer is intentionally minimal: nginx Basic Auth protects the browser UI, the gateway and code-server stay loopback-only behind nginx, and `/cli` requires the bearer token. Before long-term use on the public internet:
+
+- Put the host behind HTTPS with DNS, Tailscale, Cloudflare Access/Tunnel, or another trusted edge.
+- Keep ports `3000`, `4000`, `8787`, `8788`, and `5432` closed to the public internet.
+- Rotate `/opt/matrix/env/initial-ui-password` and `MATRIX_AUTH_TOKEN` if either is exposed.
+- Back up `/home/matrix/home`, the local Postgres volume, and `/opt/matrix/env`.
+- Keep SSH limited to trusted keys and trusted networks.
+
+IP-only installs are fine for first boot and private testing, but they are plain HTTP unless you add a TLS/access layer.
+
+When rotating `MATRIX_AUTH_TOKEN`, update both the service env file and nginx's injected gateway-token include, then restart the affected services:
+
+```bash
+NEW_TOKEN="$(openssl rand -hex 32)"
+sudo sed -i "s/^MATRIX_AUTH_TOKEN=.*/MATRIX_AUTH_TOKEN=${NEW_TOKEN}/" /opt/matrix/env/host.env
+printf 'proxy_set_header Authorization "Bearer %s";\n' "$NEW_TOKEN" | sudo tee /opt/matrix/env/gateway-auth-token.conf >/dev/null
+sudo chmod 0600 /opt/matrix/env/gateway-auth-token.conf
+sudo chown root:root /opt/matrix/env/gateway-auth-token.conf
+sudo systemctl restart matrix-gateway matrix-shell nginx
+```
+
+### Mobile and desktop login
+
+Managed Matrix Cloud mobile and desktop login will use platform auth and managed routing. Standalone self-host mobile/desktop login is not enabled yet.
+
+The intended self-host direction is:
+
+- Use a custom domain with HTTPS for the self-hosted gateway.
+- Pair the mobile or desktop app to that domain.
+- Use the self-host owner token or a future standalone device flow instead of the Matrix Cloud Clerk tenant.
+
+Until that lands, use the browser shell and CLI for self-hosted instances. Do not expect the managed `app.matrix-os.com` mobile/desktop handoff to discover an arbitrary self-hosted IP address.
 
 ## What You Get
 
@@ -131,7 +244,7 @@ The shell runs in explicit standalone mode. Public browser access is expected to
 
 IP-only installs are acceptable for first boot and private-network testing, but they are plain HTTP unless you add a trusted TLS/access layer. For a public VPS, prefer DNS plus TLS, Tailscale, Cloudflare Access/Tunnel, or another authenticated reverse proxy before storing long-lived work there.
 
-Do not expose ports `3000`, `4000`, `8787`, or `5432` publicly. Keep them on loopback and expose only your hardened reverse proxy.
+Do not expose ports `3000`, `4000`, `8787`, `8788`, or `5432` publicly. Keep them on loopback and expose only your hardened reverse proxy.
 
 The installer leaves `GET /health` open at nginx and returns only `{"ok":true}` so basic uptime monitors can check the public edge without credentials or gateway details. For deeper checks, use systemd status or local-only gateway health from the server.
 
