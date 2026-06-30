@@ -118,6 +118,16 @@ final class ShellMessageCodecTests: XCTestCase {
         XCTAssertEqual(text, "Session not found")
     }
 
+    func testServerErrorWithoutCodeDecodesAsGenericTerminalError() throws {
+        let json = #"{"type":"error","message":"Failed to create session"}"#
+        let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))
+        guard case let .error(code, text) = message else {
+            return XCTFail("expected error, got \(message)")
+        }
+        XCTAssertEqual(code, "terminal_error")
+        XCTAssertEqual(text, "Failed to create session")
+    }
+
     func testServerPongDecodes() throws {
         let json = #"{"type":"pong"}"#
         let message = try decoder.decode(ServerMessage.self, from: Data(json.utf8))

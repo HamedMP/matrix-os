@@ -101,7 +101,7 @@ extension ServerMessage: Decodable {
             self = .exit(code: try container.decode(Int.self, forKey: .code))
         case "error":
             self = .error(
-                code: try container.decode(String.self, forKey: .code),
+                code: try container.decodeIfPresent(String.self, forKey: .code) ?? "terminal_error",
                 message: try container.decodeIfPresent(String.self, forKey: .message) ?? ""
             )
         case "pong":

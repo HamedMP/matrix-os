@@ -29,7 +29,7 @@ describe("task-manager", () => {
       title: "Wire task workflow",
       description: "Build project-scoped task records",
       priority: "high",
-      linkedSessionId: "sess_abc123",
+      linkedSessionId: "shell-abc123",
       linkedWorktreeId: "wt_abc123def456",
     });
     const second = await manager.createTask("repo", {
@@ -48,7 +48,7 @@ describe("task-manager", () => {
         status: "todo",
         priority: "high",
         order: 0,
-        linkedSessionId: "sess_abc123",
+        linkedSessionId: "shell-abc123",
         linkedWorktreeId: "wt_abc123def456",
       },
     });

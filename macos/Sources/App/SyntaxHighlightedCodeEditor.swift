@@ -1,6 +1,8 @@
 #if os(macOS)
 import SwiftUI
 import AppKit
+import CodeEditLanguages
+import CodeEditSourceEditor
 import DesignSystem
 
 public enum CodeEditorTheme: String, CaseIterable, Identifiable {
@@ -8,6 +10,7 @@ public enum CodeEditorTheme: String, CaseIterable, Identifiable {
     case xcodeLight = "Xcode"
     case xcodeDark = "Xcode Dark"
     case solarizedLight = "Solarized"
+    case solarizedDark = "Solarized Dark"
     case terminalDark = "Terminal"
     case oneDark = "One Dark"
 
@@ -15,7 +18,7 @@ public enum CodeEditorTheme: String, CaseIterable, Identifiable {
 
     public var isDark: Bool {
         switch self {
-        case .xcodeDark, .terminalDark, .oneDark:
+        case .xcodeDark, .solarizedDark, .terminalDark, .oneDark:
             return true
         case .matrixLight, .xcodeLight, .solarizedLight:
             return false
@@ -28,6 +31,7 @@ public enum CodeEditorTheme: String, CaseIterable, Identifiable {
         case .xcodeLight: return NSColor(calibratedWhite: 0.99, alpha: 1)
         case .xcodeDark: return NSColor.matrixHex(0x1F2024)
         case .solarizedLight: return NSColor.matrixHex(0xFDF6E3)
+        case .solarizedDark: return NSColor.matrixHex(0x002B36)
         case .terminalDark: return NSColor.matrixHex(0x0C0D10)
         case .oneDark: return NSColor.matrixHex(0x282C34)
         }
@@ -37,6 +41,7 @@ public enum CodeEditorTheme: String, CaseIterable, Identifiable {
         switch self {
         case .matrixLight, .xcodeLight: return NSColor.matrixHex(0x32352E)
         case .solarizedLight: return NSColor.matrixHex(0x586E75)
+        case .solarizedDark: return NSColor.matrixHex(0x839496)
         case .xcodeDark, .terminalDark, .oneDark: return NSColor.matrixHex(0xE8EAED)
         }
     }
@@ -46,7 +51,7 @@ public enum CodeEditorTheme: String, CaseIterable, Identifiable {
         case .matrixLight: return NSColor(Color.signalLive)
         case .xcodeLight: return NSColor(calibratedRed: 0.58, green: 0.16, blue: 0.66, alpha: 1)
         case .xcodeDark: return NSColor.matrixHex(0xFC5FA3)
-        case .solarizedLight: return NSColor.matrixHex(0x859900)
+        case .solarizedLight, .solarizedDark: return NSColor.matrixHex(0x859900)
         case .terminalDark: return NSColor(calibratedRed: 0.67, green: 0.82, blue: 1.0, alpha: 1)
         case .oneDark: return NSColor.matrixHex(0xC678DD)
         }
@@ -57,7 +62,7 @@ public enum CodeEditorTheme: String, CaseIterable, Identifiable {
         case .matrixLight: return NSColor(calibratedRed: 0.62, green: 0.31, blue: 0.12, alpha: 1)
         case .xcodeLight: return NSColor(calibratedRed: 0.74, green: 0.25, blue: 0.12, alpha: 1)
         case .xcodeDark: return NSColor.matrixHex(0xFC6A5D)
-        case .solarizedLight: return NSColor.matrixHex(0x2AA198)
+        case .solarizedLight, .solarizedDark: return NSColor.matrixHex(0x2AA198)
         case .terminalDark: return NSColor(calibratedRed: 0.84, green: 0.70, blue: 0.45, alpha: 1)
         case .oneDark: return NSColor.matrixHex(0x98C379)
         }
@@ -67,21 +72,60 @@ public enum CodeEditorTheme: String, CaseIterable, Identifiable {
         switch self {
         case .matrixLight, .xcodeLight: return NSColor.matrixHex(0x7A7768)
         case .solarizedLight: return NSColor.matrixHex(0x93A1A1)
+        case .solarizedDark: return NSColor.matrixHex(0x586E75)
         case .xcodeDark: return NSColor.matrixHex(0x6C7986)
         case .terminalDark: return NSColor.matrixHex(0x9BA1AC)
         case .oneDark: return NSColor.matrixHex(0x7F848E)
         }
     }
 
-    var gutterBackground: NSColor {
+    private var number: NSColor {
+        switch self {
+        case .matrixLight: return NSColor(calibratedRed: 0.17, green: 0.40, blue: 0.75, alpha: 1)
+        case .xcodeLight: return NSColor(calibratedRed: 0.15, green: 0.37, blue: 0.71, alpha: 1)
+        case .xcodeDark: return NSColor.matrixHex(0xD9C97C)
+        case .solarizedLight, .solarizedDark: return NSColor.matrixHex(0xCB4B16)
+        case .terminalDark: return NSColor(calibratedRed: 0.8, green: 0.62, blue: 0.45, alpha: 1)
+        case .oneDark: return NSColor.matrixHex(0xD19A66)
+        }
+    }
+
+    private var gutterBackground: NSColor {
         switch self {
         case .matrixLight: return NSColor.matrixHex(0xF0EDE4)
         case .xcodeLight: return NSColor(calibratedWhite: 0.95, alpha: 1)
         case .xcodeDark: return NSColor.matrixHex(0x25262B)
         case .solarizedLight: return NSColor.matrixHex(0xEEE8D5)
+        case .solarizedDark: return NSColor.matrixHex(0x073642)
         case .terminalDark: return NSColor(calibratedWhite: 0.08, alpha: 1)
         case .oneDark: return NSColor.matrixHex(0x21252B)
         }
+    }
+
+    var sourceEditorTheme: EditorTheme {
+        let foreground = EditorTheme.Attribute(color: foreground)
+        let muted = EditorTheme.Attribute(color: comment)
+        let keyword = EditorTheme.Attribute(color: keyword, bold: true)
+        let string = EditorTheme.Attribute(color: string)
+        let number = EditorTheme.Attribute(color: number)
+        return EditorTheme(
+            text: foreground,
+            insertionPoint: self.foreground,
+            invisibles: EditorTheme.Attribute(color: comment.withAlphaComponent(0.55)),
+            background: background,
+            lineHighlight: gutterBackground.withAlphaComponent(isDark ? 0.55 : 0.75),
+            selection: NSColor(calibratedRed: 0.28, green: 0.48, blue: 0.85, alpha: isDark ? 0.35 : 0.22),
+            keywords: keyword,
+            commands: keyword,
+            types: EditorTheme.Attribute(color: self.keyword.withAlphaComponent(0.92), bold: false),
+            attributes: muted,
+            variables: foreground,
+            values: string,
+            numbers: number,
+            strings: string,
+            characters: string,
+            comments: muted
+        )
     }
 }
 
@@ -117,14 +161,8 @@ private extension NSColor {
     }
 }
 
-private extension NSFont {
-    var spaceWidth: CGFloat {
-        (" " as NSString).size(withAttributes: [.font: self]).width
-    }
-}
-
-struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
-    nonisolated static let engineConfiguration = EditorEngineConfiguration(kind: .textKitNative)
+struct SyntaxHighlightedCodeEditor: View {
+    nonisolated static let engineConfiguration = EditorEngineConfiguration(kind: .codeEditSourceEditor)
 
     @Binding var text: String
     let filePath: String?
@@ -132,110 +170,33 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
     var preferences: CodeEditorPreferences = .default
     var isEditable = true
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
-    }
+    @State private var cursorPositions: [CursorPosition] = []
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = true
-
-        let textView = NSTextView()
-        textView.isRichText = false
-        textView.isEditable = isEditable
-        textView.isSelectable = true
-        textView.drawsBackground = true
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.isGrammarCheckingEnabled = false
-        textView.allowsUndo = true
-        textView.delegate = context.coordinator
-        textView.textContainerInset = NSSize(width: 14, height: 14)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isHorizontallyResizable = !preferences.wrapsLines
-        textView.isVerticallyResizable = true
-        textView.autoresizingMask = preferences.wrapsLines ? [.width] : []
-        applyLayoutPreferences(to: textView, in: scrollView, preferences: preferences)
-
-        scrollView.documentView = textView
-        scrollView.verticalRulerView = LineNumberRulerView(textView: textView, theme: theme)
-        scrollView.hasVerticalRuler = true
-        scrollView.rulersVisible = true
-        context.coordinator.textView = textView
-        context.coordinator.theme = theme
-        context.coordinator.preferences = preferences
-        context.coordinator.filePath = filePath
-        context.coordinator.isEditable = isEditable
-        context.coordinator.applyHighlight {
-            apply(text: text, to: textView, theme: theme, filePath: filePath, preferences: preferences)
-        }
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        if let ruler = scrollView.verticalRulerView as? LineNumberRulerView {
-            ruler.theme = theme
-            ruler.needsDisplay = true
-        }
-        applyLayoutPreferences(to: textView, in: scrollView, preferences: preferences)
-        textView.isEditable = isEditable
-        if textView.string != text || context.coordinator.needsHighlight || context.coordinator.theme != theme || context.coordinator.preferences != preferences || context.coordinator.filePath != filePath || context.coordinator.isEditable != isEditable {
-            context.coordinator.theme = theme
-            context.coordinator.preferences = preferences
-            context.coordinator.filePath = filePath
-            context.coordinator.isEditable = isEditable
-            context.coordinator.needsHighlight = false
-            context.coordinator.applyHighlight {
-                apply(text: text, to: textView, theme: theme, filePath: filePath, preferences: preferences)
-            }
-        }
-    }
-
-    private func applyLayoutPreferences(to textView: NSTextView, in scrollView: NSScrollView, preferences: CodeEditorPreferences) {
-        textView.isHorizontallyResizable = !preferences.wrapsLines
-        textView.autoresizingMask = preferences.wrapsLines ? [.width] : []
-        textView.textContainer?.widthTracksTextView = preferences.wrapsLines
-        let width = Self.resolvedTextContainerWidth(
-            contentWidth: scrollView.contentSize.width,
-            boundsWidth: scrollView.bounds.width,
-            wrapsLines: preferences.wrapsLines
+    var body: some View {
+        CodeEditSourceEditor(
+            $text,
+            language: Self.codeLanguage(for: filePath, text: text),
+            theme: theme.sourceEditorTheme,
+            font: Self.editorFont(size: preferences.fontSize),
+            tabWidth: preferences.tabWidth,
+            indentOption: .spaces(count: preferences.tabWidth),
+            lineHeight: 1.2,
+            wrapLines: preferences.wrapsLines,
+            editorOverscroll: 0.2,
+            cursorPositions: $cursorPositions,
+            contentInsets: NSEdgeInsets(top: 12, left: 0, bottom: 12, right: 0),
+            additionalTextInsets: NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12),
+            isEditable: isEditable,
+            isSelectable: true,
+            letterSpacing: 1.0,
+            coordinators: [InitialHighlightRefreshCoordinator()],
+            showMinimap: false
         )
-        textView.textContainer?.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-        textView.minSize = NSSize(width: preferences.wrapsLines ? width : 320, height: 0)
-        textView.maxSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-        if preferences.wrapsLines, textView.frame.width < width {
-            textView.frame.size.width = width
-        }
+        .id(Self.editorIdentity(for: filePath, text: text))
+        .background(Color(nsColor: theme.background))
     }
 
-    nonisolated static func resolvedTextContainerWidth(contentWidth: CGFloat, boundsWidth: CGFloat, wrapsLines: Bool) -> CGFloat {
-        guard wrapsLines else { return CGFloat.greatestFiniteMagnitude }
-        return max(contentWidth, boundsWidth, 320)
-    }
-
-    private func apply(text: String, to textView: NSTextView, theme: CodeEditorTheme, filePath: String?, preferences: CodeEditorPreferences) {
-        let selected = textView.selectedRange()
-        textView.backgroundColor = theme.background
-        textView.insertionPointColor = theme.foreground
-        textView.textColor = theme.foreground
-        textView.font = Self.editorFont(size: preferences.fontSize)
-        textView.defaultParagraphStyle = Self.paragraphStyle(tabWidth: preferences.tabWidth, fontSize: preferences.fontSize, wrapsLines: preferences.wrapsLines)
-        textView.textStorage?.setAttributedString(Self.highlightedText(text, filePath: filePath, theme: theme, preferences: preferences))
-        textView.setSelectedRange(NSRange(location: min(selected.location, (text as NSString).length), length: 0))
-        textView.needsDisplay = true
-        textView.layoutManager?.ensureLayout(for: textView.textContainer!)
-    }
-
-    private static func editorFont(size: Double) -> NSFont {
+    static func editorFont(size: Double) -> NSFont {
         let pointSize = CGFloat(size)
         for name in ["JetBrainsMono Nerd Font Mono", "JetBrains Mono", "SFMono-Regular", "Menlo"] {
             if let font = NSFont(name: name, size: pointSize) { return font }
@@ -243,160 +204,34 @@ struct SyntaxHighlightedCodeEditor: NSViewRepresentable {
         return NSFont.monospacedSystemFont(ofSize: pointSize, weight: .regular)
     }
 
-    private static func paragraphStyle(tabWidth: Int, fontSize: Double, wrapsLines: Bool) -> NSParagraphStyle {
-        let style = NSMutableParagraphStyle()
-        let width = max(2, min(tabWidth, 8))
-        style.defaultTabInterval = CGFloat(width) * editorFont(size: fontSize).spaceWidth
-        style.lineBreakMode = wrapsLines ? .byWordWrapping : .byClipping
-        return style
-    }
-
-    static func highlightedText(_ text: String, filePath: String?, theme: CodeEditorTheme, preferences: CodeEditorPreferences) -> NSAttributedString {
-        let nsText = text as NSString
-        let fullRange = NSRange(location: 0, length: nsText.length)
-        let language = syntaxLanguage(for: filePath)
-        let output = NSMutableAttributedString(
-            string: text,
-            attributes: [
-                .font: editorFont(size: preferences.fontSize),
-                .foregroundColor: theme.foreground,
-                .paragraphStyle: paragraphStyle(tabWidth: preferences.tabWidth, fontSize: preferences.fontSize, wrapsLines: preferences.wrapsLines),
-            ]
+    static func codeLanguage(for filePath: String?, text: String) -> CodeLanguage {
+        let url = URL(fileURLWithPath: filePath?.isEmpty == false ? filePath! : "untitled.txt")
+        return CodeLanguage.detectLanguageFrom(
+            url: url,
+            prefixBuffer: String(text.prefix(2048)),
+            suffixBuffer: String(text.suffix(2048))
         )
-        if preferences.showsInvisibleCharacters {
-            apply(pattern: #" |\t"#, color: theme.comment.withAlphaComponent(0.55), to: output, range: fullRange)
-        }
-        apply(pattern: #""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`"#, color: theme.string, to: output, range: fullRange)
-        if language.supportsLineComments {
-            apply(pattern: language.commentPattern, color: theme.comment, to: output, range: fullRange)
-        }
-        if language.supportsKeywords {
-            apply(pattern: language.keywordPattern, color: theme.keyword, to: output, range: fullRange)
-        }
-        return output
     }
 
-    private struct SyntaxLanguage {
-        var supportsLineComments: Bool
-        var supportsKeywords: Bool
-        var commentPattern: String
-        var keywordPattern: String
+    static func languageName(for filePath: String?, text: String = "") -> String {
+        codeLanguage(for: filePath, text: text).tsName
     }
 
-    private static func syntaxLanguage(for filePath: String?) -> SyntaxLanguage {
-        let fallback = SyntaxLanguage(
-            supportsLineComments: true,
-            supportsKeywords: true,
-            commentPattern: #"(?m)(//.*$|#.*$)"#,
-            keywordPattern: #"\b(import|export|from|func|function|let|const|var|struct|class|enum|protocol|extension|public|private|return|if|else|switch|case|for|while|guard|try|await|async|throws|type|interface|extends|implements|new|in|of)\b"#
-        )
-        guard let filePath, !filePath.isEmpty else { return fallback }
-        let ext = URL(fileURLWithPath: filePath).pathExtension.lowercased()
-        switch ext {
-        case "json", "jsonc", "yaml", "yml", "toml", "xml", "html", "htm", "md", "markdown", "txt", "log", "csv":
-            return SyntaxLanguage(
-                supportsLineComments: false,
-                supportsKeywords: false,
-                commentPattern: fallback.commentPattern,
-                keywordPattern: fallback.keywordPattern
-            )
-        case "py", "rb", "sh", "bash", "zsh":
-            return SyntaxLanguage(
-                supportsLineComments: true,
-                supportsKeywords: true,
-                commentPattern: #"(?m)#.*$"#,
-                keywordPattern: fallback.keywordPattern
-            )
-        default:
-            return fallback
-        }
-    }
-
-    private static func apply(pattern: String, color: NSColor, to output: NSMutableAttributedString, range: NSRange) {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
-        regex.enumerateMatches(in: output.string, range: range) { match, _, _ in
-            guard let match else { return }
-            output.addAttribute(.foregroundColor, value: color, range: match.range)
-        }
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        @Binding var text: String
-        weak var textView: NSTextView?
-        var theme: CodeEditorTheme?
-        var preferences: CodeEditorPreferences?
-        var filePath: String?
-        var isEditable = true
-        var needsHighlight = false
-        private var isApplyingHighlight = false
-
-        init(text: Binding<String>) {
-            _text = text
-        }
-
-        func applyHighlight(_ body: () -> Void) {
-            isApplyingHighlight = true
-            defer { isApplyingHighlight = false }
-            body()
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            guard !isApplyingHighlight else { return }
-            needsHighlight = true
-            text = textView.string
-        }
+    private static func editorIdentity(for filePath: String?, text: String) -> String {
+        let language = codeLanguage(for: filePath, text: text)
+        return "\(filePath ?? "untitled"):\(language.id.rawValue)"
     }
 }
 
-private final class LineNumberRulerView: NSRulerView {
-    weak var textView: NSTextView?
-    var theme: CodeEditorTheme
-
-    init(textView: NSTextView, theme: CodeEditorTheme) {
-        self.textView = textView
-        self.theme = theme
-        super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
-        clientView = textView
-        ruleThickness = 48
-    }
-
-    required init(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func drawHashMarksAndLabels(in rect: NSRect) {
-        theme.gutterBackground.setFill()
-        rect.fill()
-        guard let textView, let layoutManager = textView.layoutManager, let textContainer = textView.textContainer else { return }
-        let visible = textView.visibleRect
-        let glyphRange = layoutManager.glyphRange(forBoundingRect: visible, in: textContainer)
-        let text = textView.string as NSString
-        var glyphIndex = glyphRange.location
-        var scanIndex = 0
-        var line = 1
-        while glyphIndex < NSMaxRange(glyphRange) {
-            var effective = NSRange()
-            let rect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &effective)
-            let y = rect.minY + textView.textContainerOrigin.y - visible.minY + 1
-            let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-            advanceLineNumber(upTo: characterIndex, in: text, scanIndex: &scanIndex, line: &line)
-            let label = "\(line)" as NSString
-            label.draw(
-                at: NSPoint(x: 8, y: y),
-                withAttributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                    .foregroundColor: theme.comment,
-                ]
-            )
-            glyphIndex = NSMaxRange(effective)
-        }
-    }
-
-    private func advanceLineNumber(upTo characterIndex: Int, in text: NSString, scanIndex: inout Int, line: inout Int) {
-        while scanIndex < characterIndex, scanIndex < text.length {
-            if text.character(at: scanIndex) == 10 { line += 1 }
-            scanIndex += 1
+private final class InitialHighlightRefreshCoordinator: TextViewCoordinator {
+    func prepareCoordinator(controller: TextViewController) {
+        Task { @MainActor [weak controller] in
+            guard let controller else { return }
+            let language = controller.language
+            controller.language = language
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            controller.language = language
         }
     }
 }

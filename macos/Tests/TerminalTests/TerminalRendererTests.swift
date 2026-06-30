@@ -26,6 +26,7 @@ final class TerminalRendererTests: XCTestCase {
 
     func testTerminalFocusUsesRetryPolicyAfterWindowAttachment() {
         XCTAssertEqual(TerminalFocusPolicy.initialFocusRetryDelays, [0, 0.05, 0.15, 0.35])
+        XCTAssertEqual(TerminalFocusPolicy.attachedFocusRetryDelays, [0, 0.05, 0.15])
     }
 
     func testInitialTerminalFocusDoesNotStealFromActiveControls() {
@@ -66,5 +67,24 @@ final class TerminalRendererTests: XCTestCase {
             TerminalRendererConfiguration.available(includeExperimental: true).map(\.kind),
             [.swiftTerm, .ghostty, .xtermWebView]
         )
+    }
+
+    func testTerminalLiveOverlayOnlyShowsBeforeAttach() {
+        XCTAssertTrue(TerminalConnectionOverlayPolicy.shouldShowOverlay(for: .connecting))
+        XCTAssertTrue(TerminalConnectionOverlayPolicy.shouldShowOverlay(for: .reconnecting))
+        XCTAssertFalse(TerminalConnectionOverlayPolicy.shouldShowOverlay(for: .attached))
+        XCTAssertFalse(TerminalConnectionOverlayPolicy.shouldShowOverlay(for: .exited(code: 0)))
+        XCTAssertFalse(TerminalConnectionOverlayPolicy.shouldShowOverlay(for: .error(code: "internal")))
+    }
+
+    func testTerminalOverlayStaysUpDuringStartupSettling() {
+        XCTAssertTrue(TerminalConnectionOverlayPolicy.shouldShowOverlay(
+            for: .attached,
+            isStartupSettling: true
+        ))
+        XCTAssertFalse(TerminalConnectionOverlayPolicy.shouldShowOverlay(
+            for: .attached,
+            isStartupSettling: false
+        ))
     }
 }
