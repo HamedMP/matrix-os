@@ -151,6 +151,7 @@ function attachEnv(
   env.COLORTERM = "truecolor";
   env.CLICOLOR = "1";
   env.FORCE_COLOR = "3";
+  env.COLORFGBG = "15;0";
   env.LANG = env.LANG || "en_US.UTF-8";
   if (configPaths) {
     env.ZELLIJ_CONFIG_DIR = configPaths.dir;

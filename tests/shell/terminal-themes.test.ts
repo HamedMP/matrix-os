@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { getAnsiPalette, getTerminalThemePreset, type AnsiPalette } from "../../shell/src/components/terminal/terminal-themes.js";
+import {
+  buildXtermTheme,
+  getAnsiPalette,
+  getTerminalThemePreset,
+  type AnsiPalette,
+} from "../../shell/src/components/terminal/terminal-themes.js";
+import type { Theme } from "../../shell/src/hooks/useTheme.js";
 
 const ANSI_KEYS: (keyof AnsiPalette)[] = [
   "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
@@ -15,14 +21,15 @@ function assertCompleteAnsiPalette(palette: AnsiPalette) {
 }
 
 describe("Terminal Themes", () => {
-  it("uses the Paper Dark shell theme as the default terminal palette", () => {
+  it("uses the polished dark shell theme as the default terminal palette", () => {
     const preset = getTerminalThemePreset("dark");
 
     expect(preset).toMatchObject({
       label: "Dark",
-      background: "#0C0C0C",
-      foreground: "#BFBFBF",
+      background: "#11161C",
+      foreground: "#D6D8DD",
       cursor: "#0AD18B",
+      selectionBackground: "#30363DAA",
       cyan: "#00E5C0",
       blue: "#6AA0FF",
     });
@@ -147,5 +154,30 @@ describe("Terminal Themes", () => {
       const palette = getAnsiPalette(slug, "#000000");
       assertCompleteAnsiPalette(palette);
     }
+  });
+
+  it("builds a dark-safe xterm theme for dark system shell themes", () => {
+    const shellTheme: Theme & { slug: string } = {
+      name: "Custom Dark",
+      slug: "custom-dark",
+      mode: "dark",
+      colors: {
+        background: "#101418",
+        foreground: "#E6E8EC",
+        primary: "#F8F8F2",
+      },
+      fonts: {},
+      radius: "8px",
+    };
+
+    const xtermTheme = buildXtermTheme(shellTheme, "system");
+
+    expect(xtermTheme).toMatchObject({
+      background: "#101418",
+      foreground: "#E6E8EC",
+      cursor: "#F8F8F2",
+      selectionBackground: "#30363DAA",
+    });
+    assertCompleteAnsiPalette(xtermTheme);
   });
 });
