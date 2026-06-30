@@ -31,6 +31,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.unit.result');
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.e2e.result');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT"');
     expect(workflow).toContain('Branch protection should require this aggregate job');
   });
 
