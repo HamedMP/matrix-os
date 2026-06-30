@@ -80,17 +80,7 @@ The self-host installer is for developers comfortable operating a VPS. Matrix Cl
     matrix shell ls --gateway http://<server-ip>/cli --token "$MATRIX_TOKEN"
     ```
 
-    From your laptop, set `MATRIX_GATEWAY` to the printed CLI gateway URL and pass the same token explicitly:
-
-    ```bash
-    export MATRIX_GATEWAY="http://<server-ip>/cli"
-    export MATRIX_TOKEN="$(ssh root@<server-ip> 'sudo sed -n "s/^MATRIX_AUTH_TOKEN=//p" /opt/matrix/env/host.env')"
-
-    matrix shell ls --gateway "$MATRIX_GATEWAY" --token "$MATRIX_TOKEN"
-    matrix run --gateway "$MATRIX_GATEWAY" --token "$MATRIX_TOKEN" -- echo "hello from Matrix OS"
-    ```
-
-    Browser login is for Matrix Cloud; standalone self-host CLI access currently uses this bearer token.
+    For laptop access, use the canonical commands in [CLI access from your laptop](#cli-access-from-your-laptop). Browser login is for Matrix Cloud; standalone self-host CLI access currently uses this bearer token.
   </Step>
 </Steps>
 
@@ -130,10 +120,15 @@ Treat `MATRIX_TOKEN` like a password. It grants CLI access to the standalone gat
 
 The web terminal and SSH can share the same zellij sessions when both run as the `matrix` user with the Matrix owner environment. Root's zellij sessions are separate.
 
-From an SSH session:
+From an SSH session as `root`, first switch to the owner user:
 
 ```bash
 sudo -iu matrix
+```
+
+Then run these commands inside the new `matrix` shell:
+
+```bash
 source /opt/matrix/env/host.env
 source /opt/matrix/bin/matrix-owner-env
 matrix_export_owner_env
@@ -188,6 +183,17 @@ The preview installer is intentionally minimal: nginx Basic Auth protects the br
 - Keep SSH limited to trusted keys and trusted networks.
 
 IP-only installs are fine for first boot and private testing, but they are plain HTTP unless you add a TLS/access layer.
+
+When rotating `MATRIX_AUTH_TOKEN`, update both the service env file and nginx's injected gateway-token include, then restart the affected services:
+
+```bash
+NEW_TOKEN="$(openssl rand -hex 32)"
+sudo sed -i "s/^MATRIX_AUTH_TOKEN=.*/MATRIX_AUTH_TOKEN=${NEW_TOKEN}/" /opt/matrix/env/host.env
+printf 'proxy_set_header Authorization "Bearer %s";\n' "$NEW_TOKEN" | sudo tee /opt/matrix/env/gateway-auth-token.conf >/dev/null
+sudo chmod 0600 /opt/matrix/env/gateway-auth-token.conf
+sudo chown root:root /opt/matrix/env/gateway-auth-token.conf
+sudo systemctl restart matrix-gateway matrix-shell nginx
+```
 
 ### Mobile and desktop login
 
