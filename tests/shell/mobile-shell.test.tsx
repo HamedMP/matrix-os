@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MobileAppSurface } from "../../shell/src/components/mobile/MobileAppSurface.js";
 import { MobileLauncher } from "../../shell/src/components/mobile/MobileLauncher.js";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
+import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
@@ -61,12 +62,31 @@ function ViewportProbe() {
   return <div data-testid="viewport-mode">{mobile ? "mobile" : "desktop"}</div>;
 }
 
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
+}
+
 async function loadMobileShell() {
   return (await import("../../shell/src/components/mobile/MobileShell.js")).MobileShell;
 }
 
 describe("mobile shell", () => {
   beforeEach(() => {
+    const storage = createMemoryStorage();
+    Object.defineProperty(window, "localStorage", {
+      value: storage,
+      configurable: true,
+    });
     setDesktopViewport();
   });
 
@@ -208,6 +228,44 @@ describe("mobile shell", () => {
     render(<MobileShell launchAppPath="__terminal__" />);
 
     await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
+  });
+
+  it("loads installed mobile apps from the shared shell bootstrap endpoint", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => ({
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "Notes", path: "/files/apps/notes/index.html", icon: "notes", slug: "notes" }],
+        icons: { notes: { url: "/icons/notes.png", etag: "\"abc\"", versionedUrl: "/icons/notes.png?v=abc" } },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell />);
+
+    expect(await screen.findByTestId("mobile-launcher-app-apps/notes/index.html")).toBeTruthy();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/shell/bootstrap");
+  });
+
+  it("hydrates installed mobile apps from the scoped shell snapshot before network refresh", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    saveShellSnapshot(scope, {
+      bootstrap: {
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "Cached Notes", path: "/files/apps/notes/index.html", icon: "notes", slug: "notes" }],
+        icons: { notes: { url: "/icons/notes.png", etag: "\"abc\"", versionedUrl: "/icons/notes.png?v=abc" } },
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell cacheScope={scope} />);
+
+    expect(screen.getByTestId("mobile-launcher-app-apps/notes/index.html")).toBeTruthy();
   });
 
   it("renders a hydration-stable clock placeholder before mounting", async () => {

@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
 import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config";
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
+import {
+  loadShellSnapshot,
+  saveShellSnapshot,
+  type ShellSnapshotScope,
+} from "@/lib/shell-snapshot-cache";
 export type { DockConfig };
 
 export interface DesktopConfig {
@@ -92,23 +97,54 @@ function applyBackground(config: DesktopConfig["background"], gatewayUrl: string
   }
 }
 
-export function useDesktopConfig() {
-  const [config, setConfig] = useState<DesktopConfig>(DEFAULT_DESKTOP_CONFIG);
+interface DesktopConfigHookOptions {
+  cacheScope?: ShellSnapshotScope | null;
+}
+
+function applyDesktopConfigSnapshot(
+  cfg: DesktopConfig,
+  gatewayUrl: string,
+  setters: {
+    setDock: (dock: DockConfig) => void;
+    setPinnedApps: (apps: string[]) => void;
+    setDockOrder: (order: DesktopConfig["dockOrder"]) => void;
+  },
+) {
+  setters.setDock(cfg.dock);
+  setters.setPinnedApps(cfg.pinnedApps);
+  setters.setDockOrder(cfg.dockOrder);
+  applyBackground(cfg.background, gatewayUrl);
+}
+
+export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
+  const cacheScope = options.cacheScope ?? null;
+  const cacheKey = cacheScope?.storageKey;
+  const [config, setConfig] = useState<DesktopConfig>(() => (
+    loadShellSnapshot(cacheScope)?.desktopConfig ?? DEFAULT_DESKTOP_CONFIG
+  ));
   const setDock = useDesktopConfigStore((s) => s.setDock);
   const setPinnedApps = useDesktopConfigStore((s) => s.setPinnedApps);
   const setDockOrder = useDesktopConfigStore((s) => s.setDockOrder);
   const gatewayUrl = getGatewayUrl();
 
+  useLayoutEffect(() => {
+    const cachedConfig = loadShellSnapshot(cacheScope)?.desktopConfig;
+    if (!cachedConfig) return;
+    applyDesktopConfigSnapshot(cachedConfig, gatewayUrl, { setDock, setPinnedApps, setDockOrder });
+  }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
+
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the load resolves, not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
   useEffect(() => {
-    fetchDesktopConfig(gatewayUrl).then((cfg) => {
+    const controller = new AbortController();
+    fetchDesktopConfig(gatewayUrl, controller.signal).then((cfg) => {
+      if (controller.signal.aborted) return;
       setConfig(cfg);
-      setDock(cfg.dock);
-      setPinnedApps(cfg.pinnedApps);
-      setDockOrder(cfg.dockOrder);
-      applyBackground(cfg.background, gatewayUrl);
+      applyDesktopConfigSnapshot(cfg, gatewayUrl, { setDock, setPinnedApps, setDockOrder });
+      saveShellSnapshot(cacheScope, { desktopConfig: cfg });
     });
-  }, [gatewayUrl, setDock, setPinnedApps, setDockOrder]);
+
+    return () => controller.abort();
+  }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
 
   useEffect(() => {
     applyBackground(config.background, gatewayUrl);
@@ -121,6 +157,7 @@ export function useDesktopConfig() {
         setDock(cfg.dock);
         setPinnedApps(cfg.pinnedApps);
         setDockOrder(cfg.dockOrder);
+        saveShellSnapshot(cacheScope, { desktopConfig: cfg });
       });
     }
   });
@@ -128,10 +165,15 @@ export function useDesktopConfig() {
   return config;
 }
 
-async function fetchDesktopConfig(gatewayUrl: string): Promise<DesktopConfig> {
+function settingsFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+async function fetchDesktopConfig(gatewayUrl: string, signal?: AbortSignal): Promise<DesktopConfig> {
   try {
     const res = await fetch(`${gatewayUrl}/api/settings/desktop`, {
-      signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+      signal: settingsFetchSignal(signal),
     });
     if (res.ok) {
       const data = await res.json();
@@ -140,23 +182,31 @@ async function fetchDesktopConfig(gatewayUrl: string): Promise<DesktopConfig> {
       return merged;
     }
   } catch (err) {
+    if (signal?.aborted) return DEFAULT_DESKTOP_CONFIG;
     console.warn("[desktop-config] failed to load desktop config:", err instanceof Error ? err.message : String(err));
   }
   return DEFAULT_DESKTOP_CONFIG;
 }
 
-export async function saveDesktopConfig(config: DesktopConfig): Promise<void> {
+export function saveDesktopConfig(config: DesktopConfig): Promise<void>;
+export function saveDesktopConfig(config: DesktopConfig, options: DesktopConfigHookOptions): Promise<void>;
+export async function saveDesktopConfig(
+  config: DesktopConfig,
+  options: DesktopConfigHookOptions = {},
+): Promise<void> {
   const gatewayUrl = getGatewayUrl();
-  await fetch(`${gatewayUrl}/api/settings/desktop`, {
+  const res = await fetch(`${gatewayUrl}/api/settings/desktop`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
     body: JSON.stringify(config),
   });
+  if (res.ok) saveShellSnapshot(options.cacheScope, { desktopConfig: config });
 }
 
 export async function saveDesktopConfigPatch(
   patch: Partial<DesktopConfig>,
+  options: DesktopConfigHookOptions = {},
 ): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const url = `${gatewayUrl}/api/settings/desktop`;
@@ -169,13 +219,15 @@ export async function saveDesktopConfigPatch(
   const definedPatch = Object.fromEntries(
     Object.entries(patch).filter(([, value]) => value !== undefined),
   );
+  const nextConfig = { ...config, ...definedPatch };
   const putRes = await fetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
-    body: JSON.stringify({ ...config, ...definedPatch }),
+    body: JSON.stringify(nextConfig),
   });
   if (!putRes.ok) {
     throw new Error(`PUT /api/settings/desktop ${putRes.status}`);
   }
+  saveShellSnapshot(options.cacheScope, { desktopConfig: nextConfig as unknown as DesktopConfig });
 }

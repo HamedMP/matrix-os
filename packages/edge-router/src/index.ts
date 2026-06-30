@@ -70,7 +70,7 @@ export async function handleEdgeRouterRequest(
     });
   }
 
-  return withEdgeHeaders(response);
+  return withEdgeHeaders(response, routeClass, url.pathname);
 }
 
 function buildPlatformRequest(
@@ -118,14 +118,59 @@ async function readRequestBody(request: Request): Promise<ArrayBuffer | null | R
   return body;
 }
 
-function withEdgeHeaders(response: Response): Response {
+function withEdgeHeaders(response: Response, routeClass: EdgeRouteClass, pathname: string): Response {
   const headers = new Headers(response.headers);
-  headers.set("cache-control", "no-store");
+  if (shouldPreserveBrowserCache(routeClass, pathname, response)) {
+    const upstreamCacheControl = headers.get("cache-control");
+    headers.set("cache-control", upstreamCacheControl ?? browserCacheControlForAppStaticAsset(pathname));
+  } else {
+    headers.set("cache-control", "no-store");
+  }
   headers.set("cdn-cache-control", "no-store");
   headers.set("cloudflare-cdn-cache-control", "no-store");
   const isWebSocketUpgrade = response.status === 101;
 
   return new Response(isWebSocketUpgrade ? null : response.body, buildEdgeResponseInit(response, headers));
+}
+
+function shouldPreserveBrowserCache(
+  routeClass: EdgeRouteClass,
+  pathname: string,
+  response: Response,
+): boolean {
+  return routeClass === "app" && response.status >= 200 && response.status < 400 && isSafeAppStaticAssetPath(pathname);
+}
+
+function isSafeAppStaticAssetPath(pathname: string): boolean {
+  if (
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/v1/") ||
+    pathname.startsWith("/auth/") ||
+    pathname.startsWith("/sign-in") ||
+    pathname.startsWith("/sign-up") ||
+    pathname.startsWith("/_next/data/") ||
+    pathname.startsWith("/files/apps/")
+  ) {
+    return false;
+  }
+
+  return (
+    pathname.startsWith("/_next/static/") ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/wallpapers/") ||
+    pathname.startsWith("/files/system/wallpapers/") ||
+    pathname.startsWith("/textures/") ||
+    pathname.startsWith("/fonts/") ||
+    /\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|css|js|wav|mp3)$/.test(pathname)
+  );
+}
+
+function browserCacheControlForAppStaticAsset(pathname: string): string {
+  if (pathname.startsWith("/_next/static/")) return "public, max-age=31536000, immutable";
+  if (pathname.startsWith("/icons/") || pathname.startsWith("/wallpapers/") || pathname.startsWith("/files/system/wallpapers/")) {
+    return "public, max-age=86400, immutable";
+  }
+  return "public, max-age=86400";
 }
 
 export function buildEdgeResponseInit(response: Response, headers: Headers): EdgeResponseInit {

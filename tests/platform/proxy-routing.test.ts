@@ -4806,7 +4806,7 @@ describe("platform proxy routing", () => {
     }
   });
 
-  it("serves an unregistering app-domain service worker without auth", async () => {
+  it("serves the safe app-domain service worker without auth", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("wrong target", { status: 200 }),
     );
@@ -4834,9 +4834,10 @@ describe("platform proxy routing", () => {
       expect(res.headers.get("cdn-cache-control")).toBe("no-store");
       expect(res.headers.get("service-worker-allowed")).toBe("/");
       const body = await res.text();
-      expect(body).toContain("registration.unregister()");
-      expect(body).not.toContain("[app cleanup sw] fetch failed");
-      expect(body).not.toContain('new Response("offline",');
+      expect(body).not.toContain("registration.unregister()");
+      expect(body).toContain('p.startsWith("/api/")');
+      expect(body).toContain('p.startsWith("/files/apps/")');
+      expect(body).toContain('p.startsWith("/_next/static/")');
       expect(verifyToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
