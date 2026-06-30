@@ -110,6 +110,24 @@ IP-only installs are acceptable for first boot and private-network testing, but 
 
 Do not expose ports `3000`, `4000`, `8787`, or `5432` publicly. Keep them on loopback and expose only your hardened reverse proxy.
 
+## Manual Install Telemetry
+
+The installer sends lightweight, best-effort telemetry to Matrix OS so we can see how many people choose the manual path, which release channel/version they reach, whether installs finish, and where failures happen. It records an anonymous install id, channel, installed version, IP-vs-DNS mode, default-vs-custom bundle source, selected developer-tool count, phase, status, and exit code.
+
+It does not send your Matrix handle, password, auth tokens, Postgres password, domain name, project files, shell output, or code-server URL. The website telemetry endpoint also asks PostHog to discard client IP by setting `$ip` to `0.0.0.0`.
+
+Opt out per install:
+
+```bash
+curl -fsSL https://matrix-os.com/install-server.sh | sudo MATRIX_NO_TELEMETRY=1 bash
+```
+
+Or disable only installer telemetry:
+
+```bash
+curl -fsSL https://matrix-os.com/install-server.sh | sudo MATRIX_INSTALL_TELEMETRY=0 bash
+```
+
 ## Next Steps
 
 <Cards>

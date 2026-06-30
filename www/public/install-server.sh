@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # Matrix OS standalone server installer.
 # Public copy is served from https://matrix-os.com/install-server.sh.
@@ -11,14 +11,20 @@ MATRIX_INSTALL_HANDLE="${MATRIX_INSTALL_HANDLE:-matrix}"
 MATRIX_DOMAIN="${MATRIX_DOMAIN:-_}"
 MATRIX_HOME_DIR="${MATRIX_HOME:-/home/matrix/home}"
 MATRIX_DEVELOPER_TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"
+MATRIX_INSTALL_TELEMETRY_URL="${MATRIX_INSTALL_TELEMETRY_URL:-https://matrix-os.com/api/install-telemetry}"
+MATRIX_INSTALL_TELEMETRY_ID="${MATRIX_INSTALL_TELEMETRY_ID:-}"
 INSTALL_TMP_BUNDLE=""
 INSTALL_TMP_SUM=""
+INSTALL_PHASE="init"
+INSTALL_COMPLETED=0
+INSTALL_FAILURE_CAPTURED=0
 
 cleanup_install_tmp() {
   [ -z "$INSTALL_TMP_BUNDLE" ] || rm -f "$INSTALL_TMP_BUNDLE"
   [ -z "$INSTALL_TMP_SUM" ] || rm -f "$INSTALL_TMP_SUM"
 }
 trap cleanup_install_tmp EXIT
+trap 'capture_install_failure $? $LINENO' ERR
 
 log() {
   printf 'matrix-server-install: %s\n' "$*"
@@ -26,7 +32,111 @@ log() {
 
 fail() {
   printf 'matrix-server-install: %s\n' "$*" >&2
+  if declare -F capture_install_failure >/dev/null 2>&1; then
+    capture_install_failure 1 "${BASH_LINENO[0]:-0}" || true
+  fi
   exit 1
+}
+
+telemetry_enabled() {
+  [ -z "${MATRIX_NO_TELEMETRY:-}" ] || return 1
+  [ "${MATRIX_INSTALL_TELEMETRY:-1}" != "0" ] || return 1
+  [ -n "$MATRIX_INSTALL_TELEMETRY_URL" ] || return 1
+}
+
+telemetry_id() {
+  if [ -n "$MATRIX_INSTALL_TELEMETRY_ID" ]; then
+    printf '%s\n' "$MATRIX_INSTALL_TELEMETRY_ID"
+    return
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    MATRIX_INSTALL_TELEMETRY_ID="$(openssl rand -hex 16 2>/dev/null || true)"
+  fi
+  if [ -z "$MATRIX_INSTALL_TELEMETRY_ID" ]; then
+    MATRIX_INSTALL_TELEMETRY_ID="$(date -u +%Y%m%d%H%M%S)-$$"
+  fi
+  printf '%s\n' "$MATRIX_INSTALL_TELEMETRY_ID"
+}
+
+telemetry_value() {
+  printf '%s' "${1:-unknown}" | tr -c 'A-Za-z0-9._:/@+-' '_' | cut -c1-120
+}
+
+developer_tool_count() {
+  local count tool
+  count=0
+  for tool in $MATRIX_DEVELOPER_TOOLS; do
+    [ -n "$tool" ] || continue
+    count=$((count + 1))
+  done
+  printf '%s\n' "$count"
+}
+
+bundle_source() {
+  case "$MATRIX_HOST_BUNDLE_URL" in
+    "${DEFAULT_BUNDLE_BASE}/matrix-host-bundle.tar.gz") printf 'default\n' ;;
+    *) printf 'custom\n' ;;
+  esac
+}
+
+domain_mode() {
+  if [ "$MATRIX_DOMAIN" = "_" ]; then
+    printf 'ip\n'
+  else
+    printf 'dns\n'
+  fi
+}
+
+installed_version() {
+  if [ -f /opt/matrix/app/BUNDLE_VERSION ]; then
+    head -n1 /opt/matrix/app/BUNDLE_VERSION
+    return
+  fi
+  if [ -f /opt/matrix/BUNDLE_VERSION ]; then
+    head -n1 /opt/matrix/BUNDLE_VERSION
+    return
+  fi
+  if [ -f /opt/matrix/release.json ]; then
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /opt/matrix/release.json | head -n1
+    return
+  fi
+  printf 'unknown\n'
+}
+
+capture_install_telemetry() {
+  local event status exit_code payload version
+  event="$1"
+  status="$2"
+  exit_code="${3:-0}"
+  telemetry_enabled || return 0
+  version="$(telemetry_value "$(installed_version 2>/dev/null || printf 'unknown')")"
+  payload="$(printf '{"event":"%s","installId":"%s","channel":"%s","version":"%s","domainMode":"%s","bundleSource":"%s","developerToolsCount":%s,"phase":"%s","status":"%s","exitCode":%s}\n' \
+    "$(telemetry_value "$event")" \
+    "$(telemetry_value "$(telemetry_id)")" \
+    "$(telemetry_value "$DEFAULT_CHANNEL")" \
+    "$version" \
+    "$(telemetry_value "$(domain_mode)")" \
+    "$(telemetry_value "$(bundle_source)")" \
+    "$(developer_tool_count)" \
+    "$(telemetry_value "$INSTALL_PHASE")" \
+    "$(telemetry_value "$status")" \
+    "$exit_code")"
+  curl --fail --silent --show-error --connect-timeout 2 --max-time 3 \
+    -H 'content-type: application/json' \
+    -X POST \
+    --data "$payload" \
+    "$MATRIX_INSTALL_TELEMETRY_URL" >/dev/null 2>&1 || true
+}
+
+capture_install_failure() {
+  local exit_code line
+  exit_code="$1"
+  line="$2"
+  [ "$INSTALL_COMPLETED" = "0" ] || return 0
+  [ "$INSTALL_FAILURE_CAPTURED" = "0" ] || return 0
+  INSTALL_FAILURE_CAPTURED=1
+  INSTALL_PHASE="${INSTALL_PHASE:-failed}-line-${line}"
+  capture_install_telemetry "matrix_manual_install_failed" "failed" "$exit_code"
 }
 
 require_root() {
@@ -344,16 +454,28 @@ EOF
 }
 
 main() {
+  INSTALL_PHASE="preflight"
   require_root
   require_linux_systemd
   validate_config
+  capture_install_telemetry "matrix_manual_install_started" "started" 0
+  INSTALL_PHASE="packages"
   install_packages
+  INSTALL_PHASE="user"
   ensure_matrix_user
+  INSTALL_PHASE="env"
   write_env
+  INSTALL_PHASE="bundle"
   install_bundle
+  INSTALL_PHASE="systemd"
   install_systemd_units
+  INSTALL_PHASE="nginx"
   configure_nginx
+  INSTALL_PHASE="services"
   start_services
+  INSTALL_PHASE="complete"
+  INSTALL_COMPLETED=1
+  capture_install_telemetry "matrix_manual_install_completed" "completed" 0
   print_summary
 }
 

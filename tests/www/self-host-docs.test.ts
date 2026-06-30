@@ -18,13 +18,19 @@ describe("self-host public docs", () => {
     expect(docs).toContain("nginx Basic Auth");
     expect(docs).toContain("server IP address");
     expect(docs).toContain("No domain is required");
+    expect(docs).toContain("Manual Install Telemetry");
+    expect(docs).toContain("MATRIX_NO_TELEMETRY=1");
+    expect(docs).toContain("does not send your Matrix handle");
     expect(docs).toContain("Do not expose ports `3000`, `4000`, `8787`, or `5432` publicly");
     expect(meta).toContain("\"self-host\"");
-    expect(readme).toContain("### Self-host on Your VPS");
+    expect(readme).toContain("### Managed Matrix Cloud");
+    expect(readme).toContain("### Manual VPS Install");
     expect(readme).toContain(installUrl);
     expect(readme).toContain("A domain is optional");
     expect(readme).toContain("Self-host docs");
-    expect(quickstart).toContain("[Self-host](/docs/self-host)");
+    expect(quickstart).toContain("Managed Matrix Cloud");
+    expect(quickstart).toContain("Manual VPS install");
+    expect(quickstart).toContain("A domain is optional for first boot");
   });
 
   it("adds self-host as a landing-page deployment option", () => {
@@ -32,9 +38,11 @@ describe("self-host public docs", () => {
     const deployment = readFileSync(join(root, "www/src/components/landing/DeploymentSection.tsx"), "utf8");
 
     expect(page).toContain("<DeploymentSection />");
-    expect(deployment).toContain("Self-host Matrix");
+    expect(deployment).toContain("Managed Matrix Cloud");
+    expect(deployment).toContain("Manual VPS install");
     expect(deployment).toContain("Install from the main domain on your own Linux VPS");
     expect(deployment).toContain("href=\"/docs/self-host\"");
-    expect(deployment).toContain("Hosted, self-hosted, or guided for organizations.");
+    expect(deployment).toContain("Choose managed or manual install.");
+    expect(deployment).toContain("Start with Matrix Cloud, or bring your own Linux VPS.");
   });
 });

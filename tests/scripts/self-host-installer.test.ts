@@ -40,6 +40,31 @@ describe("self-host server installer", () => {
     expect(script).toContain("trap cleanup_install_tmp EXIT");
   });
 
+  it("reports privacy-scoped manual install telemetry with an opt-out", () => {
+    const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
+    const route = readFileSync(join(root, "www/src/app/api/install-telemetry/route.ts"), "utf8");
+
+    expect(script).toContain("MATRIX_INSTALL_TELEMETRY_URL");
+    expect(script).toContain("MATRIX_NO_TELEMETRY");
+    expect(script).toContain("[ \"${MATRIX_INSTALL_TELEMETRY:-1}\" != \"0\" ]");
+    expect(script).toContain("matrix_manual_install_started");
+    expect(script).toContain("matrix_manual_install_completed");
+    expect(script).toContain("matrix_manual_install_failed");
+    expect(script).toContain("--max-time 3");
+    expect(script).toContain("installed_version");
+    expect(script).toContain("domain_mode");
+    expect(script).toContain("bundle_source");
+    expect(script).not.toContain("\"handle\"");
+    expect(script).not.toContain("MATRIX_INSTALL_HANDLE\",\"");
+
+    expect(route).toContain("MAX_BODY_BYTES = 4096");
+    expect(route).toContain("installTelemetrySchema");
+    expect(route).toContain("getPostHogClient().capture");
+    expect(route).toContain("matrix_manual_install_completed");
+    expect(route).toContain("install_surface: 'linux_vps_script'");
+    expect(route).toContain("$ip: '0.0.0.0'");
+  });
+
   it("protects the public surface with nginx basic auth and keeps services loopback", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 

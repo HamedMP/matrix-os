@@ -57,15 +57,15 @@ Matrix OS is the foundation for **Web 4**: a unified environment where operating
 
 ---
 
-## Quick Start
+## Install Matrix OS
 
-### Hosted Cloud Computer
+### Managed Matrix Cloud
 
 Start at the landing page: [matrix-os.com](https://matrix-os.com).
 
-Sign up or log in from there, choose a Matrix handle, provision your private runtime, and open the browser desktop. Hosted Matrix OS uses a platform control plane plus one VPS-native runtime per active user. That VPS is where your files, terminal sessions, generated apps, integrations, and coding agents live.
+Sign up or log in from there, choose a Matrix handle, provision your private runtime, and open the browser desktop. Managed Matrix OS uses a platform control plane plus one VPS-native runtime per active user. Matrix manages routing, auth, updates, backups, billing, and integrations. Your VPS is where your files, terminal sessions, generated apps, integrations, and coding agents live.
 
-### Self-host on Your VPS
+### Manual VPS Install
 
 Run Matrix OS on an existing Linux VPS you control:
 
@@ -73,7 +73,7 @@ Run Matrix OS on an existing Linux VPS you control:
 curl -fsSL https://matrix-os.com/install-server.sh | sudo bash
 ```
 
-The self-host installer downloads a verified host bundle, creates the `matrix` user, starts local Postgres, the Matrix gateway, web shell, code-server, nginx, and optional coding-agent tools under systemd. A domain is optional: by default nginx answers on the server IP address with Basic Auth. Self-host users own DNS, TLS, backups, updates, and server security. See [Self-host docs](https://matrix-os.com/docs/self-host) for prerequisites and tradeoffs.
+The manual installer downloads a verified host bundle, creates the `matrix` user, starts local Postgres, the Matrix gateway, web shell, code-server, nginx, and optional coding-agent tools under systemd. A domain is optional: by default nginx answers on the server IP address with Basic Auth. Manual VPS operators own DNS, TLS, backups, updates, integrations, and server security. See [Self-host docs](https://matrix-os.com/docs/self-host) for prerequisites, telemetry, and tradeoffs.
 
 ### Matrix CLI
 
