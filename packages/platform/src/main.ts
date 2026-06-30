@@ -784,7 +784,9 @@ async function proxyPostHogRelay(c: Context): Promise<Response> {
   const upstreamBase = isPostHogAssetRelayPath(upstreamPath)
     ? POSTHOG_ASSET_HOST
     : POSTHOG_INGEST_HOST;
-  const upstream = new URL(`${upstreamPath}${requestUrl.search}`, upstreamBase);
+  const upstream = new URL(upstreamBase);
+  upstream.pathname = upstreamPath;
+  upstream.search = requestUrl.search;
 
   try {
     const response = await fetch(upstream.toString(), {
