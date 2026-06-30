@@ -1,0 +1,65 @@
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const root = process.cwd();
+
+describe("self-host server installer", () => {
+  it("keeps the website-hosted installer identical to the source installer", () => {
+    const source = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
+    const website = readFileSync(join(root, "www/public/install-server.sh"), "utf8");
+
+    expect(website).toBe(source);
+    expect(statSync(join(root, "scripts/install-server.sh")).mode & 0o111).not.toBe(0);
+    expect(statSync(join(root, "www/public/install-server.sh")).mode & 0o111).not.toBe(0);
+  });
+
+  it("installs from a verified host bundle and writes standalone self-host configuration", () => {
+    const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
+
+    expect(script).toContain("https://app.matrix-os.com/system-bundles/${DEFAULT_CHANNEL}");
+    expect(script).toContain("MATRIX_HOST_BUNDLE_URL");
+    expect(script).toContain("${MATRIX_HOST_BUNDLE_URL}.sha256");
+    expect(script).toContain("sha256sum \"$tmp_bundle\"");
+    expect(script).toContain("[ \"$expected\" = \"$actual\" ] || fail \"bundle checksum mismatch\"");
+    expect(script).toContain("tar -xzf \"$tmp_bundle\" -C /opt/matrix");
+    expect(script).toContain("MATRIX_SELF_HOSTED=1");
+    expect(script).toContain("MATRIX_AUTH_TOKEN=${auth_token}");
+    expect(script).toContain("MATRIX_CODE_PROXY_TOKEN=${code_token}");
+    expect(script).toContain("DATABASE_URL=postgresql://matrix:${postgres_password}@127.0.0.1:5432/matrix");
+    expect(script).toContain("NEXT_PUBLIC_GATEWAY_WS=/ws");
+    expect(script).toContain("validate_config");
+    expect(script).toContain("MATRIX_HOST_BUNDLE_URL must be https");
+    expect(script).toContain("MATRIX_HOME must stay under /home/matrix");
+  });
+
+  it("protects the public surface with nginx basic auth and keeps services loopback", () => {
+    const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
+
+    expect(script).toContain("auth_basic \"Matrix OS\"");
+    expect(script).toContain("auth_basic_user_file /opt/matrix/env/nginx.htpasswd");
+    expect(script).toContain("openssl passwd -apr1");
+    expect(script).toContain("proxy_pass http://127.0.0.1:3000");
+    expect(script).toContain("proxy_pass http://127.0.0.1:4000");
+    expect(script).toContain("proxy_pass http://127.0.0.1:8787");
+    expect(script).toContain("proxy_set_header X-Matrix-Code-Proxy-Token");
+    expect(script).toContain("-p 127.0.0.1:5432:5432");
+    expect(script).not.toContain("-p 5432:5432");
+  });
+
+  it("installs the core Matrix services without enabling managed-cloud backup requirements", () => {
+    const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
+
+    expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-gateway.service");
+    expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-shell.service");
+    expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code.service");
+    expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code-server.service");
+    expect(script).toContain("write_self_host_restore_service");
+    expect(script).toContain("systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server");
+    expect(script).toContain("systemctl enable --now docker");
+    expect(script).not.toContain("systemctl restart docker");
+    expect(script).not.toContain("NOPASSWD:ALL");
+    expect(script).not.toContain("systemctl enable matrix-db-backup");
+    expect(script).not.toContain("systemctl enable matrix-sync-agent");
+  });
+});

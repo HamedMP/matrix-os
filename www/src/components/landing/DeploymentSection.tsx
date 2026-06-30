@@ -1,4 +1,4 @@
-import { ArrowRightIcon, BriefcaseBusinessIcon, CheckCircle2Icon, CloudIcon } from "lucide-react";
+import { ArrowRightIcon, BriefcaseBusinessIcon, CheckCircle2Icon, CloudIcon, ServerIcon } from "lucide-react";
 import { palette as c, cardShadow, cardShadowSmall, fonts } from "./theme";
 import { CtaButton, SectionShell, SectionTitle } from "./primitives";
 import { Reveal } from "./Reveal";
@@ -18,6 +18,13 @@ const guidedPilotPoints = [
   "Clear rollout plan for tools, regions, billing, and approvals",
 ] as const;
 
+const selfHostPoints = [
+  "Install from the main domain on your own Linux VPS",
+  "Browser shell, gateway, local Postgres, code-server, and systemd services",
+  "You own DNS, TLS, backups, upgrades, and server security",
+  "Best path for hackers, open-source users, and custom infrastructure",
+] as const;
+
 export function DeploymentSection() {
   return (
     <SectionShell id="deployment" className="pt-16 md:pt-28">
@@ -25,12 +32,12 @@ export function DeploymentSection() {
         <div className="mb-8 max-w-[44rem] md:mb-10">
           <SectionTitle
             title="Start with a private cloud computer."
-            continuation="Hosted today, with guided pilots for organizations."
+            continuation="Hosted, self-hosted, or guided for organizations."
           />
         </div>
       </Reveal>
 
-      <div className="grid gap-5 md:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-3">
         <Reveal>
           <article className="flex h-full flex-col rounded-2xl p-7 md:p-9" style={{ backgroundColor: c.card, boxShadow: cardShadow }}>
             <div className="mb-6 flex items-center gap-4">
@@ -59,6 +66,33 @@ export function DeploymentSection() {
         </Reveal>
 
         <Reveal delay={90}>
+          <article className="flex h-full flex-col rounded-2xl p-7 md:p-9" style={{ backgroundColor: c.card, boxShadow: cardShadowSmall }}>
+            <div className="mb-6 flex items-center gap-4">
+              <span className="grid size-11 place-items-center rounded-lg" style={{ backgroundColor: "rgba(67,78,63,0.07)", color: c.forest }}>
+                <ServerIcon className="size-5" />
+              </span>
+              <div>
+                <p className="text-[0.8125rem] font-medium" style={{ color: c.subtle }}>Run your VPS</p>
+                <h3 className="text-[1.1875rem] font-medium" style={{ color: c.deep, fontFamily: fonts.sans }}>Self-host Matrix</h3>
+              </div>
+            </div>
+            <ul className="grid gap-3">
+              {selfHostPoints.map((point) => (
+                <li key={point} className="flex gap-3 text-[0.9375rem] leading-[1.6]" style={{ color: c.mutedFg }}>
+                  <CheckCircle2Icon className="mt-1 size-4 shrink-0" style={{ color: c.forest }} />
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-auto pt-8">
+              <CtaButton href="/docs/self-host" variant="outline" phLocation="deployment" phTarget="self_host_docs">
+                Self-host guide <ArrowRightIcon className="size-4" />
+              </CtaButton>
+            </div>
+          </article>
+        </Reveal>
+
+        <Reveal delay={180}>
           <article className="flex h-full flex-col rounded-2xl p-7 md:p-9" style={{ backgroundColor: c.card, boxShadow: cardShadowSmall }}>
             <div className="mb-6 flex items-center gap-4">
               <span className="grid size-11 place-items-center rounded-lg" style={{ backgroundColor: "rgba(67,78,63,0.07)", color: c.forest }}>

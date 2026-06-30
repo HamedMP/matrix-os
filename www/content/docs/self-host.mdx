@@ -1,0 +1,118 @@
+---
+title: Self-host
+description: Install Matrix OS on your own Linux VPS with the main-domain server installer.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+Self-host Matrix OS when you want the cloud-coding computer on infrastructure you control. The installer uses the same published host bundle shape as Matrix Cloud, then configures a standalone profile with local Postgres, systemd services, nginx, the web shell, gateway, code-server, and optional coding-agent tools.
+
+```bash
+curl -fsSL https://matrix-os.com/install-server.sh | sudo bash
+```
+
+<Callout type="warn" title="Preview self-host path">
+The self-host installer is for developers comfortable operating a VPS. Matrix Cloud still provides managed routing, Clerk auth, backups, updates, billing, and integrations. Self-host installs start with nginx Basic Auth and should be put behind HTTPS, Tailscale, Cloudflare Access, or another trusted edge for long-term use.
+</Callout>
+
+## Requirements
+
+- A fresh apt-based Linux VPS with systemd.
+- Root or sudo access.
+- Ports 80 and the internal loopback service ports available.
+- Enough disk for the Matrix host bundle, local Postgres, projects, and coding tools.
+- Optional DNS record pointing at the server before install.
+
+## Install
+
+<Steps>
+  <Step>
+    ### Create or choose a VPS
+
+    Start from a clean Ubuntu or Debian-style server. A small development host works for evaluation; use more CPU and memory if you plan to run multiple coding agents and dev servers.
+  </Step>
+
+  <Step>
+    ### Run the main-domain installer
+
+    ```bash
+    curl -fsSL https://matrix-os.com/install-server.sh | sudo bash
+    ```
+
+    Optional configuration:
+
+    ```bash
+    curl -fsSL https://matrix-os.com/install-server.sh | sudo \
+      MATRIX_DOMAIN=matrix.example.com \
+      MATRIX_INSTALL_HANDLE=alice \
+      MATRIX_DEVELOPER_TOOLS="codex claude-code opencode" \
+      bash
+    ```
+  </Step>
+
+  <Step>
+    ### Open the printed URL
+
+    The installer prints the URL, username, generated password, and code-server path. Store the initial password somewhere safe, then replace the edge auth with your preferred HTTPS and access-control setup.
+  </Step>
+
+  <Step>
+    ### Verify services
+
+    ```bash
+    systemctl status matrix-gateway matrix-shell matrix-code nginx --no-pager
+    journalctl -u matrix-gateway -u matrix-shell -u matrix-code -n 200 --no-pager
+    sudo -u matrix bash
+    ```
+  </Step>
+</Steps>
+
+## What You Get
+
+- Matrix web shell on your VPS.
+- Gateway API and WebSocket services protected by an internal bearer token.
+- Local owner-controlled Postgres on `127.0.0.1`.
+- code-server behind the Matrix code proxy at `/code/`.
+- Persistent home directory at `/home/matrix/home`.
+- Optional Claude Code, Codex, OpenCode, and Pi CLI installs through Matrix tool packs.
+- Source-free install from a verified host bundle.
+
+## What You Manage
+
+- DNS and TLS.
+- Server firewalling, OS updates, and SSH access.
+- Backups and restore policy.
+- Upgrades to newer Matrix host bundles.
+- Edge auth hardening beyond the generated nginx Basic Auth.
+- Any external integration secrets.
+
+## Differences From Matrix Cloud
+
+| Capability | Matrix Cloud | Self-host preview |
+|------------|--------------|-------------------|
+| Provisioning | Managed VPS creation | Bring your own VPS |
+| Auth | Clerk and platform sessions | Generated nginx Basic Auth |
+| Routing | `app.matrix-os.com` and `code.matrix-os.com` | Your domain or server IP |
+| Backups | Managed platform path | You configure backups |
+| Updates | Platform release fan-out | Manual installer/update path |
+| Integrations | Platform-owned Pipedream | Not configured by default |
+| Mobile and desktop handoff | Upcoming managed surfaces | Not included yet |
+
+## Security Notes
+
+The shell runs in explicit standalone mode. Public browser access is expected to go through nginx, while same-origin API, file, app, and WebSocket requests are rewritten by the shell proxy with the internal `MATRIX_AUTH_TOKEN`. code-server runs loopback-only and is reached through a token-protected Matrix proxy.
+
+Do not expose ports `3000`, `4000`, `8787`, or `5432` publicly. Keep them on loopback and expose only your hardened reverse proxy.
+
+## Next Steps
+
+<Cards>
+  <Card title="CLI" href="/docs/cli">
+    Install the Matrix CLI on your laptop for hosted Matrix Cloud workflows.
+  </Card>
+  <Card title="Coding Agents" href="/docs/coding-agents">
+    Install and authenticate Claude, Codex, OpenCode, or Pi inside your Matrix computer.
+  </Card>
+</Cards>

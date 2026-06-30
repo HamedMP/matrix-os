@@ -9,6 +9,10 @@ import { Step, Steps } from 'fumadocs-ui/components/steps';
 
 This guide walks you through signing up, choosing a compute plan, completing billing, waiting for your Matrix computer to provision, and then authenticating GitHub and cloning a repository inside the web shell.
 
+<Callout type="info" title="Want to bring your own VPS?">
+  Use [Self-host](/docs/self-host) if you want to install Matrix OS on an existing Linux VPS instead of using managed Matrix Cloud.
+</Callout>
+
 ## Fastest path: paste the setup prompt
 
 If you prefer to hand setup to an agent, paste this prompt into Claude Code, Codex, or another terminal agent after your Matrix computer is provisioned:
@@ -116,6 +120,9 @@ Use `Ctrl-\ Ctrl-\` to detach from an attached terminal session without killing 
 <Cards>
   <Card title="Matrix CLI" href="/docs/cli">
     Install the CLI on your laptop to attach to shell sessions, sync files, and run coding agents from your local terminal.
+  </Card>
+  <Card title="Self-host" href="/docs/self-host">
+    Install Matrix OS on your own Linux VPS with the main-domain server installer.
   </Card>
   <Card title="Web shell" href="/docs/shell">
     Learn Terminal tabs, Canvas mode, the app sidebar, and shell keyboard shortcuts.

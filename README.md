@@ -65,6 +65,16 @@ Start at the landing page: [matrix-os.com](https://matrix-os.com).
 
 Sign up or log in from there, choose a Matrix handle, provision your private runtime, and open the browser desktop. Hosted Matrix OS uses a platform control plane plus one VPS-native runtime per active user. That VPS is where your files, terminal sessions, generated apps, integrations, and coding agents live.
 
+### Self-host on Your VPS
+
+Run Matrix OS on an existing Linux VPS you control:
+
+```bash
+curl -fsSL https://matrix-os.com/install-server.sh | sudo bash
+```
+
+The self-host installer downloads a verified host bundle, creates the `matrix` user, starts local Postgres, the Matrix gateway, web shell, code-server, nginx, and optional coding-agent tools under systemd. Self-host users own DNS, TLS, backups, updates, and server security. See [Self-host docs](https://matrix-os.com/docs/self-host) for prerequisites and tradeoffs.
+
 ### Matrix CLI
 
 Install the CLI:
