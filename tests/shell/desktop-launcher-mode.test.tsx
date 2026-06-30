@@ -7,6 +7,7 @@ import type { Desktop } from "../../shell/src/components/Desktop.js";
 import type { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import type { useDesktopConfigStore } from "../../shell/src/stores/desktop-config.js";
 import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
+import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: () => undefined,
@@ -193,6 +194,32 @@ describe("Desktop launcher dock button by mode", () => {
     await waitFor(() => {
       expect(screen.getByTestId("dock-tasks")).toBeTruthy();
       expect(screen.getByTestId("dock-settings")).toBeTruthy();
+    });
+  });
+
+  it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    saveShellSnapshot(scope, {
+      bootstrap: {
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "Cached Notes", path: "/files/apps/notes/index.html", icon: "notes", slug: "notes" }],
+        icons: { notes: { url: "/icons/notes.png", etag: "\"abc\"", versionedUrl: "/icons/notes.png?v=abc" } },
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) return new Promise(() => undefined);
+      return jsonResponse({});
+    }));
+    resetShellMode("dev", true);
+
+    render(<DesktopComponent cacheScope={scope} />);
+
+    await waitFor(() => {
+      expect(windowManagerStore.getState().apps.some((app) => app.path === "apps/notes/index.html")).toBe(true);
     });
   });
 });

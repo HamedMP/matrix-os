@@ -70,6 +70,11 @@ import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import {
+  loadShellSnapshot,
+  saveShellSnapshot,
+  type ShellSnapshotScope,
+} from "@/lib/shell-snapshot-cache";
+import {
   DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
   normalizeBuiltInAppPath,
@@ -465,10 +470,12 @@ interface DesktopProps {
   launchAppPath?: string | null;
   onOpenCommandPalette?: () => void;
   chat?: import("@/hooks/useChatState").ChatState;
+  cacheScope?: ShellSnapshotScope | null;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
-export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopProps) {
+export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
+  const cacheKey = cacheScope?.storageKey;
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -830,14 +837,10 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async () => {
-    try {
-      const bootstrapRes = await fetch(`${GATEWAY_URL}/api/shell/bootstrap`, {
-        signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-      }).catch((err) => {
-        console.warn("[desktop] Failed to fetch shell bootstrap:", err);
-        return null;
-      });
-      const bootstrap: ShellBootstrap = bootstrapRes?.ok ? await bootstrapRes.json() : {};
+    const applyBootstrap = async (
+      bootstrap: ShellBootstrap,
+      options: { resolveModuleMetadata: boolean },
+    ) => {
       const iconForSlug = (slug: string | undefined): string | undefined => {
         if (!slug) return undefined;
         return bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug);
@@ -889,6 +892,16 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
 
         for (const mod of registry) {
           if (mod.status !== "active") continue;
+          if (!options.resolveModuleMetadata) {
+            const relativeBasePath = registryPathToRelativePath(mod.path);
+            if (!relativeBasePath) continue;
+            const defaultEntryFile = mod.type === "react-app" ? "dist/index.html" : "index.html";
+            const path = normalizeBuiltInAppPath(`${relativeBasePath}/${defaultEntryFile}`);
+            addApp(mod.name, path, nameToSlug(mod.name));
+            const saved = layoutMap.get(path);
+            queueSavedLayout(saved);
+            continue;
+          }
 
           try {
             const relativeBasePath = registryPathToRelativePath(mod.path);
@@ -953,10 +966,27 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       if (layoutToLoad.length > 0) {
         wmLoadLayout(layoutToLoad);
       }
+    };
+
+    try {
+      const cachedBootstrap = loadShellSnapshot(cacheScope)?.bootstrap as ShellBootstrap | undefined;
+      if (cachedBootstrap) {
+        await applyBootstrap(cachedBootstrap, { resolveModuleMetadata: false });
+      }
+
+      const bootstrapRes = await fetch(`${GATEWAY_URL}/api/shell/bootstrap`, {
+        signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
+      }).catch((err) => {
+        console.warn("[desktop] Failed to fetch shell bootstrap:", err);
+        return null;
+      });
+      const bootstrap: ShellBootstrap = bootstrapRes?.ok ? await bootstrapRes.json() : {};
+      if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
+      await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
     } catch (err) {
       console.warn("[desktop] Failed to load desktop modules:", err);
     }
-  }, [addApp, openWindow, wmLoadLayout]);
+  }, [addApp, cacheScope, openWindow, wmLoadLayout]);
 
   useEffect(() => {
     loadModules();

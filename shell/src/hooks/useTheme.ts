@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
+import {
+  loadShellSnapshot,
+  saveShellSnapshot,
+  type ShellSnapshotScope,
+} from "@/lib/shell-snapshot-cache";
 
 export interface Theme {
   name: string;
@@ -123,14 +128,31 @@ export function getThemeFallback(): Theme {
   return DEFAULT_THEME;
 }
 
-export function useTheme() {
+export interface ShellCacheHookOptions {
+  cacheScope?: ShellSnapshotScope | null;
+}
+
+export function useTheme(options: ShellCacheHookOptions = {}) {
   const fallbackTheme = getThemeFallback();
-  const [theme, setTheme] = useState<Theme>(fallbackTheme);
+  const cacheScope = options.cacheScope ?? null;
+  const cacheKey = cacheScope?.storageKey;
+  const [theme, setTheme] = useState<Theme>(() => (
+    cacheScope ? normalizeTheme(loadShellSnapshot(cacheScope)?.theme, fallbackTheme) : fallbackTheme
+  ));
+
+  useEffect(() => {
+    if (!cacheScope) return;
+    const cachedTheme = loadShellSnapshot(cacheScope)?.theme;
+    if (cachedTheme) setTheme(normalizeTheme(cachedTheme, fallbackTheme));
+  }, [cacheKey, cacheScope, fallbackTheme]);
 
   // Fetch theme from server on mount
   useEffect(() => {
-    fetchTheme(fallbackTheme).then(setTheme);
-  }, [fallbackTheme]);
+    fetchTheme(fallbackTheme).then((nextTheme) => {
+      setTheme(nextTheme);
+      saveShellSnapshot(cacheScope, { theme: nextTheme });
+    });
+  }, [fallbackTheme, cacheKey, cacheScope]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -138,14 +160,22 @@ export function useTheme() {
 
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
-      fetchTheme(fallbackTheme).then(setTheme);
+      fetchTheme(fallbackTheme).then((nextTheme) => {
+        setTheme(nextTheme);
+        saveShellSnapshot(cacheScope, { theme: nextTheme });
+      });
     }
   });
 
   return theme;
 }
 
-export async function saveTheme(theme: Theme): Promise<void> {
+export function saveTheme(theme: Theme): Promise<void>;
+export function saveTheme(theme: Theme, options: ShellCacheHookOptions): Promise<void>;
+export async function saveTheme(
+  theme: Theme,
+  options: ShellCacheHookOptions = {},
+): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
     signal: AbortSignal.timeout(10_000),
@@ -156,6 +186,7 @@ export async function saveTheme(theme: Theme): Promise<void> {
   if (!res.ok) {
     throw new Error("Failed to save theme");
   }
+  saveShellSnapshot(options.cacheScope, { theme });
   if (typeof document !== "undefined") {
     applyTheme(theme);
   }

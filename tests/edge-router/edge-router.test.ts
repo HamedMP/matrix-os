@@ -104,6 +104,47 @@ describe("edge router worker", () => {
     expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
   });
 
+  it("preserves browser cache headers for safe app-domain static assets while keeping CDN caches disabled", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("asset", {
+        headers: {
+          "cache-control": "public, max-age=31536000, immutable",
+          "cdn-cache-control": "public, max-age=31536000",
+        },
+      }),
+    );
+
+    const response = await handleEdgeRouterRequest(
+      new Request("https://app.matrix-os.com/_next/static/chunks/app.js"),
+      EDGE_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+  });
+
+  it("does not preserve browser cache headers for app-domain API responses", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("api", {
+        headers: {
+          "cache-control": "public, max-age=31536000, immutable",
+        },
+      }),
+    );
+
+    const response = await handleEdgeRouterRequest(
+      new Request("https://app.matrix-os.com/api/shell/bootstrap"),
+      EDGE_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+  });
+
   it("rejects oversized bodies before forwarding", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope"));
 
