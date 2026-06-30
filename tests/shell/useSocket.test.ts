@@ -40,6 +40,39 @@ Object.assign(MockWebSocket, {
   CONNECTING: 0,
 });
 
+describe("websocket auth in self-host mode", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not fetch a managed ws token when nginx injects standalone gateway auth", async () => {
+    vi.resetModules();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", {
+      location: {
+        protocol: "http:",
+        host: "167.233.232.103",
+      },
+    });
+    vi.stubGlobal("document", {
+      documentElement: {
+        dataset: {
+          matrixSelfHosted: "1",
+        },
+      },
+    });
+
+    const { buildAuthenticatedWebSocketUrl } = await import("../../shell/src/lib/websocket-auth.js");
+
+    await expect(
+      buildAuthenticatedWebSocketUrl("/ws", undefined, { requireToken: true }),
+    ).resolves.toBe("ws://167.233.232.103/ws");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("useSocket message protocol", () => {
   it("sends messages as JSON with correct shape", () => {
     const ws = new MockWebSocket("ws://localhost:4000/ws");

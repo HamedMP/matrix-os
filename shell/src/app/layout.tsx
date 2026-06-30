@@ -83,10 +83,12 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const visitorCountry = getPostHogVisitorCountry(await headers());
+  const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
   const renderDocument = (includePostHogIdentify: boolean) => (
     <html
       lang="en"
       data-posthog-visitor-country={visitorCountry ?? undefined}
+      data-matrix-self-hosted={selfHostedMode ? "1" : undefined}
       // Runtime replay kill switch: read on the server per request, so
       // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops
       // replay without rebuilding the bundle.
@@ -102,7 +104,7 @@ export default async function RootLayout({
     </html>
   );
 
-  if (process.env.MATRIX_SELF_HOSTED === "1") {
+  if (selfHostedMode) {
     return renderDocument(false);
   }
 

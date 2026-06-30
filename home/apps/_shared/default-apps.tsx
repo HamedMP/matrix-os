@@ -26,6 +26,14 @@ type Metric = {
   tone?: string;
 };
 
+declare global {
+  interface Window {
+    MatrixOS?: {
+      openApp?: (name: string, path: string) => void;
+    };
+  }
+}
+
 const appMeta: Record<AppId, { title: string; subtitle: string; accent: string; metrics?: Metric[] }> = {
   "2048": {
     title: "2048",
@@ -305,7 +313,13 @@ function GameCenterApp() {
           <div className="game-card-art">{appMeta[id].title.slice(0, 2).toUpperCase()}</div>
           <h2>{appMeta[id].title}</h2>
           <p>{appMeta[id].subtitle}</p>
-          <button className="btn btn-ghost" type="button">Open</button>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => window.MatrixOS?.openApp?.(appMeta[id].title, `apps/${id}/index.html`)}
+          >
+            Open
+          </button>
         </article>
       ))}
     </main>

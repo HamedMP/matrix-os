@@ -64,7 +64,7 @@ import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { cn, nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
-import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, VSCODE_URL } from "@/lib/feature-flags";
+import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -1634,7 +1634,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     <button
                       type="button"
                       data-testid="dock-vscode"
-                      onClick={() => window.open(VSCODE_URL, "_blank", "noopener,noreferrer")}
+                      onClick={() => window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer")}
                       className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
                       style={{ width: dock.iconSize, height: dock.iconSize }}
                     >
@@ -1810,10 +1810,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               onOpenTerminal={() => {
                 completeOnboarding();
                 focusOrOpen("Terminal", "__terminal__");
-              }}
-              onOpenSymphony={() => {
-                completeOnboarding();
-                focusOrOpen("Symphony", "apps/symphony/index.html");
               }}
               onSwitchCanvas={() => {
                 setDesktopMode("canvas");

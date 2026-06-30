@@ -465,18 +465,17 @@ describe("proxy auth: self-host mode", () => {
     expect(response.status).toBe(403);
   });
 
-  it("skips ClerkProvider at shell render time in self-host mode", () => {
+  it("skips ClerkProvider while disabling managed-cloud identity work in self-host mode", () => {
     const layout = readFileSync(join(process.cwd(), "shell/src/app/layout.tsx"), "utf8");
+    const page = readFileSync(join(process.cwd(), "shell/src/app/page.tsx"), "utf8");
 
-    expect(layout).toContain('process.env.MATRIX_SELF_HOSTED === "1"');
+    expect(layout).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
+    expect(layout).toContain('data-matrix-self-hosted={selfHostedMode ? "1" : undefined}');
     expect(layout).toContain("return renderDocument(false);");
+    expect(layout).toContain("{renderDocument(true)}");
     expect(layout).toContain("{includePostHogIdentify ? <PostHogIdentify /> : null}");
-    expect(layout.indexOf('process.env.MATRIX_SELF_HOSTED === "1"')).toBeLessThan(
-      layout.indexOf("<ClerkProvider>"),
-    );
-    expect(layout.indexOf("return renderDocument(false);")).toBeLessThan(
-      layout.indexOf("renderDocument(true)"),
-    );
+    expect(page).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
+    expect(page).toContain("selfHostedMode || hasServerVerifiedMatrixSession");
   });
 });
 

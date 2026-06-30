@@ -117,6 +117,28 @@ describe("T711: GET /api/apps", () => {
     expect(apps.map((app) => app.name)).toEqual(["Good App"]);
   });
 
+  it("does not list hidden runtime apps", async () => {
+    mkdirSync(join(homePath, "apps/symphony/dist"), { recursive: true });
+    writeFileSync(join(homePath, "apps/symphony/dist/index.html"), "<html></html>");
+    writeFileSync(
+      join(homePath, "apps/symphony/matrix.json"),
+      JSON.stringify({
+        name: "Symphony",
+        slug: "symphony",
+        version: "1.0.0",
+        runtimeVersion: "^1.0.0",
+        category: "developer",
+        runtime: "vite",
+        hidden: true,
+        build: { command: "vite build", output: "dist" },
+      }),
+    );
+
+    const apps = await listApps(homePath);
+
+    expect(apps.map((app) => app.name)).not.toContain("Symphony");
+  });
+
   it("does not warn for ordinary nested directories without manifests", async () => {
     mkdirSync(join(homePath, "apps/generated/app/api/health"), { recursive: true });
     mkdirSync(join(homePath, "apps/generated/src/components"), { recursive: true });

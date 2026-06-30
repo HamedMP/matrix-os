@@ -54,6 +54,10 @@ type BillingAccessRemoteState = {
 };
 
 export function useMatrixBillingAccess(): BillingAccessState {
+  return useManagedMatrixBillingAccess();
+}
+
+function useManagedMatrixBillingAccess(): BillingAccessState {
   const { isLoaded, isSignedIn, has, userId } = useAuth();
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const legacyActive = useMemo(

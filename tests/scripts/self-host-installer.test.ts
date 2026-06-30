@@ -17,9 +17,15 @@ describe("self-host server installer", () => {
   it("installs from a verified host bundle and writes standalone self-host configuration", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
+    expect(script).toContain('DEFAULT_CHANNEL="${MATRIX_CHANNEL:-dev}"');
     expect(script).toContain("https://app.matrix-os.com/system-bundles/${DEFAULT_CHANNEL}");
     expect(script).toContain("MATRIX_HOST_BUNDLE_URL");
     expect(script).toContain("${MATRIX_HOST_BUNDLE_URL}.sha256");
+    expect(script).toContain("preflight_bundle_url");
+    expect(script).toContain("signed R2 GET URL");
+    expect(script).toContain("curl --fail --silent --show-error --head");
+    expect(script).toContain("host bundle is not reachable");
+    expect(script).toContain("Host bundle is reachable");
     expect(script).toContain("sha256sum \"$tmp_bundle\"");
     expect(script).toContain("[ \"$expected\" = \"$actual\" ] || fail \"bundle checksum mismatch\"");
     expect(script).toContain("tar -xzf \"$tmp_bundle\" -C /opt/matrix");
@@ -40,12 +46,31 @@ describe("self-host server installer", () => {
     expect(script).toContain("trap cleanup_install_tmp EXIT");
   });
 
+  it("prepares the bundled Node runtime for owner-user agent installs", () => {
+    const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
+
+    expect(script).toContain("prepare_runtime_permissions");
+    expect(script).toContain("Preparing runtime permissions");
+    expect(script).toContain("[ -d /opt/matrix/runtime/node ]");
+    expect(script).toContain("chown -R root:matrix /opt/matrix/runtime/node");
+    expect(script).toContain("chmod -R g+rwX /opt/matrix/runtime/node");
+    expect(script).toContain('find /opt/matrix/runtime/node -type d -exec chmod g+s {} +');
+    expect(script).toContain("Runtime permissions ready");
+    expect(script).toContain("sudo -iu matrix");
+  });
+
   it("reports privacy-scoped manual install telemetry with an opt-out", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
     const route = readFileSync(join(root, "www/src/app/api/install-telemetry/route.ts"), "utf8");
 
     expect(script).toContain("MATRIX_INSTALL_TELEMETRY_URL");
     expect(script).toContain("MATRIX_NO_TELEMETRY");
+    expect(script).toContain("MATRIX_INSTALL_LOG");
+    expect(script).toContain("MATRIX_INSTALL_COLOR");
+    expect(script).toContain("Matrix OS server installer");
+    expect(script).toContain("Browser shell + gateway + code-server + agents");
+    expect(script).toContain("███╗   ███╗");
+    expect(script).toContain("██████╗ ██╗██╗  ██╗");
     expect(script).toContain("[ \"${MATRIX_INSTALL_TELEMETRY:-1}\" != \"0\" ]");
     expect(script).toContain("matrix_manual_install_started");
     expect(script).toContain("matrix_manual_install_completed");
@@ -79,22 +104,40 @@ describe("self-host server installer", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
     expect(script).toContain("auth_basic \"Matrix OS\"");
-    expect(script).toContain("auth_basic_user_file /opt/matrix/env/nginx.htpasswd");
+    expect(script).toContain("htpasswd_file=\"/etc/nginx/matrix-self-host.htpasswd\"");
+    expect(script).toContain("legacy_htpasswd_file=\"/opt/matrix/env/nginx.htpasswd\"");
+    expect(script).toContain('install -m 0640 -o root -g www-data "$legacy_htpasswd_file" "$htpasswd_file"');
+    expect(script).toContain("auth_basic_user_file ${htpasswd_file}");
     expect(script).toContain("location = /health");
     expect(script).toContain("auth_basic off");
     expect(script).toContain("return 200 '{\"ok\":true}'");
     expect(script).toContain("openssl passwd -apr1");
-    expect(script).toContain("if [ ! -f /opt/matrix/env/nginx.htpasswd ]; then");
+    expect(script).toContain('if [ ! -f "$htpasswd_file" ]; then');
     expect(script).toContain("existing nginx Basic Auth credentials");
+    expect(script).toContain('if [ -f /opt/matrix/env/initial-ui-password ]; then');
+    expect(script).toContain("nginx Basic Auth challenge returned HTTP ${status}, expected 401");
+    expect(script).toContain("gateway-auth-token.conf");
+    expect(script).toContain("proxy_set_header Authorization \"Bearer %s\"");
+    expect(script).toContain("proxy_set_header Authorization \"\"");
     expect(script).toContain("code-proxy-token.conf");
     expect(script).toContain("chmod 0600 /opt/matrix/env/code-proxy-token.conf");
-    expect(script).toContain("include /opt/matrix/env/code-proxy-token.conf");
+    expect(script).toContain("include /opt/matrix/env/gateway-auth-token.conf");
+    expect(script).toContain("location @matrix_code_root_ws");
+    expect(script).toContain('if (\\$arg_reconnectionToken != "")');
+    expect(script).toContain("error_page 418 = @matrix_code_root_ws");
+    expect(script).toContain("proxy_set_header X-Forwarded-Prefix /code");
     expect(script).toContain("proxy_read_timeout 3600s");
+    expect(script).toContain("proxy_pass http://127.0.0.1:8788");
     expect(script).toContain("proxy_pass http://127.0.0.1:3000");
     expect(script).toContain("proxy_pass http://127.0.0.1:4000");
-    expect(script).toContain("proxy_pass http://127.0.0.1:8787");
+    expect(script).not.toContain("proxy_pass http://127.0.0.1:8787");
     expect(script).toContain("proxy_set_header X-Matrix-Code-Proxy-Token \"%s\"");
     expect(script).toContain("-p 127.0.0.1:5432:5432");
+    expect(script).toContain("location /cli/");
+    expect(script).toContain("auth_basic off");
+    expect(script).toContain("rewrite ^/cli/?(.*)\\$ /\\$1 break");
+    expect(script).toContain("CLI gateway: ${ui_url%/}/cli");
+    expect(script).toContain("matrix status --gateway ${ui_url%/}/cli --token \"\\$MATRIX_TOKEN\"");
     expect(script).not.toContain("-p 5432:5432");
     expect(script).not.toContain("grep '^MATRIX_CODE_PROXY_TOKEN='");
   });
@@ -102,6 +145,31 @@ describe("self-host server installer", () => {
   it("installs the core Matrix services without enabling managed-cloud backup requirements", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
+    expect(script).toContain("Installing OS packages");
+    expect(script).toContain("Writing apt output to ${MATRIX_INSTALL_LOG}");
+    expect(script).toContain("apt_get_update >>\"$MATRIX_INSTALL_LOG\" 2>&1");
+    expect(script).toContain("apt-get install -y ca-certificates curl docker.io git nginx openssl postgresql-client procps sudo tar >>\"$MATRIX_INSTALL_LOG\" 2>&1");
+    expect(script).toContain("Downloading Matrix OS");
+    expect(script).toContain("--progress-bar");
+    expect(script).toContain("run_required");
+    expect(script).toContain("restart_required_service matrix-gateway");
+    expect(script).toContain("restart_optional_service matrix-developer-tools");
+    expect(script).toContain("wait_http_ok");
+    expect(script).toContain("Verifying Matrix OS");
+    expect(script).toContain('${description} returned HTTP 500');
+    expect(script).toContain("wait_http_ok_auth");
+    expect(script).toContain('wait_http_ok "Matrix shell"');
+    expect(script).toContain('wait_http_ok_auth "nginx shell"');
+    expect(script).toContain('wait_http_ok_auth "nginx gateway API"');
+    expect(script).toContain("journalctl -u matrix-shell -n 200 --no-pager");
+    expect(script).toContain("tail -120 /var/log/nginx/error.log");
+    expect(script).toContain("http://127.0.0.1:3000/");
+    expect(script).toContain("http://127.0.0.1:4000/health");
+    expect(script).toContain("http://127.0.0.1/api/identity");
+    expect(script).toContain("optional developer tools installer");
+    expect(script).toContain("Matrix OS core is still installed");
+    expect(script).toContain("usermod -aG docker matrix");
+    expect(script).toContain("testing nginx configuration");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-gateway.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-shell.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code.service");

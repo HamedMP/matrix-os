@@ -26,6 +26,7 @@ import { BillingSection } from "./settings/sections/BillingSection";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton as AccountButton } from "./UserButton";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { isSelfHostedRuntime } from "@/lib/self-host-mode";
 
 
 const sections = [
@@ -120,17 +121,47 @@ interface SettingsProps {
 }
 
 export function Settings({
+  ...props
+}: SettingsProps) {
+  if (isSelfHostedRuntime()) {
+    return <SettingsFrame {...props} billingActive={true} showBillingSection={false} />;
+  }
+  return <ManagedSettings {...props} />;
+}
+
+function ManagedSettings(props: SettingsProps) {
+  const matrixBilling = useMatrixBillingAccess();
+  const billingActive =
+    props.billingActiveOverride !== undefined
+      ? props.billingActiveOverride
+      : matrixBilling.active;
+
+  return <SettingsFrame {...props} billingActive={billingActive} showBillingSection />;
+}
+
+interface SettingsFrameProps extends SettingsProps {
+  billingActive: boolean | null;
+  showBillingSection: boolean;
+}
+
+function SettingsFrame({
   open,
   onOpenChange,
   defaultSection = "appearance",
   lockedSection,
-  billingActiveOverride,
   closeDisabled = false,
   billingMode = "settings",
   onBillingCheckoutIntent,
   billingCheckoutReturnPath,
-}: SettingsProps) {
-  const [activeSection, setActiveSection] = useState<SectionId>(defaultSection);
+  billingActive,
+  showBillingSection,
+}: SettingsFrameProps) {
+  const resolvedDefaultSection = !showBillingSection && defaultSection === "billing" ? "appearance" : defaultSection;
+  const resolvedLockedSection = !showBillingSection && lockedSection === "billing" ? undefined : lockedSection;
+  const frameVisibleSections = showBillingSection
+    ? visibleSections
+    : visibleSections.filter((section) => section.id !== "billing");
+  const [activeSection, setActiveSection] = useState<SectionId>(resolvedDefaultSection);
   // Tracks the prior `open` value so the render-time section adjustment below
   // can detect the open transition. Uses the React-documented "store previous
   // prop in state" pattern (state, not a ref): reading/writing a ref during
@@ -139,12 +170,6 @@ export function Settings({
   // react-doctor-disable-next-line react-doctor/no-derived-useState -- transition tracker, not a mirror of `open`: it stores the previous `open` value so the render-time section adjustment below can detect the open->close edge
   // react-doctor-disable-next-line react-doctor/rerender-state-only-in-handlers -- intentionally state, not a ref: it IS read during render (in `justOpened` below) to drive the adjustment; the rule's "use useRef" advice would force ref reads/writes during render, which React Compiler flags as unoptimizable
   const [prevOpen, setPrevOpen] = useState(open);
-  const matrixBilling = useMatrixBillingAccess();
-  const billingActive =
-    billingActiveOverride !== undefined
-      ? billingActiveOverride
-      : matrixBilling.active;
-
   // Delayed unmount so the exit animation has time to play. `visible`
   // flips one frame after mount so the enter transition has a distinct
   // "from" state to animate out of. Same pattern as VocalPanel.
@@ -186,12 +211,12 @@ export function Settings({
   // it — so it cannot be a pure render-time derivation.
   const justOpened = open && !prevOpen;
   if (open !== prevOpen) setPrevOpen(open);
-  if (open && lockedSection) {
-    if (activeSection !== lockedSection) setActiveSection(lockedSection);
-  } else if (justOpened && billingActive === false) {
+  if (open && resolvedLockedSection) {
+    if (activeSection !== resolvedLockedSection) setActiveSection(resolvedLockedSection);
+  } else if (justOpened && showBillingSection && billingActive === false) {
     if (activeSection !== "billing") setActiveSection("billing");
   } else if (!open) {
-    if (activeSection !== defaultSection) setActiveSection(defaultSection);
+    if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   }
 
   if (!mounted) return null;
@@ -234,10 +259,10 @@ export function Settings({
                 aria-label="Settings sections"
                 className="flex gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0"
               >
-                {visibleSections.map((section) => {
+                {frameVisibleSections.map((section) => {
                   const Icon = section.icon;
                   const active = activeSection === section.id;
-                  const locked = Boolean(lockedSection && section.id !== lockedSection);
+                  const locked = Boolean(resolvedLockedSection && section.id !== resolvedLockedSection);
                   return (
                     <button
                       key={section.id}
@@ -277,7 +302,7 @@ export function Settings({
               {activeSection === "skills" && <SkillsSection />}
               {activeSection === "cron" && <CronSection />}
               {activeSection === "security" && <SecuritySection />}
-              {activeSection === "billing" && (
+              {showBillingSection && activeSection === "billing" && (
                 <BillingSection
                   mode={billingMode}
                   onCheckoutIntent={onBillingCheckoutIntent}

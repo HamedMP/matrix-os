@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2Icon, ClipboardIcon, GitBranchIcon, SparklesIcon, TerminalIcon } from "lucide-react";
+import { CheckCircle2Icon, ClipboardIcon, GitBranchIcon, TerminalIcon } from "lucide-react";
 
 export const DEVELOPER_SETUP_PROMPT = `Set up Matrix OS as my remote developer computer.
 
@@ -12,7 +12,6 @@ Do not upload local private keys, scan my laptop for secrets, or paste credentia
 interface DeveloperModeDashboardProps {
   setupPrompt?: string;
   onOpenTerminal: () => void;
-  onOpenSymphony: () => void;
   onSwitchCanvas: () => void;
 }
 
@@ -28,7 +27,6 @@ const SETUP_STEPS = [
 export function DeveloperModeDashboard({
   setupPrompt = DEVELOPER_SETUP_PROMPT,
   onOpenTerminal,
-  onOpenSymphony,
   onSwitchCanvas,
 }: DeveloperModeDashboardProps) {
   const [copied, setCopied] = useState(false);
@@ -50,7 +48,7 @@ export function DeveloperModeDashboard({
           <p className="mb-2 text-xs font-medium uppercase tracking-[0.28em] text-amber-200/70">Developer Fast Path</p>
           <h1 className="text-3xl font-semibold tracking-tight">Developer mode</h1>
           <p className="mt-3 text-sm leading-6 text-white/64">
-            Terminal is the primary surface. Symphony is next after your runtime, repo, and coding agent are ready.
+            Terminal is the primary surface. Bring your coding agent into the Matrix computer once the runtime and repo are ready.
           </p>
           <ol className="mt-6 grid gap-3 text-sm">
             {SETUP_STEPS.map((step, index) => (
@@ -74,7 +72,7 @@ export function DeveloperModeDashboard({
                   Copy the setup prompt into your local agent, or open Terminal and run the GitHub auth step directly inside Matrix.
                 </p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:min-w-[320px] lg:grid-cols-1">
+              <div className="grid gap-2 lg:min-w-[320px]">
                 <button
                   type="button"
                   onClick={onOpenTerminal}
@@ -82,14 +80,6 @@ export function DeveloperModeDashboard({
                 >
                   <TerminalIcon className="size-4" aria-hidden="true" />
                   Open Terminal
-                </button>
-                <button
-                  type="button"
-                  onClick={onOpenSymphony}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/12 bg-white/8 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/12"
-                >
-                  <SparklesIcon className="size-4" aria-hidden="true" />
-                  Open Symphony
                 </button>
               </div>
             </div>
