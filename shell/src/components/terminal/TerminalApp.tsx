@@ -5949,8 +5949,9 @@ function ShellCard({
         opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
         padding: "0 12px",
         position: "relative",
-        transform: dragging ? "translateY(-2px)" : "translateY(0)",
+        transform: dragging ? "translateY(-2px)" : undefined,
         transition: "border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 150ms ease",
+        zIndex: contextMenuOpen ? 30 : dragging ? 1 : undefined,
       }}
     >
       {dropTarget && (

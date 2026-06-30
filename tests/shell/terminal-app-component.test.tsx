@@ -752,6 +752,51 @@ describe("TerminalApp", () => {
     expect(within(actions).queryByText("matrix shell connect")).toBeNull();
   });
 
+  it("keeps session action menu above later session cards", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", attachedClients: 1, tabs: [{ idx: 0, name: "main", focused: true }] },
+              { name: "docs", status: "active", placement: "active", attachCommand: "mos shell attach docs", attachedClients: 0, tabs: [{ idx: 0, name: "docs", focused: true }] },
+              { name: "bench", status: "idle", placement: "active", attachCommand: "mos shell attach bench", attachedClients: 0, tabs: [{ idx: 0, name: "bench", focused: true }] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const mainCard = screen.getByTestId("terminal-session-card-main");
+    const docsCard = screen.getByTestId("terminal-session-card-docs");
+    const benchCard = screen.getByTestId("terminal-session-card-bench");
+
+    await openSessionContextMenu("main");
+
+    expect(screen.getByRole("menu", { name: "Actions for matrix-main" })).toBeTruthy();
+    expect(Number(mainCard.style.zIndex)).toBeGreaterThan(Number(docsCard.style.zIndex || "0"));
+    expect(Number(mainCard.style.zIndex)).toBeGreaterThan(Number(benchCard.style.zIndex || "0"));
+    expect(docsCard.style.transform).toBe("");
+    expect(benchCard.style.transform).toBe("");
+  });
+
   it("copies with the synchronous selection fallback and still shows the Paper copy confirmation", async () => {
     const writeText = vi.fn(async () => {
       throw new Error("clipboard denied");
