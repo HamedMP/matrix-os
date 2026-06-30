@@ -593,12 +593,27 @@ server {
     proxy_set_header Connection "upgrade";
     proxy_read_timeout 3600s;
     proxy_set_header Authorization "";
+    proxy_set_header X-Forwarded-Prefix /code;
     include /opt/matrix/env/code-proxy-token.conf;
     rewrite ^/code/?(.*)\$ /\$1 break;
     proxy_pass http://127.0.0.1:8787;
   }
 
+  location @matrix_code_root_ws {
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_set_header Authorization "";
+    include /opt/matrix/env/code-proxy-token.conf;
+    proxy_pass http://127.0.0.1:8787;
+  }
+
   location / {
+    if (\$arg_reconnectionToken != "") {
+      return 418;
+    }
+    error_page 418 = @matrix_code_root_ws;
     proxy_set_header Authorization "";
     proxy_pass http://127.0.0.1:3000;
   }

@@ -121,6 +121,10 @@ describe("self-host server installer", () => {
     expect(script).toContain("chmod 0600 /opt/matrix/env/code-proxy-token.conf");
     expect(script).toContain("include /opt/matrix/env/gateway-auth-token.conf");
     expect(script).toContain("include /opt/matrix/env/code-proxy-token.conf");
+    expect(script).toContain("location @matrix_code_root_ws");
+    expect(script).toContain('if (\\$arg_reconnectionToken != "")');
+    expect(script).toContain("error_page 418 = @matrix_code_root_ws");
+    expect(script).toContain("proxy_set_header X-Forwarded-Prefix /code");
     expect(script).toContain("proxy_read_timeout 3600s");
     expect(script).toContain("proxy_pass http://127.0.0.1:3000");
     expect(script).toContain("proxy_pass http://127.0.0.1:4000");
