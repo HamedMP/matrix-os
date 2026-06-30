@@ -16,14 +16,22 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: (props: unknown) => {
     terminalRender(props);
     return (
-      <button
-        type="button"
-        onPointerDown={() => {
-          terminalChildPointerFocusRecorder();
-        }}
-      >
-        Terminal tab one
-      </button>
+      <>
+        <button
+          type="button"
+          onPointerDown={() => {
+            terminalChildPointerFocusRecorder();
+          }}
+        >
+          Terminal tab one
+        </button>
+        <button
+          type="button"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          Terminal row action
+        </button>
+      </>
     );
   },
 }));
@@ -153,6 +161,33 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(focusWindowSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("focuses terminal Canvas windows before child row actions stop mouse-down propagation", async () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: null,
+      fullscreenWindowId: null,
+    });
+    const focusWindowSpy = vi.fn();
+    useWindowManager.setState({ focusWindow: focusWindowSpy });
+
+    await act(async () => {
+      render(<CanvasWindow win={terminalWindow} />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.mouseDown(screen.getByRole("button", { name: "Terminal row action" }), { button: 0 });
+      await Promise.resolve();
+    });
+
+    expect(focusWindowSpy).toHaveBeenCalledWith("win-terminal");
+    expect(focusWindowSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("does not draw the generic Canvas focus ring around terminal content", () => {
     useWindowManager.setState({
       windows: [terminalWindow],
@@ -169,7 +204,7 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(container.innerHTML).not.toContain("ring-primary/30");
   });
 
-  it("lets Terminal own Canvas chrome and passes window controls into it", () => {
+  it("lets Terminal keep the Canvas title bar and passes window controls into it", () => {
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 
     expect(container.textContent).toContain("Terminal tab one");

@@ -15,6 +15,7 @@ import {
   GripVerticalIcon,
   KeyboardIcon,
   LinkIcon,
+  MoreHorizontalIcon,
   PanelLeftOpenIcon,
   PencilIcon,
   PlusIcon,
@@ -63,12 +64,12 @@ const TOOLBAR_BTN_BASE_STYLE: CSSProperties = {
 
 const PAPER_THEME_BUTTON_STYLE: CSSProperties = {
   alignItems: "center",
-  background: "var(--terminal-chrome-control-bg)",
-  borderColor: "var(--terminal-chrome-control-border)",
+  background: "var(--terminal-drawer-button-bg)",
+  borderColor: "var(--terminal-drawer-button-border)",
   borderRadius: 9,
   borderStyle: "solid",
   borderWidth: 1,
-  color: "var(--terminal-chrome-control-fg)",
+  color: "var(--terminal-drawer-button-fg)",
   cursor: "pointer",
   display: "flex",
   fontFamily: "Inter, system-ui, sans-serif",
@@ -128,6 +129,23 @@ const TERMINAL_THEME_DESKTOP_MENU_STYLE: CSSProperties = {
   width: 280,
   zIndex: 90,
 };
+
+type ThemeMenuPlacement = "below-end" | "above-start";
+
+function getTerminalThemeDesktopMenuPositionStyle(placement: ThemeMenuPlacement): CSSProperties {
+  if (placement === "above-start") {
+    return {
+      bottom: "100%",
+      left: 0,
+      marginBottom: 8,
+      marginTop: 0,
+      right: "auto",
+      top: "auto",
+    };
+  }
+
+  return {};
+}
 
 const TERMINAL_THEME_MENU_DISMISS_STYLE: CSSProperties = {
   background: "transparent",
@@ -301,48 +319,6 @@ function getChangeShellThemeIconStyle(mobile: boolean): CSSProperties {
     width: mobile ? 38 : 40,
   };
 }
-
-const ACTIVE_SHELL_TOGGLE_STYLE: CSSProperties = {
-  alignItems: "center",
-  alignSelf: "center",
-  background: "var(--terminal-drawer-toggle-bg)",
-  border: "1px solid var(--terminal-drawer-toggle-border)",
-  borderRadius: 999,
-  boxSizing: "border-box",
-  color: "var(--terminal-drawer-toggle-fg)",
-  cursor: "pointer",
-  display: "flex",
-  flexShrink: 0,
-  height: 20,
-  justifyContent: "flex-start",
-  overflow: "hidden",
-  padding: 2,
-  pointerEvents: "auto",
-  position: "relative",
-  width: 46,
-  zIndex: 1,
-};
-
-const BACKGROUND_SHELL_TOGGLE_STYLE: CSSProperties = {
-  alignItems: "center",
-  alignSelf: "center",
-  background: "var(--terminal-drawer-toggle-off-bg)",
-  border: "1px solid var(--terminal-drawer-toggle-off-border)",
-  borderRadius: 999,
-  boxSizing: "border-box",
-  color: "var(--terminal-drawer-toggle-off-fg)",
-  cursor: "pointer",
-  display: "flex",
-  flexShrink: 0,
-  height: 20,
-  justifyContent: "flex-end",
-  overflow: "hidden",
-  padding: 2,
-  pointerEvents: "auto",
-  position: "relative",
-  width: 44,
-  zIndex: 1,
-};
 
 const SHELL_ROW_BUTTON_STYLE: CSSProperties = {
   background: "transparent",
@@ -808,31 +784,69 @@ const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
   transition: "opacity 120ms ease",
   width: 22,
 };
-const SESSION_COPY_BUTTON_STYLE: CSSProperties = {
-  background: "var(--terminal-drawer-action-bg)",
-  border: "1px solid var(--terminal-drawer-action-border)",
-  borderRadius: 6,
-  cursor: "pointer",
-  flexShrink: 0,
-  fontSize: 12,
-  fontWeight: 800,
-  height: 24,
-  overflow: "visible",
-  pointerEvents: "auto",
-  position: "relative",
-  transition: "background-color 120ms ease, border-color 120ms ease, color 120ms ease",
-  width: 24,
-};
-const SESSION_CLOSE_BUTTON_STYLE: CSSProperties = {
+const SESSION_MORE_BUTTON_STYLE: CSSProperties = {
   background: "var(--terminal-drawer-action-bg)",
   border: "1px solid var(--terminal-drawer-action-border)",
   borderRadius: 6,
   color: "var(--terminal-drawer-action-fg)",
-  fontSize: 15,
+  cursor: "pointer",
+  flexShrink: 0,
   height: 24,
-  lineHeight: "20px",
   pointerEvents: "auto",
+  position: "relative",
+  transition: "opacity 120ms ease",
   width: 24,
+};
+const SESSION_CONTEXT_MENU_STYLE: CSSProperties = {
+  background: "var(--terminal-drawer-card-bg)",
+  border: "1px solid var(--terminal-drawer-card-border)",
+  borderRadius: 9,
+  boxShadow: "0 14px 34px var(--terminal-drawer-card-shadow)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  minWidth: 152,
+  padding: 5,
+  position: "absolute",
+  right: 0,
+  top: "calc(100% + 6px)",
+  zIndex: 20,
+};
+const SESSION_CONTEXT_MENU_ITEM_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "transparent",
+  border: 0,
+  borderRadius: 7,
+  color: "var(--terminal-drawer-fg)",
+  cursor: "pointer",
+  display: "flex",
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 12,
+  fontWeight: 650,
+  gap: 7,
+  height: 28,
+  padding: "0 8px",
+  textAlign: "left",
+  whiteSpace: "nowrap",
+  width: "100%",
+};
+const SESSION_COPY_FEEDBACK_STYLE: CSSProperties = {
+  alignItems: "center",
+  background: "var(--terminal-drawer-action-bg)",
+  border: "1px solid var(--terminal-drawer-action-border)",
+  borderRadius: 999,
+  color: "var(--terminal-drawer-action-fg)",
+  display: "inline-flex",
+  flexShrink: 0,
+  fontFamily: "Inter, system-ui, sans-serif",
+  fontSize: 12,
+  fontWeight: 750,
+  gap: 5,
+  height: 24,
+  lineHeight: "14px",
+  padding: "0 8px",
+  pointerEvents: "none",
+  whiteSpace: "nowrap",
 };
 const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
   background: "transparent",
@@ -1332,9 +1346,9 @@ interface TerminalAppProps {
   windowControls?: TerminalWindowControls;
   /**
    * Render without the terminal's own dark title bar (traffic lights +
-   * breadcrumb), because the host window already supplies a generic window
-   * header. The terminal-specific controls (split, theme) move into a slim
-   * embedded toolbar so nothing is lost.
+   * breadcrumb), because the host window already supplies a generic window.
+   * Desktop terminal chrome is intentionally suppressed; mobile keeps a small
+   * drawer toggle bar for usability.
    */
   embeddedChrome?: boolean;
   /**
@@ -1752,6 +1766,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     const observer = new ResizeObserver((entries) => {
       if ((entries[0]?.contentRect.width ?? 0) < 500 && sidebarOpenRef.current) setSidebarOpen(false);
     });
+    // react-doctor-disable-next-line react-doctor/no-initialize-state -- false positive: observing the container may synchronously deliver the current size, but it only closes an already-open sidebar when the measured terminal width is narrow
     observer.observe(container);
     return () => observer.disconnect();
   }, []);
@@ -1998,7 +2013,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     >
       <style>{SHELL_STATUS_DOT_CSS}</style>
       <TerminalAppContext.Provider value={storeApi}>
-        {embeddedChrome ? <TerminalEmbeddedToolbar /> : <TerminalWorkspaceChrome />}
+        {mobile ? (embeddedChrome ? <TerminalEmbeddedToolbar /> : <TerminalWorkspaceChrome />) : null}
         <div
           className={mobile ? "relative flex flex-1 min-h-0 flex-col" : "relative flex flex-1 min-h-0"}
           style={{ background: "var(--terminal-app-body-bg)" }}
@@ -2124,22 +2139,6 @@ function IconPlus() {
     </svg>
   );
 }
-function IconSplitH() {
-  return (
-    <svg width={ICON_SIZE} height={ICON_SIZE} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-      <line x1="8" y1="3" x2="8" y2="13" />
-    </svg>
-  );
-}
-function IconSplitV() {
-  return (
-    <svg width={ICON_SIZE} height={ICON_SIZE} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-      <line x1="3" y1="8" x2="13" y2="8" />
-    </svg>
-  );
-}
 function IconClose() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -2201,7 +2200,7 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
   );
 }
 
-function ThemePickerButton() {
+function ThemePickerButton({ menuPlacement = "below-end" }: { menuPlacement?: ThemeMenuPlacement }) {
   const ctx = useTerminalAppContext();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [themeMenuView, setThemeMenuView] = useState<"app" | "shell">("app");
@@ -2257,6 +2256,7 @@ function ThemePickerButton() {
       {themeMenuOpen && themeMenuView === "app" ? (
         <TerminalAppThemeMenu
           mobile={ctx.mobile}
+          placement={menuPlacement}
           onClose={closeThemeMenu}
           onOpenShellTheme={() => setThemeMenuView("shell")}
         />
@@ -2264,6 +2264,7 @@ function ThemePickerButton() {
       {themeMenuOpen && themeMenuView === "shell" ? (
         <ShellThemeChooser
           mobile={ctx.mobile}
+          placement={menuPlacement}
           onBack={() => setThemeMenuView("app")}
           onClose={closeThemeMenu}
         />
@@ -2274,10 +2275,12 @@ function ThemePickerButton() {
 
 function TerminalAppThemeMenu({
   mobile,
+  placement,
   onClose,
   onOpenShellTheme,
 }: {
   mobile: boolean;
+  placement: ThemeMenuPlacement;
   onClose: () => void;
   onOpenShellTheme: () => void;
 }) {
@@ -2344,7 +2347,10 @@ function TerminalAppThemeMenu({
     <div
       role="menu"
       aria-label="Theme"
-      style={TERMINAL_THEME_DESKTOP_MENU_STYLE}
+      style={{
+        ...TERMINAL_THEME_DESKTOP_MENU_STYLE,
+        ...getTerminalThemeDesktopMenuPositionStyle(placement),
+      }}
     >
       <div style={{ padding: "8px 10px 4px" }}>
         <div style={{ color: "#6F7167", fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", lineHeight: "15px", textTransform: "uppercase" }}>
@@ -2456,10 +2462,12 @@ function ChangeShellThemeMenuItem({
 
 function ShellThemeChooser({
   mobile,
+  placement,
   onBack,
   onClose,
 }: {
   mobile: boolean;
+  placement: ThemeMenuPlacement;
   onBack: () => void;
   onClose: () => void;
 }) {
@@ -2542,6 +2550,7 @@ function ShellThemeChooser({
         data-testid="terminal-shell-theme-panel"
         style={{
           ...TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE,
+          ...getTerminalThemeDesktopMenuPositionStyle(placement),
           ...getShellThemePanelMotionStyle(false),
         }}
       >
@@ -2944,26 +2953,7 @@ function TerminalWorkspaceChrome() {
           )}
         </div>
       </div>
-      <div className="flex shrink-0 items-center" style={{ gap: 8 }}>
-        {!ctx.mobile && (
-          <>
-            <ChromeIconButton
-              label="Split right"
-              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "horizontal"); }}
-            >
-              <IconSplitH />
-            </ChromeIconButton>
-            <ChromeIconButton
-              label="Split down"
-              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "vertical"); }}
-            >
-              <IconSplitV />
-            </ChromeIconButton>
-            <span style={{ background: "var(--terminal-chrome-control-border)", height: 22, margin: "0 4px", width: 1 }} />
-          </>
-        )}
-        <ThemePickerButton />
-      </div>
+      <span aria-hidden="true" style={{ width: ctx.mobile ? 40 : 0 }} />
     </div>
   );
 }
@@ -3008,26 +2998,7 @@ function TerminalEmbeddedToolbar() {
           <PanelLeftOpenIcon size={18} strokeWidth={1.9} />
         </button>
       ) : <span />}
-      <div className="flex shrink-0 items-center" style={{ gap: 8 }}>
-        {!ctx.mobile && (
-          <>
-            <ChromeIconButton
-              label="Split right"
-              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "horizontal"); }}
-            >
-              <IconSplitH />
-            </ChromeIconButton>
-            <ChromeIconButton
-              label="Split down"
-              onClick={() => { if (ctx.focusedPaneId) ctx.splitPane(ctx.focusedPaneId, "vertical"); }}
-            >
-              <IconSplitV />
-            </ChromeIconButton>
-            <span style={{ background: "var(--terminal-chrome-control-border)", height: 22, margin: "0 4px", width: 1 }} />
-          </>
-        )}
-        <ThemePickerButton />
-      </div>
+      <span aria-hidden="true" style={{ width: ctx.mobile ? 36 : 0 }} />
     </div>
   );
 }
@@ -3062,39 +3033,6 @@ function TerminalTrafficButton({
         width: 13,
       }}
     />
-  );
-}
-
-function ChromeIconButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      onPointerDown={(event) => event.stopPropagation()}
-      onMouseDown={(event) => event.stopPropagation()}
-      className="flex items-center justify-center"
-      style={{
-        background: "var(--terminal-chrome-control-bg)",
-        border: "1px solid var(--terminal-chrome-control-border)",
-        borderRadius: 9,
-        color: "var(--terminal-chrome-control-fg)",
-        cursor: "pointer",
-        height: 32,
-        width: 32,
-      }}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -3584,28 +3522,28 @@ const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
 const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
   alignItems: "center",
   border: "1px solid rgba(255, 255, 255, 0.56)",
-  borderRadius: 8,
-  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.45) inset, 0 5px 12px rgba(49, 54, 45, 0.16)",
+  borderRadius: 7,
+  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.36) inset, 0 4px 9px rgba(49, 54, 45, 0.14)",
   boxSizing: "border-box",
   color: "#FFFDF7",
   display: "flex",
-  flex: "0 0 26px",
+  flex: "0 0 22px",
   fontFamily: "Inter, system-ui, sans-serif",
   fontSize: 11,
   fontWeight: 900,
-  height: 26,
+  height: 22,
   justifyContent: "center",
   letterSpacing: 0,
-  lineHeight: "26px",
+  lineHeight: "22px",
   overflow: "hidden",
-  width: 26,
+  width: 22,
 };
 
 const TERMINAL_AGENT_LOGO_IMAGE_STYLE: CSSProperties = {
   display: "block",
-  height: 17,
+  height: 15,
   objectFit: "contain",
-  width: 17,
+  width: 15,
 };
 
 function isTerminalAgentId(value: unknown): value is TerminalAgentId {
@@ -3755,6 +3693,7 @@ function LocalTerminalSidebar() {
   const [deletingShellNames, setDeletingShellNames] = useState<string[]>([]);
   const [closeConfirmationShell, setCloseConfirmationShell] = useState<ShellSessionSummary | null>(null);
   const [newSessionMenuAnchor, setNewSessionMenuAnchor] = useState<NewSessionMenuAnchor | null>(null);
+  const [backgroundSessionsExpanded, setBackgroundSessionsExpanded] = useState(true);
   const [draggingShellName, setDraggingShellName] = useState<string | null>(null);
   const [dragOverShellName, setDragOverShellName] = useState<string | null>(null);
   const [draggingShellPlacement, setDraggingShellPlacement] = useState<"active" | "background" | null>(null);
@@ -4503,18 +4442,21 @@ function LocalTerminalSidebar() {
         }}
       >
         <div className="flex items-center justify-between" style={{ gap: 16 }}>
-          <div className="flex min-w-0 items-start" style={{ gap: 12 }}>
+          <div className="flex min-w-0 items-center" style={{ gap: 12 }}>
             <div
+              data-testid="terminal-expanded-brand"
               className="flex shrink-0 items-center justify-center"
               style={{
+                alignSelf: "center",
                 background: "var(--terminal-drawer-brand-bg)",
-                borderRadius: ctx.mobile ? 12 : 9,
-                height: ctx.mobile ? 40 : 30,
-                width: ctx.mobile ? 40 : 30,
+                borderRadius: ctx.mobile ? 12 : 10,
+                height: ctx.mobile ? 40 : 38,
+                width: ctx.mobile ? 40 : 38,
               }}
             >
               <span
                 aria-hidden="true"
+                data-testid="terminal-expanded-brand-mask"
                 style={{
                   background: "var(--terminal-drawer-brand-fg)",
                   WebkitMaskImage: "url('/matrix-logo.svg')",
@@ -4526,8 +4468,8 @@ function LocalTerminalSidebar() {
                   WebkitMaskSize: "contain",
                   maskSize: "contain",
                   display: "block",
-                  height: ctx.mobile ? 22 : 17,
-                  width: ctx.mobile ? 22 : 17,
+                  height: ctx.mobile ? 22 : 22,
+                  width: ctx.mobile ? 22 : 22,
                 }}
               />
             </div>
@@ -4706,6 +4648,8 @@ function LocalTerminalSidebar() {
           <ShellSessionGroup
             label="Background"
             shells={backgroundShells}
+            expanded={backgroundSessionsExpanded}
+            onToggleExpanded={() => setBackgroundSessionsExpanded((expanded) => !expanded)}
             deletingShellNames={deletingShellNames}
             foreground={false}
             selectedShellName={activeShellName}
@@ -4721,6 +4665,20 @@ function LocalTerminalSidebar() {
             onDragEnd={finishShellDrag}
           />
         )}
+      </div>
+      <div
+        data-testid="terminal-sidebar-footer"
+        className="shrink-0"
+        style={{
+          alignItems: "center",
+          background: "var(--terminal-drawer-bg)",
+          borderTop: "1px solid var(--terminal-drawer-border)",
+          display: "flex",
+          justifyContent: "flex-start",
+          padding: ctx.mobile ? "13px 20px calc(13px + env(safe-area-inset-bottom))" : "12px 18px",
+        }}
+      >
+        <ThemePickerButton menuPlacement="above-start" />
       </div>
       {!ctx.mobile ? (
         <button
@@ -4798,32 +4756,32 @@ function NewSessionMenu({
       style={{
         background: "var(--terminal-drawer-card-bg)",
         border: "1px solid var(--terminal-drawer-card-border)",
-        borderRadius: 10,
-        boxShadow: "0 20px 45px var(--terminal-drawer-card-shadow)",
+        borderRadius: 9,
+        boxShadow: "0 16px 36px var(--terminal-drawer-card-shadow)",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
-        padding: 12,
+        gap: 4,
+        padding: 8,
         position: "absolute",
         ...(align === "right"
-          ? { right: -48, top: "calc(100% + 8px)" }
+          ? { right: 0, top: "calc(100% + 8px)" }
           : { left: "calc(100% + 8px)", top: 0 }),
-        width: 300,
+        width: 244,
         // Sits above the collapsed rail's right divider and the terminal
         // content so the NEW TAB menu never paints behind that edge.
         zIndex: 120,
       }}
     >
-      <div style={{ paddingBottom: 2 }}>
+      <div style={{ padding: "0 4px 1px" }}>
         <div
           style={{
             color: "var(--terminal-drawer-subtle)",
             fontFamily: "Inter, system-ui, sans-serif",
             fontSize: 12,
             fontWeight: 800,
-            letterSpacing: "0.1em",
-            lineHeight: "16px",
+            letterSpacing: "0.08em",
+            lineHeight: "15px",
             textTransform: "uppercase",
           }}
         >
@@ -4836,7 +4794,7 @@ function NewSessionMenu({
         icon={(
           <TerminalIcon
             aria-hidden="true"
-            size={20}
+            size={16}
             strokeWidth={2.1}
             style={{ color: "var(--terminal-drawer-selected-stripe)", flexShrink: 0 }}
           />
@@ -4905,15 +4863,15 @@ function NewSessionMenuItem({
         alignItems: "center",
         background: active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent",
         border: 0,
-        borderRadius: active ? 7 : 7,
+        borderRadius: 7,
         boxSizing: "border-box",
         color: "var(--terminal-drawer-fg)",
         cursor: "pointer",
         display: "flex",
         flexShrink: 0,
-        gap: 12,
-        height: active ? 38 : 36,
-        padding: "0 12px",
+        gap: 9,
+        height: 32,
+        padding: "0 9px",
         textAlign: "left",
       }}
       onMouseEnter={(event) => {
@@ -4928,9 +4886,9 @@ function NewSessionMenuItem({
         style={{
           flex: "1 1 auto",
           fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 16,
+          fontSize: 13,
           fontWeight: active ? 700 : 600,
-          lineHeight: "20px",
+          lineHeight: "17px",
           minWidth: 0,
           color: install ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
         }}
@@ -4959,9 +4917,9 @@ function NewSessionMenuItem({
               fontFamily: "Inter, system-ui, sans-serif",
               fontSize: 12,
               fontWeight: 700,
-              height: 21,
+              height: 18,
               lineHeight: "14px",
-              padding: "0 7px",
+              padding: "0 6px",
             }}
           >
             Install
@@ -5380,6 +5338,7 @@ function CollapsedSessionsRail({
       >
         <span
           aria-hidden="true"
+          data-testid="terminal-collapsed-brand-mask"
           style={{
             background: "var(--terminal-drawer-brand-fg)",
             WebkitMaskImage: "url('/matrix-logo.svg')",
@@ -5391,8 +5350,8 @@ function CollapsedSessionsRail({
             WebkitMaskSize: "contain",
             maskSize: "contain",
             display: "block",
-            height: 20,
-            width: 20,
+            height: 22,
+            width: 22,
           }}
         />
       </div>
@@ -5417,7 +5376,15 @@ function CollapsedSessionsRail({
       <CollapsedRailGroup shells={activeShells} selectedShellName={selectedShellName} onOpen={onOpen} />
       {backgroundShells.length > 0 && (
         <>
-          <div style={{ background: "var(--terminal-drawer-border)", height: 1, width: 34 }} />
+          <div
+            data-testid="terminal-collapsed-background-divider"
+            style={{
+              background: "var(--terminal-drawer-border)",
+              height: 1,
+              marginTop: 2,
+              width: 36,
+            }}
+          />
           <CollapsedRailGroup shells={backgroundShells} selectedShellName={selectedShellName} onOpen={onOpen} muted />
         </>
       )}
@@ -5466,7 +5433,7 @@ function CollapsedRailGroup({
               fontWeight: 700,
               height: COLLAPSED_RAIL_ITEM_SIZE,
               lineHeight: "14px",
-              opacity: muted ? 0.82 : 1,
+              opacity: muted ? 0.72 : 1,
               overflow: "visible",
               width: COLLAPSED_RAIL_ITEM_SIZE,
             }}
@@ -5547,6 +5514,8 @@ function ShellSessionGroup({
   label,
   shells,
   pending = false,
+  expanded = true,
+  onToggleExpanded,
   deletingShellNames,
   foreground,
   selectedShellName,
@@ -5564,6 +5533,8 @@ function ShellSessionGroup({
   label: "Active" | "Background";
   shells: ShellSessionSummary[];
   pending?: boolean;
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
   deletingShellNames: string[];
   foreground: boolean;
   selectedShellName: string | null;
@@ -5578,45 +5549,81 @@ function ShellSessionGroup({
   onDrop: (shell: ShellSessionSummary) => void;
   onDragEnd: () => void;
 }) {
+  const collapsible = label === "Background";
+  const contentId = `terminal-session-group-${label.toLowerCase()}-content`;
   return (
     <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
-        <div className="flex items-center" style={{ gap: 7 }}>
-          {label === "Background" && (
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--terminal-drawer-muted)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
+        <button
+          type="button"
+          aria-label={collapsible ? "Toggle Background sessions" : undefined}
+          aria-expanded={collapsible ? expanded : undefined}
+          aria-controls={collapsible ? contentId : undefined}
+          disabled={!collapsible}
+          onClick={collapsible ? onToggleExpanded : undefined}
+          className="flex items-center"
+          style={{
+            background: "transparent",
+            border: 0,
+            color: "var(--terminal-drawer-muted)",
+            cursor: collapsible ? "pointer" : "default",
+            gap: 7,
+            padding: 0,
+            textAlign: "left",
+          }}
+        >
+          {collapsible && (
+            <ChevronRightIcon
+              aria-hidden="true"
+              data-testid="terminal-session-background-chevron"
+              size={12}
+              strokeWidth={2.5}
+              style={{
+                transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+                transition: "transform 140ms ease",
+              }}
+            />
           )}
           <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", lineHeight: "14px", textTransform: "uppercase" }}>
             {label}{" "}
             <span style={{ fontWeight: 600, opacity: 0.55 }}>({shells.length})</span>
           </span>
-        </div>
+        </button>
       </div>
-      {pending ? <ShellPendingCard /> : null}
-      {shells.length === 0 && !pending ? (
-        <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 12, padding: "8px 0 6px" }}>
-          {foreground ? "No active sessions" : "Nothing running in background"}
-        </div>
-      ) : shells.map((shell) => (
-        <ShellCard
-          key={`${label}-${shell.name}`}
-          shell={shell}
-          foreground={foreground}
-          deleting={deletingShellNames.includes(shell.name)}
-          selected={shell.name === selectedShellName}
-          onOpen={() => onOpen(shell)}
-          onToggle={() => onToggle(shell)}
-          onRename={(nextName) => onRename(shell, nextName)}
-          onDelete={() => onDelete(shell)}
-          dragging={shell.name === draggingShellName}
-          dropTarget={shell.name === dragOverShellName}
-          onDragStart={() => onDragStart(shell)}
-          onDragOver={() => onDragOver(shell)}
-          onDrop={() => onDrop(shell)}
-          onDragEnd={onDragEnd}
-        />
-      ))}
+      <div
+        id={contentId}
+        hidden={!expanded}
+        style={{ display: expanded ? "flex" : undefined, flexDirection: "column", gap: 10 }}
+      >
+        {expanded ? (
+          <>
+          {pending ? <ShellPendingCard /> : null}
+          {shells.length === 0 && !pending ? (
+            <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 12, padding: "8px 0 6px" }}>
+              {foreground ? "No active sessions" : "Nothing running in background"}
+            </div>
+          ) : shells.map((shell) => (
+            <ShellCard
+              key={`${label}-${shell.name}`}
+              shell={shell}
+              foreground={foreground}
+              deleting={deletingShellNames.includes(shell.name)}
+              selected={shell.name === selectedShellName}
+              onOpen={() => onOpen(shell)}
+              onToggle={() => onToggle(shell)}
+              onRename={(nextName) => onRename(shell, nextName)}
+              onDelete={() => onDelete(shell)}
+              dragging={shell.name === draggingShellName}
+              dropTarget={shell.name === dragOverShellName}
+              onDragStart={() => onDragStart(shell)}
+              onDragOver={() => onDragOver(shell)}
+              onDrop={() => onDrop(shell)}
+              onDragEnd={onDragEnd}
+            />
+          ))}
+          </>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -5718,17 +5725,55 @@ function ShellCard({
   const [copyFeedback, setCopyFeedback] = useState<"copied" | "failed" | null>(null);
   const displayName = formatShellDisplayName(shell.name);
   const [actionsVisible, setActionsVisible] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState(shell.name);
   const [renameSaving, setRenameSaving] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommittingRef = useRef(false);
   const copiedTimerRef = useRef<number | null>(null);
-  const showActions = actionsVisible || copyFeedback !== null;
-  const showRenameControl = foreground && actionsVisible && !renaming;
+  const restoreFocusAfterMenuCloseRef = useRef(false);
+  const showActions = actionsVisible || copyFeedback !== null || contextMenuOpen;
+  const showRenameControl = actionsVisible && !renaming;
   const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
   const renameControlLabel = `Rename ${displayName}`;
+  const toggleMenuLabel = foreground ? "Move to Background" : "Make Active";
+  const getContextMenuItems = () => Array.from(
+    contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
+  );
+  const focusContextMenuItem = (nextIndex: number) => {
+    const items = getContextMenuItems();
+    if (items.length === 0) return;
+    const normalizedIndex = (nextIndex + items.length) % items.length;
+    items[normalizedIndex]?.focus();
+  };
+  const handleContextMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape" || event.key === "Tab") {
+      event.preventDefault();
+      restoreFocusAfterMenuCloseRef.current = true;
+      setContextMenuOpen(false);
+      return;
+    }
+    const items = getContextMenuItems();
+    if (items.length === 0) return;
+    const currentIndex = items.findIndex((item) => item === document.activeElement);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusContextMenuItem(currentIndex < 0 ? 0 : currentIndex + 1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusContextMenuItem(currentIndex < 0 ? items.length - 1 : currentIndex - 1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      focusContextMenuItem(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      focusContextMenuItem(items.length - 1);
+    }
+  };
 
   useEffect(() => () => {
     if (copiedTimerRef.current !== null) {
@@ -5741,6 +5786,33 @@ function ShellCard({
     renameInputRef.current?.focus();
     renameInputRef.current?.select();
   }, [renaming]);
+
+  useEffect(() => {
+    if (!contextMenuOpen) return;
+    const firstMenuItem = contextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
+    firstMenuItem?.focus();
+    const onPointerDown = (event: globalThis.PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && cardRef.current?.contains(target)) return;
+      restoreFocusAfterMenuCloseRef.current = false;
+      setContextMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [contextMenuOpen]);
+
+  useEffect(() => {
+    if (contextMenuOpen || !restoreFocusAfterMenuCloseRef.current) return;
+    restoreFocusAfterMenuCloseRef.current = false;
+    moreButtonRef.current?.focus();
+  }, [contextMenuOpen]);
+
+  const closeContextMenuWithFocusReturn = () => {
+    restoreFocusAfterMenuCloseRef.current = true;
+    setContextMenuOpen(false);
+  };
 
   const copyAttachCommand = async () => {
     try {
@@ -5977,8 +6049,8 @@ function ShellCard({
           alignItems: "center",
           display: "grid",
           gap: 6,
-          gridTemplateColumns: renaming ? "minmax(0, 1fr)" : foreground ? "minmax(0, 1fr) 22px" : "minmax(0, 1fr)",
-          paddingRight: renaming ? 0 : 64,
+          gridTemplateColumns: "minmax(0, 1fr)",
+          paddingRight: renaming ? 0 : 58,
         }}
       >
           {renaming ? (
@@ -6023,29 +6095,6 @@ function ShellCard({
               {displayName}
             </button>
           )}
-          {foreground && !renaming && (
-            <button
-              type="button"
-              aria-label={renameControlLabel}
-              title={renameControlLabel}
-              disabled={renameSaving}
-              onClick={(event) => {
-                event.stopPropagation();
-                setRenameDraft(shell.name);
-                setRenaming(true);
-              }}
-              onPointerDown={(event) => event.stopPropagation()}
-              onMouseDown={(event) => event.stopPropagation()}
-              className="flex items-center justify-center"
-              style={{
-                ...SESSION_RENAME_BUTTON_STYLE,
-                cursor: renameSaving ? "not-allowed" : "pointer",
-                opacity: showRenameControl ? 1 : 0,
-              }}
-            >
-              <PencilIcon size={12} strokeWidth={2} />
-            </button>
-          )}
           {!renaming && (
             <div
               data-testid={`terminal-session-actions-${shell.name}`}
@@ -6059,83 +6108,157 @@ function ShellCard({
             >
               <button
                 type="button"
-                data-testid={`terminal-session-copy-button-${shell.name}`}
-                aria-label={`Copy connect command for ${displayName}`}
-                title={copyFeedback === "copied" ? "Copied" : shellConnectCommand(shell.name)}
+                aria-label={renameControlLabel}
+                title={renameControlLabel}
+                disabled={renameSaving}
                 tabIndex={showActions ? 0 : -1}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void copyAttachCommand();
+                  setRenameDraft(shell.name);
+                  setRenaming(true);
                 }}
                 onPointerDown={(event) => event.stopPropagation()}
                 onMouseDown={(event) => event.stopPropagation()}
                 className="flex items-center justify-center"
                 style={{
-                  ...SESSION_COPY_BUTTON_STYLE,
-                  color: copyFeedback === "copied" ? "var(--terminal-drawer-selected-stripe)" : "var(--terminal-drawer-action-fg)",
+                  ...SESSION_RENAME_BUTTON_STYLE,
+                  cursor: renameSaving ? "not-allowed" : "pointer",
+                  opacity: showRenameControl ? 1 : 0,
                 }}
               >
-                {copyFeedback === "copied" ? (
-                  <>
-                    <CheckIcon size={12} strokeWidth={2.2} />
-                    <output data-testid={`terminal-session-copy-toast-${shell.name}`} aria-live="polite" className="sr-only">
-                      Copied
-                    </output>
-                  </>
-                ) : (
-                  <LinkIcon size={12} strokeWidth={2.1} />
-                )}
+                <PencilIcon size={12} strokeWidth={2} />
               </button>
-              <button
-                type="button"
-                aria-label={`${deleting ? "Deleting" : "Close"} ${displayName}`}
-                tabIndex={showActions ? 0 : -1}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDelete();
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                disabled={deleting}
-                className="flex shrink-0 items-center justify-center"
-                style={{
-                  ...SESSION_CLOSE_BUTTON_STYLE,
-                  cursor: deleting ? "not-allowed" : "pointer",
-                  opacity: deleting ? 0.65 : 1,
-                }}
-              >
-                ×
-              </button>
+              <div style={{ position: "relative" }}>
+                <button
+                  ref={moreButtonRef}
+                  type="button"
+                  aria-label={`More actions for ${displayName}`}
+                  aria-haspopup="menu"
+                  aria-expanded={contextMenuOpen}
+                  tabIndex={showActions ? 0 : -1}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    restoreFocusAfterMenuCloseRef.current = true;
+                    setContextMenuOpen((open) => !open);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  className="flex items-center justify-center"
+                  style={{
+                    ...SESSION_MORE_BUTTON_STYLE,
+                    opacity: showActions ? 1 : 0,
+                  }}
+                >
+                  <MoreHorizontalIcon size={14} strokeWidth={2.2} />
+                </button>
+                {contextMenuOpen ? (
+                  <div
+                    ref={contextMenuRef}
+                    role="menu"
+                    aria-label={`Actions for ${displayName}`}
+                    tabIndex={-1}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onKeyDown={handleContextMenuKeyDown}
+                    style={SESSION_CONTEXT_MENU_STYLE}
+                  >
+                    <SessionContextMenuItem
+                      label={toggleMenuLabel}
+                      onClick={() => {
+                        closeContextMenuWithFocusReturn();
+                        onToggle();
+                      }}
+                    >
+                      <Rows2Icon size={13} strokeWidth={2} />
+                    </SessionContextMenuItem>
+                    <SessionContextMenuItem
+                      label="Copy Command"
+                      onClick={() => {
+                        void copyAttachCommand();
+                        closeContextMenuWithFocusReturn();
+                      }}
+                    >
+                      <LinkIcon size={13} strokeWidth={2} />
+                    </SessionContextMenuItem>
+                    <SessionContextMenuItem
+                      label={deleting ? "Deleting" : "Close"}
+                      disabled={deleting}
+                      onClick={() => {
+                        if (deleting) return;
+                        closeContextMenuWithFocusReturn();
+                        onDelete();
+                      }}
+                    >
+                      <Trash2Icon size={13} strokeWidth={2} />
+                    </SessionContextMenuItem>
+                  </div>
+                ) : null}
+              </div>
+              {copyFeedback ? (
+                <output
+                  data-testid={`terminal-session-copy-toast-${shell.name}`}
+                  aria-live="polite"
+                  style={{
+                    ...SESSION_COPY_FEEDBACK_STYLE,
+                    color: copyFeedback === "copied"
+                      ? "var(--terminal-drawer-selected-stripe)"
+                      : "var(--terminal-drawer-warning-fg)",
+                  }}
+                >
+                  {copyFeedback === "copied" ? (
+                    <CheckIcon aria-hidden="true" size={12} strokeWidth={2.4} />
+                  ) : (
+                    <span aria-hidden="true" style={{ fontSize: 12, fontWeight: 900 }}>!</span>
+                  )}
+                  <span>{copyFeedback === "copied" ? "Copied" : "Copy failed"}</span>
+                </output>
+              ) : null}
             </div>
           )}
         </div>
       </div>
-      {!renaming && !deleting && (
-        <button
-          type="button"
-          aria-label={foreground ? `Move ${displayName} to background` : `Make ${displayName} active`}
-          title={foreground ? "Move to background" : "Make active"}
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggle();
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.stopPropagation()}
-          style={foreground ? ACTIVE_SHELL_TOGGLE_STYLE : BACKGROUND_SHELL_TOGGLE_STYLE}
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              background: foreground ? "var(--terminal-drawer-toggle-knob)" : "var(--terminal-drawer-toggle-off-knob)",
-              borderRadius: "50%",
-              display: "block",
-              height: 14,
-              width: 14,
-            }}
-          />
-        </button>
-      )}
     </div>
+  );
+}
+
+function SessionContextMenuItem({
+  label,
+  children,
+  disabled = false,
+  onClick,
+}: {
+  label: string;
+  children: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      aria-label={label}
+      disabled={disabled}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      style={{
+        ...SESSION_CONTEXT_MENU_ITEM_STYLE,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.62 : 1,
+      }}
+      onMouseEnter={(event) => {
+        if (!disabled) event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
+      }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.background = "transparent";
+      }}
+    >
+      <span aria-hidden="true" style={{ color: "var(--terminal-drawer-action-fg)", display: "flex", flexShrink: 0 }}>
+        {children}
+      </span>
+      <span>{label}</span>
+    </button>
   );
 }
 

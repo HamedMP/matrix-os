@@ -2,9 +2,9 @@
 import React from "react";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Desktop } from "../../shell/src/components/Desktop.js";
-import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
-import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindowManager.js";
+import type { Desktop } from "../../shell/src/components/Desktop.js";
+import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
+import type { useWindowManager, AppWindow } from "../../shell/src/hooks/useWindowManager.js";
 
 const { terminalRender } = vi.hoisted(() => ({
   terminalRender: vi.fn(() => <div>Terminal content</div>),
@@ -128,13 +128,35 @@ function jsonResponse(body: unknown) {
   }));
 }
 
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
+}
+
+type DesktopComponentType = typeof Desktop;
+type DesktopModeStore = typeof useDesktopMode;
+type WindowManagerStore = typeof useWindowManager;
+
+let DesktopComponent: DesktopComponentType;
+let desktopModeStore: DesktopModeStore;
+let windowManagerStore: WindowManagerStore;
+
 function resetStores(win: AppWindow, fullscreenWindowId: string | null = win.id) {
-  useDesktopMode.setState({
+  desktopModeStore.setState({
     mode: "dev",
     previousMode: null,
     _hydrated: true,
   });
-  useWindowManager.setState({
+  windowManagerStore.setState({
     windows: [win],
     nextZ: 11,
     closedPaths: new Set(),
@@ -146,7 +168,14 @@ function resetStores(win: AppWindow, fullscreenWindowId: string | null = win.id)
 }
 
 describe("Desktop terminal fullscreen chrome", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
+    const storage = createMemoryStorage();
+    vi.stubGlobal("localStorage", storage);
+    Object.defineProperty(window, "localStorage", {
+      value: storage,
+      configurable: true,
+    });
     terminalRender.mockClear();
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -156,6 +185,9 @@ describe("Desktop terminal fullscreen chrome", () => {
       if (url.includes("/api/apps")) return jsonResponse([]);
       return jsonResponse({});
     }));
+    DesktopComponent = (await import("../../shell/src/components/Desktop.js")).Desktop;
+    desktopModeStore = (await import("../../shell/src/stores/desktop-mode.js")).useDesktopMode;
+    windowManagerStore = (await import("../../shell/src/hooks/useWindowManager.js")).useWindowManager;
   });
 
   afterEach(() => {
@@ -165,7 +197,7 @@ describe("Desktop terminal fullscreen chrome", () => {
   it("shows no exit pill for a fullscreen terminal in Developer mode (header stays instead)", async () => {
     resetStores(terminalWindow);
 
-    render(<Desktop />);
+    render(<DesktopComponent />);
 
     await screen.findByText("Terminal content");
     await waitFor(() => {
@@ -176,7 +208,7 @@ describe("Desktop terminal fullscreen chrome", () => {
   it("shows no exit pill for a fullscreen app window in Developer mode (header stays instead)", async () => {
     resetStores(appWindow);
 
-    render(<Desktop />);
+    render(<DesktopComponent />);
 
     await screen.findByText("App content");
     // Developer-mode windows keep their header (with traffic lights) when
@@ -184,11 +216,27 @@ describe("Desktop terminal fullscreen chrome", () => {
     expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
   });
 
+  it("keeps a windowed Terminal on the main-branch terminal header chrome", async () => {
+    resetStores(terminalWindow, null);
+
+    const { container } = render(<DesktopComponent />);
+
+    await screen.findByText("Terminal content");
+    const terminalWindowEl = container.querySelector(".app-window") as HTMLElement | null;
+    const header = container.querySelector(".app-window .border-b-0") as HTMLElement | null;
+
+    expect(terminalWindowEl?.className).toContain("border-0");
+    expect(header).toBeTruthy();
+    expect(header?.className).not.toContain("border-border");
+    expect(header?.style.background).toBe("var(--terminal-drawer-bg)");
+    expect(header?.style.color).toBe("var(--terminal-drawer-fg)");
+  });
+
   it("shows no global exit pill in Canvas mode (the window's own header handles exit)", async () => {
     resetStores(appWindow);
-    useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });
+    desktopModeStore.setState({ mode: "canvas", previousMode: null, _hydrated: true });
 
-    render(<Desktop />);
+    render(<DesktopComponent />);
 
     await waitFor(() => {
       expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
@@ -198,7 +246,7 @@ describe("Desktop terminal fullscreen chrome", () => {
   it("lets the terminal-owned title bar double-click toggle window zoom", async () => {
     resetStores(terminalWindow, null);
 
-    render(<Desktop />);
+    render(<DesktopComponent />);
 
     await screen.findByText("Terminal content");
     const props = terminalRender.mock.lastCall?.[0] as {
@@ -215,6 +263,6 @@ describe("Desktop terminal fullscreen chrome", () => {
       props.windowControls!.dragHandleProps!.onDoubleClick!();
     });
 
-    expect(useWindowManager.getState().fullscreenWindowId).toBe("win-terminal");
+    expect(windowManagerStore.getState().fullscreenWindowId).toBe("win-terminal");
   });
 });

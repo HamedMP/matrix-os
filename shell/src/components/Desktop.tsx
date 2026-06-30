@@ -1915,9 +1915,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 <CardHeader
                   className={cn(
                     "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
-                    // Terminal owns its chrome: the Card's light header bg + border
-                    // read as a white title bar over the dark terminal. Match the
-                    // terminal's dark drawer so the top is seamless, not framed.
+                    // Terminal keeps the main-branch host title bar styling;
+                    // only the Terminal app's own internal toolbar was removed.
                     terminalOwnsChrome ? "border-b-0" : "border-b border-border",
                   )}
                   style={terminalOwnsChrome ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" } : undefined}
@@ -1947,8 +1946,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   {win.path.startsWith("__terminal__") ? (
                     <TerminalApp
                       launchTargetId={win.id}
-                      // Always use the shared CardHeader above (windowed and
-                      // fullscreen), so the terminal drops its own dark chrome.
                       embeddedChrome
                       windowControls={{
                         close: () => wmCloseWindow(win.id),
