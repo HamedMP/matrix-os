@@ -148,10 +148,14 @@ export function useTheme(options: ShellCacheHookOptions = {}) {
 
   // Fetch theme from server on mount
   useEffect(() => {
-    fetchTheme(fallbackTheme).then((nextTheme) => {
+    const controller = new AbortController();
+    fetchTheme(fallbackTheme, controller.signal).then((nextTheme) => {
+      if (controller.signal.aborted) return;
       setTheme(nextTheme);
       saveShellSnapshot(cacheScope, { theme: nextTheme });
     });
+
+    return () => controller.abort();
   }, [fallbackTheme, cacheKey, cacheScope]);
 
   useEffect(() => {
@@ -192,14 +196,20 @@ export async function saveTheme(
   }
 }
 
-async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME): Promise<Theme> {
+function settingsFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(10_000);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME, signal?: AbortSignal): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
     const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
-      signal: AbortSignal.timeout(10_000),
+      signal: settingsFetchSignal(signal),
     });
     if (res.ok) return normalizeTheme(await res.json(), defaultTheme);
   } catch (err: unknown) {
+    if (signal?.aborted) return defaultTheme;
     console.warn("[theme] Failed to fetch theme:", err instanceof Error ? err.message : String(err));
   }
   return defaultTheme;

@@ -125,6 +125,50 @@ describe("edge router worker", () => {
     expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
   });
 
+  it("respects upstream no-store headers for static-looking app-domain assets", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("asset", {
+        headers: {
+          "cache-control": "no-store",
+        },
+      }),
+    );
+
+    const response = await handleEdgeRouterRequest(
+      new Request("https://app.matrix-os.com/icons/private.svg"),
+      EDGE_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+  });
+
+  it("does not classify API or v1 paths as static assets by extension", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("api", {
+        headers: {
+          "cache-control": "public, max-age=31536000, immutable",
+        },
+      }),
+    );
+
+    const apiResponse = await handleEdgeRouterRequest(
+      new Request("https://app.matrix-os.com/api/theme.css"),
+      EDGE_ENV,
+    );
+    const v1Response = await handleEdgeRouterRequest(
+      new Request("https://app.matrix-os.com/v1/widget.js"),
+      EDGE_ENV,
+    );
+
+    expect(apiResponse.headers.get("cache-control")).toBe("no-store");
+    expect(v1Response.headers.get("cache-control")).toBe("no-store");
+    expect(apiResponse.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(v1Response.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+  });
+
   it("does not preserve browser cache headers for app-domain API responses", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("api", {

@@ -122,9 +122,7 @@ function withEdgeHeaders(response: Response, routeClass: EdgeRouteClass, pathnam
   const headers = new Headers(response.headers);
   if (shouldPreserveBrowserCache(routeClass, pathname, response)) {
     const upstreamCacheControl = headers.get("cache-control");
-    headers.set("cache-control", upstreamCacheControl && !upstreamCacheControl.toLowerCase().includes("no-store")
-      ? upstreamCacheControl
-      : browserCacheControlForAppStaticAsset(pathname));
+    headers.set("cache-control", upstreamCacheControl ?? browserCacheControlForAppStaticAsset(pathname));
   } else {
     headers.set("cache-control", "no-store");
   }
@@ -144,6 +142,18 @@ function shouldPreserveBrowserCache(
 }
 
 function isSafeAppStaticAssetPath(pathname: string): boolean {
+  if (
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/v1/") ||
+    pathname.startsWith("/auth/") ||
+    pathname.startsWith("/sign-in") ||
+    pathname.startsWith("/sign-up") ||
+    pathname.startsWith("/_next/data/") ||
+    pathname.startsWith("/files/apps/")
+  ) {
+    return false;
+  }
+
   return (
     pathname.startsWith("/_next/static/") ||
     pathname.startsWith("/icons/") ||
@@ -152,7 +162,7 @@ function isSafeAppStaticAssetPath(pathname: string): boolean {
     pathname.startsWith("/textures/") ||
     pathname.startsWith("/fonts/") ||
     /\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|css|js|wav|mp3)$/.test(pathname)
-  ) && !pathname.startsWith("/files/apps/");
+  );
 }
 
 function browserCacheControlForAppStaticAsset(pathname: string): string {

@@ -135,11 +135,15 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setConfig/setDock/setPinnedApps/setDockOrder calls all populate distinct stores from a single fetched desktop-config payload inside one async .then callback; they run together once the load resolves, not as a synchronous render-time cascade, and target separate Zustand slices that cannot be collapsed
   useEffect(() => {
-    fetchDesktopConfig(gatewayUrl).then((cfg) => {
+    const controller = new AbortController();
+    fetchDesktopConfig(gatewayUrl, controller.signal).then((cfg) => {
+      if (controller.signal.aborted) return;
       setConfig(cfg);
       applyDesktopConfigSnapshot(cfg, gatewayUrl, { setDock, setPinnedApps, setDockOrder });
       saveShellSnapshot(cacheScope, { desktopConfig: cfg });
     });
+
+    return () => controller.abort();
   }, [cacheKey, cacheScope, gatewayUrl, setDock, setPinnedApps, setDockOrder]);
 
   useEffect(() => {
@@ -161,10 +165,15 @@ export function useDesktopConfig(options: DesktopConfigHookOptions = {}) {
   return config;
 }
 
-async function fetchDesktopConfig(gatewayUrl: string): Promise<DesktopConfig> {
+function settingsFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+async function fetchDesktopConfig(gatewayUrl: string, signal?: AbortSignal): Promise<DesktopConfig> {
   try {
     const res = await fetch(`${gatewayUrl}/api/settings/desktop`, {
-      signal: AbortSignal.timeout(SETTINGS_FETCH_TIMEOUT_MS),
+      signal: settingsFetchSignal(signal),
     });
     if (res.ok) {
       const data = await res.json();
@@ -173,6 +182,7 @@ async function fetchDesktopConfig(gatewayUrl: string): Promise<DesktopConfig> {
       return merged;
     }
   } catch (err) {
+    if (signal?.aborted) return DEFAULT_DESKTOP_CONFIG;
     console.warn("[desktop-config] failed to load desktop config:", err instanceof Error ? err.message : String(err));
   }
   return DEFAULT_DESKTOP_CONFIG;
