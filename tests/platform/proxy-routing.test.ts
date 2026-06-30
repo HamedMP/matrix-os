@@ -4844,6 +4844,51 @@ describe("platform proxy routing", () => {
     }
   });
 
+  it("proxies app-domain PostHog relay logs without auth or session headers", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
+    const verifyToken = vi.fn().mockResolvedValue({ authenticated: false });
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken,
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_123";
+    try {
+      const res = await app.request("/relay/i/v1/logs?verbose=true", {
+        method: "POST",
+        headers: {
+          host: "app.matrix-os.com",
+          authorization: "Bearer clerk-session",
+          cookie: "__session=clerk-cookie; matrix_app_session__alice=session",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ api_key: "phc_test", batch: [] }),
+      });
+
+      expect(res.status).toBe(204);
+      expect(verifyToken).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [target, init] = fetchMock.mock.calls[0]!;
+      expect(target).toBe("https://eu.i.posthog.com/i/v1/logs?verbose=true");
+      expect(init?.method).toBe("POST");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      expect(init?.headers).toBeInstanceOf(Headers);
+      const headers = init?.headers as Headers;
+      expect(headers.get("content-type")).toBe("application/json");
+      expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("cookie")).toBeNull();
+      expect(headers.get("host")).toBe("eu.i.posthog.com");
+    } finally {
+      delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    }
+  });
+
   it("routes app-domain icons directly to the runtime gateway", async () => {
     const verifyToken = vi.fn().mockResolvedValue({ sub: "user_alice" });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
