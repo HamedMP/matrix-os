@@ -73,7 +73,7 @@ Run Matrix OS on an existing Linux VPS you control:
 curl -fsSL https://matrix-os.com/install-server.sh | sudo bash
 ```
 
-The self-host installer downloads a verified host bundle, creates the `matrix` user, starts local Postgres, the Matrix gateway, web shell, code-server, nginx, and optional coding-agent tools under systemd. Self-host users own DNS, TLS, backups, updates, and server security. See [Self-host docs](https://matrix-os.com/docs/self-host) for prerequisites and tradeoffs.
+The self-host installer downloads a verified host bundle, creates the `matrix` user, starts local Postgres, the Matrix gateway, web shell, code-server, nginx, and optional coding-agent tools under systemd. A domain is optional: by default nginx answers on the server IP address with Basic Auth. Self-host users own DNS, TLS, backups, updates, and server security. See [Self-host docs](https://matrix-os.com/docs/self-host) for prerequisites and tradeoffs.
 
 ### Matrix CLI
 

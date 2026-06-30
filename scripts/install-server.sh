@@ -47,10 +47,11 @@ validate_config() {
   case "$MATRIX_INSTALL_HANDLE" in
     ""|*[!A-Za-z0-9_-]*) fail "MATRIX_INSTALL_HANDLE may only contain letters, numbers, underscore, and dash" ;;
   esac
-  case "$MATRIX_DOMAIN" in
-    "_"|[A-Za-z0-9.-]*) ;;
-    *) fail "MATRIX_DOMAIN may only be '_' or a DNS name" ;;
-  esac
+  if [ "$MATRIX_DOMAIN" != "_" ]; then
+    [ "${#MATRIX_DOMAIN}" -le 253 ] || fail "MATRIX_DOMAIN may only be '_' or a DNS name"
+    [[ "$MATRIX_DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]] \
+      || fail "MATRIX_DOMAIN may only be '_' or a DNS name"
+  fi
   case "$MATRIX_HOME_DIR" in
     /home/matrix/*|/home/matrix) ;;
     *) fail "MATRIX_HOME must stay under /home/matrix for standalone installs" ;;

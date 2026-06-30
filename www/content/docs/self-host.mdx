@@ -14,7 +14,7 @@ curl -fsSL https://matrix-os.com/install-server.sh | sudo bash
 ```
 
 <Callout type="warn" title="Preview self-host path">
-The self-host installer is for developers comfortable operating a VPS. Matrix Cloud still provides managed routing, Clerk auth, backups, updates, billing, and integrations. Self-host installs start with nginx Basic Auth and should be put behind HTTPS, Tailscale, Cloudflare Access, or another trusted edge for long-term use.
+The self-host installer is for developers comfortable operating a VPS. Matrix Cloud still provides managed routing, Clerk auth, backups, updates, billing, and integrations. Self-host installs start with nginx Basic Auth and can work from the server IP address; put the host behind HTTPS, Tailscale, Cloudflare Access, or another trusted edge for long-term use.
 </Callout>
 
 ## Requirements
@@ -23,7 +23,7 @@ The self-host installer is for developers comfortable operating a VPS. Matrix Cl
 - Root or sudo access.
 - Ports 80 and the internal loopback service ports available.
 - Enough disk for the Matrix host bundle, local Postgres, projects, and coding tools.
-- Optional DNS record pointing at the server before install.
+- Optional DNS record pointing at the server before install. If you skip DNS, the installer uses the server IP/default nginx vhost.
 
 ## Install
 
@@ -40,6 +40,8 @@ The self-host installer is for developers comfortable operating a VPS. Matrix Cl
     ```bash
     curl -fsSL https://matrix-os.com/install-server.sh | sudo bash
     ```
+
+    No domain is required. The default `MATRIX_DOMAIN=_` makes nginx answer on the server IP address and the installer prints an `http://<server-ip>` URL.
 
     Optional configuration:
 
@@ -103,6 +105,8 @@ The self-host installer is for developers comfortable operating a VPS. Matrix Cl
 ## Security Notes
 
 The shell runs in explicit standalone mode. Public browser access is expected to go through nginx, while same-origin API, file, app, and WebSocket requests are rewritten by the shell proxy with the internal `MATRIX_AUTH_TOKEN`. code-server runs loopback-only and is reached through a token-protected Matrix proxy.
+
+IP-only installs are acceptable for first boot and private-network testing, but they are plain HTTP unless you add a trusted TLS/access layer. For a public VPS, prefer DNS plus TLS, Tailscale, Cloudflare Access/Tunnel, or another authenticated reverse proxy before storing long-lived work there.
 
 Do not expose ports `3000`, `4000`, `8787`, or `5432` publicly. Keep them on loopback and expose only your hardened reverse proxy.
 

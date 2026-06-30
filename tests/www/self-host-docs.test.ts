@@ -16,10 +16,13 @@ describe("self-host public docs", () => {
     expect(docs).toContain("Matrix Cloud");
     expect(docs).toContain("Self-host preview");
     expect(docs).toContain("nginx Basic Auth");
+    expect(docs).toContain("server IP address");
+    expect(docs).toContain("No domain is required");
     expect(docs).toContain("Do not expose ports `3000`, `4000`, `8787`, or `5432` publicly");
     expect(meta).toContain("\"self-host\"");
     expect(readme).toContain("### Self-host on Your VPS");
     expect(readme).toContain(installUrl);
+    expect(readme).toContain("A domain is optional");
     expect(readme).toContain("Self-host docs");
     expect(quickstart).toContain("[Self-host](/docs/self-host)");
   });

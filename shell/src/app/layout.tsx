@@ -83,7 +83,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const visitorCountry = getPostHogVisitorCountry(await headers());
-  const document = (
+  const renderDocument = (includePostHogIdentify: boolean) => (
     <html
       lang="en"
       data-posthog-visitor-country={visitorCountry ?? undefined}
@@ -94,7 +94,7 @@ export default async function RootLayout({
     >
       <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
         {children}
-        <PostHogIdentify />
+        {includePostHogIdentify ? <PostHogIdentify /> : null}
         <PwaRegister />
         <InstallPrompt />
         <Toaster />
@@ -103,7 +103,7 @@ export default async function RootLayout({
   );
 
   if (process.env.MATRIX_SELF_HOSTED === "1") {
-    return document;
+    return renderDocument(false);
   }
 
   return (
@@ -112,7 +112,7 @@ export default async function RootLayout({
     // build time (default /sign-in and /sign-up); without them Clerk falls
     // back to the hosted Account Portal (accounts.matrix-os.com).
     <ClerkProvider>
-      {document}
+      {renderDocument(true)}
     </ClerkProvider>
   );
 }

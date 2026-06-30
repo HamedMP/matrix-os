@@ -469,9 +469,13 @@ describe("proxy auth: self-host mode", () => {
     const layout = readFileSync(join(process.cwd(), "shell/src/app/layout.tsx"), "utf8");
 
     expect(layout).toContain('process.env.MATRIX_SELF_HOSTED === "1"');
-    expect(layout).toContain("return document;");
+    expect(layout).toContain("return renderDocument(false);");
+    expect(layout).toContain("{includePostHogIdentify ? <PostHogIdentify /> : null}");
     expect(layout.indexOf('process.env.MATRIX_SELF_HOSTED === "1"')).toBeLessThan(
       layout.indexOf("<ClerkProvider>"),
+    );
+    expect(layout.indexOf("return renderDocument(false);")).toBeLessThan(
+      layout.indexOf("renderDocument(true)"),
     );
   });
 });
