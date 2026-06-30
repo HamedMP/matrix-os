@@ -465,14 +465,15 @@ describe("proxy auth: self-host mode", () => {
     expect(response.status).toBe(403);
   });
 
-  it("keeps ClerkProvider while disabling managed-cloud identity work in self-host mode", () => {
+  it("skips ClerkProvider while disabling managed-cloud identity work in self-host mode", () => {
     const layout = readFileSync(join(process.cwd(), "shell/src/app/layout.tsx"), "utf8");
     const page = readFileSync(join(process.cwd(), "shell/src/app/page.tsx"), "utf8");
 
     expect(layout).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
-    expect(layout).toContain("{renderDocument(!selfHostedMode)}");
+    expect(layout).toContain('data-matrix-self-hosted={selfHostedMode ? "1" : undefined}');
+    expect(layout).toContain("return renderDocument(false);");
+    expect(layout).toContain("{renderDocument(true)}");
     expect(layout).toContain("{includePostHogIdentify ? <PostHogIdentify /> : null}");
-    expect(layout).not.toContain("return renderDocument(false);");
     expect(page).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
     expect(page).toContain("selfHostedMode || hasServerVerifiedMatrixSession");
   });

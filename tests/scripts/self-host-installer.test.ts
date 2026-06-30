@@ -46,6 +46,19 @@ describe("self-host server installer", () => {
     expect(script).toContain("trap cleanup_install_tmp EXIT");
   });
 
+  it("prepares the bundled Node runtime for owner-user agent installs", () => {
+    const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
+
+    expect(script).toContain("prepare_runtime_permissions");
+    expect(script).toContain("Preparing runtime permissions");
+    expect(script).toContain("[ -d /opt/matrix/runtime/node ]");
+    expect(script).toContain("chown -R root:matrix /opt/matrix/runtime/node");
+    expect(script).toContain("chmod -R g+rwX /opt/matrix/runtime/node");
+    expect(script).toContain('find /opt/matrix/runtime/node -type d -exec chmod g+s {} +');
+    expect(script).toContain("Runtime permissions ready");
+    expect(script).toContain("sudo -iu matrix");
+  });
+
   it("reports privacy-scoped manual install telemetry with an opt-out", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
     const route = readFileSync(join(root, "www/src/app/api/install-telemetry/route.ts"), "utf8");
@@ -114,6 +127,11 @@ describe("self-host server installer", () => {
     expect(script).toContain("proxy_pass http://127.0.0.1:8787");
     expect(script).toContain("proxy_set_header X-Matrix-Code-Proxy-Token \"%s\"");
     expect(script).toContain("-p 127.0.0.1:5432:5432");
+    expect(script).toContain("location /cli/");
+    expect(script).toContain("auth_basic off");
+    expect(script).toContain("rewrite ^/cli/?(.*)\\$ /\\$1 break");
+    expect(script).toContain("CLI gateway: ${ui_url%/}/cli");
+    expect(script).toContain("matrix status --gateway ${ui_url%/}/cli --token \"\\$MATRIX_TOKEN\"");
     expect(script).not.toContain("-p 5432:5432");
     expect(script).not.toContain("grep '^MATRIX_CODE_PROXY_TOKEN='");
   });

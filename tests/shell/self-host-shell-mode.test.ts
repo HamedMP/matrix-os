@@ -5,14 +5,23 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("self-host shell mode", () => {
-  it("bypasses managed-cloud onboarding while preserving Clerk context for shared shell chrome", () => {
+  it("bypasses managed-cloud onboarding without loading Clerk on bare IP installs", () => {
     const page = readFileSync(join(root, "shell/src/app/page.tsx"), "utf8");
     const layout = readFileSync(join(root, "shell/src/app/layout.tsx"), "utf8");
+    const menuBar = readFileSync(join(root, "shell/src/components/MenuBar.tsx"), "utf8");
+    const userButton = readFileSync(join(root, "shell/src/components/UserButton.tsx"), "utf8");
+    const billingAccess = readFileSync(join(root, "shell/src/hooks/useMatrixBillingAccess.ts"), "utf8");
 
     expect(page).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
     expect(page).toContain("selfHostedMode || hasServerVerifiedMatrixSession");
     expect(layout).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
-    expect(layout).toContain("{renderDocument(!selfHostedMode)}");
-    expect(layout).not.toContain("return renderDocument(false);");
+    expect(layout).toContain('data-matrix-self-hosted={selfHostedMode ? "1" : undefined}');
+    expect(layout).toContain("if (selfHostedMode) {");
+    expect(layout).toContain("return renderDocument(false);");
+    expect(layout).toContain("<ClerkProvider>");
+    expect(layout).toContain("{renderDocument(true)}");
+    expect(menuBar).toContain("isSelfHostedDocument()");
+    expect(userButton).toContain("SelfHostedUserButton");
+    expect(billingAccess).toContain("useManagedMatrixBillingAccess");
   });
 });

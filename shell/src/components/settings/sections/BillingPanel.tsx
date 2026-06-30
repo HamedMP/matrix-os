@@ -32,6 +32,7 @@ import type {
   BillingEntitlementSummary,
 } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
+import { isSelfHostedDocument } from "@/lib/self-host-mode";
 
 function preselectedFeatureSlug(selectedPlan: unknown): string | null {
   if (typeof selectedPlan !== "string") return null;
@@ -927,10 +928,56 @@ export function BillingPanel({
   onCheckoutIntent?: () => void;
   checkoutReturnPath?: string;
 }) {
+  const props = {
+    active,
+    entitlement,
+    accessReason,
+    accessIssue,
+    mode,
+    onCheckoutIntent,
+    checkoutReturnPath,
+  };
+  if (isSelfHostedDocument()) {
+    return <BillingPanelInner {...props} selectedPlan={undefined} />;
+  }
+  return <ManagedBillingPanel {...props} />;
+}
+
+function ManagedBillingPanel(props: {
+  active: boolean | null;
+  entitlement?: BillingEntitlementSummary | null;
+  accessReason?: string | null;
+  accessIssue?: BillingAccessIssue;
+  mode: BillingPanelMode;
+  onCheckoutIntent?: () => void;
+  checkoutReturnPath?: string;
+}) {
   const { user } = useUser();
+  return <BillingPanelInner {...props} selectedPlan={user?.publicMetadata?.selectedPlan} />;
+}
+
+function BillingPanelInner({
+  active,
+  entitlement,
+  accessReason,
+  accessIssue,
+  mode = "settings",
+  onCheckoutIntent,
+  checkoutReturnPath,
+  selectedPlan,
+}: {
+  active: boolean | null;
+  entitlement?: BillingEntitlementSummary | null;
+  accessReason?: string | null;
+  accessIssue?: BillingAccessIssue;
+  mode?: BillingPanelMode;
+  onCheckoutIntent?: () => void;
+  checkoutReturnPath?: string;
+  selectedPlan?: unknown;
+}) {
   const [selectedProfileSlug, setSelectedProfileSlug] = useState<string>(
     () =>
-      preselectedFeatureSlug(user?.publicMetadata?.selectedPlan) ??
+      preselectedFeatureSlug(selectedPlan) ??
       MATRIX_BILLING_SERVER_PROFILES[1]?.featureSlug ??
       MATRIX_BILLING_SERVER_PROFILES[0]?.featureSlug ??
       "",

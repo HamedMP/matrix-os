@@ -446,6 +446,21 @@ install_bundle() {
   INSTALL_TMP_SUM=""
 }
 
+prepare_runtime_permissions() {
+  section "Preparing runtime permissions"
+  if [ -d /opt/matrix/runtime/node ]; then
+    run_required "setting Node runtime owner group" chown -R root:matrix /opt/matrix/runtime/node
+    run_required "allowing matrix user Node runtime writes" chmod -R g+rwX /opt/matrix/runtime/node
+    if find /opt/matrix/runtime/node -type d -exec chmod g+s {} + >>"$MATRIX_INSTALL_LOG" 2>&1; then
+      ok "Runtime permissions ready"
+      return
+    fi
+    warn "could not set setgid bit on all Node runtime directories; agent installs may need sudo"
+    return
+  fi
+  warn "Node runtime prefix not found at /opt/matrix/runtime/node; skipping agent install permissions"
+}
+
 write_self_host_restore_service() {
   cat >/etc/systemd/system/matrix-restore.service <<'EOF'
 [Unit]
@@ -553,6 +568,16 @@ server {
     proxy_pass http://127.0.0.1:4000/;
   }
 
+  location /cli/ {
+    auth_basic off;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    rewrite ^/cli/?(.*)\$ /\$1 break;
+    proxy_pass http://127.0.0.1:4000;
+  }
+
   location /ws {
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
@@ -638,12 +663,15 @@ User: matrix
 ${password_line}
 
 Code editor: ${ui_url%/}/code/
+CLI gateway: ${ui_url%/}/cli
 Home: ${MATRIX_HOME_DIR}
 
 Useful commands:
   systemctl status matrix-gateway matrix-shell matrix-code nginx --no-pager
   journalctl -u matrix-gateway -u matrix-shell -u matrix-code -n 200 --no-pager
-  sudo -u matrix bash
+  sudo -iu matrix
+  MATRIX_TOKEN=\$(sudo awk -F= '\$1=="MATRIX_AUTH_TOKEN"{print \$2}' /opt/matrix/env/host.env)
+  matrix status --gateway ${ui_url%/}/cli --token "\$MATRIX_TOKEN"
 
 This preview protects the web UI with nginx Basic Auth. Put the host behind
 HTTPS, Tailscale, Cloudflare Access, or another trusted edge before long-term use.
@@ -666,6 +694,8 @@ main() {
   write_env
   INSTALL_PHASE="bundle"
   install_bundle
+  INSTALL_PHASE="runtime_permissions"
+  prepare_runtime_permissions
   INSTALL_PHASE="systemd"
   install_systemd_units
   INSTALL_PHASE="nginx"

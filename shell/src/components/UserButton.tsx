@@ -14,6 +14,7 @@ import Link from "next/link";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { useState } from "react";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { isSelfHostedDocument } from "@/lib/self-host-mode";
 
 const SIGN_OUT_TIMEOUT_MS = 10_000;
 
@@ -111,8 +112,62 @@ export function UserButton({
   if (!mounted) {
     return <Placeholder variant={variant} />;
   }
+  if (isSelfHostedDocument()) {
+    return <SelfHostedUserButton variant={variant} onOpenSettings={onOpenSettings} />;
+  }
 
   return <MountedUserButton variant={variant} onOpenSettings={onOpenSettings} />;
+}
+
+function SelfHostedUserButton({
+  variant,
+  onOpenSettings,
+}: {
+  variant: UserButtonVariant;
+  onOpenSettings?: () => void;
+}) {
+  const isSettings = variant === "settings";
+  const isMenubar = variant === "menubar";
+  const label = "Self-hosted Matrix OS";
+  const button = (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onOpenSettings}
+      className={cn(
+        "flex items-center justify-center rounded-xl border border-border/60 bg-card text-foreground shadow-sm transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        isMenubar ? "size-[18px] rounded-full border-0 bg-transparent shadow-none" : "size-10",
+        isSettings && "min-h-12 w-full justify-start gap-3 rounded-2xl px-2",
+      )}
+    >
+      <span
+        className={cn(
+          "grid shrink-0 place-items-center rounded-full bg-emerald-600/12 text-emerald-700 dark:text-emerald-300",
+          isMenubar ? "size-[18px]" : "size-10",
+        )}
+      >
+        <ServerIcon className={cn("size-5", isMenubar && "size-3")} aria-hidden="true" />
+      </span>
+      {isSettings ? (
+        <span className="min-w-0 truncate text-left text-sm font-semibold">
+          Self-hosted
+        </span>
+      ) : null}
+    </button>
+  );
+
+  if (isSettings) {
+    return button;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side={isMenubar ? "bottom" : "right"} sideOffset={8}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 function MountedUserButton({

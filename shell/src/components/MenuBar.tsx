@@ -9,6 +9,7 @@ import { AppSettingsDialog } from "./AppSettingsDialog";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton } from "./UserButton";
 import { ModeSwitcherBar } from "./ModeSwitcherBar";
+import { isSelfHostedDocument } from "@/lib/self-host-mode";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
 
@@ -65,15 +66,31 @@ function MenuBarClock() {
 
 function MenuBarUser({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const mounted = useIsClient();
+
+  if (!mounted) {
+    return <MenuBarUserPlaceholder />;
+  }
+  if (isSelfHostedDocument()) {
+    return <UserButton variant="menubar" onOpenSettings={onOpenSettings} />;
+  }
+
+  return <AuthenticatedMenuBarUser onOpenSettings={onOpenSettings} />;
+}
+
+function MenuBarUserPlaceholder() {
+  return (
+    <div className="px-1 py-0.5 rounded hover:bg-foreground/10">
+      <UserIcon className="size-[14px] text-foreground/70" />
+    </div>
+  );
+}
+
+function AuthenticatedMenuBarUser({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const { isLoaded, isSignedIn } = useAuth();
   const { active: billingActive } = useMatrixBillingAccess();
 
-  if (!mounted || !isLoaded || !isSignedIn) {
-    return (
-      <div className="px-1 py-0.5 rounded hover:bg-foreground/10">
-        <UserIcon className="size-[14px] text-foreground/70" />
-      </div>
-    );
+  if (!isLoaded || !isSignedIn) {
+    return <MenuBarUserPlaceholder />;
   }
 
   // Only surface a billing chip when action is required. An active subscription

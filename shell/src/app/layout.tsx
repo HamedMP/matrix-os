@@ -88,6 +88,7 @@ export default async function RootLayout({
     <html
       lang="en"
       data-posthog-visitor-country={visitorCountry ?? undefined}
+      data-matrix-self-hosted={selfHostedMode ? "1" : undefined}
       // Runtime replay kill switch: read on the server per request, so
       // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops
       // replay without rebuilding the bundle.
@@ -103,13 +104,17 @@ export default async function RootLayout({
     </html>
   );
 
+  if (selfHostedMode) {
+    return renderDocument(false);
+  }
+
   return (
     // ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep
     // sign-in/up cross-links on the in-app routes. Those vars are baked at
     // build time (default /sign-in and /sign-up); without them Clerk falls
     // back to the hosted Account Portal (accounts.matrix-os.com).
     <ClerkProvider>
-      {renderDocument(!selfHostedMode)}
+      {renderDocument(true)}
     </ClerkProvider>
   );
 }
