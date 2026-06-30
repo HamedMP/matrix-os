@@ -230,16 +230,17 @@ const TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE: CSSProperties = {
   background: "var(--terminal-chrome-bg)",
   border: "1px solid var(--terminal-chrome-control-border)",
   boxShadow: "0 18px 44px rgba(0, 0, 0, 0.44)",
-  gap: 10,
-  padding: 10,
-  width: 386,
+  gap: 8,
+  maxWidth: "calc(100vw - 24px)",
+  padding: 8,
+  width: 280,
 };
 
 const TERMINAL_SHELL_THEME_DESKTOP_HEADER_STYLE: CSSProperties = {
   alignItems: "center",
   display: "flex",
-  gap: 10,
-  padding: "2px 2px 0",
+  gap: 8,
+  padding: "1px 1px 0",
 };
 
 const TERMINAL_SHELL_THEME_MOBILE_HEADER_STYLE: CSSProperties = {
@@ -2605,7 +2606,7 @@ function ShellThemeChooserContent({
           <span style={{ color: mobile ? "#77786C" : "var(--terminal-chrome-muted)", fontSize: mobile ? 12 : 11, lineHeight: mobile ? "16px" : "14px" }}>
             {mobile
               ? "Terminal colors. We recommend Dark."
-              : "Terminal colors. Dark reads best for agent output, diffs, and status."}
+              : "Terminal colors. Dark reads best."}
           </span>
         </span>
       </div>
@@ -2662,7 +2663,7 @@ function ShellThemeChooserContent({
         <span>
           {mobile
             ? "Light & Matrix aren't fully tuned — some colors lose contrast. Switch back to Dark if output looks off."
-            : "Light and Matrix aren't fully tuned — some terminal colors lose contrast. Switch back to Dark if output looks off."}
+            : "Light and Matrix are not fully tuned; switch back to Dark if output looks off."}
         </span>
       </div>
 
@@ -2710,13 +2711,13 @@ function getShellThemeOptionStyle(mobile: boolean, selected: boolean): CSSProper
     alignItems: "center",
     background: selected ? "rgba(57, 255, 106, 0.08)" : "rgba(255, 255, 255, 0.02)",
     border: `1px solid ${selected ? "var(--terminal-chrome-active)" : "var(--terminal-chrome-control-border)"}`,
-    borderRadius: 10,
+    borderRadius: 9,
     color: "var(--terminal-chrome-fg)",
     cursor: "pointer",
     display: "flex",
-    gap: 12,
-    minHeight: 58,
-    padding: "10px 12px",
+    gap: 9,
+    minHeight: 50,
+    padding: "8px 9px",
     textAlign: "left",
     width: "100%",
   };
@@ -2727,9 +2728,9 @@ function getShellThemeOptionTrailingStyle(mobile: boolean): CSSProperties {
     alignItems: "center",
     display: "flex",
     flexShrink: 0,
-    gap: mobile ? 9 : 10,
+    gap: mobile ? 9 : 6,
     justifyContent: "flex-end",
-    minWidth: mobile ? 116 : 132,
+    minWidth: mobile ? 116 : 86,
   };
 }
 
@@ -2769,10 +2770,10 @@ function getShellThemeWarningStyle(mobile: boolean): CSSProperties {
     borderRadius: mobile ? 9 : 10,
     color: mobile ? "#8A7B52" : "#D4B570",
     display: "flex",
-    fontSize: mobile ? 10 : 11,
-    gap: 10,
-    lineHeight: mobile ? "14px" : "16px",
-    padding: mobile ? "10px 12px" : "11px 12px",
+    fontSize: mobile ? 10 : 10,
+    gap: mobile ? 10 : 8,
+    lineHeight: mobile ? "14px" : "14px",
+    padding: mobile ? "10px 12px" : "9px 10px",
   };
 }
 
