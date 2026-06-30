@@ -233,10 +233,12 @@ preflight_bundle_url() {
   log "Channel: ${DEFAULT_CHANNEL}"
   log "Bundle: ${MATRIX_HOST_BUNDLE_URL}"
 
-  if ! curl --fail --silent --show-error --location --head \
+  # Do not follow this HEAD redirect: the platform returns a signed R2 GET URL,
+  # and R2 rejects following that signature as a HEAD request.
+  if ! curl --fail --silent --show-error --head \
     --connect-timeout 10 --max-time 30 \
     "$MATRIX_HOST_BUNDLE_URL" >/dev/null; then
-    fail "host bundle is not reachable: ${MATRIX_HOST_BUNDLE_URL}. Use MATRIX_CHANNEL=dev or pass MATRIX_HOST_BUNDLE_URL to a published bundle."
+    fail "host bundle is not reachable: ${MATRIX_HOST_BUNDLE_URL}. Use a published MATRIX_CHANNEL or pass MATRIX_HOST_BUNDLE_URL to a published bundle."
   fi
 
   if ! curl --fail --silent --show-error --location --head \

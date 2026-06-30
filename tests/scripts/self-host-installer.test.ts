@@ -22,7 +22,8 @@ describe("self-host server installer", () => {
     expect(script).toContain("MATRIX_HOST_BUNDLE_URL");
     expect(script).toContain("${MATRIX_HOST_BUNDLE_URL}.sha256");
     expect(script).toContain("preflight_bundle_url");
-    expect(script).toContain("curl --fail --silent --show-error --location --head");
+    expect(script).toContain("signed R2 GET URL");
+    expect(script).toContain("curl --fail --silent --show-error --head");
     expect(script).toContain("host bundle is not reachable");
     expect(script).toContain("Host bundle is reachable");
     expect(script).toContain("sha256sum \"$tmp_bundle\"");
