@@ -114,6 +114,8 @@ describe("self-host server installer", () => {
     expect(script).toContain("openssl passwd -apr1");
     expect(script).toContain('if [ ! -f "$htpasswd_file" ]; then');
     expect(script).toContain("existing nginx Basic Auth credentials");
+    expect(script).toContain('if [ -f /opt/matrix/env/initial-ui-password ]; then');
+    expect(script).toContain("nginx Basic Auth challenge returned HTTP ${status}, expected 401");
     expect(script).toContain("gateway-auth-token.conf");
     expect(script).toContain("proxy_set_header Authorization \"Bearer %s\"");
     expect(script).toContain("proxy_set_header Authorization \"\"");

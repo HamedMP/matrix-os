@@ -3,7 +3,6 @@
 import { useAuth } from "@clerk/nextjs";
 import { useEffect, useMemo, useState } from "react";
 import { hasMatrixBillingAccess } from "@/lib/billing";
-import { isSelfHostedDocument } from "@/lib/self-host-mode";
 
 const BILLING_STATUS_TIMEOUT_MS = 10_000;
 const BILLING_STATUS_CACHE_TTL_MS = 30_000;
@@ -55,16 +54,6 @@ type BillingAccessRemoteState = {
 };
 
 export function useMatrixBillingAccess(): BillingAccessState {
-  if (isSelfHostedDocument()) {
-    return {
-      active: true,
-      checking: false,
-      entitlement: null,
-      accessReason: "self_hosted",
-      accessIssue: null,
-    };
-  }
-
   return useManagedMatrixBillingAccess();
 }
 

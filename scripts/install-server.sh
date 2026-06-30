@@ -640,13 +640,19 @@ start_services() {
 }
 
 verify_services() {
-  local password
+  local password status
   section "Verifying Matrix OS"
   wait_http_ok "Matrix gateway" "http://127.0.0.1:4000/health" "Check: journalctl -u matrix-gateway -n 200 --no-pager"
   wait_http_ok "Matrix shell" "http://127.0.0.1:3000/" "Check: journalctl -u matrix-shell -n 200 --no-pager"
-  password="$(cat /opt/matrix/env/initial-ui-password)"
-  wait_http_ok_auth "nginx shell" "http://127.0.0.1/" "$password" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-shell -n 200 --no-pager"
-  wait_http_ok_auth "nginx gateway API" "http://127.0.0.1/api/identity" "$password" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-gateway -n 200 --no-pager"
+  if [ -f /opt/matrix/env/initial-ui-password ]; then
+    password="$(cat /opt/matrix/env/initial-ui-password)"
+    wait_http_ok_auth "nginx shell" "http://127.0.0.1/" "$password" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-shell -n 200 --no-pager"
+    wait_http_ok_auth "nginx gateway API" "http://127.0.0.1/api/identity" "$password" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-gateway -n 200 --no-pager"
+  else
+    status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" "http://127.0.0.1/" || true)"
+    [ "$status" = "401" ] || fail "nginx Basic Auth challenge returned HTTP ${status}, expected 401"
+    ok "nginx Basic Auth is configured"
+  fi
 }
 
 print_summary() {
