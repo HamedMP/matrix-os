@@ -726,7 +726,7 @@ describe("TerminalApp", () => {
     expect(within(menu).getByRole("menuitem", { name: "Close" })).toBeTruthy();
     expect(document.activeElement).toBe(moveButton);
 
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(moveButton, { key: "Escape" });
     expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
     expect(document.activeElement).toBe(within(actions).getByRole("button", { name: "More actions for matrix-main" }));
 
@@ -1912,6 +1912,9 @@ describe("TerminalApp", () => {
     expect(document.activeElement).toBe(closeItem);
     fireEvent.keyDown(closeItem, { key: "Home" });
     expect(document.activeElement).toBe(moveItem);
+    fireEvent.keyDown(moveItem, { key: "Tab" });
+    expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
+    expect(document.activeElement).toBe(moreButton);
     expect(screen.queryByRole("menuitem", { name: "Move matrix-main to background" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Copy connect command for matrix-main" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Close matrix-main" })).toBeNull();

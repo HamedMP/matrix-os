@@ -5593,7 +5593,7 @@ function ShellSessionGroup({
       <div
         id={contentId}
         hidden={!expanded}
-        style={{ display: expanded ? "flex" : "none", flexDirection: "column", gap: 10 }}
+        style={{ display: expanded ? "flex" : undefined, flexDirection: "column", gap: 10 }}
       >
         {expanded ? (
           <>
@@ -5741,6 +5741,39 @@ function ShellCard({
   const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
   const renameControlLabel = `Rename ${displayName}`;
   const toggleMenuLabel = foreground ? "Move to Background" : "Make Active";
+  const getContextMenuItems = () => Array.from(
+    contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
+  );
+  const focusContextMenuItem = (nextIndex: number) => {
+    const items = getContextMenuItems();
+    if (items.length === 0) return;
+    const normalizedIndex = (nextIndex + items.length) % items.length;
+    items[normalizedIndex]?.focus();
+  };
+  const handleContextMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape" || event.key === "Tab") {
+      event.preventDefault();
+      restoreFocusAfterMenuCloseRef.current = true;
+      setContextMenuOpen(false);
+      return;
+    }
+    const items = getContextMenuItems();
+    if (items.length === 0) return;
+    const currentIndex = items.findIndex((item) => item === document.activeElement);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusContextMenuItem(currentIndex < 0 ? 0 : currentIndex + 1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusContextMenuItem(currentIndex < 0 ? items.length - 1 : currentIndex - 1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      focusContextMenuItem(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      focusContextMenuItem(items.length - 1);
+    }
+  };
 
   useEffect(() => () => {
     if (copiedTimerRef.current !== null) {
@@ -5754,62 +5787,26 @@ function ShellCard({
     renameInputRef.current?.select();
   }, [renaming]);
 
-  // react-doctor-disable-next-line react-doctor/exhaustive-deps -- menu close reason is intentionally held in a mutable ref so Escape/menu-item closes restore focus while outside-pointer closes do not; making it render state would add an extra close render and stale-focus edge cases
   useEffect(() => {
     if (!contextMenuOpen) return;
-    const getMenuItems = () => Array.from(
-      contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
-    );
-    const focusMenuItem = (nextIndex: number) => {
-      const items = getMenuItems();
-      if (items.length === 0) return;
-      const normalizedIndex = (nextIndex + items.length) % items.length;
-      items[normalizedIndex]?.focus();
-    };
-    const firstMenuItem = getMenuItems()[0];
+    const firstMenuItem = contextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
     firstMenuItem?.focus();
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        restoreFocusAfterMenuCloseRef.current = true;
-        setContextMenuOpen(false);
-        return;
-      }
-      const target = event.target;
-      if (!(target instanceof Node) || !contextMenuRef.current?.contains(target)) return;
-      const items = getMenuItems();
-      if (items.length === 0) return;
-      const currentIndex = items.findIndex((item) => item === document.activeElement);
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        focusMenuItem(currentIndex < 0 ? 0 : currentIndex + 1);
-      } else if (event.key === "ArrowUp") {
-        event.preventDefault();
-        focusMenuItem(currentIndex < 0 ? items.length - 1 : currentIndex - 1);
-      } else if (event.key === "Home") {
-        event.preventDefault();
-        focusMenuItem(0);
-      } else if (event.key === "End") {
-        event.preventDefault();
-        focusMenuItem(items.length - 1);
-      }
-    };
     const onPointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && cardRef.current?.contains(target)) return;
       restoreFocusAfterMenuCloseRef.current = false;
       setContextMenuOpen(false);
     };
-    document.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown, true);
-      if (restoreFocusAfterMenuCloseRef.current) {
-        moreButtonRef.current?.focus();
-        restoreFocusAfterMenuCloseRef.current = false;
-      }
     };
+  }, [contextMenuOpen]);
+
+  useEffect(() => {
+    if (contextMenuOpen || !restoreFocusAfterMenuCloseRef.current) return;
+    restoreFocusAfterMenuCloseRef.current = false;
+    moreButtonRef.current?.focus();
   }, [contextMenuOpen]);
 
   const closeContextMenuWithFocusReturn = () => {
@@ -6162,6 +6159,7 @@ function ShellCard({
                     tabIndex={-1}
                     onPointerDown={(event) => event.stopPropagation()}
                     onMouseDown={(event) => event.stopPropagation()}
+                    onKeyDown={handleContextMenuKeyDown}
                     style={SESSION_CONTEXT_MENU_STYLE}
                   >
                     <SessionContextMenuItem
