@@ -77,6 +77,31 @@ warn() {
   printf '%s%sWARN%s  %s\n' "$COLOR_YELLOW" "$COLOR_BOLD" "$COLOR_RESET" "$*" >&2
 }
 
+run_required() {
+  local description
+  description="$1"
+  shift
+  "$@" >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "${description} failed"
+}
+
+restart_required_service() {
+  local unit
+  unit="$1"
+  run_required "starting ${unit}" systemctl restart "$unit"
+  ok "${unit} started"
+}
+
+restart_optional_service() {
+  local unit label
+  unit="$1"
+  label="$2"
+  if systemctl restart "$unit" >>"$MATRIX_INSTALL_LOG" 2>&1; then
+    ok "${unit} started"
+  else
+    warn "${label} failed; Matrix OS core is still installed. Details: journalctl -u ${unit} -n 100 --no-pager"
+  fi
+}
+
 fail() {
   local failed_phase
   failed_phase="${INSTALL_PHASE:-unknown}"
@@ -273,16 +298,17 @@ install_packages() {
 }
 
 ensure_matrix_user() {
+  section "Preparing Matrix OS user"
   if ! getent group matrix >/dev/null 2>&1; then
-    groupadd --system matrix
+    run_required "creating matrix group" groupadd --system matrix
   fi
   if ! getent group docker >/dev/null 2>&1; then
-    groupadd --system docker
+    run_required "creating docker group" groupadd --system docker
   fi
   if ! id matrix >/dev/null 2>&1; then
-    useradd --system --gid matrix --groups docker --home-dir /home/matrix --shell /bin/bash matrix
+    run_required "creating matrix user" useradd --system --gid matrix --groups docker --home-dir /home/matrix --shell /bin/bash matrix
   else
-    usermod -aG docker matrix
+    run_required "updating matrix user groups" usermod -aG docker matrix
   fi
 
   install -d -o root -g matrix -m 0770 /opt/matrix
@@ -290,7 +316,8 @@ ensure_matrix_user() {
   install -d -o matrix -g matrix -m 0755 /home/matrix "$MATRIX_HOME_DIR" "$MATRIX_HOME_DIR/projects"
   install -d -o matrix -g matrix -m 0755 "$MATRIX_HOME_DIR/.local" "$MATRIX_HOME_DIR/.local/bin" "$MATRIX_HOME_DIR/.local/share"
   install -d -o matrix -g matrix -m 0755 "$MATRIX_HOME_DIR/.cache" "$MATRIX_HOME_DIR/.config"
-  usermod -d "$MATRIX_HOME_DIR" matrix
+  run_required "setting matrix home directory" usermod -d "$MATRIX_HOME_DIR" matrix
+  ok "Matrix OS user ready"
 }
 
 random_secret() {
@@ -411,11 +438,12 @@ install_systemd_units() {
     install -m 0644 /opt/matrix/systemd/matrix-developer-tools.service /etc/systemd/system/matrix-developer-tools.service
   fi
   write_self_host_restore_service
-  systemctl daemon-reload
-  systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server >/dev/null
+  run_required "reloading systemd" systemctl daemon-reload
+  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-gateway matrix-shell matrix-code matrix-code-server
   if [ -f /etc/systemd/system/matrix-developer-tools.service ] && [ -n "$MATRIX_DEVELOPER_TOOLS" ]; then
-    systemctl enable matrix-developer-tools >/dev/null
+    run_required "enabling optional developer tools service" systemctl enable matrix-developer-tools
   fi
+  ok "Systemd units installed"
 }
 
 configure_nginx() {
@@ -488,22 +516,23 @@ EOF
 
   rm -f /etc/nginx/sites-enabled/default
   ln -sfn /etc/nginx/sites-available/matrix-self-host /etc/nginx/sites-enabled/matrix-self-host
-  nginx -t
-  systemctl enable nginx >/dev/null
+  run_required "testing nginx configuration" nginx -t
+  run_required "enabling nginx" systemctl enable nginx
+  ok "nginx configured"
 }
 
 start_services() {
   section "Starting Matrix OS services"
-  systemctl enable --now docker >/dev/null
-  systemctl restart matrix-restore
-  systemctl restart matrix-gateway
-  systemctl restart matrix-shell
-  systemctl restart matrix-code-server || true
-  systemctl restart matrix-code || true
+  run_required "starting docker" systemctl enable --now docker
+  restart_required_service matrix-restore
+  restart_required_service matrix-gateway
+  restart_required_service matrix-shell
+  restart_optional_service matrix-code-server "code-server proxy"
+  restart_optional_service matrix-code "code service"
   if systemctl list-unit-files matrix-developer-tools.service >/dev/null 2>&1; then
-    systemctl restart matrix-developer-tools || true
+    restart_optional_service matrix-developer-tools "optional developer tools installer"
   fi
-  systemctl restart nginx
+  restart_required_service nginx
 }
 
 print_summary() {

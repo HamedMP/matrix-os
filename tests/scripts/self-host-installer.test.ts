@@ -120,6 +120,13 @@ describe("self-host server installer", () => {
     expect(script).toContain("apt-get install -y ca-certificates curl docker.io git nginx openssl postgresql-client procps sudo tar >>\"$MATRIX_INSTALL_LOG\" 2>&1");
     expect(script).toContain("Downloading Matrix OS");
     expect(script).toContain("--progress-bar");
+    expect(script).toContain("run_required");
+    expect(script).toContain("restart_required_service matrix-gateway");
+    expect(script).toContain("restart_optional_service matrix-developer-tools");
+    expect(script).toContain("optional developer tools installer");
+    expect(script).toContain("Matrix OS core is still installed");
+    expect(script).toContain("usermod -aG docker matrix");
+    expect(script).toContain("testing nginx configuration");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-gateway.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-shell.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code.service");
