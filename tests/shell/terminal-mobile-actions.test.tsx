@@ -143,6 +143,34 @@ describe("TerminalApp mobile actions", () => {
     window.removeEventListener(TERMINAL_INPUT_EVENT, listener);
   });
 
+  it("loads mobile new-session agent status once under React Strict Mode", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    render(
+      <React.StrictMode>
+        <TerminalApp mobile />
+      </React.StrictMode>,
+    );
+
+    const newSession = await screen.findByRole("button", { name: "New session" });
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => (
+        String(input).endsWith("/api/agents")
+      )).length).toBeGreaterThanOrEqual(2);
+    });
+    fetchMock.mockClear();
+
+    fireEvent.click(newSession);
+    await screen.findByRole("menu", { name: "New session menu" });
+
+    await waitFor(() => {
+      const agentStatusCalls = fetchMock.mock.calls.filter(([input]) => (
+        String(input).endsWith("/api/agents")
+      ));
+      expect(agentStatusCalls).toHaveLength(1);
+    });
+  });
+
   it("keeps mobile command input keyboard-safe and uses green primary actions", async () => {
     render(<TerminalApp mobile />);
 

@@ -3244,10 +3244,9 @@ function MobileTerminalActions({
   };
 
   const toggleNewSessionMenu = () => {
-    setNewSessionMenuOpen((open) => {
-      if (!open) void fetchAgentStatuses();
-      return !open;
-    });
+    const shouldOpen = !newSessionMenuOpen;
+    setNewSessionMenuOpen(shouldOpen);
+    if (shouldOpen) void fetchAgentStatuses();
   };
 
   const closeNewSessionMenu = useCallback(() => {
