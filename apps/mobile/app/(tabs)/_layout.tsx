@@ -1,9 +1,9 @@
 import { Tabs } from "expo-router";
-import { View, StyleSheet } from "react-native";
+import { View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
-import { colors, fonts } from "@/lib/theme";
 
 const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
   chat: { outline: "chatbubble-outline", filled: "chatbubble" },
@@ -13,6 +13,7 @@ const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; fille
 };
 
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
+  const { theme } = useUnistyles();
   const icons = TAB_ICONS[name];
   if (!icons) return null;
 
@@ -21,7 +22,7 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
       <Ionicons
         name={focused ? icons.filled : icons.outline}
         size={20}
-        color={focused ? colors.light.forest : colors.light.moss}
+        color={focused ? theme.colors.forest : theme.colors.moss}
       />
     </View>
   );
@@ -36,6 +37,7 @@ function ConnectionDot({ connected }: { connected: boolean }) {
 }
 
 export default function TabsLayout() {
+  const { theme } = useUnistyles();
   const { connectionState, unreadCount } = useGateway();
   const isConnected = connectionState === "connected";
 
@@ -47,12 +49,12 @@ export default function TabsLayout() {
         tabBarBackground: () => (
           <BlurView tint="light" intensity={88} style={styles.tabBarBackdrop} />
         ),
-        tabBarActiveTintColor: colors.light.forest,
-        tabBarInactiveTintColor: colors.light.moss,
+        tabBarActiveTintColor: theme.colors.forest,
+        tabBarInactiveTintColor: theme.colors.moss,
         tabBarLabelStyle: styles.tabBarLabel,
         tabBarItemStyle: styles.tabBarItem,
         headerStyle: styles.header,
-        headerTintColor: colors.light.foreground,
+        headerTintColor: theme.colors.foreground,
         headerTitleStyle: styles.headerTitle,
         headerRight: () => <ConnectionDot connected={isConnected} />,
       }}
@@ -98,7 +100,7 @@ export default function TabsLayout() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   tabBar: {
     position: "absolute" as const,
     left: 14,
@@ -125,7 +127,7 @@ const styles = StyleSheet.create({
     borderCurve: "continuous" as const,
   },
   tabBarLabel: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 11,
     marginTop: 0,
   },
@@ -142,12 +144,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(50, 61, 46, 0.08)",
   },
   header: {
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
     boxShadow: "none",
   },
   headerTitle: {
-    fontFamily: fonts.sansSemiBold,
-    color: colors.light.foreground,
+    fontFamily: theme.fonts.sansSemiBold,
+    color: theme.colors.foreground,
   },
   headerRight: {
     marginRight: 16,
@@ -161,17 +163,17 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   dotConnected: {
-    backgroundColor: colors.light.success,
+    backgroundColor: theme.colors.success,
   },
   dotDisconnected: {
-    backgroundColor: colors.light.moss,
+    backgroundColor: theme.colors.moss,
   },
   badge: {
-    backgroundColor: colors.light.forest,
-    color: colors.light.background,
+    backgroundColor: theme.colors.forest,
+    color: theme.colors.background,
     fontSize: 10,
     minWidth: 18,
     height: 18,
     lineHeight: 18,
   },
-});
+}));

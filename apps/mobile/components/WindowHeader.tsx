@@ -1,9 +1,8 @@
 import React, { useCallback, useRef, type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, fonts, radius } from "@/lib/theme";
 
-const L = colors.light;
 const DOUBLE_TAP_MS = 280;
 
 export interface WindowHeaderProps {
@@ -51,6 +50,7 @@ export function WindowHeader({
   maximized = false,
   onToggleMaximized,
 }: WindowHeaderProps) {
+  const { theme } = useUnistyles();
   const lastTapRef = useRef(0);
 
   // Manual double-tap: the bar background is the only maximize target, so taps
@@ -76,7 +76,7 @@ export function WindowHeader({
     >
       {onBack ? (
         <Pressable accessibilityRole="button" accessibilityLabel={backLabel} onPress={onBack} style={styles.iconButton}>
-          <Ionicons name={backIcon} size={20} color={L.ink} />
+          <Ionicons name={backIcon} size={20} color={theme.colors.ink} />
         </Pressable>
       ) : null}
 
@@ -90,7 +90,7 @@ export function WindowHeader({
           <Text style={[styles.title, maximized && styles.titleCompact]} numberOfLines={1}>
             {title}
           </Text>
-          {titleAffordance ? <Ionicons name="chevron-down" size={13} color={L.inkMuted} /> : null}
+          {titleAffordance ? <Ionicons name="chevron-down" size={13} color={theme.colors.inkMuted} /> : null}
         </View>
         {subtitle && !maximized ? (
           <Text style={[styles.subtitle, subtitleMono ? styles.subtitleMono : styles.subtitleSans]} numberOfLines={1}>
@@ -109,30 +109,31 @@ export function WindowHeaderAction({
   icon,
   label,
   onPress,
-  tint = L.ink,
+  tint,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
   tint?: string;
 }) {
+  const { theme } = useUnistyles();
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={styles.actionButton}>
-      <Ionicons name={icon} size={19} color={tint} />
+      <Ionicons name={icon} size={19} color={tint ?? theme.colors.ink} />
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   bar: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     paddingHorizontal: 14,
     paddingBottom: 10,
-    backgroundColor: L.paper,
+    backgroundColor: theme.colors.paper,
     borderBottomWidth: 1,
-    borderBottomColor: L.line,
+    borderBottomColor: theme.colors.line,
   },
   barCompact: {
     paddingBottom: 6,
@@ -144,9 +145,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 14,
     borderCurve: "continuous",
-    backgroundColor: L.panel,
+    backgroundColor: theme.colors.panel,
     borderWidth: 1,
-    borderColor: L.line,
+    borderColor: theme.colors.line,
   },
   titleGroup: {
     flex: 1,
@@ -158,8 +159,8 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   title: {
-    fontFamily: fonts.sansBold,
-    color: L.foreground,
+    fontFamily: theme.fonts.sansBold,
+    color: theme.colors.foreground,
     fontSize: 18,
     letterSpacing: -0.3,
   },
@@ -171,12 +172,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   subtitleMono: {
-    fontFamily: fonts.mono,
-    color: L.accentInk,
+    fontFamily: theme.fonts.mono,
+    color: theme.colors.accentInk,
   },
   subtitleSans: {
-    fontFamily: fonts.sans,
-    color: L.inkMuted,
+    fontFamily: theme.fonts.sans,
+    color: theme.colors.inkMuted,
   },
   actions: {
     flexDirection: "row",
@@ -190,8 +191,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 11,
     borderCurve: "continuous",
-    backgroundColor: L.panel,
+    backgroundColor: theme.colors.panel,
     borderWidth: 1,
-    borderColor: L.line,
+    borderColor: theme.colors.line,
   },
-});
+}));

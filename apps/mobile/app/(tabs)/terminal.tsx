@@ -6,10 +6,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
   View,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useGateway } from "@/app/_layout";
@@ -28,12 +28,8 @@ import {
   type MobileTerminalSession,
   terminalReducer,
 } from "@/lib/terminal-state";
-import { colors, fonts } from "@/lib/theme";
-
-const L = colors.light;
-const T = colors.terminal;
-
 export default function TerminalScreen() {
+  const { theme } = useUnistyles();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { client } = useGateway();
@@ -272,10 +268,10 @@ export default function TerminalScreen() {
         actions={
           <>
             {state.activeSessionId ? (
-              <WindowHeaderAction icon="stop-circle-outline" label="End session" onPress={confirmEnd} tint={L.destructive} />
+              <WindowHeaderAction icon="stop-circle-outline" label="End session" onPress={confirmEnd} tint={theme.colors.destructive} />
             ) : null}
             {state.status === "connecting" ? (
-              <ActivityIndicator color={L.accentInk} style={styles.headerSpinner} />
+              <ActivityIndicator color={theme.colors.accentInk} style={styles.headerSpinner} />
             ) : (
               <WindowHeaderAction icon="add" label="New session" onPress={() => connectSession()} />
             )}
@@ -330,14 +326,15 @@ interface SessionChipProps {
 }
 
 const SessionChip = React.memo(function SessionChip({ session, active, onSelect }: SessionChipProps) {
+  const { theme } = useUnistyles();
   const handlePress = useCallback(() => onSelect(session.sessionId), [onSelect, session.sessionId]);
   const status = session.visualStatus;
   const hollow = status === "idle" || status === "finished";
   const dotColor = status === "waiting"
-    ? colors.light.statusWaiting
+    ? theme.colors.statusWaiting
     : hollow
-      ? colors.light.statusIdle
-      : colors.light.statusRunning;
+      ? theme.colors.statusIdle
+      : theme.colors.statusRunning;
   return (
     <Pressable
       accessibilityRole="button"
@@ -391,10 +388,10 @@ function SessionChipRow({ sessions, activeSessionId, onSelect }: SessionChipRowP
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: colors.light.paper,
+    backgroundColor: theme.colors.paper,
   },
   headerSpinner: {
     width: 38,
@@ -421,8 +418,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 11,
     borderWidth: 1,
-    borderColor: colors.light.line,
-    backgroundColor: colors.light.field,
+    borderColor: theme.colors.line,
+    backgroundColor: theme.colors.field,
   },
   sessionChipActiveCombined: {
     maxWidth: 190,
@@ -434,8 +431,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 11,
     borderWidth: 1,
-    backgroundColor: colors.light.panel,
-    borderColor: colors.light.borderStrong,
+    backgroundColor: theme.colors.panel,
+    borderColor: theme.colors.borderStrong,
   },
   chipDot: {
     width: 7,
@@ -443,15 +440,15 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   sessionChipText: {
-    fontFamily: fonts.mono,
-    color: colors.light.ink,
+    fontFamily: theme.fonts.mono,
+    color: theme.colors.ink,
     fontSize: 12,
   },
   // Full-bleed dark console — no floating frame; the light WindowHeader above
   // and the control footer below are the only chrome.
   terminalSurface: {
     flex: 1,
-    backgroundColor: T.bg,
+    backgroundColor: theme.terminal.bg,
     overflow: "hidden",
   },
   emptyOverlay: {
@@ -459,18 +456,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 28,
-    backgroundColor: T.bg,
+    backgroundColor: theme.terminal.bg,
   },
   emptyTitle: {
-    fontFamily: fonts.sansBold,
-    color: T.fg,
+    fontFamily: theme.fonts.sansBold,
+    color: theme.terminal.fg,
     fontSize: 17,
   },
   emptySubtitle: {
     marginTop: 6,
     textAlign: "center",
-    fontFamily: fonts.sans,
-    color: T.fgDim,
+    fontFamily: theme.fonts.sans,
+    color: theme.terminal.fgDim,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -485,11 +482,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(239, 68, 68, 0.07)",
   },
   errorText: {
-    fontFamily: fonts.sansMedium,
-    color: colors.light.destructive,
+    fontFamily: theme.fonts.sansMedium,
+    color: theme.colors.destructive,
     fontSize: 12,
   },
   controlFooter: {
-    backgroundColor: colors.light.paper,
+    backgroundColor: theme.colors.paper,
   },
-});
+}));

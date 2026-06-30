@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
-import { FlatList, type ListRenderItem, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, type ListRenderItem, Pressable, Text, View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { buildTerminalControlSequence, type TerminalControlKey } from "@/lib/terminal-state";
 import {
   TERMINAL_ARROW_KEYS,
@@ -8,15 +9,12 @@ import {
   TERMINAL_SYMBOL_KEYS,
   sendTerminalClipboardPaste,
 } from "@/lib/terminal-controls";
-import { colors, fonts } from "@/lib/theme";
 
 interface TerminalControlBarProps {
   onSend: (data: string) => void;
   onFontScale: (delta: number) => void;
   onClear: () => void;
 }
-
-const light = colors.light;
 
 type BarItem =
   | { id: string; label: string; kind: "seq"; seq: TerminalControlKey; danger?: boolean }
@@ -91,12 +89,12 @@ export function TerminalControlBar({ onSend, onFontScale, onClear }: TerminalCon
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   bar: {
     flexGrow: 0,
     borderTopWidth: 1,
-    borderTopColor: light.line,
-    backgroundColor: light.paper,
+    borderTopColor: theme.colors.line,
+    backgroundColor: theme.colors.paper,
   },
   content: {
     alignItems: "center",
@@ -112,23 +110,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: light.line,
-    backgroundColor: light.field,
+    borderColor: theme.colors.line,
+    backgroundColor: theme.colors.field,
   },
   keyLabel: {
-    fontFamily: fonts.monoBold,
+    fontFamily: theme.fonts.monoBold,
     fontSize: 14,
-    color: light.ink,
+    color: theme.colors.ink,
   },
   keyLabelDanger: {
-    fontFamily: fonts.monoBold,
+    fontFamily: theme.fonts.monoBold,
     fontSize: 14,
-    color: light.glow,
+    color: theme.colors.glow,
   },
   divider: {
     width: 1,
     height: 24,
     marginHorizontal: 3,
-    backgroundColor: light.line,
+    backgroundColor: theme.colors.line,
   },
-});
+}));

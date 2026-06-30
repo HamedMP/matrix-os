@@ -1,5 +1,6 @@
 import React, { forwardRef, useCallback, useImperativeHandle, useMemo, useRef } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { colors } from "@/lib/theme";
 
@@ -191,7 +192,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   },
 );
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: T.bg, overflow: "hidden" },
-  web: { flex: 1, backgroundColor: T.bg },
-});
+const styles = StyleSheet.create((theme) => ({
+  container: { flex: 1, backgroundColor: theme.terminal.bg, overflow: "hidden" },
+  web: { flex: 1, backgroundColor: theme.terminal.bg },
+}));

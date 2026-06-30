@@ -4,14 +4,13 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
-  StyleSheet,
   TextInput,
   Text,
   useWindowDimensions,
   View,
   type ListRenderItemInfo,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Image } from "expo-image";
 import { Link } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -26,18 +25,18 @@ import {
   type MatrixAppEntry,
 } from "@/lib/apps";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
-import { colors, fonts, radius } from "@/lib/theme";
+import { colors } from "@/lib/theme";
 
+const H_PADDING = 16;
+
+// Icon-tile palette pairs a background with a legible glyph colour so fallback
+// (no shipped icon) tiles never wash out. Stable per app via a slug hash.
 const L = colors.light;
-const H_PADDING = 14;
-
-// Icon-tile palette pairs a background with a legible glyph colour so icons
-// never wash out on pale tiles. Stable per app via a slug hash.
 const TILE_PALETTE: Array<{ bg: string; fg: string }> = [
   { bg: L.forest, fg: "#DCE6D2" },
   { bg: L.moss, fg: "#EFF3EC" },
   { bg: "#5F7A6B", fg: "#EAF0EC" },
-  { bg: L.lichen, fg: "#26301F" },
+  { bg: "#7C6F4E", fg: "#F4EFE2" },
   { bg: L.glow, fg: "#FBEFE4" },
 ];
 
@@ -47,18 +46,49 @@ function tileFor(slug: string): { bg: string; fg: string } {
   return TILE_PALETTE[hash];
 }
 
-function AppGlyph({ app, gatewayUrl, fg, size }: { app: MatrixAppEntry; gatewayUrl?: string; fg: string; size: number }) {
-  const iconUrl = app.icon && gatewayUrl && app.icon.startsWith("/")
-    ? `${gatewayUrl.replace(/\/+$/, "")}${app.icon}`
-    : app.icon;
-
-  if (iconUrl && /^https?:\/\//.test(iconUrl)) {
-    return <Image source={{ uri: iconUrl }} style={[styles.glyphImage, { width: size, height: size }]} contentFit="cover" />;
-  }
-  return <Ionicons name={getAppIconName(app) as keyof typeof Ionicons.glyphMap} size={size} color={fg} />;
+function resolveIconUrl(app: MatrixAppEntry, gatewayUrl?: string): string | undefined {
+  const icon = app.icon;
+  if (!icon) return undefined;
+  const url = icon.startsWith("/") && gatewayUrl ? `${gatewayUrl.replace(/\/+$/, "")}${icon}` : icon;
+  return /^https?:\/\//.test(url) ? url : undefined;
 }
 
-// One springboard cell: rounded icon tile + label beneath, fixed width so rows
+// Premium springboard tile: shipped icons fill the squircle edge-to-edge; apps
+// with no icon fall back to a tinted tile + category glyph instead of a generic
+// repeated image.
+function AppTileGlyph({
+  app,
+  gatewayUrl,
+  tile,
+}: {
+  app: MatrixAppEntry;
+  gatewayUrl?: string;
+  tile: { bg: string; fg: string };
+}) {
+  const iconUrl = resolveIconUrl(app, gatewayUrl);
+
+  if (iconUrl) {
+    return (
+      <Image
+        source={{ uri: iconUrl }}
+        style={styles.tileImage}
+        contentFit="cover"
+        transition={120}
+        cachePolicy="memory-disk"
+      />
+    );
+  }
+
+  return (
+    <View style={styles.tileFallback(tile.bg)}>
+      {/* Soft top highlight gives the tile a glossy, app-icon feel without a gradient dep. */}
+      <View style={styles.tileGloss} pointerEvents="none" />
+      <Ionicons name={getAppIconName(app) as keyof typeof Ionicons.glyphMap} size={30} color={tile.fg} />
+    </View>
+  );
+}
+
+// One springboard cell: squircle icon tile + label beneath, fixed width so rows
 // stay aligned even on a partial final row.
 const AppGridItem = memo(function AppGridItem({
   app,
@@ -86,19 +116,21 @@ const AppGridItem = memo(function AppGridItem({
           onOpen(slug);
           if (process.env.EXPO_OS === "ios") Haptics.selectionAsync();
         }}
-        style={({ pressed }) => [styles.cell, { width }, pressed && styles.cellPressed]}
+        style={({ pressed }) => [styles.cell(width), pressed && styles.cellPressed]}
       >
-        <View style={[styles.tile, { backgroundColor: tile.bg }]}>
-          <AppGlyph app={app} gatewayUrl={gatewayUrl} fg={tile.fg} size={28} />
+        <View style={styles.tile}>
+          <AppTileGlyph app={app} gatewayUrl={gatewayUrl} tile={tile} />
           {active ? <View style={styles.activeDot} /> : null}
         </View>
-        <Text numberOfLines={1} style={styles.cellLabel}>{app.name}</Text>
+        <Text numberOfLines={1} style={styles.cellLabel}>
+          {app.name}
+        </Text>
       </Pressable>
     </Link>
   );
 });
 
-// "Jump back in" — the last-opened app as a single tappable row.
+// "Jump back in" — the last-opened app as a single tappable card.
 function RecentRow({
   app,
   gatewayUrl,
@@ -118,16 +150,22 @@ function RecentRow({
         accessibilityRole="button"
         accessibilityLabel={`Continue ${app.name}`}
         onPress={() => onOpen(slug)}
-        style={({ pressed }) => [styles.recentRow, pressed && styles.cellPressed]}
+        style={({ pressed }) => [styles.recentRow, pressed && styles.recentRowPressed]}
       >
-        <View style={[styles.recentTile, { backgroundColor: tile.bg }]}>
-          <AppGlyph app={app} gatewayUrl={gatewayUrl} fg={tile.fg} size={26} />
+        <View style={styles.recentTile}>
+          <AppTileGlyph app={app} gatewayUrl={gatewayUrl} tile={tile} />
         </View>
         <View style={styles.recentText}>
-          <Text numberOfLines={1} style={styles.recentName}>{app.name}</Text>
-          <Text numberOfLines={1} style={styles.recentMeta}>{app.category ?? "tap to reopen"}</Text>
+          <Text numberOfLines={1} style={styles.recentName}>
+            {app.name}
+          </Text>
+          <Text numberOfLines={1} style={styles.recentMeta}>
+            {app.category ?? "Tap to reopen"}
+          </Text>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={L.inkDim} />
+        <View style={styles.recentChevron}>
+          <Ionicons name="arrow-forward" size={16} color={L.accentInk} />
+        </View>
       </Pressable>
     </Link>
   );
@@ -174,8 +212,8 @@ function appsReducer(state: AppsState, action: AppsAction): AppsState {
 }
 
 export default function AppsScreen() {
-  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const { theme } = useUnistyles();
   const { client, connectionState } = useGateway();
   const [state, dispatch] = useReducer(appsReducer, initialAppsState);
   const { apps, refreshing, loading, query, lastActiveAppSlug } = state;
@@ -213,12 +251,14 @@ export default function AppsScreen() {
   const handleOpenApp = useCallback((slug: string) => {
     dispatch({ type: "lastActiveAppSlugChanged", slug });
     loadMobileShellState()
-      .then((shellState) => saveMobileShellState({
-        ...shellState,
-        mode: "app",
-        lastActiveAppSlug: slug,
-        updatedAt: new Date().toISOString(),
-      }))
+      .then((shellState) =>
+        saveMobileShellState({
+          ...shellState,
+          mode: "app",
+          lastActiveAppSlug: slug,
+          updatedAt: new Date().toISOString(),
+        }),
+      )
       .catch((err: unknown) => {
         console.warn("[mobile] failed to save app open state", err instanceof Error ? err.message : String(err));
       });
@@ -258,13 +298,13 @@ export default function AppsScreen() {
   );
 
   const refreshControl = useMemo(
-    () => <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={L.accentInk} />,
-    [refreshing, handleRefresh],
+    () => <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.colors.accentInk} />,
+    [refreshing, handleRefresh, theme.colors.accentInk],
   );
 
   const listHeader = useMemo(
     () => (
-      <View>
+      <View style={styles.listHeader}>
         {query.trim() === "" && lastActiveApp ? (
           <View>
             <Text style={styles.sectionLabel}>Jump back in</Text>
@@ -279,33 +319,33 @@ export default function AppsScreen() {
 
   return (
     <View style={styles.screen}>
-      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+      <View style={styles.header}>
         <View style={styles.headerTitleGroup}>
           <Text style={styles.headerTitle}>Apps</Text>
           <Text style={styles.headerSubtitle}>
             {apps.length} installed{connected ? "" : " · connecting…"}
           </Text>
         </View>
-        <View style={styles.avatar}>
-          <Ionicons name="person" size={15} color="#DCE6D2" />
-        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Account" style={styles.avatar}>
+          <Ionicons name="person" size={16} color="#DCE6D2" />
+        </Pressable>
       </View>
 
       <View style={styles.searchWrap}>
         <View style={styles.searchBar}>
-          <Ionicons name="search" size={17} color={L.inkDim} />
+          <Ionicons name="search" size={17} color={theme.colors.inkDim} />
           <TextInput
             value={query}
             onChangeText={(text) => dispatch({ type: "queryChanged", query: text })}
             placeholder="Search apps"
-            placeholderTextColor={L.inkDim}
+            placeholderTextColor={theme.colors.inkDim}
             autoCapitalize="none"
             autoCorrect={false}
             style={styles.searchInput}
           />
           {query ? (
             <Pressable accessibilityLabel="Clear search" onPress={() => dispatch({ type: "queryChanged", query: "" })}>
-              <Ionicons name="close-circle" size={17} color={L.inkDim} />
+              <Ionicons name="close-circle" size={18} color={theme.colors.inkDim} />
             </Pressable>
           ) : null}
         </View>
@@ -313,7 +353,7 @@ export default function AppsScreen() {
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator color={L.accentInk} />
+          <ActivityIndicator color={theme.colors.accentInk} />
         </View>
       ) : (
         <FlatList
@@ -329,12 +369,10 @@ export default function AppsScreen() {
           ListEmptyComponent={
             <View style={styles.empty}>
               <View style={styles.emptyIcon}>
-                <Ionicons name="apps-outline" size={30} color={L.accentInk} />
+                <Ionicons name="apps-outline" size={30} color={theme.colors.accentInk} />
               </View>
               <Text style={styles.emptyTitle}>{client ? "No apps found" : "Connecting to Matrix OS"}</Text>
-              <Text style={styles.emptyText}>
-                Apps from your VPS launcher at app.matrix-os.com appear here.
-              </Text>
+              <Text style={styles.emptyText}>Apps from your VPS launcher at app.matrix-os.com appear here.</Text>
             </View>
           }
         />
@@ -343,123 +381,186 @@ export default function AppsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: L.paper },
+const styles = StyleSheet.create((theme, rt) => ({
+  screen: { flex: 1, backgroundColor: theme.colors.paper },
   header: {
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
-    paddingHorizontal: 18,
-    paddingBottom: 12,
+    paddingHorizontal: 20,
+    paddingTop: rt.insets.top + 10,
+    paddingBottom: 14,
   },
-  headerTitleGroup: { flex: 1, minWidth: 0, gap: 2 },
-  headerTitle: { fontFamily: fonts.sansBold, fontSize: 30, letterSpacing: -0.9, lineHeight: 34, color: L.ink },
-  headerSubtitle: { fontFamily: fonts.mono, fontSize: 12, color: L.inkMuted },
+  headerTitleGroup: { flex: 1, minWidth: 0, gap: 3 },
+  headerTitle: {
+    fontFamily: theme.fonts.sansBold,
+    fontSize: 32,
+    letterSpacing: -1,
+    lineHeight: 36,
+    color: theme.colors.ink,
+  },
+  headerSubtitle: { fontFamily: theme.fonts.mono, fontSize: 12, color: theme.colors.inkMuted },
   avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 999,
-    backgroundColor: L.forest,
+    width: 38,
+    height: 38,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.forest,
     borderWidth: 1,
-    borderColor: L.line,
+    borderColor: "rgba(255,255,255,0.12)",
     alignItems: "center",
     justifyContent: "center",
+    boxShadow: theme.shadows.sm,
   },
-  searchWrap: { paddingHorizontal: 18, paddingBottom: 6 },
+  searchWrap: { paddingHorizontal: 20, paddingBottom: 4 },
   searchBar: {
-    height: 42,
+    height: 46,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
     paddingHorizontal: 14,
-    borderRadius: 12,
+    borderRadius: theme.radius.xl,
     borderWidth: 1,
-    borderColor: L.line,
-    backgroundColor: L.field,
+    borderColor: theme.colors.lineSoft,
+    backgroundColor: theme.colors.field,
   },
-  searchInput: { flex: 1, fontFamily: fonts.sans, fontSize: 14, color: L.ink, paddingVertical: 8 },
+  searchInput: {
+    flex: 1,
+    fontFamily: theme.fonts.sans,
+    fontSize: 15,
+    color: theme.colors.ink,
+    paddingVertical: 8,
+  },
+  listHeader: { gap: 2 },
   sectionLabel: {
-    fontFamily: fonts.sansSemiBold,
-    fontSize: 12,
-    color: L.inkMuted,
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 8,
+    fontFamily: theme.fonts.monoBold,
+    fontSize: 11,
+    letterSpacing: 0.9,
+    textTransform: "uppercase",
+    color: theme.colors.inkDim,
+    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingBottom: 10,
   },
-  listContent: { paddingHorizontal: H_PADDING, paddingBottom: 120 },
-  cell: {
-    alignItems: "center",
-    gap: 7,
-    paddingVertical: 10,
-  },
-  cellPressed: { opacity: 0.75 },
+  listContent: { paddingHorizontal: H_PADDING, paddingBottom: 130 },
+
+  // Grid cell + squircle tile
+  cell: (w: number) => ({
+    width: w,
+    alignItems: "center" as const,
+    gap: 8,
+    paddingVertical: 9,
+  }),
+  cellPressed: { opacity: 0.85, transform: [{ scale: 0.93 }] },
   tile: {
-    width: 60,
-    height: 60,
-    borderRadius: 17,
+    width: 64,
+    height: 64,
+    borderRadius: 19,
+    overflow: "hidden",
+    backgroundColor: theme.colors.panel,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.line,
     alignItems: "center",
     justifyContent: "center",
+    boxShadow: theme.shadows.card,
+  },
+  tileImage: { width: "100%", height: "100%" },
+  tileFallback: (bg: string) => ({
+    width: "100%" as const,
+    height: "100%" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    backgroundColor: bg,
+  }),
+  tileGloss: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: "55%",
+    backgroundColor: "rgba(255,255,255,0.10)",
   },
   activeDot: {
     position: "absolute",
-    top: 5,
-    right: 5,
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: "#DCE6D2",
+    top: 6,
+    right: 6,
+    width: 9,
+    height: 9,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.glow,
     borderWidth: 1.5,
-    borderColor: "rgba(0,0,0,0.18)",
+    borderColor: theme.colors.panel,
   },
-  glyphImage: { borderRadius: 14 },
   cellLabel: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 12,
     lineHeight: 15,
     textAlign: "center",
-    color: L.ink,
+    color: theme.colors.ink,
   },
+
+  // "Jump back in" card
   recentRow: {
-    marginHorizontal: 18,
+    marginHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",
-    gap: 13,
+    gap: 14,
     padding: 12,
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.xl2,
     borderWidth: 1,
-    borderColor: L.line,
-    backgroundColor: L.panel,
+    borderColor: theme.colors.line,
+    backgroundColor: theme.colors.panel,
+    boxShadow: theme.shadows.card,
   },
+  recentRowPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
   recentTile: {
-    width: 46,
-    height: 46,
-    borderRadius: 13,
+    width: 52,
+    height: 52,
+    borderRadius: 15,
+    overflow: "hidden",
+    backgroundColor: theme.colors.panel,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.line,
     alignItems: "center",
     justifyContent: "center",
   },
-  recentText: { flex: 1, minWidth: 0, gap: 2 },
-  recentName: { fontFamily: fonts.sansSemiBold, fontSize: 16, letterSpacing: -0.2, color: L.ink },
-  recentMeta: { fontFamily: fonts.mono, fontSize: 11, color: L.inkMuted },
+  recentText: { flex: 1, minWidth: 0, gap: 3 },
+  recentName: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 16,
+    letterSpacing: -0.2,
+    color: theme.colors.ink,
+  },
+  recentMeta: { fontFamily: theme.fonts.mono, fontSize: 11, color: theme.colors.inkMuted },
+  recentChevron: {
+    width: 30,
+    height: 30,
+    borderRadius: theme.radius.full,
+    backgroundColor: theme.colors.field,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   empty: { alignItems: "center", paddingVertical: 64, paddingHorizontal: 28 },
   emptyIcon: {
     width: 72,
     height: 72,
-    borderRadius: 18,
-    backgroundColor: L.panel,
+    borderRadius: theme.radius.xl2,
+    backgroundColor: theme.colors.panel,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: L.line,
+    borderColor: theme.colors.line,
     marginBottom: 16,
+    boxShadow: theme.shadows.card,
   },
-  emptyTitle: { fontFamily: fonts.sansSemiBold, fontSize: 17, color: L.ink },
+  emptyTitle: { fontFamily: theme.fonts.sansSemiBold, fontSize: 17, color: theme.colors.ink },
   emptyText: {
     marginTop: 8,
     textAlign: "center",
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 14,
     lineHeight: 20,
-    color: L.inkMuted,
+    color: theme.colors.inkMuted,
   },
-});
+}));

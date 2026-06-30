@@ -5,9 +5,9 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Pressable,
-  StyleSheet,
   type ListRenderItemInfo,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
@@ -22,7 +22,6 @@ import { useGateway } from "../_layout";
 import { ChatMessage } from "@/components/ChatMessage";
 import { InputBar } from "@/components/InputBar";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
-import { colors, fonts, spacing } from "@/lib/theme";
 import type { ServerMessage } from "@/lib/gateway-client";
 import {
   getCachedMessages,
@@ -67,32 +66,33 @@ function TypingIndicator() {
   );
 }
 
-const typingStyles = StyleSheet.create({
+const typingStyles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
     alignSelf: "flex-start",
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
     borderRadius: 16,
     borderCurve: "continuous" as const,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
     paddingVertical: 10,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
+    marginHorizontal: theme.spacing.lg,
+    marginTop: theme.spacing.sm,
   },
   dot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: colors.light.mutedForeground,
+    backgroundColor: theme.colors.mutedForeground,
   },
-});
+}));
 
 // react-doctor-disable-next-line react-doctor/no-giant-component -- mobile chat is an intentionally integrated screen; splitting it is deferred outside the React Doctor score cleanup stack.
 export default function ChatScreen() {
+  const { theme } = useUnistyles();
   const { client, connectionState, gateway, clearUnread, incrementUnread } = useGateway();
   const { isSignedIn } = useAuth();
   const router = useRouter();
@@ -356,7 +356,7 @@ export default function ChatScreen() {
               <Ionicons
                 name={isConnected ? "chatbubble-outline" : "cloud-offline-outline"}
                 size={40}
-                color={isConnected ? colors.light.primary : colors.light.mutedForeground}
+                color={isConnected ? theme.colors.primary : theme.colors.mutedForeground}
               />
             </View>
             <Text style={styles.emptyLabel}>Matrix OS</Text>
@@ -402,14 +402,14 @@ export default function ChatScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
   },
   listContent: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.sm,
     gap: 8,
   },
   emptyContainer: {
@@ -417,68 +417,68 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 60,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: theme.spacing.xl,
   },
   emptyIcon: {
     width: 80,
     height: 80,
     borderRadius: 20,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: spacing.lg,
+    marginBottom: theme.spacing.lg,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
   },
   emptyLabel: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 11,
-    color: colors.light.primary,
+    color: theme.colors.primary,
     letterSpacing: 2,
     textTransform: "uppercase",
-    marginBottom: spacing.sm,
+    marginBottom: theme.spacing.sm,
   },
   emptySubtitle: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     textAlign: "center",
   },
   suggestionsContainer: {
-    marginTop: spacing["2xl"],
+    marginTop: theme.spacing["2xl"],
     width: "100%",
-    gap: spacing.sm,
+    gap: theme.spacing.sm,
   },
   suggestionsTitle: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 12,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     textTransform: "uppercase",
     letterSpacing: 0.5,
-    marginBottom: spacing.xs,
+    marginBottom: theme.spacing.xs,
   },
   suggestion: {
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
     borderRadius: 12,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
     paddingVertical: 12,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
   },
   suggestionText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   loadingOlder: {
     alignItems: "center",
-    paddingVertical: spacing.md,
+    paddingVertical: theme.spacing.md,
   },
   loadingOlderText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 12,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
-});
+}));

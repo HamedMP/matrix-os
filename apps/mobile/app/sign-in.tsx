@@ -4,16 +4,15 @@ import {
   Text,
   Pressable,
   ActivityIndicator,
-  StyleSheet,
   Alert,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import { makeRedirectUri } from "expo-auth-session";
 import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -22,6 +21,7 @@ const clerkOAuthRedirectUrl =
   makeRedirectUri({ scheme: "matrixos", path: "sso-callback" });
 
 export default function SignInScreen() {
+  const { theme } = useUnistyles();
   const router = useRouter();
   const { isSignedIn } = useAuth();
   const { startSSOFlow } = useSSO();
@@ -88,10 +88,10 @@ export default function SignInScreen() {
           ]}
         >
           {loading ? (
-            <ActivityIndicator size="small" color={colors.light.foreground} />
+            <ActivityIndicator size="small" color={theme.colors.foreground} />
           ) : (
             <>
-              <Ionicons name="logo-google" size={20} color={colors.light.foreground} />
+              <Ionicons name="logo-google" size={20} color={theme.colors.foreground} />
               <Text style={styles.googleButtonText}>Continue with Google</Text>
             </>
           )}
@@ -105,14 +105,14 @@ export default function SignInScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
   },
   content: {
     flex: 1,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: theme.spacing.xl,
     justifyContent: "center",
   },
   header: {
@@ -124,36 +124,36 @@ const styles = StyleSheet.create({
     height: 104,
     borderRadius: 28,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
     boxShadow: "0 12px 28px rgba(50, 61, 46, 0.10)",
-    marginBottom: spacing.lg,
+    marginBottom: theme.spacing.lg,
   },
   logo: {
     width: 76,
     height: 76,
   },
   wordmark: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 12,
-    color: colors.light.forest,
+    color: theme.colors.forest,
     letterSpacing: 2.4,
-    marginBottom: spacing.lg,
+    marginBottom: theme.spacing.lg,
   },
   title: {
-    fontFamily: fonts.sansBold,
+    fontFamily: theme.fonts.sansBold,
     fontSize: 30,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     marginBottom: 8,
     textAlign: "center",
   },
   subtitle: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 15,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     lineHeight: 22,
     textAlign: "center",
   },
@@ -162,31 +162,31 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
-    backgroundColor: colors.light.card,
-    borderRadius: radius.lg,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
     paddingVertical: 16,
     paddingHorizontal: 24,
     boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
   },
   googleButtonText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 16,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   buttonPressed: {
     opacity: 0.85,
     transform: [{ scale: 0.98 }],
   },
   termsText: {
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 12,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     textAlign: "center",
     marginTop: 24,
     lineHeight: 18,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
   },
-});
+}));

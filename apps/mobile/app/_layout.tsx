@@ -1,7 +1,9 @@
+import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
 import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
+import { View, Text, ActivityIndicator } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as SplashScreen from "expo-splash-screen";
 import * as SecureStore from "expo-secure-store";
 import {
@@ -21,7 +23,6 @@ import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
 import { HOSTED_GATEWAY, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
-import { colors, fonts } from "@/lib/theme";
 
 let nativeSplashRegistered = false;
 const nativeSplashRegistration = SplashScreen.preventAutoHideAsync()
@@ -72,6 +73,7 @@ export function useGateway() {
 }
 
 export default function RootLayout() {
+  const { theme } = useUnistyles();
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -117,7 +119,7 @@ export default function RootLayout() {
     return (
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingTitle}>Matrix OS</Text>
-        <ActivityIndicator size="large" color={colors.light.primary} style={styles.loadingSpinner} />
+        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
       </View>
     );
   }
@@ -127,7 +129,7 @@ export default function RootLayout() {
       <View style={styles.loadingContainer}>
         <Text style={styles.loadingTitle}>Matrix OS</Text>
         <Text style={styles.loadingSubtitle}>Authenticating…</Text>
-        <ActivityIndicator size="large" color={colors.light.primary} style={styles.loadingSpinner} />
+        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
       </View>
     );
   }
@@ -156,6 +158,7 @@ function MissingClerkConfigScreen() {
 }
 
 function GatewayShell() {
+  const { theme } = useUnistyles();
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [client, setClient] = useState<GatewayClient | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
@@ -269,10 +272,10 @@ function GatewayShell() {
       <GatewayContext.Provider value={contextValue}>
         <Stack
           screenOptions={{
-            headerStyle: { backgroundColor: colors.light.background },
-            headerTintColor: colors.light.foreground,
-            headerTitleStyle: { fontFamily: fonts.sansSemiBold },
-            contentStyle: { backgroundColor: colors.light.background },
+            headerStyle: { backgroundColor: theme.colors.background },
+            headerTintColor: theme.colors.foreground,
+            headerTitleStyle: { fontFamily: theme.fonts.sansSemiBold },
+            contentStyle: { backgroundColor: theme.colors.background },
           }}
         >
           <Stack.Screen name="index" options={{ headerShown: false }} />
@@ -287,7 +290,7 @@ function GatewayShell() {
             options={{
               title: "Gateway",
               presentation: "modal",
-              headerStyle: { backgroundColor: colors.light.background },
+              headerStyle: { backgroundColor: theme.colors.background },
             }}
           />
           <Stack.Screen
@@ -295,7 +298,7 @@ function GatewayShell() {
             options={{
               title: "Sign In",
               presentation: "modal",
-              headerStyle: { backgroundColor: colors.light.background },
+              headerStyle: { backgroundColor: theme.colors.background },
             }}
           />
         </Stack>
@@ -321,7 +324,7 @@ function NotificationRouter() {
   return null;
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   flex: {
     flex: 1,
   },
@@ -329,35 +332,35 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
   },
   loadingTitle: {
-    fontFamily: fonts.sansBold,
+    fontFamily: theme.fonts.sansBold,
     fontSize: 28,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     letterSpacing: -0.5,
   },
   loadingSubtitle: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     marginTop: 8,
   },
   loadingSpinner: {
     marginTop: 24,
   },
   configTitle: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 16,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     marginTop: 16,
   },
   configBody: {
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     marginTop: 8,
     maxWidth: 300,
     textAlign: "center",
   },
-});
+}));

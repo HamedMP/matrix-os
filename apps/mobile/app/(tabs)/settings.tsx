@@ -7,8 +7,8 @@ import {
   Switch,
   Linking,
   RefreshControl,
-  StyleSheet,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { ChannelBadge } from "@/components/ChannelBadge";
@@ -18,7 +18,6 @@ import {
   type AppSettings,
 } from "@/lib/storage";
 import { isBiometricAvailable, getSupportedBiometricTypes, getBiometricLabel } from "@/lib/auth";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -42,6 +41,7 @@ function SettingsRow({
   onPress?: () => void;
   right?: React.ReactNode;
 }) {
+  const { theme } = useUnistyles();
   return (
     <Pressable
       onPress={onPress}
@@ -54,7 +54,7 @@ function SettingsRow({
       <View style={styles.rowLeft}>
         {icon && (
           <View style={styles.rowIcon}>
-            <Ionicons name={icon} size={18} color={colors.light.primary} />
+            <Ionicons name={icon} size={18} color={theme.colors.primary} />
           </View>
         )}
         <Text style={styles.rowLabel}>{label}</Text>
@@ -64,7 +64,7 @@ function SettingsRow({
       ) : right ? (
         right
       ) : onPress ? (
-        <Ionicons name="chevron-forward" size={16} color={colors.light.mutedForeground} />
+        <Ionicons name="chevron-forward" size={16} color={theme.colors.mutedForeground} />
       ) : null}
     </Pressable>
   );
@@ -222,11 +222,12 @@ function SettingsContent({
   onRefresh,
   updateSetting,
 }: SettingsContentProps) {
+  const { theme: uniTheme } = useUnistyles();
   const refreshControl = useMemo(
     () => (
-      <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.light.primary} />
+      <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={uniTheme.colors.primary} />
     ),
-    [refreshing, onRefresh],
+    [refreshing, onRefresh, uniTheme.colors.primary],
   );
 
   return (
@@ -253,7 +254,7 @@ function SettingsContent({
           </View>
         ) : (
           <View style={styles.emptyRow}>
-            <Ionicons name="person-circle-outline" size={16} color={colors.light.mutedForeground} />
+            <Ionicons name="person-circle-outline" size={16} color={uniTheme.colors.mutedForeground} />
             <Text style={styles.emptyText}>
               {connectionState === "connected"
                 ? "No agent profile configured"
@@ -274,7 +275,7 @@ function SettingsContent({
           ))
         ) : (
           <View style={styles.emptyRow}>
-            <Ionicons name="radio-outline" size={16} color={colors.light.mutedForeground} />
+            <Ionicons name="radio-outline" size={16} color={uniTheme.colors.mutedForeground} />
             <Text style={styles.emptyText}>
               {connectionState === "connected"
                 ? "No channels configured"
@@ -292,7 +293,7 @@ function SettingsContent({
             <Switch
               value={settings.notificationsEnabled}
               onValueChange={(v) => updateSetting("notificationsEnabled", v)}
-              trackColor={{ false: colors.light.border, true: colors.light.primary }}
+              trackColor={{ false: uniTheme.colors.border, true: uniTheme.colors.primary }}
               thumbColor="#ffffff"
             />
           }
@@ -308,14 +309,14 @@ function SettingsContent({
               <Switch
                 value={settings.biometricEnabled}
                 onValueChange={(v) => updateSetting("biometricEnabled", v)}
-                trackColor={{ false: colors.light.border, true: colors.light.primary }}
+                trackColor={{ false: uniTheme.colors.border, true: uniTheme.colors.primary }}
                 thumbColor="#ffffff"
               />
             }
           />
         ) : (
           <View style={styles.emptyRow}>
-            <Ionicons name="lock-closed-outline" size={16} color={colors.light.mutedForeground} />
+            <Ionicons name="lock-closed-outline" size={16} color={uniTheme.colors.mutedForeground} />
             <Text style={styles.emptyText}>No biometric authentication available</Text>
           </View>
         )}
@@ -342,7 +343,7 @@ function SettingsContent({
                 <Ionicons
                   name={icons[theme]}
                   size={16}
-                  color={isActive ? colors.light.primaryForeground : colors.light.foreground}
+                  color={isActive ? uniTheme.colors.primaryForeground : uniTheme.colors.foreground}
                 />
                 <Text
                   style={[
@@ -381,7 +382,7 @@ function SettingsContent({
             pressed && styles.rowPressed,
           ]}
         >
-          <Ionicons name="globe-outline" size={16} color={colors.light.primary} />
+          <Ionicons name="globe-outline" size={16} color={uniTheme.colors.primary} />
           <Text style={styles.actionButtonText}>matrix-os.com</Text>
         </Pressable>
       </SettingsSection>
@@ -389,40 +390,40 @@ function SettingsContent({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
   },
   scrollContent: {
-    padding: spacing.xl,
+    padding: theme.spacing.xl,
     paddingBottom: 48,
   },
   section: {
-    marginBottom: spacing.xl,
+    marginBottom: theme.spacing.xl,
   },
   sectionTitle: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 11,
-    color: colors.light.primary,
+    color: theme.colors.primary,
     letterSpacing: 2,
     textTransform: "uppercase",
-    marginBottom: spacing.sm,
+    marginBottom: theme.spacing.sm,
   },
   sectionContent: {
-    gap: spacing.sm,
+    gap: theme.spacing.sm,
   },
   row: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
   },
   rowPressed: {
     opacity: 0.8,
@@ -430,60 +431,60 @@ const styles = StyleSheet.create({
   rowLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.md,
+    gap: theme.spacing.md,
     flex: 1,
   },
   rowIcon: {
     width: 32,
     height: 32,
-    borderRadius: radius.sm,
+    borderRadius: theme.radius.sm,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.secondary,
+    backgroundColor: theme.colors.secondary,
     alignItems: "center",
     justifyContent: "center",
   },
   rowLabel: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     flex: 1,
   },
   rowValue: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 13,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   emptyRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
+    gap: theme.spacing.sm,
+    paddingVertical: theme.spacing.sm,
   },
   emptyText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 13,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   actionButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    paddingVertical: spacing.md,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    paddingVertical: theme.spacing.md,
   },
   actionButtonText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 14,
-    color: colors.light.primary,
+    color: theme.colors.primary,
   },
   themeRow: {
     flexDirection: "row",
-    gap: spacing.sm,
+    gap: theme.spacing.sm,
   },
   themeOption: {
     flex: 1,
@@ -491,40 +492,40 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     paddingVertical: 10,
   },
   themeOptionActive: {
-    backgroundColor: colors.light.primary,
+    backgroundColor: theme.colors.primary,
   },
   themeOptionInactive: {
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
   themeOptionText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 12,
   },
   themeOptionTextActive: {
-    color: colors.light.primaryForeground,
+    color: theme.colors.primaryForeground,
   },
   themeOptionTextInactive: {
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   profileCard: {
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    padding: spacing.lg,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.lg,
   },
   profileText: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 12,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     lineHeight: 18,
   },
-});
+}));

@@ -1,6 +1,7 @@
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import Animated, { FadeInUp } from "react-native-reanimated";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
+import { colors } from "@/lib/theme";
 
 export interface Task {
   id: string;
@@ -57,15 +58,15 @@ export function TaskCard({ task, onPress }: TaskCardProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   card: {
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
     boxShadow: "0 1px 4px rgba(0, 0, 0, 0.04)",
   },
   cardPressed: {
@@ -78,40 +79,40 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   statusBadge: {
-    marginLeft: spacing.sm,
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.sm,
+    marginLeft: theme.spacing.sm,
+    borderRadius: theme.radius.full,
+    paddingHorizontal: theme.spacing.sm,
     paddingVertical: 2,
   },
   statusText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 11,
   },
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
-    marginTop: spacing.sm,
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.sm,
   },
   type: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 11,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   priorityBadge: {
-    borderRadius: radius.full,
+    borderRadius: theme.radius.full,
     backgroundColor: "rgba(239, 68, 68, 0.1)",
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: theme.spacing.sm,
     paddingVertical: 2,
   },
   priorityText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 11,
-    color: colors.light.destructive,
+    color: theme.colors.destructive,
   },
-});
+}));

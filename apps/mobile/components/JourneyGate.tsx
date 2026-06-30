@@ -1,5 +1,5 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { colors, fonts, radius, spacing } from "@/lib/theme";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   PROVISIONING_STAGE_LABEL,
   type JourneyFetchResult,
@@ -53,10 +53,11 @@ function PrimaryButton({ label, onPress, testID }: { label: string; onPress: () 
  * `first_run`/`ready` are handled by the caller (it hands off to the shell).
  */
 export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, onSignOut = () => {}, working = false }: JourneyGateProps) {
+  const { theme } = useUnistyles();
   if (!result) {
     return (
       <Centered>
-        <ActivityIndicator color={colors.light.primary} testID="journey-loading" />
+        <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
         <Body>Loading your Matrix computer…</Body>
       </Centered>
     );
@@ -110,7 +111,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
     case "payment_settling":
       return (
         <Centered>
-          {journey.settling?.delayed ? null : <ActivityIndicator color={colors.light.primary} testID="journey-loading" />}
+          {journey.settling?.delayed ? null : <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />}
           <Title>{journey.settling?.delayed ? "Taking longer than expected" : "Activating your subscription"}</Title>
           <Body>{journey.detail}</Body>
           {journey.settling?.delayed ? (
@@ -121,7 +122,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
     case "provisioning":
       return (
         <Centered>
-          <ActivityIndicator color={colors.light.primary} testID="journey-loading" />
+          <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
           <Title>Building your Matrix computer</Title>
           <Body>{journey.progress ? (PROVISIONING_STAGE_LABEL[journey.progress.stage] ?? journey.detail) : journey.detail}</Body>
         </Centered>
@@ -145,19 +146,19 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
       // first_run / ready — the caller redirects.
       return (
         <Centered>
-          <ActivityIndicator color={colors.light.primary} testID="journey-loading" />
+          <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
           <Body>Opening your Matrix computer…</Body>
         </Centered>
       );
   }
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.light.background, padding: spacing.lg },
-  card: { alignItems: "center", gap: spacing.md, maxWidth: 360 },
-  title: { fontFamily: fonts.sansSemiBold, fontSize: 20, color: colors.light.forest, textAlign: "center" },
-  body: { fontFamily: fonts.sans, fontSize: 14, color: colors.light.forest, opacity: 0.8, textAlign: "center" },
-  button: { backgroundColor: colors.light.primary, paddingVertical: spacing.sm, paddingHorizontal: spacing.lg, borderRadius: radius.md },
+const styles = StyleSheet.create((theme) => ({
+  container: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.background, padding: theme.spacing.lg },
+  card: { alignItems: "center", gap: theme.spacing.md, maxWidth: 360 },
+  title: { fontFamily: theme.fonts.sansSemiBold, fontSize: 20, color: theme.colors.forest, textAlign: "center" },
+  body: { fontFamily: theme.fonts.sans, fontSize: 14, color: theme.colors.forest, opacity: 0.8, textAlign: "center" },
+  button: { backgroundColor: theme.colors.primary, paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.lg, borderRadius: theme.radius.md },
   buttonPressed: { opacity: 0.85 },
-  buttonLabel: { fontFamily: fonts.sansSemiBold, fontSize: 15, color: colors.light.primaryForeground },
-});
+  buttonLabel: { fontFamily: theme.fonts.sansSemiBold, fontSize: 15, color: theme.colors.primaryForeground },
+}));

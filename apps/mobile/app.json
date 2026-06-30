@@ -61,7 +61,8 @@
           "color": "#9AA48C"
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "react-native-edge-to-edge"
     ],
     "experiments": {
       "typedRoutes": true
