@@ -118,7 +118,7 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(SHELL_Z_INDEX.fullscreenWindow).toBeLessThan(SHELL_Z_INDEX.settings);
   });
 
-  it("focuses terminal Canvas windows during capture before terminal child handling", async () => {
+  it("focuses terminal Canvas windows through the shared window mouse-down path", async () => {
     useWindowManager.setState({
       windows: [terminalWindow],
       nextZ: 2,
@@ -128,14 +128,7 @@ describe("CanvasWindow terminal interactivity", () => {
       focusedWindowId: null,
       fullscreenWindowId: null,
     });
-    const childFocusStates: Array<string | null> = [];
-    let focusedDuringPointer: string | null = null;
-    terminalChildPointerFocusRecorder.mockImplementation(() => {
-      childFocusStates.push(focusedDuringPointer);
-    });
-    const focusWindowSpy = vi.fn((id: string) => {
-      focusedDuringPointer = id;
-    });
+    const focusWindowSpy = vi.fn();
     useWindowManager.setState({ focusWindow: focusWindowSpy });
 
     await act(async () => {
@@ -144,16 +137,15 @@ describe("CanvasWindow terminal interactivity", () => {
     });
 
     await act(async () => {
-      fireEvent.pointerDown(screen.getByRole("button", { name: "Terminal tab one" }), { button: 0 });
+      fireEvent.mouseDown(screen.getByRole("button", { name: "Terminal tab one" }), { button: 0 });
       await Promise.resolve();
     });
 
-    expect(childFocusStates).toEqual(["win-terminal"]);
     expect(focusWindowSpy).toHaveBeenCalledWith("win-terminal");
     expect(focusWindowSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("does not draw the generic Canvas focus ring around terminal content", () => {
+  it("draws the generic Canvas focus ring around focused terminal content", () => {
     useWindowManager.setState({
       windows: [terminalWindow],
       nextZ: 2,
@@ -166,10 +158,10 @@ describe("CanvasWindow terminal interactivity", () => {
 
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 
-    expect(container.innerHTML).not.toContain("ring-primary/30");
+    expect(container.innerHTML).toContain("ring-primary/30");
   });
 
-  it("lets Terminal own Canvas chrome and passes window controls into it", () => {
+  it("keeps shared Canvas chrome and passes window controls into Terminal", () => {
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 
     expect(container.textContent).toContain("Terminal tab one");

@@ -130,6 +130,23 @@ const TERMINAL_THEME_DESKTOP_MENU_STYLE: CSSProperties = {
   zIndex: 90,
 };
 
+type ThemeMenuPlacement = "below-end" | "above-start";
+
+function getTerminalThemeDesktopMenuPositionStyle(placement: ThemeMenuPlacement): CSSProperties {
+  if (placement === "above-start") {
+    return {
+      bottom: "100%",
+      left: 0,
+      marginBottom: 8,
+      marginTop: 0,
+      right: "auto",
+      top: "auto",
+    };
+  }
+
+  return {};
+}
+
 const TERMINAL_THEME_MENU_DISMISS_STYLE: CSSProperties = {
   background: "transparent",
   border: 0,
@@ -2183,7 +2200,7 @@ function ToolbarBtn({ onClick, title, children, variant = "default", ariaLabel }
   );
 }
 
-function ThemePickerButton() {
+function ThemePickerButton({ menuPlacement = "below-end" }: { menuPlacement?: ThemeMenuPlacement }) {
   const ctx = useTerminalAppContext();
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [themeMenuView, setThemeMenuView] = useState<"app" | "shell">("app");
@@ -2239,6 +2256,7 @@ function ThemePickerButton() {
       {themeMenuOpen && themeMenuView === "app" ? (
         <TerminalAppThemeMenu
           mobile={ctx.mobile}
+          placement={menuPlacement}
           onClose={closeThemeMenu}
           onOpenShellTheme={() => setThemeMenuView("shell")}
         />
@@ -2246,6 +2264,7 @@ function ThemePickerButton() {
       {themeMenuOpen && themeMenuView === "shell" ? (
         <ShellThemeChooser
           mobile={ctx.mobile}
+          placement={menuPlacement}
           onBack={() => setThemeMenuView("app")}
           onClose={closeThemeMenu}
         />
@@ -2256,10 +2275,12 @@ function ThemePickerButton() {
 
 function TerminalAppThemeMenu({
   mobile,
+  placement,
   onClose,
   onOpenShellTheme,
 }: {
   mobile: boolean;
+  placement: ThemeMenuPlacement;
   onClose: () => void;
   onOpenShellTheme: () => void;
 }) {
@@ -2326,7 +2347,10 @@ function TerminalAppThemeMenu({
     <div
       role="menu"
       aria-label="Theme"
-      style={TERMINAL_THEME_DESKTOP_MENU_STYLE}
+      style={{
+        ...TERMINAL_THEME_DESKTOP_MENU_STYLE,
+        ...getTerminalThemeDesktopMenuPositionStyle(placement),
+      }}
     >
       <div style={{ padding: "8px 10px 4px" }}>
         <div style={{ color: "#6F7167", fontFamily: "Inter, system-ui, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", lineHeight: "15px", textTransform: "uppercase" }}>
@@ -2438,10 +2462,12 @@ function ChangeShellThemeMenuItem({
 
 function ShellThemeChooser({
   mobile,
+  placement,
   onBack,
   onClose,
 }: {
   mobile: boolean;
+  placement: ThemeMenuPlacement;
   onBack: () => void;
   onClose: () => void;
 }) {
@@ -2524,6 +2550,7 @@ function ShellThemeChooser({
         data-testid="terminal-shell-theme-panel"
         style={{
           ...TERMINAL_SHELL_THEME_DESKTOP_PANEL_STYLE,
+          ...getTerminalThemeDesktopMenuPositionStyle(placement),
           ...getShellThemePanelMotionStyle(false),
         }}
       >
@@ -4458,7 +4485,6 @@ function LocalTerminalSidebar() {
             </div>
           </div>
           <div className="flex shrink-0 items-center" style={{ gap: 10 }}>
-            <ThemePickerButton />
             <div style={{ position: "relative" }}>
               <button
                 type="button"
@@ -4639,6 +4665,20 @@ function LocalTerminalSidebar() {
             onDragEnd={finishShellDrag}
           />
         )}
+      </div>
+      <div
+        data-testid="terminal-sidebar-footer"
+        className="shrink-0"
+        style={{
+          alignItems: "center",
+          background: "var(--terminal-drawer-bg)",
+          borderTop: "1px solid var(--terminal-drawer-border)",
+          display: "flex",
+          justifyContent: "flex-start",
+          padding: ctx.mobile ? "13px 20px calc(13px + env(safe-area-inset-bottom))" : "12px 18px",
+        }}
+      >
+        <ThemePickerButton menuPlacement="above-start" />
       </div>
       {!ctx.mobile ? (
         <button

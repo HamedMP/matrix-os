@@ -109,7 +109,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
   const isIframeWindow = !win.path.startsWith("__");
-  const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
   const minimizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -605,9 +604,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         <TerminalApp
           mobile={isMobile}
           launchTargetId={win.id}
-          // Use the shared Canvas title bar (floating, like every other window)
-          // instead of the terminal's own dark chrome; split/theme move into the
-          // slim embedded toolbar.
           embeddedChrome
           canvasZoom={isFullscreen ? 1 : zoom}
           windowControls={{
@@ -675,7 +671,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       className="absolute"
       data-canvas-window={!isPreview && !isFullscreen || undefined}
       style={{ ...wrapperStyle, ...windowMotionStyle }}
-      onMouseDown={isFullscreen || terminalOwnsChrome ? undefined : () => focusWindow(win.id)}
+      onMouseDown={isFullscreen ? undefined : () => focusWindow(win.id)}
     >
       {!isFullscreen && titleBar}
       <div
@@ -685,17 +681,11 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
             ? `rounded-lg bg-card overflow-hidden flex items-center justify-center transition-shadow duration-150 ${
                 isFocused ? "shadow-lg ring-1 ring-primary/30" : "shadow-md opacity-80"
               }`
-            : terminalOwnsChrome
-              ? "rounded-lg bg-card overflow-hidden transition-shadow duration-150 shadow-md"
             : `rounded-lg bg-card overflow-hidden transition-shadow duration-150 ${
                 isFocused ? "shadow-xl ring-1 ring-primary/30" : "shadow-md"
               }`
         }
         style={contentStyle}
-        onPointerDownCapture={(event) => {
-          if (!terminalOwnsChrome || event.button !== 0) return;
-          focusWindow(win.id);
-        }}
       >
         {isFullscreen && fullscreenTitleBar}
         {isFullscreen ? (

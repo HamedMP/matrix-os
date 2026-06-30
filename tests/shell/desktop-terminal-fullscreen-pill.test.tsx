@@ -184,6 +184,21 @@ describe("Desktop terminal fullscreen chrome", () => {
     expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
   });
 
+  it("keeps a windowed Terminal on the same desktop header chrome as other apps", async () => {
+    resetStores(terminalWindow, null);
+
+    const { container } = render(<Desktop />);
+
+    await screen.findByText("Terminal content");
+    const header = container.querySelector(".app-window .border-b") as HTMLElement | null;
+
+    expect(header).toBeTruthy();
+    expect(header?.className).toContain("border-border");
+    expect(header?.className).not.toContain("border-b-0");
+    expect(header?.style.background).toBe("");
+    expect(header?.style.color).toBe("");
+  });
+
   it("shows no global exit pill in Canvas mode (the window's own header handles exit)", async () => {
     resetStores(appWindow);
     useDesktopMode.setState({ mode: "canvas", previousMode: null, _hydrated: true });

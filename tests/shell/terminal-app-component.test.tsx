@@ -457,6 +457,10 @@ describe("TerminalApp", () => {
     fetchMock.mockClear();
 
     const button = screen.getByRole("button", { name: "Theme" });
+    const footer = screen.getByTestId("terminal-sidebar-footer");
+    expect(within(footer).getByRole("button", { name: "Theme" })).toBe(button);
+    expect(footer.style.justifyContent).toBe("flex-start");
+    expect(footer.style.borderTop).toBe("1px solid var(--terminal-drawer-border)");
     expect(button.textContent?.replace(/\s+/g, "")).toBe("☼Theme");
     expect(button.style.height).toBe("34px");
     expect(button.style.borderRadius).toBe("9px");
@@ -473,6 +477,9 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    expect(screen.getByRole("menu", { name: "Theme" }).style.bottom).toBe("100%");
+    expect(screen.getByRole("menu", { name: "Theme" }).style.left).toBe("0px");
+    expect(screen.getByRole("menu", { name: "Theme" }).style.top).toBe("auto");
     expect(screen.getByText("Warm paper")).toBeTruthy();
     expect(screen.getByText("Warm dark")).toBeTruthy();
     expect(screen.getByText("Phosphor green")).toBeTruthy();
@@ -607,6 +614,8 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
     expect(screen.getByRole("region", { name: "Shell theme" })).toBeTruthy();
     expect(screen.getByTestId("terminal-shell-theme-panel")).toBeTruthy();
+    expect(screen.getByTestId("terminal-shell-theme-panel").style.bottom).toBe("100%");
+    expect(screen.getByTestId("terminal-shell-theme-panel").style.left).toBe("0px");
     expect(screen.getByRole("button", { name: "Back to theme menu" })).toBeTruthy();
     expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
