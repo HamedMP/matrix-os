@@ -17,9 +17,14 @@ describe("self-host server installer", () => {
   it("installs from a verified host bundle and writes standalone self-host configuration", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
+    expect(script).toContain('DEFAULT_CHANNEL="${MATRIX_CHANNEL:-dev}"');
     expect(script).toContain("https://app.matrix-os.com/system-bundles/${DEFAULT_CHANNEL}");
     expect(script).toContain("MATRIX_HOST_BUNDLE_URL");
     expect(script).toContain("${MATRIX_HOST_BUNDLE_URL}.sha256");
+    expect(script).toContain("preflight_bundle_url");
+    expect(script).toContain("curl --fail --silent --show-error --location --head");
+    expect(script).toContain("host bundle is not reachable");
+    expect(script).toContain("Host bundle is reachable");
     expect(script).toContain("sha256sum \"$tmp_bundle\"");
     expect(script).toContain("[ \"$expected\" = \"$actual\" ] || fail \"bundle checksum mismatch\"");
     expect(script).toContain("tar -xzf \"$tmp_bundle\" -C /opt/matrix");
@@ -46,6 +51,12 @@ describe("self-host server installer", () => {
 
     expect(script).toContain("MATRIX_INSTALL_TELEMETRY_URL");
     expect(script).toContain("MATRIX_NO_TELEMETRY");
+    expect(script).toContain("MATRIX_INSTALL_LOG");
+    expect(script).toContain("MATRIX_INSTALL_COLOR");
+    expect(script).toContain("Matrix OS server installer");
+    expect(script).toContain("Browser shell + gateway + code-server + agents");
+    expect(script).toContain("███╗   ███╗");
+    expect(script).toContain("██████╗ ██╗██╗  ██╗");
     expect(script).toContain("[ \"${MATRIX_INSTALL_TELEMETRY:-1}\" != \"0\" ]");
     expect(script).toContain("matrix_manual_install_started");
     expect(script).toContain("matrix_manual_install_completed");
@@ -102,6 +113,12 @@ describe("self-host server installer", () => {
   it("installs the core Matrix services without enabling managed-cloud backup requirements", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
+    expect(script).toContain("Installing OS packages");
+    expect(script).toContain("Writing apt output to ${MATRIX_INSTALL_LOG}");
+    expect(script).toContain("apt_get_update >>\"$MATRIX_INSTALL_LOG\" 2>&1");
+    expect(script).toContain("apt-get install -y ca-certificates curl docker.io git nginx openssl postgresql-client procps sudo tar >>\"$MATRIX_INSTALL_LOG\" 2>&1");
+    expect(script).toContain("Downloading Matrix OS");
+    expect(script).toContain("--progress-bar");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-gateway.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-shell.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code.service");

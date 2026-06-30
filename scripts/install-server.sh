@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # Matrix OS standalone server installer.
 # Public copy is served from https://matrix-os.com/install-server.sh.
 
-DEFAULT_CHANNEL="${MATRIX_CHANNEL:-stable}"
+DEFAULT_CHANNEL="${MATRIX_CHANNEL:-dev}"
 DEFAULT_BUNDLE_BASE="https://app.matrix-os.com/system-bundles/${DEFAULT_CHANNEL}"
 MATRIX_HOST_BUNDLE_URL="${MATRIX_HOST_BUNDLE_URL:-${DEFAULT_BUNDLE_BASE}/matrix-host-bundle.tar.gz}"
 MATRIX_INSTALL_HANDLE="${MATRIX_INSTALL_HANDLE:-matrix}"
@@ -13,6 +13,7 @@ MATRIX_HOME_DIR="${MATRIX_HOME:-/home/matrix/home}"
 MATRIX_DEVELOPER_TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"
 MATRIX_INSTALL_TELEMETRY_URL="${MATRIX_INSTALL_TELEMETRY_URL:-https://matrix-os.com/api/install-telemetry}"
 MATRIX_INSTALL_TELEMETRY_ID="${MATRIX_INSTALL_TELEMETRY_ID:-}"
+MATRIX_INSTALL_LOG="${MATRIX_INSTALL_LOG:-/tmp/matrix-server-install.log}"
 INSTALL_TMP_BUNDLE=""
 INSTALL_TMP_SUM=""
 INSTALL_PHASE="init"
@@ -26,15 +27,65 @@ cleanup_install_tmp() {
 trap cleanup_install_tmp EXIT
 trap 'capture_install_failure $? $LINENO' ERR
 
+if [ "${MATRIX_INSTALL_COLOR:-auto}" = "always" ] || { [ "${MATRIX_INSTALL_COLOR:-auto}" = "auto" ] && [ -t 1 ] && [ "${TERM:-dumb}" != "dumb" ]; }; then
+  COLOR_RESET="$(printf '\033[0m')"
+  COLOR_BOLD="$(printf '\033[1m')"
+  COLOR_DIM="$(printf '\033[2m')"
+  COLOR_BLUE="$(printf '\033[34m')"
+  COLOR_GREEN="$(printf '\033[32m')"
+  COLOR_YELLOW="$(printf '\033[33m')"
+  COLOR_RED="$(printf '\033[31m')"
+else
+  COLOR_RESET=""
+  COLOR_BOLD=""
+  COLOR_DIM=""
+  COLOR_BLUE=""
+  COLOR_GREEN=""
+  COLOR_YELLOW=""
+  COLOR_RED=""
+fi
+
+section() {
+  printf '\n%s%s==> %s%s\n' "$COLOR_BLUE" "$COLOR_BOLD" "$*" "$COLOR_RESET"
+}
+
+banner() {
+  cat <<EOF
+
+${COLOR_BLUE}${COLOR_BOLD}███╗   ███╗ █████╗ ████████╗██████╗ ██╗██╗  ██╗     ██████╗ ███████╗
+████╗ ████║██╔══██╗╚══██╔══╝██╔══██╗██║╚██╗██╔╝    ██╔═══██╗██╔════╝
+██╔████╔██║███████║   ██║   ██████╔╝██║ ╚███╔╝     ██║   ██║███████╗
+██║╚██╔╝██║██╔══██║   ██║   ██╔══██╗██║ ██╔██╗     ██║   ██║╚════██║
+██║ ╚═╝ ██║██║  ██║   ██║   ██║  ██║██║██╔╝ ██╗    ╚██████╔╝███████║
+╚═╝     ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝     ╚═════╝ ╚══════╝${COLOR_RESET}
+
+        ${COLOR_BOLD}Matrix OS server installer${COLOR_RESET}
+        ${COLOR_DIM}Browser shell + gateway + code-server + agents${COLOR_RESET}
+
+EOF
+}
+
 log() {
-  printf 'matrix-server-install: %s\n' "$*"
+  printf '%s    %s%s\n' "$COLOR_DIM" "$*" "$COLOR_RESET"
+}
+
+ok() {
+  printf '%s%sOK%s  %s\n' "$COLOR_GREEN" "$COLOR_BOLD" "$COLOR_RESET" "$*"
+}
+
+warn() {
+  printf '%s%sWARN%s  %s\n' "$COLOR_YELLOW" "$COLOR_BOLD" "$COLOR_RESET" "$*" >&2
 }
 
 fail() {
-  printf 'matrix-server-install: %s\n' "$*" >&2
+  local failed_phase
+  failed_phase="${INSTALL_PHASE:-unknown}"
+  printf '\n%s%sERROR%s %s\n' "$COLOR_RED" "$COLOR_BOLD" "$COLOR_RESET" "$*" >&2
   if declare -F capture_install_failure >/dev/null 2>&1; then
     capture_install_failure 1 "${BASH_LINENO[0]:-0}" || true
   fi
+  printf '%s\n' "Installer phase: ${failed_phase}" >&2
+  printf '%s\n\n' "Detailed log: ${MATRIX_INSTALL_LOG}" >&2
   exit 1
 }
 
@@ -175,6 +226,28 @@ validate_config() {
   esac
 }
 
+preflight_bundle_url() {
+  [ "${MATRIX_SKIP_BUNDLE_PREFLIGHT:-0}" != "1" ] || return 0
+
+  section "Checking Matrix OS host bundle"
+  log "Channel: ${DEFAULT_CHANNEL}"
+  log "Bundle: ${MATRIX_HOST_BUNDLE_URL}"
+
+  if ! curl --fail --silent --show-error --location --head \
+    --connect-timeout 10 --max-time 30 \
+    "$MATRIX_HOST_BUNDLE_URL" >/dev/null; then
+    fail "host bundle is not reachable: ${MATRIX_HOST_BUNDLE_URL}. Use MATRIX_CHANNEL=dev or pass MATRIX_HOST_BUNDLE_URL to a published bundle."
+  fi
+
+  if ! curl --fail --silent --show-error --location --head \
+    --connect-timeout 10 --max-time 30 \
+    "${MATRIX_HOST_BUNDLE_URL}.sha256" >/dev/null; then
+    fail "host bundle checksum is not reachable: ${MATRIX_HOST_BUNDLE_URL}.sha256"
+  fi
+
+  ok "Host bundle is reachable"
+}
+
 apt_get_update() {
   apt-get update \
     -o Acquire::Retries=5 \
@@ -185,9 +258,13 @@ apt_get_update() {
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   if command -v apt-get >/dev/null 2>&1; then
-    log "installing OS packages"
-    apt_get_update
-    apt-get install -y ca-certificates curl docker.io git nginx openssl postgresql-client procps sudo tar
+    section "Installing OS packages"
+    : >"$MATRIX_INSTALL_LOG"
+    log "Writing apt output to ${MATRIX_INSTALL_LOG}"
+    apt_get_update >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "apt-get update failed"
+    apt-get install -y ca-certificates curl docker.io git nginx openssl postgresql-client procps sudo tar >>"$MATRIX_INSTALL_LOG" 2>&1 \
+      || fail "apt-get install failed"
+    ok "OS packages installed"
     return
   fi
   fail "only apt-based Linux distributions are supported in this preview"
@@ -272,11 +349,18 @@ install_bundle() {
   INSTALL_TMP_BUNDLE="$tmp_bundle"
   INSTALL_TMP_SUM="$tmp_sum"
 
-  log "downloading host bundle"
-  curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
-    --connect-timeout 10 --max-time 900 \
-    "$MATRIX_HOST_BUNDLE_URL" -o "$tmp_bundle"
-  curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
+  section "Downloading Matrix OS"
+  log "Bundle: ${MATRIX_HOST_BUNDLE_URL}"
+  if [ -t 1 ]; then
+    curl --fail --location --progress-bar --retry 3 --retry-delay 5 --retry-all-errors \
+      --connect-timeout 10 --max-time 900 \
+      "$MATRIX_HOST_BUNDLE_URL" -o "$tmp_bundle"
+  else
+    curl --fail --silent --show-error --location --retry 3 --retry-delay 5 --retry-all-errors \
+      --connect-timeout 10 --max-time 900 \
+      "$MATRIX_HOST_BUNDLE_URL" -o "$tmp_bundle"
+  fi
+  curl --fail --silent --show-error --location --retry 3 --retry-delay 5 --retry-all-errors \
     --connect-timeout 10 --max-time 30 \
     "${MATRIX_HOST_BUNDLE_URL}.sha256" -o "$tmp_sum"
 
@@ -285,7 +369,8 @@ install_bundle() {
   [ -n "$expected" ] || fail "empty bundle checksum"
   [ "$expected" = "$actual" ] || fail "bundle checksum mismatch"
 
-  log "extracting host bundle"
+  ok "Host bundle checksum verified"
+  section "Extracting Matrix OS"
   tar -xzf "$tmp_bundle" -C /opt/matrix
   chmod 0755 /opt/matrix/bin/matrix-* /opt/matrix/bin/zellij 2>/dev/null || true
   cleanup_install_tmp
@@ -315,7 +400,7 @@ EOF
 }
 
 install_systemd_units() {
-  log "installing systemd units"
+  section "Installing systemd units"
   install -m 0644 /opt/matrix/systemd/matrix-gateway.service /etc/systemd/system/matrix-gateway.service
   install -m 0644 /opt/matrix/systemd/matrix-shell.service /etc/systemd/system/matrix-shell.service
   install -m 0644 /opt/matrix/systemd/matrix-code.service /etc/systemd/system/matrix-code.service
@@ -406,7 +491,7 @@ EOF
 }
 
 start_services() {
-  log "starting services"
+  section "Starting Matrix OS services"
   systemctl enable --now docker >/dev/null
   systemctl restart matrix-restore
   systemctl restart matrix-gateway
@@ -439,7 +524,7 @@ print_summary() {
 
   cat <<EOF
 
-Matrix OS standalone install complete.
+${COLOR_GREEN}${COLOR_BOLD}Matrix OS standalone install complete.${COLOR_RESET}
 
 Open: ${ui_url}
 User: matrix
@@ -460,10 +545,12 @@ EOF
 
 main() {
   INSTALL_PHASE="preflight"
+  banner
   require_root
   require_linux_systemd
   validate_config
   capture_install_telemetry "matrix_manual_install_started" "started" 0
+  preflight_bundle_url
   INSTALL_PHASE="packages"
   install_packages
   INSTALL_PHASE="user"
