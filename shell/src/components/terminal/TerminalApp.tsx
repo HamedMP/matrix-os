@@ -804,9 +804,9 @@ const SESSION_CONTEXT_MENU_STYLE: CSSProperties = {
   boxShadow: "0 14px 34px var(--terminal-drawer-card-shadow)",
   display: "flex",
   flexDirection: "column",
-  gap: 3,
-  minWidth: 208,
-  padding: 6,
+  gap: 2,
+  minWidth: 152,
+  padding: 5,
   position: "absolute",
   right: 0,
   top: "calc(100% + 6px)",
@@ -823,9 +823,9 @@ const SESSION_CONTEXT_MENU_ITEM_STYLE: CSSProperties = {
   fontFamily: "Inter, system-ui, sans-serif",
   fontSize: 12,
   fontWeight: 650,
-  gap: 8,
-  height: 30,
-  padding: "0 9px",
+  gap: 7,
+  height: 28,
+  padding: "0 8px",
   textAlign: "left",
   whiteSpace: "nowrap",
   width: "100%",
@@ -5734,7 +5734,7 @@ function ShellCard({
   const showRenameControl = actionsVisible && !renaming;
   const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
   const renameControlLabel = `Rename ${displayName}`;
-  const toggleMenuLabel = foreground ? `Move ${displayName} to background` : `Make ${displayName} active`;
+  const toggleMenuLabel = foreground ? "Move to Background" : "Make Active";
 
   useEffect(() => () => {
     if (copiedTimerRef.current !== null) {
@@ -6139,7 +6139,7 @@ function ShellCard({
                       <Rows2Icon size={13} strokeWidth={2} />
                     </SessionContextMenuItem>
                     <SessionContextMenuItem
-                      label={`Copy connect command for ${displayName}`}
+                      label="Copy Command"
                       onClick={() => {
                         void copyAttachCommand();
                         closeContextMenuWithFocusReturn();
@@ -6148,7 +6148,7 @@ function ShellCard({
                       <LinkIcon size={13} strokeWidth={2} />
                     </SessionContextMenuItem>
                     <SessionContextMenuItem
-                      label={`${deleting ? "Deleting" : "Close"} ${displayName}`}
+                      label={deleting ? "Deleting" : "Close"}
                       disabled={deleting}
                       onClick={() => {
                         if (deleting) return;

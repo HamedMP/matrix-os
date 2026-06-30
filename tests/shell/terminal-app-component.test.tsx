@@ -698,7 +698,7 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.queryByText("matrix shell connect")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Command" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy Matrix shell connect command for matrix-main" })).toBeNull();
     const row = screen.getByRole("button", { name: "Open matrix-main" }).closest(".group");
     expect(row).toBeTruthy();
@@ -714,13 +714,13 @@ describe("TerminalApp", () => {
     expect(actions.style.maxHeight).toBe("");
     expect(within(actions).getByRole("button", { name: "Rename matrix-main" })).toBeTruthy();
     expect(within(actions).getByRole("button", { name: "More actions for matrix-main" })).toBeTruthy();
-    expect(within(actions).queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
-    expect(within(actions).queryByRole("button", { name: "Close matrix-main" })).toBeNull();
+    expect(within(actions).queryByRole("button", { name: "Copy Command" })).toBeNull();
+    expect(within(actions).queryByRole("button", { name: "Close" })).toBeNull();
 
     let menu = await openSessionContextMenu("main");
-    const moveButton = within(menu).getByRole("menuitem", { name: "Move matrix-main to background" });
+    const moveButton = within(menu).getByRole("menuitem", { name: "Move to Background" });
     expect(moveButton).toBeTruthy();
-    expect(within(menu).getByRole("menuitem", { name: "Close matrix-main" })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: "Close" })).toBeTruthy();
     expect(document.activeElement).toBe(moveButton);
 
     fireEvent.keyDown(document, { key: "Escape" });
@@ -728,7 +728,7 @@ describe("TerminalApp", () => {
     expect(document.activeElement).toBe(within(actions).getByRole("button", { name: "More actions for matrix-main" }));
 
     menu = await openSessionContextMenu("main");
-    const copyButton = within(menu).getByRole("menuitem", { name: "Copy connect command for matrix-main" });
+    const copyButton = within(menu).getByRole("menuitem", { name: "Copy Command" });
     await act(async () => {
       fireEvent.click(copyButton);
       await Promise.resolve();
@@ -789,7 +789,7 @@ describe("TerminalApp", () => {
     await openSessionContextMenu("main");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Copy connect command for matrix-main" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Copy Command" }));
       await Promise.resolve();
     });
 
@@ -841,7 +841,7 @@ describe("TerminalApp", () => {
     await openSessionContextMenu("main");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Copy connect command for matrix-main" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Copy Command" }));
       await Promise.resolve();
     });
 
@@ -1220,7 +1220,7 @@ describe("TerminalApp", () => {
 
     let menu = await openSessionContextMenu("claude-review", "claude-review");
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close claude-review" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
 
@@ -1242,7 +1242,7 @@ describe("TerminalApp", () => {
 
     menu = await openSessionContextMenu("claude-review", "claude-review");
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close claude-review" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
     await act(async () => {
@@ -1291,7 +1291,7 @@ describe("TerminalApp", () => {
 
     const menu = await openSessionContextMenu("main");
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close matrix-main" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
 
@@ -1345,12 +1345,12 @@ describe("TerminalApp", () => {
 
     let menu = await openSessionContextMenu("main");
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: "Move matrix-main to background" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to Background" }));
       await Promise.resolve();
     });
     menu = await openSessionContextMenu("docs", "docs");
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: "Make docs active" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Make Active" }));
       await Promise.resolve();
     });
 
@@ -1539,11 +1539,11 @@ describe("TerminalApp", () => {
     });
     const menu = await openSessionContextMenu("main");
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: "Move matrix-main to background" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to Background" }));
       await Promise.resolve();
     });
 
-    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Make matrix-main active" })).toBeTruthy();
+    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Make Active" })).toBeTruthy();
     expect(resolveMarkSeen).toBeDefined();
 
     await act(async () => {
@@ -1551,7 +1551,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Make matrix-main active" })).toBeTruthy();
+    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Make Active" })).toBeTruthy();
   });
 
   it("keeps a reopened background shell active when the placement patch fails after attach", async () => {
@@ -1590,15 +1590,15 @@ describe("TerminalApp", () => {
 
     const docsMenu = await openSessionContextMenu("docs", "docs");
     await act(async () => {
-      fireEvent.click(within(docsMenu).getByRole("menuitem", { name: "Make docs active" }));
+      fireEvent.click(within(docsMenu).getByRole("menuitem", { name: "Make Active" }));
       await Promise.resolve();
     });
 
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: { sessionId: "docs" },
     });
-    expect(within(await openSessionContextMenu("docs", "docs")).getByRole("menuitem", { name: "Move docs to background" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Make docs active" })).toBeNull();
+    expect(within(await openSessionContextMenu("docs", "docs")).getByRole("menuitem", { name: "Move to Background" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Make Active" })).toBeNull();
     expect(screen.queryByText("Failed to update session")).toBeNull();
     expect(screen.queryByText("Could not update session")).toBeNull();
     expect(vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
@@ -1648,8 +1648,8 @@ describe("TerminalApp", () => {
     expect(screen.getByText("matrix-os")).toBeTruthy();
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Move matrix-main to background" })).toBeNull();
-    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Move matrix-main to background" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Move to Background" })).toBeNull();
+    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Move to Background" })).toBeTruthy();
     expect(screen.queryByText("Zellij")).toBeNull();
   });
 
@@ -1890,8 +1890,16 @@ describe("TerminalApp", () => {
     const moreButton = within(actions).getByRole("button", { name: "More actions for matrix-main" });
     expect(moreButton.style.width).toBe("24px");
     expect(moreButton.style.height).toBe("24px");
-    expect(screen.queryByRole("button", { name: "Move matrix-main to background" })).toBeNull();
-    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Move matrix-main to background" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Move to Background" })).toBeNull();
+    const menu = await openSessionContextMenu("main");
+    expect(menu.style.minWidth).toBe("152px");
+    expect(menu.style.padding).toBe("5px");
+    expect(within(menu).getByRole("menuitem", { name: "Move to Background" }).style.height).toBe("28px");
+    expect(within(menu).getByRole("menuitem", { name: "Copy Command" })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: "Close" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Move matrix-main to background" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Close matrix-main" })).toBeNull();
   });
 
   it("lets desktop users resize the terminal sessions drawer", async () => {
@@ -2267,7 +2275,7 @@ describe("TerminalApp", () => {
     await openSessionContextMenu("main");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("menuitem", { name: "Copy connect command for matrix-main" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Copy Command" }));
       await Promise.resolve();
     });
 
@@ -2757,7 +2765,7 @@ describe("TerminalApp", () => {
     const mainActions = screen.getByTestId("terminal-session-actions-main");
     expect(within(mainActions).getByRole("button", { name: "Rename matrix-main" })).toBeTruthy();
     expect(within(mainActions).getByRole("button", { name: "More actions for matrix-main" }).closest(".group")).toBe(mainCard);
-    expect(screen.queryByRole("button", { name: "Move matrix-main to background" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Move to Background" })).toBeNull();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /open bench/i }));
@@ -2783,7 +2791,7 @@ describe("TerminalApp", () => {
     const closeMenu = await openSessionContextMenu("main");
 
     await act(async () => {
-      const deleteButton = within(closeMenu).getByRole("menuitem", { name: /close matrix-main/i });
+      const deleteButton = within(closeMenu).getByRole("menuitem", { name: "Close" });
       fireEvent.click(deleteButton);
       fireEvent.click(deleteButton);
       await Promise.resolve();
@@ -2863,7 +2871,7 @@ describe("TerminalApp", () => {
     const benchMenu = await openSessionContextMenu("bench", "bench");
 
     await act(async () => {
-      fireEvent.click(within(benchMenu).getByRole("menuitem", { name: /close bench/i }));
+      fireEvent.click(within(benchMenu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
     await act(async () => {
@@ -3040,7 +3048,7 @@ describe("TerminalApp", () => {
       String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST"
     )).length;
     expect(shellListCallsAfterWait).toBeGreaterThan(shellListCallsBeforeWait);
-    expect(screen.queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Command" })).toBeNull();
   });
 
   it("does not clobber a concurrent Shells refresh when delete rollback runs", async () => {
@@ -3084,7 +3092,7 @@ describe("TerminalApp", () => {
     const menu = await openSessionContextMenu("main");
 
     await act(async () => {
-      fireEvent.click(within(menu).getByRole("menuitem", { name: /close matrix-main/i }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
     expect(screen.getByRole("dialog", { name: "Close this session?" })).toBeTruthy();
@@ -3094,7 +3102,7 @@ describe("TerminalApp", () => {
       fireEvent.click(within(screen.getByRole("dialog", { name: "Close this session?" })).getByRole("button", { name: "Delete" }));
       await Promise.resolve();
     });
-    expect(screen.queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Command" })).toBeNull();
 
     await act(async () => {
       shellList = [{ name: "bench", status: "active" }];
