@@ -16,14 +16,22 @@ vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
   TerminalApp: (props: unknown) => {
     terminalRender(props);
     return (
-      <button
-        type="button"
-        onPointerDown={() => {
-          terminalChildPointerFocusRecorder();
-        }}
-      >
-        Terminal tab one
-      </button>
+      <>
+        <button
+          type="button"
+          onPointerDown={() => {
+            terminalChildPointerFocusRecorder();
+          }}
+        >
+          Terminal tab one
+        </button>
+        <button
+          type="button"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          Terminal row action
+        </button>
+      </>
     );
   },
 }));
@@ -138,6 +146,33 @@ describe("CanvasWindow terminal interactivity", () => {
 
     await act(async () => {
       fireEvent.mouseDown(screen.getByRole("button", { name: "Terminal tab one" }), { button: 0 });
+      await Promise.resolve();
+    });
+
+    expect(focusWindowSpy).toHaveBeenCalledWith("win-terminal");
+    expect(focusWindowSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses terminal Canvas windows before child row actions stop mouse-down propagation", async () => {
+    useWindowManager.setState({
+      windows: [terminalWindow],
+      nextZ: 2,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      apps: [],
+      focusedWindowId: null,
+      fullscreenWindowId: null,
+    });
+    const focusWindowSpy = vi.fn();
+    useWindowManager.setState({ focusWindow: focusWindowSpy });
+
+    await act(async () => {
+      render(<CanvasWindow win={terminalWindow} />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.mouseDown(screen.getByRole("button", { name: "Terminal row action" }), { button: 0 });
       await Promise.resolve();
     });
 

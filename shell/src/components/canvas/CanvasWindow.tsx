@@ -109,6 +109,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
   const isIframeWindow = !win.path.startsWith("__");
+  const isBuiltInWindow = win.path.startsWith("__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
   const minimizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -663,6 +664,14 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       )}
     </>
   );
+  const handleWindowMouseDownCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (isFullscreen || !isBuiltInWindow || event.button !== 0) return;
+    focusWindow(win.id);
+  };
+  const handleWindowMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (isFullscreen || isBuiltInWindow || event.button !== 0) return;
+    focusWindow(win.id);
+  };
 
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational positioning wrapper, not a control. The onMouseDown is a pure pointer convenience that raises window focus/z-index; keyboard users focus the window by tabbing into its own interactive children (title-bar buttons and the app content), so no role/onKeyDown is needed. Giving this whole-window container (which wraps an app iframe) a button role would mislabel it for assistive tech.
@@ -671,7 +680,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       className="absolute"
       data-canvas-window={!isPreview && !isFullscreen || undefined}
       style={{ ...wrapperStyle, ...windowMotionStyle }}
-      onMouseDown={isFullscreen ? undefined : () => focusWindow(win.id)}
+      onMouseDownCapture={handleWindowMouseDownCapture}
+      onMouseDown={handleWindowMouseDown}
     >
       {!isFullscreen && titleBar}
       <div
