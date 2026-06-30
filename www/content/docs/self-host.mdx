@@ -110,9 +110,11 @@ IP-only installs are acceptable for first boot and private-network testing, but 
 
 Do not expose ports `3000`, `4000`, `8787`, or `5432` publicly. Keep them on loopback and expose only your hardened reverse proxy.
 
+The installer leaves `GET /health` open at nginx and returns only `{"ok":true}` so basic uptime monitors can check the public edge without credentials or gateway details. For deeper checks, use systemd status or local-only gateway health from the server.
+
 ## Manual Install Telemetry
 
-The installer sends lightweight, best-effort telemetry to Matrix OS so we can see how many people choose the manual path, which release channel/version they reach, whether installs finish, and where failures happen. It records an anonymous install id, channel, installed version, IP-vs-DNS mode, default-vs-custom bundle source, selected developer-tool count, phase, status, and exit code.
+The installer sends lightweight, best-effort telemetry to Matrix OS so we can see how many people choose the manual path, which release channel/version they reach, whether installs finish, and where failures happen. The endpoint has a bounded request body and short-window rate limits to keep the signal useful. It records an anonymous install id, channel, installed version, IP-vs-DNS mode, default-vs-custom bundle source, selected developer-tool count, phase, status, and exit code.
 
 It does not send your Matrix handle, password, auth tokens, Postgres password, domain name, project files, shell output, or code-server URL. The website telemetry endpoint also asks PostHog to discard client IP by setting `$ip` to `0.0.0.0`.
 

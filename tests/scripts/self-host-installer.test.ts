@@ -58,6 +58,10 @@ describe("self-host server installer", () => {
     expect(script).not.toContain("MATRIX_INSTALL_HANDLE\",\"");
 
     expect(route).toContain("MAX_BODY_BYTES = 4096");
+    expect(route).toContain("RATE_LIMIT_MAX_INSTALL_IDS");
+    expect(route).toContain("installTelemetryBuckets");
+    expect(route).toContain("allowInstallTelemetryEvent(input.installId)");
+    expect(route).toContain("return jsonResponse(429)");
     expect(route).toContain("readBoundedJson");
     expect(route).toContain("request.body?.getReader()");
     expect(route).toContain("totalBytes > MAX_BODY_BYTES");
@@ -76,6 +80,9 @@ describe("self-host server installer", () => {
 
     expect(script).toContain("auth_basic \"Matrix OS\"");
     expect(script).toContain("auth_basic_user_file /opt/matrix/env/nginx.htpasswd");
+    expect(script).toContain("location = /health");
+    expect(script).toContain("auth_basic off");
+    expect(script).toContain("return 200 '{\"ok\":true}'");
     expect(script).toContain("openssl passwd -apr1");
     expect(script).toContain("if [ ! -f /opt/matrix/env/nginx.htpasswd ]; then");
     expect(script).toContain("existing nginx Basic Auth credentials");

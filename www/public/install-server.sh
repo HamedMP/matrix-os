@@ -367,7 +367,12 @@ server {
   location /files/ { proxy_pass http://127.0.0.1:4000; }
   location /icons/ { proxy_pass http://127.0.0.1:4000; }
   location /apps/ { proxy_pass http://127.0.0.1:4000; }
-  location /health { proxy_pass http://127.0.0.1:4000; }
+  location = /health {
+    auth_basic off;
+    access_log off;
+    default_type application/json;
+    return 200 '{"ok":true}';
+  }
   location /gateway/ { proxy_pass http://127.0.0.1:4000/; }
 
   location /ws {

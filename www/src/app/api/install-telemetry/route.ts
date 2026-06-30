@@ -5,6 +5,21 @@ import { getPostHogClient, shutdownPostHog } from '@/lib/posthog-server';
 export const runtime = 'nodejs';
 
 const MAX_BODY_BYTES = 4096;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_EVENTS_PER_INSTALL = 12;
+const RATE_LIMIT_MAX_GLOBAL_EVENTS = 240;
+const RATE_LIMIT_MAX_INSTALL_IDS = 1_000;
+
+type RateLimitBucket = {
+  count: number;
+  resetAt: number;
+};
+
+const installTelemetryBuckets = new Map<string, RateLimitBucket>();
+let globalRateLimitBucket: RateLimitBucket = {
+  count: 0,
+  resetAt: 0,
+};
 
 const installTelemetrySchema = z.object({
   event: z.enum([
@@ -25,6 +40,59 @@ const installTelemetrySchema = z.object({
 
 function jsonResponse(status: number) {
   return NextResponse.json({ ok: status < 400 }, { status });
+}
+
+function pruneExpiredInstallTelemetryBuckets(now: number) {
+  for (const [installId, bucket] of installTelemetryBuckets) {
+    if (bucket.resetAt <= now) {
+      installTelemetryBuckets.delete(installId);
+    }
+  }
+
+  while (installTelemetryBuckets.size > RATE_LIMIT_MAX_INSTALL_IDS) {
+    const oldestInstallId = installTelemetryBuckets.keys().next().value;
+    if (!oldestInstallId) {
+      break;
+    }
+    installTelemetryBuckets.delete(oldestInstallId);
+  }
+}
+
+function allowInstallTelemetryEvent(installId: string, now = Date.now()) {
+  pruneExpiredInstallTelemetryBuckets(now);
+
+  if (globalRateLimitBucket.resetAt <= now) {
+    globalRateLimitBucket = {
+      count: 0,
+      resetAt: now + RATE_LIMIT_WINDOW_MS,
+    };
+  }
+
+  if (globalRateLimitBucket.count >= RATE_LIMIT_MAX_GLOBAL_EVENTS) {
+    return false;
+  }
+
+  const existingBucket = installTelemetryBuckets.get(installId);
+  if (!existingBucket || existingBucket.resetAt <= now) {
+    installTelemetryBuckets.set(installId, {
+      count: 1,
+      resetAt: now + RATE_LIMIT_WINDOW_MS,
+    });
+    globalRateLimitBucket.count += 1;
+    return true;
+  }
+
+  if (existingBucket.count >= RATE_LIMIT_MAX_EVENTS_PER_INSTALL) {
+    return false;
+  }
+
+  installTelemetryBuckets.delete(installId);
+  installTelemetryBuckets.set(installId, {
+    count: existingBucket.count + 1,
+    resetAt: existingBucket.resetAt,
+  });
+  globalRateLimitBucket.count += 1;
+  return true;
 }
 
 async function readBoundedJson(request: Request): Promise<{ body?: unknown; tooLarge?: boolean }> {
@@ -71,6 +139,10 @@ export async function POST(request: Request) {
   }
 
   const input = parsed.data;
+  if (!allowInstallTelemetryEvent(input.installId)) {
+    return jsonResponse(429);
+  }
+
   const posthog = getPostHogClient();
   after(async () => {
     try {
