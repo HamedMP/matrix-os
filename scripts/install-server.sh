@@ -102,6 +102,25 @@ restart_optional_service() {
   fi
 }
 
+wait_http_ok() {
+  local description url log_hint attempt code
+  description="$1"
+  url="$2"
+  log_hint="$3"
+  for attempt in $(seq 1 30); do
+    code="$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" --max-time 5 "$url" 2>>"$MATRIX_INSTALL_LOG" || true)"
+    if [ "$code" = "200" ]; then
+      ok "${description} is reachable"
+      return 0
+    fi
+    if [ "$code" = "500" ]; then
+      fail "${description} returned HTTP 500. ${log_hint}"
+    fi
+    sleep 2
+  done
+  fail "${description} did not become reachable. ${log_hint}"
+}
+
 fail() {
   local failed_phase
   failed_phase="${INSTALL_PHASE:-unknown}"
@@ -535,6 +554,12 @@ start_services() {
   restart_required_service nginx
 }
 
+verify_services() {
+  section "Verifying Matrix OS"
+  wait_http_ok "Matrix gateway" "http://127.0.0.1:4000/health" "Check: journalctl -u matrix-gateway -n 200 --no-pager"
+  wait_http_ok "Matrix shell" "http://127.0.0.1:3000/" "Check: journalctl -u matrix-shell -n 200 --no-pager"
+}
+
 print_summary() {
   local ip password_line ui_url
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -596,6 +621,8 @@ main() {
   configure_nginx
   INSTALL_PHASE="services"
   start_services
+  INSTALL_PHASE="verify"
+  verify_services
   INSTALL_PHASE="complete"
   INSTALL_COMPLETED=1
   capture_install_telemetry "matrix_manual_install_completed" "completed" 0

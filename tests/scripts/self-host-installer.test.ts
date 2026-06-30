@@ -123,6 +123,13 @@ describe("self-host server installer", () => {
     expect(script).toContain("run_required");
     expect(script).toContain("restart_required_service matrix-gateway");
     expect(script).toContain("restart_optional_service matrix-developer-tools");
+    expect(script).toContain("wait_http_ok");
+    expect(script).toContain("Verifying Matrix OS");
+    expect(script).toContain('${description} returned HTTP 500');
+    expect(script).toContain('wait_http_ok "Matrix shell"');
+    expect(script).toContain("journalctl -u matrix-shell -n 200 --no-pager");
+    expect(script).toContain("http://127.0.0.1:3000/");
+    expect(script).toContain("http://127.0.0.1:4000/health");
     expect(script).toContain("optional developer tools installer");
     expect(script).toContain("Matrix OS core is still installed");
     expect(script).toContain("usermod -aG docker matrix");

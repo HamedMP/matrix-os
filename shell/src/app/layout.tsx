@@ -83,6 +83,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const visitorCountry = getPostHogVisitorCountry(await headers());
+  const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
   const renderDocument = (includePostHogIdentify: boolean) => (
     <html
       lang="en"
@@ -102,17 +103,13 @@ export default async function RootLayout({
     </html>
   );
 
-  if (process.env.MATRIX_SELF_HOSTED === "1") {
-    return renderDocument(false);
-  }
-
   return (
     // ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep
     // sign-in/up cross-links on the in-app routes. Those vars are baked at
     // build time (default /sign-in and /sign-up); without them Clerk falls
     // back to the hosted Account Portal (accounts.matrix-os.com).
     <ClerkProvider>
-      {renderDocument(true)}
+      {renderDocument(!selfHostedMode)}
     </ClerkProvider>
   );
 }

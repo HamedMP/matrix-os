@@ -10,7 +10,8 @@ export const metadata: Metadata = {
 };
 
 export default async function Home() {
-  const platformSessionActive = hasServerVerifiedMatrixSession(await headers());
+  const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
+  const platformSessionActive = selfHostedMode || hasServerVerifiedMatrixSession(await headers());
 
   return (
     <OnboardingGate platformSessionActive={platformSessionActive}>
