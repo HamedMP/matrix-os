@@ -64,6 +64,8 @@ interface UserMachinesTable {
   deleted_at: string | null;
   failure_code: string | null;
   failure_at: string | null;
+  resize_started_at: string | null;
+  resize_target_server_type: string | null;
   attempt: number;
 }
 
@@ -387,6 +389,8 @@ export interface UserMachineRecord {
   deletedAt: string | null;
   failureCode: string | null;
   failureAt: string | null;
+  resizeStartedAt: string | null;
+  resizeTargetServerType: string | null;
   attempt: number;
 }
 
@@ -577,6 +581,8 @@ export interface NewUserMachine {
   deletedAt?: string | null;
   failureCode?: string | null;
   failureAt?: string | null;
+  resizeStartedAt?: string | null;
+  resizeTargetServerType?: string | null;
   attempt?: number;
 }
 
@@ -667,12 +673,16 @@ async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
       deleted_at TEXT,
       failure_code TEXT,
       failure_at TEXT,
+      resize_started_at TEXT,
+      resize_target_server_type TEXT,
       attempt INTEGER NOT NULL DEFAULT 1
     )
   `.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS server_type TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_started_at TEXT`.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS resize_target_server_type TEXT`.execute(db);
   await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_user_machines_status ON user_machines(status)`.execute(db);
   await sql`ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_clerk_user_id_key`.execute(db);
@@ -1155,6 +1165,8 @@ function mapUserMachine(row: UserMachinesTable): UserMachineRecord {
     deletedAt: row.deleted_at,
     failureCode: row.failure_code,
     failureAt: row.failure_at,
+    resizeStartedAt: row.resize_started_at,
+    resizeTargetServerType: row.resize_target_server_type,
     attempt: row.attempt,
   };
 }
@@ -1179,6 +1191,8 @@ function toUserMachineRow(record: NewUserMachine): UserMachinesTable {
     deleted_at: record.deletedAt ?? null,
     failure_code: record.failureCode ?? null,
     failure_at: record.failureAt ?? null,
+    resize_started_at: record.resizeStartedAt ?? null,
+    resize_target_server_type: record.resizeTargetServerType ?? null,
     attempt: record.attempt ?? 1,
   };
 }
@@ -1203,6 +1217,8 @@ function toUserMachineUpdate(values: Partial<NewUserMachine>): Partial<UserMachi
   if (values.deletedAt !== undefined) update.deleted_at = values.deletedAt;
   if (values.failureCode !== undefined) update.failure_code = values.failureCode;
   if (values.failureAt !== undefined) update.failure_at = values.failureAt;
+  if (values.resizeStartedAt !== undefined) update.resize_started_at = values.resizeStartedAt;
+  if (values.resizeTargetServerType !== undefined) update.resize_target_server_type = values.resizeTargetServerType;
   if (values.attempt !== undefined) update.attempt = values.attempt;
   return update;
 }
@@ -1914,7 +1930,7 @@ export async function listActiveUserMachinesByClerkId(
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
     .where('deleted_at', 'is', null)
-    .where('status', 'in', ['running', 'provisioning', 'recovering'])
+    .where('status', 'in', ['running', 'provisioning', 'recovering', 'resizing'])
     .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
     .orderBy('provisioned_at', 'desc')
     .execute();
@@ -1932,6 +1948,70 @@ export async function updateUserMachine(
     .set(toUserMachineUpdate(values))
     .where('machine_id', '=', machineId)
     .execute();
+}
+
+export async function claimRunningUserMachineResize(
+  db: PlatformDB,
+  machineId: string,
+  hetznerServerId: number,
+  resizeStartedAt: string,
+  resizeTargetServerType: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set({
+      status: 'resizing',
+      failure_code: null,
+      failure_at: null,
+      resize_started_at: resizeStartedAt,
+      resize_target_server_type: resizeTargetServerType,
+    })
+    .where('machine_id', '=', machineId)
+    .where('hetzner_server_id', '=', hetznerServerId)
+    .where('status', '=', 'running')
+    .where('deleted_at', 'is', null)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function completeUserMachineResize(
+  db: PlatformDB,
+  machineId: string,
+  hetznerServerId: number,
+  values: Partial<NewUserMachine>,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .updateTable('user_machines')
+    .set(toUserMachineUpdate(values))
+    .where('machine_id', '=', machineId)
+    .where('hetzner_server_id', '=', hetznerServerId)
+    .where('status', '=', 'resizing')
+    .where('deleted_at', 'is', null)
+    .returningAll()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
+export async function listStaleResizingUserMachines(
+  db: PlatformDB,
+  olderThanIso: string,
+  limit: number,
+): Promise<UserMachineRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where('status', '=', 'resizing')
+    .where('resize_started_at', 'is not', null)
+    .where('resize_started_at', '<', olderThanIso)
+    .where('deleted_at', 'is', null)
+    .orderBy('resize_started_at')
+    .limit(limit)
+    .execute();
+  return rows.map(mapUserMachine);
 }
 
 export async function completeUserMachineRegistration(
@@ -1977,6 +2057,7 @@ export async function claimUserMachineRecovery(
     .where('runtime_slot', '=', runtimeSlot)
     .where('deleted_at', 'is', null)
     .where('status', '!=', 'recovering')
+    .where('status', '!=', 'resizing')
     .returningAll()
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;
@@ -2016,6 +2097,7 @@ export async function claimUserMachineDelete(
     .set({ status: 'deleted', deleted_at: deletedAt })
     .where('machine_id', '=', machineId)
     .where('deleted_at', 'is', null)
+    .where('status', '!=', 'resizing')
     .returningAll()
     .executeTakeFirst();
   return row ? mapUserMachine(row) : undefined;

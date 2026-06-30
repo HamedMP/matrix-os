@@ -8,6 +8,7 @@ import {
   ProvisionRequestSchema,
   RegisterRequestSchema,
   RecoverRequestSchema,
+  ResizeMachineRequestSchema,
   DeployRequestSchema,
 } from './customer-vps-schema.js';
 import type { CustomerVpsService } from './customer-vps.js';
@@ -204,6 +205,27 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       return c.json(await deps.service.recover(parsed.data), 202);
     } catch (err: unknown) {
       return jsonError(c, err, '/vps/recover');
+    }
+  });
+
+  app.post('/:machineId/resize', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    const params = MachineIdParamSchema.safeParse({ machineId: c.req.param('machineId') });
+    if (!params.success) {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    try {
+      const parsed = ResizeMachineRequestSchema.safeParse(await readJson(c));
+      if (!parsed.success) {
+        return c.json({ error: 'Invalid request' }, 400);
+      }
+      return c.json(await deps.service.resize({
+        machineId: params.data.machineId,
+        ...parsed.data,
+      }), 200);
+    } catch (err: unknown) {
+      return jsonError(c, err, '/vps/:machineId/resize');
     }
   });
 

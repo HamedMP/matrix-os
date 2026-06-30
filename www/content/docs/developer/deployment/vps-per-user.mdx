@@ -19,6 +19,7 @@ Included:
 - Shared `code.matrix-os.com` routing to the authenticated user's VPS-hosted code-server gateway.
 - Customer host restore gate, hourly Postgres backups, and R2 metadata pointers.
 - Manual recovery through `POST /vps/recover` or `matrixctl recover`.
+- In-place machine capacity changes through `POST /vps/:machineId/resize`.
 - Host-bundle based updates for shell, gateway, code, default apps, and runtime CLIs.
 - Local owner-controlled Postgres on each customer VPS at `127.0.0.1:5432`.
 
@@ -175,6 +176,29 @@ Not restored in this slice:
 - A failed backup that did not update `system/db/latest`.
 
 If restore fails, `matrix-restore.service` exits non-zero and `matrix-gateway.service` remains gated by `ConditionPathExists=/opt/matrix/restore-complete`.
+
+## Machine Resize
+
+Use resize when a running customer VPS needs more or less CPU/RAM without replacing the machine or restoring from backup.
+
+```bash
+curl -sS -X POST "$PLATFORM_PUBLIC_URL/vps/$MACHINE_ID/resize" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"serverType":"cpx32"}'
+```
+
+Expected behavior:
+
+- The endpoint is platform-internal only and requires the same platform bearer token as provision, status, recovery, delete, deploy, and fleet routes.
+- The route validates the UUID path parameter and the `serverType` body with Zod before touching the service.
+- The service only resizes `running`, undeleted machines that still have a Hetzner server ID.
+- The target server type must be allowed by the user's active billing entitlement when billing enforcement is configured.
+- The platform marks the machine `resizing`, powers the server off, calls Hetzner's in-place server-type action with disk upgrade disabled, powers the server back on, then marks it `running` with the accepted target type.
+- The platform does not create, delete, recover, or reprovision the machine. Owner data under `/home/matrix/home` and the customer-local Postgres volume stay on the same VPS.
+- Provider failures return a generic provisioning error to the caller while server-side logs retain provider details.
+
+Do not use recovery for ordinary capacity changes. Recovery intentionally replaces the server and restores from the latest backup; resize keeps the current machine and data volume in place.
 
 ## Rollback
 

@@ -157,6 +157,57 @@ describe('platform/customer-vps-routes', () => {
     expect(service.recover).toHaveBeenCalledWith({ clerkUserId: 'user_123', runtimeSlot: 'staging', allowEmpty: true });
   });
 
+  it('protects and validates the machine resize route contract', async () => {
+    const service = {
+      resize: vi.fn().mockResolvedValue({
+        machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+        serverType: 'cpx32',
+        status: 'running',
+      }),
+    } as unknown as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({ service, platformSecret }));
+
+    const unauthorized = await app.request('/vps/9f05824c-8d0a-4d83-9cb4-b312d43ff112/resize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ serverType: 'cpx32' }),
+    });
+    expect(unauthorized.status).toBe(401);
+
+    const invalidBody = await app.request('/vps/9f05824c-8d0a-4d83-9cb4-b312d43ff112/resize', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ serverType: '../../cpx32' }),
+    });
+    expect(invalidBody.status).toBe(400);
+    expect(await invalidBody.json()).toEqual({ error: 'Invalid request' });
+
+    const invalidMachine = await app.request('/vps/not-a-uuid/resize', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ serverType: 'cpx32' }),
+    });
+    expect(invalidMachine.status).toBe(400);
+    expect(await invalidMachine.json()).toEqual({ error: 'Invalid request' });
+
+    const resized = await app.request('/vps/9f05824c-8d0a-4d83-9cb4-b312d43ff112/resize', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ serverType: 'cpx32' }),
+    });
+    expect(resized.status).toBe(200);
+    expect(await resized.json()).toEqual({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      serverType: 'cpx32',
+      status: 'running',
+    });
+    expect(service.resize).toHaveBeenCalledWith({
+      machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      serverType: 'cpx32',
+    });
+  });
+
   it('rejects invalid request bodies with generic validation errors', async () => {
     const app = createApp();
     const res = await app.request('/vps/provision', {
@@ -234,6 +285,21 @@ describe('platform/customer-vps-routes', () => {
         'content-length': '5001',
       },
       body: JSON.stringify({ clerkUserId: 'user_123', handle: 'alice', padding: 'x'.repeat(5000) }),
+    });
+
+    expect(res.status).toBe(413);
+  });
+
+  it('rejects resize bodies over 4096 bytes before parsing', async () => {
+    const app = createApp();
+    const res = await app.request('/vps/9f05824c-8d0a-4d83-9cb4-b312d43ff112/resize', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${platformSecret}`,
+        'content-type': 'application/json',
+        'content-length': '5001',
+      },
+      body: JSON.stringify({ serverType: 'cpx32', padding: 'x'.repeat(5000) }),
     });
 
     expect(res.status).toBe(413);
