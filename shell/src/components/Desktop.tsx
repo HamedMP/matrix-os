@@ -1856,6 +1856,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             const isFullscreen = win.id === fullscreenWindowId;
             const isMinimizing = minimizingIds.has(win.id);
             const isHidden = win.minimized && !isMinimizing && !isFullscreen;
+            const terminalOwnsChrome = win.path.startsWith("__terminal__");
+
             // Compute dock target for suck animation
             let dockTargetX = 0;
             let dockTargetY = 0;
@@ -1882,6 +1884,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   ? "fixed inset-0 gap-0 rounded-none p-0 overflow-hidden border-0 bg-background"
                   : cn(
                       "app-window absolute gap-0 rounded-none md:rounded-lg p-0 overflow-hidden shadow-2xl",
+                      // The terminal body is dark; the Card's default light border
+                      // reads as a stray white frame (Canvas omits it). Drop it.
+                      terminalOwnsChrome && "border-0",
                     )
                 }
                 style={isFullscreen ? {
@@ -1914,8 +1919,11 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 <CardHeader
                   className={cn(
                     "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
-                    "border-b border-border",
+                    // Terminal keeps the main-branch host title bar styling;
+                    // only the Terminal app's own internal toolbar was removed.
+                    terminalOwnsChrome ? "border-b-0" : "border-b border-border",
                   )}
+                  style={terminalOwnsChrome ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" } : undefined}
                   onPointerDown={(e) => onDragStart(win.id, e)}
                   onPointerMove={onDragMove}
                   onPointerUp={onDragEnd}

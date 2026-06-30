@@ -109,7 +109,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
   const isIframeWindow = !win.path.startsWith("__");
-  const isBuiltInWindow = win.path.startsWith("__");
+  const terminalOwnsChrome = win.path.startsWith("__terminal__");
   const isCanvasScrolling = useCanvasTransform((s) => s.isScrolling);
   const [contentFocused, setContentFocused] = useState(false);
   const minimizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -665,11 +665,11 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
     </>
   );
   const handleWindowMouseDownCapture = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (isFullscreen || !isBuiltInWindow || event.button !== 0) return;
+    if (isFullscreen || !terminalOwnsChrome || event.button !== 0) return;
     focusWindow(win.id);
   };
   const handleWindowMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (isFullscreen || isBuiltInWindow || event.button !== 0) return;
+    if (isFullscreen || terminalOwnsChrome || event.button !== 0) return;
     focusWindow(win.id);
   };
 
@@ -691,11 +691,17 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
             ? `rounded-lg bg-card overflow-hidden flex items-center justify-center transition-shadow duration-150 ${
                 isFocused ? "shadow-lg ring-1 ring-primary/30" : "shadow-md opacity-80"
               }`
+            : terminalOwnsChrome
+              ? "rounded-lg bg-card overflow-hidden transition-shadow duration-150 shadow-md"
             : `rounded-lg bg-card overflow-hidden transition-shadow duration-150 ${
                 isFocused ? "shadow-xl ring-1 ring-primary/30" : "shadow-md"
               }`
         }
         style={contentStyle}
+        onPointerDownCapture={(event) => {
+          if (!terminalOwnsChrome || event.button !== 0) return;
+          focusWindow(win.id);
+        }}
       >
         {isFullscreen && fullscreenTitleBar}
         {isFullscreen ? (
