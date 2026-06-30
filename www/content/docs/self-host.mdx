@@ -80,7 +80,17 @@ The self-host installer is for developers comfortable operating a VPS. Matrix Cl
     matrix shell ls --gateway http://<server-ip>/cli --token "$MATRIX_TOKEN"
     ```
 
-    From your laptop, set `MATRIX_GATEWAY` to the printed CLI gateway URL and pass the same token explicitly. Browser login is for Matrix Cloud; standalone self-host CLI access currently uses this bearer token.
+    From your laptop, set `MATRIX_GATEWAY` to the printed CLI gateway URL and pass the same token explicitly:
+
+    ```bash
+    export MATRIX_GATEWAY="http://<server-ip>/cli"
+    export MATRIX_TOKEN="$(ssh root@<server-ip> 'sudo sed -n "s/^MATRIX_AUTH_TOKEN=//p" /opt/matrix/env/host.env')"
+
+    matrix shell ls --gateway "$MATRIX_GATEWAY" --token "$MATRIX_TOKEN"
+    matrix run --gateway "$MATRIX_GATEWAY" --token "$MATRIX_TOKEN" -- echo "hello from Matrix OS"
+    ```
+
+    Browser login is for Matrix Cloud; standalone self-host CLI access currently uses this bearer token.
   </Step>
 </Steps>
 
