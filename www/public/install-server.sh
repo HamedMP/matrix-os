@@ -222,16 +222,18 @@ install_systemd_units() {
 
 configure_nginx() {
   local code_proxy_token password hash server_name
-  password="$(openssl rand -base64 18 | tr -d '\n')"
-  hash="$(openssl passwd -apr1 "$password")"
   code_proxy_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN)" || fail "MATRIX_CODE_PROXY_TOKEN is missing from host.env"
   server_name="$MATRIX_DOMAIN"
 
-  printf 'matrix:%s\n' "$hash" >/opt/matrix/env/nginx.htpasswd
+  if [ ! -f /opt/matrix/env/nginx.htpasswd ]; then
+    password="$(openssl rand -base64 18 | tr -d '\n')"
+    hash="$(openssl passwd -apr1 "$password")"
+    printf 'matrix:%s\n' "$hash" >/opt/matrix/env/nginx.htpasswd
+    printf '%s\n' "$password" >/opt/matrix/env/initial-ui-password
+    chmod 0600 /opt/matrix/env/initial-ui-password
+  fi
   chmod 0640 /opt/matrix/env/nginx.htpasswd
   chown root:www-data /opt/matrix/env/nginx.htpasswd
-  printf '%s\n' "$password" >/opt/matrix/env/initial-ui-password
-  chmod 0600 /opt/matrix/env/initial-ui-password
   printf 'proxy_set_header X-Matrix-Code-Proxy-Token "%s";\n' "$code_proxy_token" >/opt/matrix/env/code-proxy-token.conf
   chmod 0600 /opt/matrix/env/code-proxy-token.conf
   chown root:root /opt/matrix/env/code-proxy-token.conf
@@ -261,6 +263,7 @@ server {
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
     proxy_pass http://127.0.0.1:4000;
   }
 
@@ -268,6 +271,7 @@ server {
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
     include /opt/matrix/env/code-proxy-token.conf;
     rewrite ^/code/?(.*)\$ /\$1 break;
     proxy_pass http://127.0.0.1:8787;
@@ -300,7 +304,7 @@ start_services() {
 }
 
 print_summary() {
-  local ip ui_url
+  local ip password_line ui_url
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   if [ -n "${MATRIX_PUBLIC_URL:-}" ]; then
     ui_url="$MATRIX_PUBLIC_URL"
@@ -311,6 +315,11 @@ print_summary() {
   else
     ui_url="http://<server-ip>"
   fi
+  if [ -f /opt/matrix/env/initial-ui-password ]; then
+    password_line="Password: $(cat /opt/matrix/env/initial-ui-password)"
+  else
+    password_line="Password: existing nginx Basic Auth credentials"
+  fi
 
   cat <<EOF
 
@@ -318,7 +327,7 @@ Matrix OS standalone install complete.
 
 Open: ${ui_url}
 User: matrix
-Password: $(cat /opt/matrix/env/initial-ui-password)
+${password_line}
 
 Code editor: ${ui_url%/}/code/
 Home: ${MATRIX_HOME_DIR}

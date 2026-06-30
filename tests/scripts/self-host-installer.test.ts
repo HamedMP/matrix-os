@@ -44,9 +44,12 @@ describe("self-host server installer", () => {
     expect(script).toContain("auth_basic \"Matrix OS\"");
     expect(script).toContain("auth_basic_user_file /opt/matrix/env/nginx.htpasswd");
     expect(script).toContain("openssl passwd -apr1");
+    expect(script).toContain("if [ ! -f /opt/matrix/env/nginx.htpasswd ]; then");
+    expect(script).toContain("existing nginx Basic Auth credentials");
     expect(script).toContain("code-proxy-token.conf");
     expect(script).toContain("chmod 0600 /opt/matrix/env/code-proxy-token.conf");
     expect(script).toContain("include /opt/matrix/env/code-proxy-token.conf");
+    expect(script).toContain("proxy_read_timeout 3600s");
     expect(script).toContain("proxy_pass http://127.0.0.1:3000");
     expect(script).toContain("proxy_pass http://127.0.0.1:4000");
     expect(script).toContain("proxy_pass http://127.0.0.1:8787");
