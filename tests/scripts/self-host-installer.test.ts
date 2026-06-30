@@ -98,8 +98,12 @@ describe("self-host server installer", () => {
     expect(script).toContain("openssl passwd -apr1");
     expect(script).toContain("if [ ! -f /opt/matrix/env/nginx.htpasswd ]; then");
     expect(script).toContain("existing nginx Basic Auth credentials");
+    expect(script).toContain("gateway-auth-token.conf");
+    expect(script).toContain("proxy_set_header Authorization \"Bearer %s\"");
+    expect(script).toContain("proxy_set_header Authorization \"\"");
     expect(script).toContain("code-proxy-token.conf");
     expect(script).toContain("chmod 0600 /opt/matrix/env/code-proxy-token.conf");
+    expect(script).toContain("include /opt/matrix/env/gateway-auth-token.conf");
     expect(script).toContain("include /opt/matrix/env/code-proxy-token.conf");
     expect(script).toContain("proxy_read_timeout 3600s");
     expect(script).toContain("proxy_pass http://127.0.0.1:3000");
@@ -126,10 +130,15 @@ describe("self-host server installer", () => {
     expect(script).toContain("wait_http_ok");
     expect(script).toContain("Verifying Matrix OS");
     expect(script).toContain('${description} returned HTTP 500');
+    expect(script).toContain("wait_http_ok_auth");
     expect(script).toContain('wait_http_ok "Matrix shell"');
+    expect(script).toContain('wait_http_ok_auth "nginx shell"');
+    expect(script).toContain('wait_http_ok_auth "nginx gateway API"');
     expect(script).toContain("journalctl -u matrix-shell -n 200 --no-pager");
+    expect(script).toContain("journalctl -u nginx -n 120 --no-pager");
     expect(script).toContain("http://127.0.0.1:3000/");
     expect(script).toContain("http://127.0.0.1:4000/health");
+    expect(script).toContain("http://127.0.0.1/api/identity");
     expect(script).toContain("optional developer tools installer");
     expect(script).toContain("Matrix OS core is still installed");
     expect(script).toContain("usermod -aG docker matrix");

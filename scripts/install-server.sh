@@ -121,6 +121,26 @@ wait_http_ok() {
   fail "${description} did not become reachable. ${log_hint}"
 }
 
+wait_http_ok_auth() {
+  local description url password log_hint attempt code
+  description="$1"
+  url="$2"
+  password="$3"
+  log_hint="$4"
+  for attempt in $(seq 1 30); do
+    code="$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" --max-time 5 --user "matrix:${password}" "$url" 2>>"$MATRIX_INSTALL_LOG" || true)"
+    if [ "$code" = "200" ]; then
+      ok "${description} is reachable"
+      return 0
+    fi
+    if [ "$code" = "401" ] || [ "$code" = "500" ]; then
+      fail "${description} returned HTTP ${code}. ${log_hint}"
+    fi
+    sleep 2
+  done
+  fail "${description} did not become reachable. ${log_hint}"
+}
+
 fail() {
   local failed_phase
   failed_phase="${INSTALL_PHASE:-unknown}"
@@ -466,7 +486,8 @@ install_systemd_units() {
 }
 
 configure_nginx() {
-  local code_proxy_token password hash server_name
+  local auth_token code_proxy_token password hash server_name
+  auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN)" || fail "MATRIX_AUTH_TOKEN is missing from host.env"
   code_proxy_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN)" || fail "MATRIX_CODE_PROXY_TOKEN is missing from host.env"
   server_name="$MATRIX_DOMAIN"
 
@@ -479,6 +500,9 @@ configure_nginx() {
   fi
   chmod 0640 /opt/matrix/env/nginx.htpasswd
   chown root:www-data /opt/matrix/env/nginx.htpasswd
+  printf 'proxy_set_header Authorization "Bearer %s";\n' "$auth_token" >/opt/matrix/env/gateway-auth-token.conf
+  chmod 0600 /opt/matrix/env/gateway-auth-token.conf
+  chown root:root /opt/matrix/env/gateway-auth-token.conf
   printf 'proxy_set_header X-Matrix-Code-Proxy-Token "%s";\n' "$code_proxy_token" >/opt/matrix/env/code-proxy-token.conf
   chmod 0600 /opt/matrix/env/code-proxy-token.conf
   chown root:root /opt/matrix/env/code-proxy-token.conf
@@ -497,23 +521,39 @@ server {
   proxy_set_header X-Forwarded-Proto \$scheme;
   proxy_set_header X-Real-IP \$remote_addr;
 
-  location /api/ { proxy_pass http://127.0.0.1:4000; }
-  location /files/ { proxy_pass http://127.0.0.1:4000; }
-  location /icons/ { proxy_pass http://127.0.0.1:4000; }
-  location /apps/ { proxy_pass http://127.0.0.1:4000; }
+  location /api/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+  location /files/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+  location /icons/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+  location /apps/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
   location = /health {
     auth_basic off;
     access_log off;
     default_type application/json;
     return 200 '{"ok":true}';
   }
-  location /gateway/ { proxy_pass http://127.0.0.1:4000/; }
+  location /gateway/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000/;
+  }
 
   location /ws {
     proxy_http_version 1.1;
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
     proxy_read_timeout 3600s;
+    include /opt/matrix/env/gateway-auth-token.conf;
     proxy_pass http://127.0.0.1:4000;
   }
 
@@ -522,12 +562,14 @@ server {
     proxy_set_header Upgrade \$http_upgrade;
     proxy_set_header Connection "upgrade";
     proxy_read_timeout 3600s;
+    proxy_set_header Authorization "";
     include /opt/matrix/env/code-proxy-token.conf;
     rewrite ^/code/?(.*)\$ /\$1 break;
     proxy_pass http://127.0.0.1:8787;
   }
 
   location / {
+    proxy_set_header Authorization "";
     proxy_pass http://127.0.0.1:3000;
   }
 }
@@ -555,9 +597,13 @@ start_services() {
 }
 
 verify_services() {
+  local password
   section "Verifying Matrix OS"
   wait_http_ok "Matrix gateway" "http://127.0.0.1:4000/health" "Check: journalctl -u matrix-gateway -n 200 --no-pager"
   wait_http_ok "Matrix shell" "http://127.0.0.1:3000/" "Check: journalctl -u matrix-shell -n 200 --no-pager"
+  password="$(cat /opt/matrix/env/initial-ui-password)"
+  wait_http_ok_auth "nginx shell" "http://127.0.0.1/" "$password" "Check: journalctl -u nginx -n 120 --no-pager; journalctl -u matrix-shell -n 200 --no-pager"
+  wait_http_ok_auth "nginx gateway API" "http://127.0.0.1/api/identity" "$password" "Check: journalctl -u nginx -n 120 --no-pager; journalctl -u matrix-gateway -n 200 --no-pager"
 }
 
 print_summary() {
