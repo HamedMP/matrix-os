@@ -6202,7 +6202,7 @@ function ShellCard({
                     ...SESSION_COPY_FEEDBACK_STYLE,
                     color: copyFeedback === "copied"
                       ? "var(--terminal-drawer-selected-stripe)"
-                      : "var(--terminal-drawer-danger-fg)",
+                      : "var(--terminal-drawer-warning-fg)",
                   }}
                 >
                   {copyFeedback === "copied" ? (
