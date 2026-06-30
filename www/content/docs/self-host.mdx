@@ -178,11 +178,55 @@ The preview installer is intentionally minimal: nginx Basic Auth protects the br
 
 - Put the host behind HTTPS with DNS, Tailscale, Cloudflare Access/Tunnel, or another trusted edge.
 - Keep ports `3000`, `4000`, `8787`, `8788`, and `5432` closed to the public internet.
-- Rotate `/opt/matrix/env/initial-ui-password` and `MATRIX_AUTH_TOKEN` if either is exposed.
+- Rotate the nginx Basic Auth username/password and `MATRIX_AUTH_TOKEN` if either is exposed.
 - Back up `/home/matrix/home`, the local Postgres volume, and `/opt/matrix/env`.
 - Keep SSH limited to trusted keys and trusted networks.
 
 IP-only installs are fine for first boot and private testing, but they are plain HTTP unless you add a TLS/access layer.
+
+#### Change the web username or password
+
+The printed `User` and `Password` protect the browser UI through nginx Basic Auth. They are separate from the Linux `matrix` user, the CLI `MATRIX_AUTH_TOKEN`, Postgres, and any future Matrix Cloud login.
+
+Run this on the VPS as `root` to replace the browser username and password:
+
+```bash
+sudo bash -lc '
+set -euo pipefail
+
+read -rp "New Matrix web username: " MATRIX_WEB_USER
+if ! printf "%s" "$MATRIX_WEB_USER" | grep -Eq "^[A-Za-z0-9._-]{1,64}$"; then
+  echo "Username must be 1-64 chars: letters, numbers, dot, underscore, or dash." >&2
+  exit 1
+fi
+
+read -rsp "New Matrix web password: " MATRIX_WEB_PASSWORD
+echo
+if [ -z "$MATRIX_WEB_PASSWORD" ]; then
+  echo "Password cannot be empty." >&2
+  exit 1
+fi
+
+HASH="$(openssl passwd -apr1 "$MATRIX_WEB_PASSWORD")"
+printf "%s:%s\n" "$MATRIX_WEB_USER" "$HASH" > /etc/nginx/matrix-self-host.htpasswd
+chown root:www-data /etc/nginx/matrix-self-host.htpasswd
+chmod 0640 /etc/nginx/matrix-self-host.htpasswd
+
+printf "%s\n" "$MATRIX_WEB_USER" > /opt/matrix/env/initial-ui-user
+printf "%s\n" "$MATRIX_WEB_PASSWORD" > /opt/matrix/env/initial-ui-password
+chown root:root /opt/matrix/env/initial-ui-user /opt/matrix/env/initial-ui-password
+chmod 0600 /opt/matrix/env/initial-ui-user /opt/matrix/env/initial-ui-password
+
+nginx -t
+systemctl reload nginx
+'
+```
+
+Then test the new credentials from the VPS:
+
+```bash
+curl -I -u '<new-user>:<new-password>' http://127.0.0.1/
+```
 
 When rotating `MATRIX_AUTH_TOKEN`, update both the service env file and nginx's injected gateway-token include, then restart the affected services:
 
