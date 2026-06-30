@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const createdTerminals = vi.hoisted(() => [] as Array<{
   options: Record<string, unknown>;
   element: HTMLElement | null;
   viewport: HTMLElement | null;
+  focus: ReturnType<typeof vi.fn>;
+}>);
+
+const createdFitAddons = vi.hoisted(() => [] as Array<{
+  fit: ReturnType<typeof vi.fn>;
 }>);
 
 const stubWs = vi.hoisted(() => ({
@@ -91,6 +96,10 @@ vi.mock("@xterm/xterm", () => ({
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class MockFitAddon {
     fit = vi.fn();
+
+    constructor() {
+      createdFitAddons.push(this);
+    }
   },
 }));
 
@@ -182,6 +191,28 @@ class WebSocketMock {
   constructor(_url: string) {}
 }
 
+function installVisualViewportMock(input: { height: number; offsetTop: number }) {
+  const listeners = new Map<string, Set<() => void>>();
+  const viewport = {
+    height: input.height,
+    offsetTop: input.offsetTop,
+    addEventListener: vi.fn((type: string, listener: () => void) => {
+      const set = listeners.get(type) ?? new Set<() => void>();
+      set.add(listener);
+      listeners.set(type, set);
+    }),
+    removeEventListener: vi.fn((type: string, listener: () => void) => {
+      listeners.get(type)?.delete(listener);
+    }),
+    dispatch(type: string) {
+      for (const listener of listeners.get(type) ?? []) listener();
+    },
+  };
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+  Object.defineProperty(window, "visualViewport", { configurable: true, value: viewport });
+  return viewport;
+}
+
 function createCachedTerminal() {
   const element = document.createElement("div");
   element.className = "xterm";
@@ -211,6 +242,7 @@ function createCachedTerminal() {
 describe("TerminalPane scrolling", () => {
   beforeEach(() => {
     createdTerminals.length = 0;
+    createdFitAddons.length = 0;
     restorePlan.current = {
       cached: null,
       reuseTerminal: false,
@@ -224,6 +256,7 @@ describe("TerminalPane scrolling", () => {
       setTimeout(() => cb(0), 0)) as typeof requestAnimationFrame;
     stubWs.send.mockReset();
     stubWs.close.mockReset();
+    Reflect.deleteProperty(window, "visualViewport");
   });
 
   it("configures xterm scrollback and native viewport scrolling after mount", async () => {
@@ -312,5 +345,39 @@ describe("TerminalPane scrolling", () => {
     expect(cached.viewport.style.getPropertyValue("scrollbar-gutter")).toBe("stable");
     expect(cached.viewport.style.overscrollBehavior).toBe("contain");
     expect(cached.viewport.style.touchAction).toBe("pan-y");
+  });
+
+  it("does not refocus xterm on mobile visual viewport resize when native keyboard is suppressed", async () => {
+    const viewport = installVisualViewportMock({ height: 800, offsetTop: 0 });
+
+    render(
+      <TerminalPane
+        paneId="pane-mobile-keyboard-test"
+        cwd=""
+        theme={theme}
+        isFocused
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        suppressNativeKeyboard
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    await waitFor(() => expect(createdFitAddons).toHaveLength(1));
+
+    const terminal = createdTerminals[0];
+    const fitAddon = createdFitAddons[0];
+    terminal.focus.mockClear();
+    fitAddon.fit.mockClear();
+
+    await act(async () => {
+      viewport.height = 560;
+      viewport.dispatch("resize");
+    });
+
+    await waitFor(() => expect(fitAddon.fit).toHaveBeenCalled());
+    expect(terminal.focus).not.toHaveBeenCalled();
   });
 });

@@ -13,7 +13,6 @@ import {
   FilesIcon,
   FolderIcon,
   GripVerticalIcon,
-  KeyboardIcon,
   LinkIcon,
   MoreHorizontalIcon,
   PanelLeftOpenIcon,
@@ -699,6 +698,8 @@ function getTerminalAppChromeCssVars(theme: TerminalAppChromeTheme): TerminalApp
     "--terminal-drawer-toggle-off-fg": theme.drawerToggleOffForeground,
     "--terminal-drawer-toggle-off-knob": theme.drawerToggleOffKnob,
     "--terminal-drawer-drop-line": theme.drawerDropLine,
+    "--terminal-mobile-primary-bg": theme.drawerPrimaryButtonBackground,
+    "--terminal-mobile-primary-fg": theme.drawerPrimaryButtonForeground,
   };
 }
 
@@ -1379,7 +1380,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       : terminalPreset?.background ?? "var(--background)";
   const terminalChromeBackground = appChromeTheme.chromeBackground;
   const terminalChromeForeground = appChromeTheme.chromeForeground;
-  const terminalChromeAccent = appChromeTheme.chromeAccent;
+  const terminalChromeAccent = mobile ? "var(--terminal-mobile-primary-bg)" : appChromeTheme.chromeAccent;
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState("");
@@ -3218,10 +3219,57 @@ function MobileTerminalActions({
   accent: string;
 }) {
   const ctx = useTerminalAppContext();
+  const [newSessionMenuOpen, setNewSessionMenuOpen] = useState(false);
+  const [agentStatuses, setAgentStatuses] = useState<Record<TerminalAgentId, boolean> | null>(null);
+  const newSessionDisclosureRef = useRef<HTMLDivElement | null>(null);
   const getCwd = () => ctx.sidebarSelectedPath ?? defaultCwd;
   const focusedPaneId = ctx.focusedPaneId;
   const actionBackground = `color-mix(in srgb, ${foreground} 9%, transparent)`;
   const actionBorder = `color-mix(in srgb, ${foreground} 18%, transparent)`;
+  const primaryForeground = "var(--terminal-mobile-primary-fg)";
+
+  const fetchAgentStatuses = async () => {
+    try {
+      const res = await fetch(`${getGatewayUrl()}/api/agents`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return;
+      const parsed = parseTerminalAgentStatuses(await res.json());
+      if (parsed.length === 0) return;
+      setAgentStatuses(Object.fromEntries(
+        parsed.map((agent) => [agent.id, agent.installed]),
+      ) as Record<TerminalAgentId, boolean>);
+    } catch (err: unknown) {
+      console.warn("Failed to load terminal agent status:", err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const toggleNewSessionMenu = () => {
+    const shouldOpen = !newSessionMenuOpen;
+    setNewSessionMenuOpen(shouldOpen);
+    if (shouldOpen) void fetchAgentStatuses();
+  };
+
+  const closeNewSessionMenu = useCallback(() => {
+    setNewSessionMenuOpen(false);
+  }, []);
+
+  const createShellSession = () => {
+    setNewSessionMenuOpen(false);
+    void ctx.createShellSessionTab("Shell", getCwd());
+  };
+
+  const createAgentSession = (option: TerminalAgentOption, installed: boolean) => {
+    setNewSessionMenuOpen(false);
+    const label = installed ? option.label : `Install ${option.label}`;
+    const cmd = installed
+      ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
+      : terminalAgentVisibleInstallCommand(option);
+    void ctx.createShellSessionTab(label, getCwd(), {
+      namePrefix: option.id,
+      cmd,
+    });
+  };
 
   return (
     <div
@@ -3232,8 +3280,9 @@ function MobileTerminalActions({
         display: "flex",
         alignItems: "center",
         gap: 4,
-        overflowX: "auto",
+        overflow: "visible",
         padding: "6px 2px 4px",
+        position: "relative",
         background,
         borderTop: `1px solid ${actionBorder}`,
         scrollbarWidth: "none",
@@ -3241,42 +3290,31 @@ function MobileTerminalActions({
         flexShrink: 0,
       }}
     >
-      <MobileActionButton
-        label="Shell"
-        title="Open mobile shell"
-        icon={<TerminalIcon size={14} strokeWidth={1.8} />}
-        onClick={() => { void ctx.createShellSessionTab("Mobile Shell", getCwd()); }}
-        background={accent}
-        foreground="var(--primary-foreground)"
-        border="transparent"
-      />
-      <MobileActionButton
-        label="Pane"
-        title="Split pane below"
-        icon={<Rows2Icon size={14} strokeWidth={1.8} />}
-        onClick={() => { if (focusedPaneId) ctx.splitPane(focusedPaneId, "vertical"); }}
-        background={actionBackground}
-        foreground={foreground}
-        border={actionBorder}
-      />
-      <MobileActionButton
-        label="Tab"
-        title="Open terminal tab"
-        icon={<PlusIcon size={14} strokeWidth={1.8} />}
-        onClick={() => { void ctx.createShellSessionTab("Shell", getCwd()); }}
-        background={actionBackground}
-        foreground={foreground}
-        border={actionBorder}
-      />
-      <MobileActionButton
-        label="Cmd"
-        title="Open Claude Code"
-        icon={<KeyboardIcon size={14} strokeWidth={1.8} />}
-        onClick={() => ctx.addTab(getCwd(), "Claude Code", true)}
-        background={actionBackground}
-        foreground={foreground}
-        border={actionBorder}
-      />
+      <div ref={newSessionDisclosureRef} style={{ position: "relative", flex: "0 0 auto" }}>
+        <MobileActionButton
+          label="+ Session"
+          ariaLabel="New session"
+          ariaHasPopup="menu"
+          ariaExpanded={newSessionMenuOpen}
+          title="New session"
+          icon={<PlusIcon size={14} strokeWidth={1.8} />}
+          onClick={toggleNewSessionMenu}
+          background={accent}
+          foreground={primaryForeground}
+          border="transparent"
+          minWidth={92}
+        />
+        {newSessionMenuOpen ? (
+          <NewSessionMenu
+            align="mobile"
+            onClose={closeNewSessionMenu}
+            onCreateShell={createShellSession}
+            onCreateAgent={createAgentSession}
+            agentStatuses={agentStatuses}
+            ignoreLightDismissRef={newSessionDisclosureRef}
+          />
+        ) : null}
+      </div>
       <MobileActionButton
         label="Paste"
         title="Paste clipboard"
@@ -3303,6 +3341,9 @@ function MobileTerminalActions({
 
 function MobileActionButton({
   label,
+  ariaLabel,
+  ariaHasPopup,
+  ariaExpanded,
   title,
   icon,
   onClick,
@@ -3312,6 +3353,9 @@ function MobileActionButton({
   minWidth = 56,
 }: {
   label: string;
+  ariaLabel?: string;
+  ariaHasPopup?: "menu";
+  ariaExpanded?: boolean;
   title: string;
   icon: React.ReactNode;
   onClick: () => void;
@@ -3323,7 +3367,9 @@ function MobileActionButton({
   return (
     <button
       type="button"
-      aria-label={label}
+      aria-label={ariaLabel ?? label}
+      aria-haspopup={ariaHasPopup}
+      aria-expanded={ariaExpanded}
       title={title}
       onClick={onClick}
       style={{
@@ -3394,6 +3440,8 @@ function MobileCommandComposer({
         placeholder="Type command..."
         autoCapitalize="none"
         autoCorrect="off"
+        autoComplete="off"
+        enterKeyHint="send"
         spellCheck={false}
         style={{
           background: `color-mix(in srgb, ${foreground} 8%, transparent)`,
@@ -3402,7 +3450,7 @@ function MobileCommandComposer({
           color: foreground,
           flex: "1 1 auto",
           fontFamily: "var(--font-mono, ui-monospace, monospace)",
-          fontSize: 13,
+          fontSize: 16,
           height: 36,
           minWidth: 0,
           padding: "0 10px",
@@ -3415,7 +3463,7 @@ function MobileCommandComposer({
           background: accent,
           border: "1px solid transparent",
           borderRadius: 9,
-          color: "#15180F",
+          color: "var(--terminal-mobile-primary-fg)",
           cursor: "pointer",
           flexShrink: 0,
           fontSize: 12,
@@ -4486,40 +4534,42 @@ function LocalTerminalSidebar() {
             </div>
           </div>
           <div className="flex shrink-0 items-center" style={{ gap: 10 }}>
-            <div style={{ position: "relative" }}>
-              <button
-                type="button"
-                aria-label="New session"
-                aria-haspopup="menu"
-                aria-expanded={newSessionMenuAnchor === "drawer"}
-                onClick={() => openNewSessionMenu("drawer")}
-                disabled={creatingShell}
-                className="flex items-center justify-center"
-                style={{
-                  background: "var(--terminal-drawer-primary-button-bg)",
-                  border: 0,
-                  borderRadius: ctx.mobile ? 13 : 10,
-                  color: "var(--terminal-drawer-primary-button-fg)",
-                  cursor: creatingShell ? "not-allowed" : "pointer",
-                  fontSize: 25,
-                  height: ctx.mobile ? 44 : 40,
-                  lineHeight: "28px",
-                  opacity: creatingShell ? 0.72 : 1,
-                  width: ctx.mobile ? 44 : 40,
-                }}
-              >
-                <PlusIcon aria-hidden="true" size={ctx.mobile ? 20 : 18} strokeWidth={2.5} />
-              </button>
-              {newSessionMenuAnchor === "drawer" ? (
-                <NewSessionMenu
-                  align="right"
-                  onClose={() => setNewSessionMenuAnchor(null)}
-                  onCreateShell={() => void createManagedShell()}
-                  onCreateAgent={createAgentSession}
-                  agentStatuses={agentStatuses}
-                />
-              ) : null}
-            </div>
+            {!ctx.mobile ? (
+              <div style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  aria-label="New session"
+                  aria-haspopup="menu"
+                  aria-expanded={newSessionMenuAnchor === "drawer"}
+                  onClick={() => openNewSessionMenu("drawer")}
+                  disabled={creatingShell}
+                  className="flex items-center justify-center"
+                  style={{
+                    background: "var(--terminal-drawer-primary-button-bg)",
+                    border: 0,
+                    borderRadius: 10,
+                    color: "var(--terminal-drawer-primary-button-fg)",
+                    cursor: creatingShell ? "not-allowed" : "pointer",
+                    fontSize: 25,
+                    height: 40,
+                    lineHeight: "28px",
+                    opacity: creatingShell ? 0.72 : 1,
+                    width: 40,
+                  }}
+                >
+                  <PlusIcon aria-hidden="true" size={18} strokeWidth={2.5} />
+                </button>
+                {newSessionMenuAnchor === "drawer" ? (
+                  <NewSessionMenu
+                    align="right"
+                    onClose={() => setNewSessionMenuAnchor(null)}
+                    onCreateShell={() => void createManagedShell()}
+                    onCreateAgent={createAgentSession}
+                    agentStatuses={agentStatuses}
+                  />
+                ) : null}
+              </div>
+            ) : null}
             {!ctx.mobile && (
               <>
                 <button
@@ -4721,12 +4771,14 @@ function NewSessionMenu({
   onCreateShell,
   onCreateAgent,
   agentStatuses,
+  ignoreLightDismissRef,
 }: {
-  align: "left" | "right";
+  align: "left" | "right" | "mobile";
   onClose: () => void;
   onCreateShell: () => void;
   onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
   agentStatuses: Record<TerminalAgentId, boolean> | null;
+  ignoreLightDismissRef?: React.RefObject<HTMLElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -4737,6 +4789,7 @@ function NewSessionMenu({
     const onPointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && menuRef.current?.contains(target)) return;
+      if (target instanceof Node && ignoreLightDismissRef?.current?.contains(target)) return;
       onClose();
     };
     document.addEventListener("keydown", onKeyDown);
@@ -4745,7 +4798,7 @@ function NewSessionMenu({
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown, true);
     };
-  }, [onClose]);
+  }, [ignoreLightDismissRef, onClose]);
 
   return (
     <div
@@ -4765,7 +4818,9 @@ function NewSessionMenu({
         gap: 4,
         padding: 8,
         position: "absolute",
-        ...(align === "right"
+        ...(align === "mobile"
+          ? { bottom: "calc(100% + 8px)", left: 0 }
+          : align === "right"
           ? { right: 0, top: "calc(100% + 8px)" }
           : { left: "calc(100% + 8px)", top: 0 }),
         width: 244,

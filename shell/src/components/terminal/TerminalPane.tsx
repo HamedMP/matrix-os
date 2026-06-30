@@ -1497,7 +1497,7 @@ export function TerminalPane({
           termRef.current as Parameters<typeof sendTerminalResize>[1],
           allowRemoteResizeRef.current,
         );
-        if (isFocusedRef.current) {
+        if (isFocusedRef.current && !suppressNativeKeyboard) {
           (termRef.current as { focus?: () => void } | null)?.focus?.();
         }
       } catch (err: unknown) {
@@ -1505,7 +1505,7 @@ export function TerminalPane({
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [viewportHeight, viewportOffsetTop, keyboardOpen]);
+  }, [viewportHeight, viewportOffsetTop, keyboardOpen, suppressNativeKeyboard]);
 
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
