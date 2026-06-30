@@ -360,7 +360,7 @@ ensure_matrix_user() {
 }
 
 random_secret() {
-  openssl rand -base64 32 | tr -d '\n'
+  openssl rand -hex 32 | tr -d '\n'
 }
 
 read_env_value() {
@@ -689,8 +689,8 @@ Useful commands:
   systemctl status matrix-gateway matrix-shell matrix-code nginx --no-pager
   journalctl -u matrix-gateway -u matrix-shell -u matrix-code -n 200 --no-pager
   sudo -iu matrix
-  MATRIX_TOKEN=\$(sudo awk -F= '\$1=="MATRIX_AUTH_TOKEN"{print \$2}' /opt/matrix/env/host.env)
-  matrix status --gateway ${ui_url%/}/cli --token "\$MATRIX_TOKEN"
+  MATRIX_TOKEN=\$(sudo sed -n 's/^MATRIX_AUTH_TOKEN=//p' /opt/matrix/env/host.env)
+  matrix shell ls --gateway ${ui_url%/}/cli --token "\$MATRIX_TOKEN"
 
 This preview protects the web UI with nginx Basic Auth. Put the host behind
 HTTPS, Tailscale, Cloudflare Access, or another trusted edge before long-term use.
