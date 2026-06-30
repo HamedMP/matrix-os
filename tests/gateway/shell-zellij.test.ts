@@ -232,6 +232,71 @@ describe("zellij adapter", () => {
     expect(pty.kill).toHaveBeenCalled();
   });
 
+  it("soft-detaches attach PTYs through zellij actions and clears the fallback when zellij exits", async () => {
+    vi.useFakeTimers();
+    try {
+      const pty = ptyProcess();
+      const spawnPty = vi.fn(() => pty);
+      const execFile = vi.fn((_file, _args, _opts, cb) => {
+        cb(null, "", "");
+        return childProcess();
+      });
+      const adapter = createZellijAdapter({ execFile, spawnPty, timeoutMs: 25 });
+
+      const attached = adapter.attachSession("main");
+      attached.detach?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(execFile).toHaveBeenCalledWith(
+        "zellij",
+        ["--session", "main", "action", "detach"],
+        expect.objectContaining({ timeout: 1500, signal: expect.any(AbortSignal) }),
+        expect.any(Function),
+      );
+      expect(pty.writes).toEqual([]);
+      expect(pty.kill).not.toHaveBeenCalled();
+
+      pty.emitExit(0);
+      vi.advanceTimersByTime(1500);
+      expect(pty.kill).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("kills soft-detached attach PTYs when zellij does not exit", async () => {
+    vi.useFakeTimers();
+    try {
+      const pty = ptyProcess();
+      const spawnPty = vi.fn(() => pty);
+      const execFile = vi.fn((_file, _args, _opts, cb) => {
+        cb(null, "", "");
+        return childProcess();
+      });
+      const adapter = createZellijAdapter({ execFile, spawnPty, timeoutMs: 25 });
+
+      const attached = adapter.attachSession("main");
+      attached.detach?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(execFile).toHaveBeenCalledWith(
+        "zellij",
+        ["--session", "main", "action", "detach"],
+        expect.objectContaining({ timeout: 1500, signal: expect.any(AbortSignal) }),
+        expect.any(Function),
+      );
+      expect(pty.writes).toEqual([]);
+      expect(pty.kill).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1500);
+      expect(pty.kill).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("attaches through a PTY so input, output, exit, and resize behave like a real terminal", () => {
     const pty = ptyProcess();
     const spawnPty = vi.fn(() => pty);
