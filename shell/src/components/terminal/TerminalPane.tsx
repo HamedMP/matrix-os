@@ -51,6 +51,22 @@ const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   iipSizeLimit: 8_000_000,
 };
 
+function shouldDisableWebglRenderer(suppressNativeKeyboard: boolean): boolean {
+  if (suppressNativeKeyboard) return true;
+  if (typeof navigator === "undefined") return false;
+  const userAgent = navigator.userAgent;
+  const isAppleMobile = /\b(iPad|iPhone|iPod)\b/.test(userAgent)
+    || (userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1);
+  const isSafari = /Safari\//.test(userAgent) && !/(Chrome|CriOS|FxiOS|EdgiOS)\//.test(userAgent);
+  return isAppleMobile && isSafari;
+}
+
+function scrollTerminalViewportToBottom(term: Terminal | null): void {
+  const viewport = (term as { viewport?: HTMLElement | null } | null)?.viewport;
+  if (!viewport) return;
+  viewport.scrollTop = viewport.scrollHeight;
+}
+
 const AUTH_BANNER_BASE_STYLE: CSSProperties = {
   position: "absolute",
   top: 8,
@@ -577,6 +593,8 @@ export function TerminalPane({
         });
       };
 
+      const webglDisabled = shouldDisableWebglRenderer(suppressNativeKeyboard);
+
       const clearAuthDetectTimer = () => {
         if (authDetectTimerRef.current) {
           clearTimeout(authDetectTimerRef.current);
@@ -649,25 +667,29 @@ export function TerminalPane({
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
 
-      const refitAndFocus = () => {
+      const focusIfAllowed = () => {
+        if (isFocusedRef.current && !suppressNativeKeyboard) {
+          term.focus();
+        }
+      };
+
+      const refitOnly = () => {
         if (disposed) {
           return;
         }
         try {
           fitAddon.fit();
           sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
-          if (isFocusedRef.current && !suppressNativeKeyboard) {
-            term.focus();
-          }
+          focusIfAllowed();
         } catch (err: unknown) {
           log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
         }
       };
 
       const scheduleStableFit = () => {
-        requestAnimationFrame(refitAndFocus);
-        window.setTimeout(refitAndFocus, 80);
-        window.setTimeout(refitAndFocus, 250);
+        requestAnimationFrame(refitOnly);
+        window.setTimeout(refitOnly, 80);
+        window.setTimeout(refitOnly, 250);
       };
 
       // Subscribe to GPU context loss (common on mobile Safari, which drops GL
@@ -694,7 +716,7 @@ export function TerminalPane({
       // addon). Returns the addon, or null when WebGL is unavailable / fails —
       // in which case xterm keeps using the DOM renderer.
       const enableWebgl = async (): Promise<unknown> => {
-        if (disposed) {
+        if (disposed || webglDisabled) {
           return null;
         }
         try {
@@ -739,13 +761,16 @@ export function TerminalPane({
         // re-create the renderer if a prior context loss left it on the DOM
         // renderer).
         webglAddonRef.current = (cached.webglAddon as { dispose: () => void } | null) ?? null;
-        if (webglAddonRef.current) {
+        if (webglDisabled && webglAddonRef.current) {
+          disposeWebgl();
+          webglAddon = null;
+        } else if (webglAddonRef.current) {
           wireWebglContextLoss(
             webglAddonRef.current as unknown as {
               onContextLoss: (cb: () => void) => { dispose: () => void };
             },
           );
-        } else {
+        } else if (!webglDisabled) {
           void enableWebgl().then((addon) => {
             webglAddon = addon;
           });
@@ -1336,7 +1361,7 @@ export function TerminalPane({
       });
 
       const resizeObserver = new ResizeObserver(() => {
-        requestAnimationFrame(refitAndFocus);
+        requestAnimationFrame(refitOnly);
       });
       resizeObserver.observe(container);
 
@@ -1463,14 +1488,14 @@ export function TerminalPane({
   }, [isFocused, suppressNativeKeyboard]);
 
   // Re-fit the terminal whenever the visual viewport changes (soft keyboard
-  // open/close, URL-bar collapse, orientation). The container also shrinks via
-  // the --terminal-keyboard-height var so its ResizeObserver fires, but an
-  // explicit fit here covers the cases where the host height is unchanged yet
-  // the visible band moved (iOS keyboard over a full-height layout viewport).
+  // open/close, URL-bar collapse, orientation). The document viewport is
+  // resized by `interactiveWidget: "resizes-content"`; the terminal host does
+  // not subtract a keyboard CSS var, so these passes only recompute rows/cols
+  // and keep the prompt visible after mobile keyboard transitions settle.
   useEffect(() => {
     const fit = fitAddonRef.current as { fit?: () => void } | null;
     if (!fit?.fit) return;
-    const id = requestAnimationFrame(() => {
+    const refit = () => {
       try {
         fit.fit?.();
         sendTerminalResize(
@@ -1478,14 +1503,24 @@ export function TerminalPane({
           termRef.current as Parameters<typeof sendTerminalResize>[1],
           allowRemoteResizeRef.current,
         );
+        if (suppressNativeKeyboard) {
+          scrollTerminalViewportToBottom(termRef.current as Terminal | null);
+        }
         if (isFocusedRef.current && !suppressNativeKeyboard) {
           (termRef.current as { focus?: () => void } | null)?.focus?.();
         }
       } catch (err: unknown) {
         console.warn("Terminal viewport re-fit failed:", err instanceof Error ? err.message : err);
       }
-    });
-    return () => cancelAnimationFrame(id);
+    };
+    const id = requestAnimationFrame(refit);
+    const settleId = suppressNativeKeyboard ? window.setTimeout(refit, 220) : null;
+    return () => {
+      cancelAnimationFrame(id);
+      if (settleId !== null) {
+        window.clearTimeout(settleId);
+      }
+    };
   }, [viewportHeight, viewportOffsetTop, keyboardOpen, suppressNativeKeyboard]);
 
   return (
@@ -1500,11 +1535,6 @@ export function TerminalPane({
         outlineOffset: "-1px",
         // Left gutter so the prompt isn't jammed against the window edge.
         paddingLeft: 12,
-        // Pin the terminal host to the visible band: the var is 0px until the
-        // mobile soft keyboard opens (published by TerminalKeyBar), so this is a
-        // no-op on desktop. When the keyboard opens the host shrinks and its
-        // ResizeObserver re-fits the grid above the keyboard.
-        height: "calc(100% - var(--terminal-keyboard-height, 0px))",
       }}
       onPointerDown={handleFocus}
       onClick={handleFocus}

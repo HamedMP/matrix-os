@@ -42,6 +42,7 @@ import {
 } from "@/lib/shell-snapshot-cache";
 import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
+import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetail } from "@/components/terminal/mobile-terminal-events";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { ChatApp } from "@/components/ChatApp";
 import { AppViewer } from "@/components/AppViewer";
@@ -198,6 +199,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [time, setTime] = useState("--:--");
+  const [terminalInputActive, setTerminalInputActive] = useState(false);
   const stackRef = useRef(openStack);
   const launchPathConsumedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -205,6 +207,8 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   }, [openStack]);
 
   const top = openStack[openStack.length - 1];
+  const topIsTerminal = view === "app" && !!top?.app.path.startsWith("__terminal__");
+  const hideBottomDock = topIsTerminal && terminalInputActive;
 
   useEffect(() => {
     const tick = () => setTime(formatClock(new Date()));
@@ -213,6 +217,21 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     const id = window.setInterval(tick, 30_000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    const handleTerminalInputActive = (event: Event) => {
+      const detail = (event as CustomEvent<MobileTerminalInputActiveDetail>).detail;
+      setTerminalInputActive(detail?.active === true);
+    };
+    window.addEventListener(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, handleTerminalInputActive);
+    return () => window.removeEventListener(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, handleTerminalInputActive);
+  }, []);
+
+  useEffect(() => {
+    if (!topIsTerminal) {
+      setTerminalInputActive(false);
+    }
+  }, [topIsTerminal]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded mount load of the installed-apps registry: it runs once on mount, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. A data-fetching library would be overkill for this single shell-bootstrap read.
   useEffect(() => {
@@ -453,8 +472,10 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
       </main>
 
       <nav
+        data-testid="mobile-bottom-dock"
         className="flex items-center justify-around px-2"
         style={{
+          display: hideBottomDock ? "none" : "flex",
           height: 64,
           background: "rgba(0,0,0,0.35)",
           borderTop: "1px solid rgba(244,237,224,0.08)",

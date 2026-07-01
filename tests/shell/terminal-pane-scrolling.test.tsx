@@ -14,6 +14,11 @@ const createdFitAddons = vi.hoisted(() => [] as Array<{
   fit: ReturnType<typeof vi.fn>;
 }>);
 
+const createdWebglAddons = vi.hoisted(() => [] as Array<{
+  dispose: ReturnType<typeof vi.fn>;
+  onContextLoss: ReturnType<typeof vi.fn>;
+}>);
+
 const stubWs = vi.hoisted(() => ({
   readyState: 1,
   send: vi.fn(),
@@ -99,6 +104,17 @@ vi.mock("@xterm/addon-fit", () => ({
 
     constructor() {
       createdFitAddons.push(this);
+    }
+  },
+}));
+
+vi.mock("@xterm/addon-webgl", () => ({
+  WebglAddon: class MockWebglAddon {
+    dispose = vi.fn();
+    onContextLoss = vi.fn(() => ({ dispose: vi.fn() }));
+
+    constructor() {
+      createdWebglAddons.push(this);
     }
   },
 }));
@@ -243,6 +259,7 @@ describe("TerminalPane scrolling", () => {
   beforeEach(() => {
     createdTerminals.length = 0;
     createdFitAddons.length = 0;
+    createdWebglAddons.length = 0;
     restorePlan.current = {
       cached: null,
       reuseTerminal: false,
@@ -405,5 +422,71 @@ describe("TerminalPane scrolling", () => {
 
     expect(createdFitAddons[0].fit).toHaveBeenCalled();
     expect(createdTerminals[0].focus).not.toHaveBeenCalled();
+  });
+
+  it("does not shrink the terminal host by the mobile keyboard height variable", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-mobile-height-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        suppressNativeKeyboard
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+
+    const host = document.querySelector(".ph-no-capture") as HTMLElement;
+    expect(host.style.height).toBe("");
+  });
+
+  it("uses the DOM renderer instead of WebGL when native keyboard input is suppressed", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-mobile-dom-renderer-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        suppressNativeKeyboard
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(createdWebglAddons).toHaveLength(0);
+    expect(createdTerminals[0].loadAddon).not.toHaveBeenCalledWith(expect.objectContaining({
+      onContextLoss: expect.any(Function),
+    }));
+  });
+
+  it("keeps attempting WebGL on desktop panes", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-desktop-webgl-test"
+        cwd=""
+        theme={theme}
+        isFocused={false}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdWebglAddons).toHaveLength(1));
+    expect(createdTerminals[0].loadAddon).toHaveBeenCalledWith(createdWebglAddons[0]);
   });
 });
