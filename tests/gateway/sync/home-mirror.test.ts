@@ -516,25 +516,27 @@ describe("createHomeMirror", () => {
         peerRegistry: registry,
         logger,
       });
-      await mirror.start();
+      try {
+        await mirror.start();
 
-      registry.broadcastChange("alice", "laptop-1", {
-        type: "sync:change",
-        files: [{ path: traversalPath, hash: sha256(Buffer.from("evil")), size: 4, action: "update" }],
-        peerId: "laptop-1",
-        manifestVersion: 2,
-      });
+        registry.broadcastChange("alice", "laptop-1", {
+          type: "sync:change",
+          files: [{ path: traversalPath, hash: sha256(Buffer.from("evil")), size: 4, action: "update" }],
+          peerId: "laptop-1",
+          manifestVersion: 2,
+        });
 
-      await settle(80);
+        await settle(80);
 
-      await expect(stat(outsidePath)).rejects.toThrow(/ENOENT/);
-      expect(logger.error).toHaveBeenCalledWith(
-        expect.stringContaining(`remote-change failed for ${traversalPath}:`),
-        expect.stringMatching(/invalid/i),
-      );
-
-      await mirror.stop();
-      await rm(outsideRoot, { recursive: true, force: true });
+        await expect(stat(outsidePath)).rejects.toThrow(/ENOENT/);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.stringContaining(`remote-change failed for ${traversalPath}:`),
+          expect.stringMatching(/invalid/i),
+        );
+      } finally {
+        await mirror.stop();
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
     });
 
     it("does not follow local symlinks on remote writes", async () => {
@@ -558,25 +560,27 @@ describe("createHomeMirror", () => {
         peerRegistry: registry,
         logger,
       });
-      await mirror.start();
+      try {
+        await mirror.start();
 
-      registry.broadcastChange("alice", "laptop-1", {
-        type: "sync:change",
-        files: [{ path: "linked.txt", hash: sha256(Buffer.from("replacement")), size: 11, action: "update" }],
-        peerId: "laptop-1",
-        manifestVersion: 2,
-      });
+        registry.broadcastChange("alice", "laptop-1", {
+          type: "sync:change",
+          files: [{ path: "linked.txt", hash: sha256(Buffer.from("replacement")), size: 11, action: "update" }],
+          peerId: "laptop-1",
+          manifestVersion: 2,
+        });
 
-      await settle(80);
+        await settle(80);
 
-      expect(await readFile(target, "utf8")).toBe("outside");
-      expect(logger.error).toHaveBeenCalledWith(
-        expect.stringContaining("remote-change failed for linked.txt:"),
-        expect.stringMatching(/symlink/i),
-      );
-
-      await mirror.stop();
-      await rm(outsideRoot, { recursive: true, force: true });
+        expect(await readFile(target, "utf8")).toBe("outside");
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.stringContaining("remote-change failed for linked.txt:"),
+          expect.stringMatching(/symlink/i),
+        );
+      } finally {
+        await mirror.stop();
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
     });
 
     it("logs non-Error failures during remote pulls without losing the reason", async () => {
@@ -689,26 +693,28 @@ describe("createHomeMirror", () => {
         peerRegistry: registry,
         logger,
       });
-      await mirror.start();
+      try {
+        await mirror.start();
 
-      registry.broadcastChange("alice", "laptop-1", {
-        type: "sync:change",
-        files: [{ path: traversalPath, hash: "sha256:" + "0".repeat(64), size: 0, action: "delete" }],
-        peerId: "laptop-1",
-        manifestVersion: 2,
-      });
+        registry.broadcastChange("alice", "laptop-1", {
+          type: "sync:change",
+          files: [{ path: traversalPath, hash: "sha256:" + "0".repeat(64), size: 0, action: "delete" }],
+          peerId: "laptop-1",
+          manifestVersion: 2,
+        });
 
-      await settle(80);
+        await settle(80);
 
-      const remaining = await readFile(outsidePath, "utf8");
-      expect(remaining).toBe("keep me");
-      expect(logger.error).toHaveBeenCalledWith(
-        expect.stringContaining(`remote-change failed for ${traversalPath}:`),
-        expect.stringMatching(/invalid/i),
-      );
-
-      await mirror.stop();
-      await rm(outsideRoot, { recursive: true, force: true });
+        const remaining = await readFile(outsidePath, "utf8");
+        expect(remaining).toBe("keep me");
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.stringContaining(`remote-change failed for ${traversalPath}:`),
+          expect.stringMatching(/invalid/i),
+        );
+      } finally {
+        await mirror.stop();
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
     });
 
     it("ignores broadcasts for ignored paths (e.g. node_modules and browser profiles)", async () => {
