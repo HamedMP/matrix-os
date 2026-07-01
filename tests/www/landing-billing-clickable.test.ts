@@ -18,7 +18,7 @@ describe("landing billing is clickable", () => {
   });
 
   it("emits plan-click telemetry", () => {
-    expect(src).toContain("marketing_billing_plan_clicked");
+    expect(src).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_PLAN_CLICKED");
   });
 
   it("drops the duplicated inline plans array", () => {
