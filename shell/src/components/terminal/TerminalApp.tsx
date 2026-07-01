@@ -4224,7 +4224,6 @@ function LocalTerminalSidebar() {
   const activeShellName = activePaneSessionId && isCanonicalShellSessionId(activePaneSessionId)
     ? activePaneSessionId
     : null;
-  const terminalDividerColor = "var(--terminal-drawer-border)";
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
   const startSidebarResize = (event: ReactPointerEvent<HTMLElement>) => {
     if (ctx.mobile) return;
@@ -4442,7 +4441,7 @@ function LocalTerminalSidebar() {
           <CollapsedSessionsRail
             shells={unfilteredRenderedShells}
             selectedShellName={activeShellName}
-            terminalDividerColor={terminalDividerColor}
+            terminalDividerColor="var(--terminal-drawer-border)"
             onExpand={() => ctx.setSidebarOpen(true)}
             creatingShell={creatingShell}
             newSessionMenuOpen={newSessionMenuAnchor === "rail"}
@@ -4470,7 +4469,7 @@ function LocalTerminalSidebar() {
         className="shrink-0 overflow-hidden"
         style={{
           background: "var(--terminal-drawer-bg)",
-          borderRight: ctx.mobile ? "none" : `1px solid ${terminalDividerColor}`,
+          borderRight: ctx.mobile ? "none" : "1px solid var(--terminal-drawer-border)",
           borderBottom: ctx.mobile ? "1px solid var(--terminal-drawer-border)" : "none",
           color: "var(--terminal-drawer-fg)",
           display: "flex",

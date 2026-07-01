@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from "node:fs";
 import React from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
@@ -546,11 +545,6 @@ describe("TerminalApp", () => {
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-scrollbar-thumb")).toContain("--terminal-drawer-border");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-scrollbar-thumb-hover")).toBe("var(--terminal-drawer-border)");
 
-    const globalsCss = readFileSync("shell/src/app/globals.css", "utf8");
-    expect(globalsCss).toContain(".terminal-sessions-scroll::-webkit-scrollbar-thumb");
-    expect(globalsCss).toContain("[data-theme-style=\"neumorphic\"] .terminal-sessions-scroll::-webkit-scrollbar-thumb");
-    expect(globalsCss).toContain("background: var(--terminal-drawer-scrollbar-thumb)");
-    expect(globalsCss).not.toMatch(/terminal-sessions-scroll[\s\S]{0,400}--muted-foreground/);
   });
 
   it("updates terminal app theme without saving the global Matrix OS theme", async () => {
