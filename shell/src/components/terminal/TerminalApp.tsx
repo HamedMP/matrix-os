@@ -1054,7 +1054,7 @@ function setPaneSessionId(node: PaneNode, paneId: string, sessionId: string): Pa
     if (node.id !== paneId || node.sessionId === sessionId) {
       return node;
     }
-    return { ...node, sessionId };
+    return { ...node, sessionId, compatMode: compatModeForShellSession(sessionId) };
   }
 
   const left = setPaneSessionId(node.children[0], paneId, sessionId);
@@ -1067,7 +1067,9 @@ function setPaneSessionId(node: PaneNode, paneId: string, sessionId: string): Pa
 
 function renameSessionInTree(node: PaneNode, fromSessionId: string, toSessionId: string): PaneNode {
   if (node.type === "pane") {
-    return node.sessionId === fromSessionId ? { ...node, sessionId: toSessionId } : node;
+    return node.sessionId === fromSessionId
+      ? { ...node, sessionId: toSessionId, compatMode: compatModeForShellSession(toSessionId) }
+      : node;
   }
   const left = renameSessionInTree(node.children[0], fromSessionId, toSessionId);
   const right = renameSessionInTree(node.children[1], fromSessionId, toSessionId);
@@ -1156,6 +1158,30 @@ function getCanonicalShellSessionIds(layout: TerminalLayout): string[] {
     }
   }
   return Array.from(seen);
+}
+
+function compatModeForShellSession(sessionId: string | undefined) {
+  return sessionId?.startsWith("codex-") ? "codex-tui" as const : undefined;
+}
+
+function applyCompatModeToPaneTree(node: PaneNode): PaneNode {
+  if (node.type === "pane") {
+    return {
+      ...node,
+      compatMode: node.compatMode ?? compatModeForShellSession(node.sessionId),
+    };
+  }
+  return {
+    ...node,
+    children: [
+      applyCompatModeToPaneTree(node.children[0]),
+      applyCompatModeToPaneTree(node.children[1]),
+    ],
+  };
+}
+
+function applyCompatModeToTabs(tabs: Tab[]): Tab[] {
+  return tabs.map((tab) => ({ ...tab, paneTree: applyCompatModeToPaneTree(tab.paneTree) }));
 }
 
 function destroyTerminalSessions(sessionIds: string[]) {
@@ -1487,6 +1513,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         claudeMode: claude,
         startupCommand,
         sessionId,
+        compatMode: compatModeForShellSession(sessionId) ?? (startupCommand === "codex" ? "codex-tui" : undefined),
       },
     };
     setTabs((prev) => [...prev, tab]);
@@ -1506,6 +1533,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         id: paneId,
         cwd,
         sessionId,
+        compatMode: compatModeForShellSession(sessionId),
       },
     };
     setTabs((prev) => [...prev, tab]);
@@ -1636,7 +1664,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               if (!cancelled && sessionReady) {
                 const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
                 const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-                setTabs(data.tabs);
+                setTabs(applyCompatModeToTabs(data.tabs));
                 setActiveTabId(nextActiveTabId);
                 setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
                 setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);

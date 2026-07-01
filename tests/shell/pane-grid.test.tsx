@@ -28,6 +28,7 @@ describe("PaneGrid", () => {
       cwd: "projects/app",
       sessionId: "session-1",
       claudeMode: true,
+      compatMode: "codex-tui",
     };
     const onFocusPane = vi.fn();
     const onSessionAttached = vi.fn();
@@ -51,6 +52,7 @@ describe("PaneGrid", () => {
       onFocus: onFocusPane,
       onSessionAttached,
       shouldCacheOnUnmount: shouldCachePane,
+      compatMode: "codex-tui",
     }));
   });
 

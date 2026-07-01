@@ -14,6 +14,7 @@ import {
   matrixZellijConfigPaths,
   renderMatrixZellijConfig,
 } from "./shell/zellij-config.js";
+import { applyTerminalTruecolorEnv } from "./terminal-env.js";
 
 type CommandRunner = (
   command: string,
@@ -155,15 +156,10 @@ function ptyEnv(
     env.ZELLIJ_CONFIG_DIR = zellijConfigPaths.dir;
     env.ZELLIJ_CONFIG_FILE = zellijConfigPaths.file;
   }
-  return {
+  return applyTerminalTruecolorEnv({
     ...env,
     ...launchEnv,
-    TERM: "xterm-256color",
-    COLORTERM: "truecolor",
-    CLICOLOR: "1",
-    FORCE_COLOR: "3",
-    COLORFGBG: "15;0",
-  };
+  });
 }
 
 function delay(ms: number): Promise<void> {

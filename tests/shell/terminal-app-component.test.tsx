@@ -197,6 +197,74 @@ describe("TerminalApp", () => {
       type: "pane",
       sessionId: "canvas-session-123",
     });
+    expect((props.paneTree as { compatMode?: string }).compatMode).toBeUndefined();
+  });
+
+  it("marks canvas-provided Codex shell sessions for Codex TUI compatibility", async () => {
+    render(<TerminalApp initialSessionId="codex-backend" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string; compatMode?: string };
+    };
+
+    expect(props.paneTree).toMatchObject({
+      type: "pane",
+      sessionId: "codex-backend",
+      compatMode: "codex-tui",
+    });
+  });
+
+  it("marks restored codex-* shell sessions for Codex TUI compatibility", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            activeTabId: "tab-codex",
+            tabs: [
+              {
+                id: "tab-codex",
+                label: "codex-backend",
+                paneTree: { type: "pane", id: "pane-codex", cwd: "projects", sessionId: "codex-backend" },
+              },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "codex-backend", status: "active" }] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string; compatMode?: string };
+    };
+
+    expect(props.paneTree).toMatchObject({
+      sessionId: "codex-backend",
+      compatMode: "codex-tui",
+    });
   });
 
   it("renders the desktop terminal pane grid flush without an inset content frame", async () => {
@@ -3411,6 +3479,7 @@ describe("TerminalApp", () => {
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
         sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
+        compatMode: "codex-tui",
       },
     });
 
