@@ -1,4 +1,7 @@
 export const SHELL_Z_INDEX = {
+  // Panel-local card elevation. This stays below app windows and only orders
+  // sibling rows inside a shell surface.
+  terminalSessionMenuCard: 30,
   appWindowMax: 500,
   fullscreenWindow: 600,
   fullscreenExit: 601,
