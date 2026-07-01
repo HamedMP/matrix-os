@@ -112,6 +112,16 @@ describe('platform/customer-vps', () => {
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
   });
 
+  it('does not use the private PostHog ingest host as the public browser host', () => {
+    const config = loadCustomerVpsConfig({
+      POSTHOG_HOST: 'https://eu.i.posthog.com',
+      NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
+    });
+
+    expect(config.posthogHost).toBe('https://eu.i.posthog.com');
+    expect(config.posthogPublicHost).toBe('https://eu.posthog.com');
+  });
+
   it('provisions a user machine idempotently by clerkUserId', async () => {
     const { service, hetzner } = createService();
 

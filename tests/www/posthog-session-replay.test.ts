@@ -49,7 +49,7 @@ describe("www session replay init", () => {
     expect(options.disable_session_recording).toBe(false);
     expect(options.enable_recording_console_log).toBe(true);
     expect(options.capture_pageview).toBe("history_change");
-    expect(options.autocapture).toBe(false);
+    expect(options.autocapture).toBe(true);
     expect(options.session_recording).toEqual({ maskAllInputs: true });
   });
 
