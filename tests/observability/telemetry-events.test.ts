@@ -5,12 +5,23 @@ import { MATRIX_TELEMETRY_EVENTS, isMatrixTelemetryEvent } from "../../packages/
 describe("Matrix telemetry events", () => {
   it("names product lifecycle, runtime, shell, websocket, CLI, app, and billing events explicitly", () => {
     expect(MATRIX_TELEMETRY_EVENTS).toMatchObject({
+      MARKETING_LANDING_VIEWED: "matrix_marketing_landing_viewed",
+      MARKETING_SIGNUP_CLICKED: "matrix_marketing_signup_clicked",
+      MARKETING_BILLING_VIEWED: "matrix_marketing_billing_viewed",
+      MARKETING_BILLING_PLAN_CLICKED: "matrix_marketing_billing_plan_clicked",
       USER_SIGNED_UP: "matrix_user_signed_up",
+      BILLING_CHECKOUT_STARTED: "matrix_billing_checkout_started",
+      BILLING_CHECKOUT_CREATED: "matrix_billing_checkout_created",
+      BILLING_CHECKOUT_FAILED: "matrix_billing_checkout_failed",
+      BILLING_CHECKOUT_COMPLETED: "matrix_billing_checkout_completed",
+      BILLING_CHECKOUT_EXPIRED: "matrix_billing_checkout_expired",
+      BILLING_SUBSCRIPTION_UPDATED: "matrix_billing_subscription_updated",
       BILLING_EVENT_RECEIVED: "matrix_billing_event_received",
       VPS_PROVISION_REQUESTED: "matrix_vps_provision_requested",
       VPS_PROVISION_FAILED: "matrix_vps_provision_failed",
       VPS_REGISTERED: "matrix_vps_registered",
       VPS_REGISTRATION_FAILED: "matrix_vps_registration_failed",
+      RUNTIME_ACTIVATED: "matrix_runtime_activated",
       BILLING_WEBHOOK_FAILED: "matrix_billing_webhook_failed",
       ONBOARDING_FAILED: "matrix_onboarding_failed",
       RUNTIME_UPGRADE_REQUESTED: "matrix_runtime_upgrade_requested",
