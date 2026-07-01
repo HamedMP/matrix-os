@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
+import { createContext, use, useCallback, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
 import Image from "next/image";
 import {
   BotIcon,
@@ -698,6 +698,12 @@ function getTerminalAppChromeCssVars(theme: TerminalAppChromeTheme): TerminalApp
     "--terminal-drawer-toggle-off-fg": theme.drawerToggleOffForeground,
     "--terminal-drawer-toggle-off-knob": theme.drawerToggleOffKnob,
     "--terminal-drawer-drop-line": theme.drawerDropLine,
+    "--terminal-drawer-scrollbar-thumb": "color-mix(in srgb, var(--terminal-drawer-border) 72%, transparent)",
+    "--terminal-drawer-scrollbar-thumb-hover": "var(--terminal-drawer-border)",
+    "--terminal-drawer-scrollbar-track": "var(--terminal-drawer-bg)",
+    "--terminal-drawer-resize-handle-bg": "color-mix(in srgb, var(--terminal-drawer-border) 58%, transparent)",
+    "--terminal-drawer-resize-handle-hover": "var(--terminal-drawer-border)",
+    "--terminal-drawer-resize-handle-focus": "var(--terminal-drawer-selected-border)",
     "--terminal-mobile-primary-bg": theme.drawerPrimaryButtonBackground,
     "--terminal-mobile-primary-fg": theme.drawerPrimaryButtonForeground,
   };
@@ -3278,9 +3284,9 @@ function MobileTerminalActions({
     if (shouldOpen) void fetchAgentStatuses();
   };
 
-  const closeNewSessionMenu = useCallback(() => {
+  const closeNewSessionMenu = () => {
     setNewSessionMenuOpen(false);
-  }, []);
+  };
 
   const createShellSession = () => {
     setNewSessionMenuOpen(false);
@@ -4246,7 +4252,6 @@ function LocalTerminalSidebar() {
   const activeShellName = activePaneSessionId && isCanonicalShellSessionId(activePaneSessionId)
     ? activePaneSessionId
     : null;
-  const terminalDividerColor = ctx.terminalBackground || "#080A08";
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
   const startSidebarResize = (event: ReactPointerEvent<HTMLElement>) => {
     if (ctx.mobile) return;
@@ -4464,7 +4469,7 @@ function LocalTerminalSidebar() {
           <CollapsedSessionsRail
             shells={unfilteredRenderedShells}
             selectedShellName={activeShellName}
-            terminalDividerColor={terminalDividerColor}
+            terminalDividerColor="var(--terminal-drawer-border)"
             onExpand={() => ctx.setSidebarOpen(true)}
             creatingShell={creatingShell}
             newSessionMenuOpen={newSessionMenuAnchor === "rail"}
@@ -4492,7 +4497,7 @@ function LocalTerminalSidebar() {
         className="shrink-0 overflow-hidden"
         style={{
           background: "var(--terminal-drawer-bg)",
-          borderRight: ctx.mobile ? "none" : `1px solid ${terminalDividerColor}`,
+          borderRight: ctx.mobile ? "none" : "1px solid var(--terminal-drawer-border)",
           borderBottom: ctx.mobile ? "1px solid var(--terminal-drawer-border)" : "none",
           color: "var(--terminal-drawer-fg)",
           display: "flex",
@@ -4674,7 +4679,12 @@ function LocalTerminalSidebar() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto" style={{ display: "flex", flexDirection: "column", gap: 18, padding: ctx.mobile ? 20 : 18 }}>
+      <div
+        data-testid="terminal-sessions-scroll"
+        data-terminal-scrollbar="drawer"
+        className="terminal-sessions-scroll min-h-0 flex-1 overflow-y-auto"
+        style={{ display: "flex", flexDirection: "column", gap: 18, padding: ctx.mobile ? 20 : 18 }}
+      >
         {shellsLoading && (
           <div style={{ color: "var(--terminal-drawer-muted)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>Loading sessions...</div>
         )}
@@ -4763,14 +4773,16 @@ function LocalTerminalSidebar() {
         <button
           type="button"
           aria-label="Resize sessions drawer"
+          className="terminal-drawer-resize-handle"
           onPointerDown={startSidebarResize}
           onKeyDown={resizeSidebarWithKeyboard}
           style={{
-            background: terminalDividerColor,
+            background: "var(--terminal-drawer-resize-handle-bg)",
             border: 0,
             bottom: 0,
             cursor: "col-resize",
             margin: 0,
+            outline: "none",
             position: "absolute",
             right: 0,
             top: 0,
@@ -4809,16 +4821,17 @@ function NewSessionMenu({
   ignoreLightDismissRef?: React.RefObject<HTMLElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const closeMenu = useEffectEvent(onClose);
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") closeMenu();
     };
     const onPointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && menuRef.current?.contains(target)) return;
       if (target instanceof Node && ignoreLightDismissRef?.current?.contains(target)) return;
-      onClose();
+      closeMenu();
     };
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -4826,7 +4839,7 @@ function NewSessionMenu({
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown, true);
     };
-  }, [ignoreLightDismissRef, onClose]);
+  }, [ignoreLightDismissRef]);
 
   return (
     <div
