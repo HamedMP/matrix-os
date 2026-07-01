@@ -1,6 +1,6 @@
 ---
 name: worktree-pr-monitor
-description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then ping the requester with completion status. Use when asked to run a worktree -> PR -> monitor workflow, get a PR to Greptile 5/5, or publish changes while keeping main clean.
+description: Create or continue an isolated Matrix OS worktree PR, validate it, push it, monitor CI and GitHub review feedback, iterate until the latest trusted Greptile result is 5/5, then add ready-for-ci and wait for triggered CI to pass before pinging completion. Use when asked to run a worktree to PR to monitor workflow, get a PR to Greptile 5/5 plus CI pass, or publish changes while keeping main clean.
 ---
 
 # Worktree PR Monitor
@@ -31,6 +31,11 @@ git worktree flow for isolated PR publication.
 - Do not merge unless explicitly asked.
 - If Greptile has reviewed the PR, the loop is complete only when the latest
   trusted Greptile result is `5/5`.
+- Add the `ready-for-ci` label only after the latest trusted Greptile result is
+  `5/5`; this label triggers the broader PR CI workflows.
+- If label-triggered CI fails, remove `ready-for-ci`, fix the failures, commit
+  and push, then return to the Greptile fulfillment loop before re-adding the
+  label.
 - Treat unresolved human review threads, Codex review issue comments, and
   Greptile findings as blockers until they are fixed, acknowledged, or
   explicitly deferred by the requester.
@@ -77,21 +82,35 @@ git worktree flow for isolated PR publication.
      - `Review/Monitoring`
      - `Invariants` when backend code changed
 
-7. Monitor.
-   - Use `gh pr checks --watch` or equivalent GitHub API status reads.
+7. Monitor review feedback until Greptile is complete.
+   - Use `gh pr checks --watch` or equivalent GitHub API status reads for
+     already-running checks.
    - Use thread-aware review inspection for unresolved GitHub review threads.
    - Inspect issue comments for Codex reviews.
    - Inspect Greptile feedback and rating. If the latest trusted Greptile
      result is below `5/5`, implement fixes, rerun relevant checks, commit,
      push, and continue monitoring.
 
-8. Ping completion.
+8. Trigger and monitor label-gated CI.
+   - Once the latest trusted Greptile result is `5/5`, add the `ready-for-ci`
+     label with `gh pr edit --add-label ready-for-ci`.
+   - Wait for the triggered checks with `gh pr checks --watch` or equivalent
+     GitHub API status reads.
+   - If every required triggered check passes, the PR is ready.
+   - If any triggered check fails, remove the `ready-for-ci` label with
+     `gh pr edit --remove-label ready-for-ci`, inspect the failure, implement
+     the fix, rerun relevant local checks, commit, push, and return to step 7.
+     Do not re-add `ready-for-ci` until Greptile is again `5/5` on the latest
+     commit.
+
+9. Ping completion.
    - Reply with:
      - PR URL
      - branch and worktree path
      - latest commit SHA
      - checks run and result
      - latest Greptile status, explicitly `5/5`
+     - `ready-for-ci` status and triggered CI result
      - skipped checks or residual risk
    - If blocked, reply with the exact blocker and the next action needed.
 
@@ -106,5 +125,7 @@ bun run check:patterns
 bun run test
 git push -u origin HEAD
 gh pr view --json number,url,title,state,headRefName,baseRefName
+gh pr edit --add-label ready-for-ci
+gh pr edit --remove-label ready-for-ci
 gh pr checks --watch
 ```
