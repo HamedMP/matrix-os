@@ -5,6 +5,7 @@ Wants=network-online.target
 Requires=matrix-restore.service
 ConditionPathExists=/opt/matrix/restore-complete
 ConditionPathExists=/opt/matrix/bin/matrix-install-tool-pack
+ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server
 
 [Service]
 Type=oneshot
@@ -12,7 +13,6 @@ User=root
 Group=root
 EnvironmentFile=/opt/matrix/env/host.env
 ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server
-ExecStartPost=-/bin/systemctl start matrix-code.service
 Restart=on-failure
 RestartSec=10m
 TimeoutStartSec=900

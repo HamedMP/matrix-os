@@ -14,42 +14,6 @@ describe("ColorPicker", () => {
   });
 });
 
-describe("ThemeEditor", () => {
-  it("color categories cover all 20 keys", () => {
-    const categories: Record<string, string[]> = {
-      Base: ["background", "foreground"],
-      Cards: ["card", "card-foreground", "popover", "popover-foreground"],
-      Primary: ["primary", "primary-foreground"],
-      Secondary: ["secondary", "secondary-foreground"],
-      Muted: ["muted", "muted-foreground"],
-      Accent: ["accent", "accent-foreground"],
-      Status: ["destructive", "success", "warning"],
-      Chrome: ["border", "input", "ring"],
-    };
-
-    const allKeys = Object.values(categories).flat();
-    expect(allKeys).toHaveLength(20);
-
-    const uniqueKeys = new Set(allKeys);
-    expect(uniqueKeys.size).toBe(20);
-  });
-
-  it("font options include expected families", () => {
-    const sansFonts = ["Inter", "system-ui"];
-    const monoFonts = ["JetBrains Mono", "Fira Code", "Source Code Pro"];
-    expect(sansFonts.length).toBeGreaterThan(0);
-    expect(monoFonts.length).toBeGreaterThan(0);
-  });
-
-  it("radius range is 0 to 1.5 with step 0.25", () => {
-    const min = 0;
-    const max = 1.5;
-    const step = 0.25;
-    const steps = (max - min) / step;
-    expect(steps).toBe(6);
-  });
-});
-
 describe("BackgroundEditor", () => {
   it("supports 4 background types", () => {
     const types = ["pattern", "solid", "gradient", "wallpaper"];
@@ -83,8 +47,9 @@ describe("DockEditor", () => {
 });
 
 describe("AppearanceSection", () => {
-  it("has 3 tabs", () => {
-    const tabs = ["Theme", "Background", "Dock"];
-    expect(tabs).toHaveLength(3);
+  it("keeps only background and dock settings", () => {
+    const sections = ["Background", "Dock"];
+    expect(sections).toHaveLength(2);
+    expect(sections).not.toContain("Theme");
   });
 });

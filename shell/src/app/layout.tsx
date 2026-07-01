@@ -83,6 +83,30 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const visitorCountry = getPostHogVisitorCountry(await headers());
+  const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
+  const renderDocument = (includePostHogIdentify: boolean) => (
+    <html
+      lang="en"
+      data-posthog-visitor-country={visitorCountry ?? undefined}
+      data-matrix-self-hosted={selfHostedMode ? "1" : undefined}
+      // Runtime replay kill switch: read on the server per request, so
+      // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops
+      // replay without rebuilding the bundle.
+      data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
+    >
+      <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
+        {children}
+        {includePostHogIdentify ? <PostHogIdentify /> : null}
+        <PwaRegister />
+        <InstallPrompt />
+        <Toaster />
+      </body>
+    </html>
+  );
+
+  if (selfHostedMode) {
+    return renderDocument(false);
+  }
 
   return (
     // ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep
@@ -90,22 +114,7 @@ export default async function RootLayout({
     // build time (default /sign-in and /sign-up); without them Clerk falls
     // back to the hosted Account Portal (accounts.matrix-os.com).
     <ClerkProvider>
-      <html
-        lang="en"
-        data-posthog-visitor-country={visitorCountry ?? undefined}
-        // Runtime replay kill switch: read on the server per request, so
-        // setting POSTHOG_DISABLE_REPLAY and restarting matrix-shell stops
-        // replay without rebuilding the bundle.
-        data-posthog-disable-replay={process.env.POSTHOG_DISABLE_REPLAY ? "1" : undefined}
-      >
-        <body className={`${inter.variable} ${instrumentSans.variable} ${jetbrainsMono.variable} ${cormorant.variable} ${orbitron.variable}`}>
-          {children}
-          <PostHogIdentify />
-          <PwaRegister />
-          <InstallPrompt />
-          <Toaster />
-        </body>
-      </html>
+      {renderDocument(true)}
     </ClerkProvider>
   );
 }

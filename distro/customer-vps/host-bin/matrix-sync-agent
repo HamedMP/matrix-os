@@ -303,6 +303,11 @@ apply_update() {
       sudo systemctl start --no-block matrix-code-server.service || true
       log "Code-server runtime service enabled"
     fi
+    if [ -f "$extract_dir/systemd/matrix-code.service" ]; then
+      sudo systemctl enable matrix-code.service
+      sudo systemctl start --no-block matrix-code.service || true
+      log "Code editor service enabled"
+    fi
     if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
       sudo systemctl enable matrix-symphony.service
       sudo systemctl start --no-block matrix-symphony.service || true

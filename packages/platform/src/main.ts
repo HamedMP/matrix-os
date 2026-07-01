@@ -169,6 +169,9 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const PROXY_TIMEOUT_MS = 30_000;
 const AUTH_SHELL_PROXY_TIMEOUT_MS = 5_000;
+const POSTHOG_RELAY_TIMEOUT_MS = 10_000;
+const POSTHOG_INGEST_HOST = 'https://eu.i.posthog.com';
+const POSTHOG_ASSET_HOST = 'https://eu-assets.i.posthog.com';
 const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const CLERK_USER_LOOKUP_TIMEOUT_MS = 10_000;
@@ -241,6 +244,15 @@ const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
 const DECODED_FETCH_RESPONSE_HEADERS = new Set([
   'content-encoding',
   'content-length',
+]);
+const POSTHOG_RELAY_FORWARD_HEADERS = new Set([
+  'accept',
+  'accept-language',
+  'content-type',
+  'dnt',
+  'origin',
+  'referer',
+  'user-agent',
 ]);
 
 const HostBundleReleaseBodySchema = z.object({
@@ -704,7 +716,10 @@ function applyNoStoreResponseHeaders(headers: Headers): void {
   headers.set('expires', '0');
 }
 
-const APP_DOMAIN_UNREGISTER_SERVICE_WORKER = `
+const APP_DOMAIN_SAFE_SERVICE_WORKER = `
+const VERSION = "app-v1";
+const CACHE_STATIC = "matrix-os-static-" + VERSION;
+
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
@@ -713,16 +728,77 @@ self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
     await Promise.all(keys
-      .filter((key) => key.startsWith("matrix-os-"))
+      .filter((key) => key.startsWith("matrix-os-static-") && key !== CACHE_STATIC)
       .map((key) => caches.delete(key)));
     await self.clients.claim();
-    await self.registration.unregister();
   })());
 });
+
+function isBypassed(url) {
+  if (url.origin !== self.location.origin) return true;
+  const p = url.pathname;
+  return (
+    p.startsWith("/api/") ||
+    p.startsWith("/v1/") ||
+    p.startsWith("/clerk") ||
+    p.startsWith("/_clerk") ||
+    p.startsWith("/__clerk") ||
+    p.startsWith("/__session") ||
+    p.startsWith("/sign-in") ||
+    p.startsWith("/sign-up") ||
+    p.startsWith("/files/apps/") ||
+    p.includes("/__nextjs_") ||
+    p.startsWith("/_next/data/")
+  );
+}
+
+function isStaticAsset(url) {
+  const p = url.pathname;
+  return (
+    p.startsWith("/_next/static/") ||
+    p.startsWith("/icons/") ||
+    p.startsWith("/wallpapers/") ||
+    p.startsWith("/files/system/wallpapers/") ||
+    p.startsWith("/textures/") ||
+    p.startsWith("/fonts/") ||
+    /\\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|css|js|wav|mp3)$/.test(p)
+  );
+}
+
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  if (isBypassed(url) || !isStaticAsset(url)) return;
+  event.respondWith(cacheFirst(req));
+});
+
+async function cacheFirst(req) {
+  const cache = await caches.open(CACHE_STATIC);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  try {
+    const res = await fetch(req, { signal: AbortSignal.timeout(30000) });
+    if (res.ok && res.type === "basic") {
+      cache.put(req, res.clone()).catch((err) => {
+        console.warn("[app sw] static cache put failed:", err?.message ?? err);
+      });
+    }
+    return res;
+  } catch (_err) {
+    return new Response("offline", {
+      status: 504,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
+  }
+}
 `.trim();
 
 function appDomainServiceWorkerResponse(): Response {
-  return new Response(APP_DOMAIN_UNREGISTER_SERVICE_WORKER, {
+  return new Response(APP_DOMAIN_SAFE_SERVICE_WORKER, {
     status: 200,
     headers: {
       'content-type': 'text/javascript; charset=utf-8',
@@ -734,6 +810,75 @@ function appDomainServiceWorkerResponse(): Response {
       'service-worker-allowed': '/',
     },
   });
+}
+
+function isPostHogRelayPath(path: string): boolean {
+  return path === '/relay' || path.startsWith('/relay/');
+}
+
+function isPostHogAssetRelayPath(upstreamPath: string): boolean {
+  return (
+    upstreamPath === '/static' ||
+    upstreamPath.startsWith('/static/') ||
+    upstreamPath === '/array' ||
+    upstreamPath.startsWith('/array/')
+  );
+}
+
+function buildPostHogRelayHeaders(c: Context, upstream: URL): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(c.req.header())) {
+    const lowerKey = key.toLowerCase();
+    if (
+      value &&
+      (POSTHOG_RELAY_FORWARD_HEADERS.has(lowerKey) || lowerKey.startsWith('sec-ch-ua'))
+    ) {
+      headers.set(key, value);
+    }
+  }
+  headers.set('host', upstream.host);
+  headers.set('accept-encoding', 'identity');
+  headers.set('connection', 'close');
+  return headers;
+}
+
+async function proxyPostHogRelay(c: Context): Promise<Response> {
+  const requestUrl = new URL(c.req.url);
+  const upstreamPath = requestUrl.pathname.slice('/relay'.length) || '/';
+  const upstreamBase = isPostHogAssetRelayPath(upstreamPath)
+    ? POSTHOG_ASSET_HOST
+    : POSTHOG_INGEST_HOST;
+  const upstream = new URL(upstreamBase);
+  upstream.pathname = upstreamPath;
+  upstream.search = requestUrl.search;
+
+  try {
+    const response = await fetch(upstream.toString(), {
+      method: c.req.method,
+      headers: buildPostHogRelayHeaders(c, upstream),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(POSTHOG_RELAY_TIMEOUT_MS),
+      body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
+    });
+    const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
+    if (!isPostHogAssetRelayPath(upstreamPath)) {
+      applyNoStoreResponseHeaders(responseHeaders);
+    }
+    return new Response(response.body, {
+      status: response.status,
+      headers: responseHeaders,
+    });
+  } catch (err: unknown) {
+    logPlatformRouteError('app-domain posthog relay proxy', err);
+    return new Response('Telemetry relay unavailable', {
+      status: 502,
+      headers: {
+        'cache-control': 'no-store, private',
+        'cdn-cache-control': 'no-store',
+        'cloudflare-cdn-cache-control': 'no-store',
+      },
+    });
+  }
 }
 
 function isPostgresUniqueViolation(err: unknown): boolean {
@@ -2942,6 +3087,9 @@ export function createApp(deps: {
     const reqPath = c.req.path;
     if (isAppDomain && reqPath === '/service-worker.js') {
       return appDomainServiceWorkerResponse();
+    }
+    if (isAppDomain && isPostHogRelayPath(reqPath)) {
+      return proxyPostHogRelay(c);
     }
     if (isAppDomain && (
       reqPath === '/auth/device' ||

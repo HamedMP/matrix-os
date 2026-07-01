@@ -64,11 +64,16 @@ import { DeveloperModeDashboard } from "./developer/DeveloperModeDashboard";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { cn, nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
-import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, VSCODE_URL } from "@/lib/feature-flags";
+import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
+import {
+  loadShellSnapshot,
+  saveShellSnapshot,
+  type ShellSnapshotScope,
+} from "@/lib/shell-snapshot-cache";
 import {
   DEFAULT_PINNED_APPS,
   isBuiltInAppPath,
@@ -98,6 +103,11 @@ function iconAssetPath(iconUrl: string | undefined): string | undefined {
 
 function sameIconAsset(left: string | undefined, right: string | undefined): boolean {
   return iconAssetPath(left) === iconAssetPath(right);
+}
+
+function gatewayFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
 const MATRIX_FIRST_RUN_LOGO_STYLE: CSSProperties = {
@@ -465,10 +475,12 @@ interface DesktopProps {
   launchAppPath?: string | null;
   onOpenCommandPalette?: () => void;
   chat?: import("@/hooks/useChatState").ChatState;
+  cacheScope?: ShellSnapshotScope | null;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, chatOpen, minimizingIds, firstRunStatus, manualSetupVisible, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
-export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopProps) {
+export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
+  const cacheKey = cacheScope?.storageKey;
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -829,15 +841,26 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
   }, [apps, focusOrOpen, launchAppPath]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
-  const loadModules = useCallback(async () => {
-    try {
-      const bootstrapRes = await fetch(`${GATEWAY_URL}/api/shell/bootstrap`, {
-        signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-      }).catch((err) => {
-        console.warn("[desktop] Failed to fetch shell bootstrap:", err);
-        return null;
+  const loadModules = useCallback(async (signal?: AbortSignal) => {
+    const isLoadAborted = () => signal?.aborted === true;
+    const fetchForLoad = async (input: RequestInfo | URL): Promise<Response | null> => {
+      if (isLoadAborted()) return null;
+      const response = await fetch(input, {
+        signal: gatewayFetchSignal(signal),
       });
-      const bootstrap: ShellBootstrap = bootstrapRes?.ok ? await bootstrapRes.json() : {};
+      return isLoadAborted() ? null : response;
+    };
+    const readJsonForLoad = async <T,>(response: Response): Promise<T | null> => {
+      if (isLoadAborted()) return null;
+      const data = await response.json() as T;
+      return isLoadAborted() ? null : data;
+    };
+    const applyBootstrap = async (
+      bootstrap: ShellBootstrap,
+      options: { resolveModuleMetadata: boolean },
+    ) => {
+      if (isLoadAborted()) return;
+
       const iconForSlug = (slug: string | undefined): string | undefined => {
         if (!slug) return undefined;
         return bootstrap.icons?.[slug]?.versionedUrl ?? iconUrlForSlug(slug);
@@ -871,6 +894,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
       if (Array.isArray(bootstrap.apps)) {
         const appsList = bootstrap.apps;
         for (const app of appsList) {
+          if (isLoadAborted()) return;
           // path from API is like "/files/apps/calculator/index.html"
           // strip leading "/files/" to get relative path for AppViewer
           const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
@@ -888,7 +912,18 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
         const registry = bootstrap.modules;
 
         for (const mod of registry) {
+          if (isLoadAborted()) return;
           if (mod.status !== "active") continue;
+          if (!options.resolveModuleMetadata) {
+            const relativeBasePath = registryPathToRelativePath(mod.path);
+            if (!relativeBasePath) continue;
+            const defaultEntryFile = mod.type === "react-app" ? "dist/index.html" : "index.html";
+            const path = normalizeBuiltInAppPath(`${relativeBasePath}/${defaultEntryFile}`);
+            addApp(mod.name, path, nameToSlug(mod.name));
+            const saved = layoutMap.get(path);
+            queueSavedLayout(saved);
+            continue;
+          }
 
           try {
             const relativeBasePath = registryPathToRelativePath(mod.path);
@@ -909,9 +944,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
             let metaRes: Response | undefined;
             for (const candidate of metaCandidates) {
               // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential-by-design priority fallback: tries the candidate manifest filenames in order and breaks on the first that exists; parallelizing would always fire every request and lose the priority semantics
-              const res = await fetch(candidate, {
-                signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
-              });
+              const res = await fetchForLoad(candidate);
+              if (!res) return;
               if (res.ok) {
                 metaRes = res;
                 break;
@@ -931,7 +965,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               continue;
             }
 
-            const meta: ModuleMeta = await metaRes.json();
+            const meta = await readJsonForLoad<ModuleMeta>(metaRes);
+            if (!meta) return;
             const entryFile = meta.entry ?? meta.entryPoint ?? "index.html";
             path = normalizeBuiltInAppPath(`${relativeBasePath}/${entryFile}`);
             appName = meta.name ?? mod.name;
@@ -945,21 +980,44 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
               openWindow(appName, path);
             }
           } catch (err) {
+            if (isLoadAborted()) return;
             console.warn(`[desktop] Failed to load module "${mod.name}":`, err);
           }
         }
       }
 
+      if (isLoadAborted()) return;
       if (layoutToLoad.length > 0) {
         wmLoadLayout(layoutToLoad);
       }
+    };
+
+    try {
+      const cachedBootstrap = loadShellSnapshot(cacheScope)?.bootstrap as ShellBootstrap | undefined;
+      if (cachedBootstrap) {
+        await applyBootstrap(cachedBootstrap, { resolveModuleMetadata: false });
+      }
+
+      const bootstrapRes = await fetchForLoad(`${GATEWAY_URL}/api/shell/bootstrap`).catch((err) => {
+        if (isLoadAborted()) return null;
+        console.warn("[desktop] Failed to fetch shell bootstrap:", err);
+        return undefined;
+      });
+      if (bootstrapRes === null) return;
+      const bootstrap = bootstrapRes?.ok ? await readJsonForLoad<ShellBootstrap>(bootstrapRes) : {};
+      if (bootstrap === null) return;
+      if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
+      await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
     } catch (err) {
+      if (isLoadAborted()) return;
       console.warn("[desktop] Failed to load desktop modules:", err);
     }
-  }, [addApp, openWindow, wmLoadLayout]);
+  }, [addApp, cacheScope, openWindow, wmLoadLayout]);
 
   useEffect(() => {
-    loadModules();
+    const controller = new AbortController();
+    void loadModules(controller.signal);
+    return () => controller.abort();
   }, [loadModules]);
 
   useFileWatcher((path: string, event: string) => {
@@ -1634,7 +1692,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                     <button
                       type="button"
                       data-testid="dock-vscode"
-                      onClick={() => window.open(VSCODE_URL, "_blank", "noopener,noreferrer")}
+                      onClick={() => window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer")}
                       className="flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border-border/60"
                       style={{ width: dock.iconSize, height: dock.iconSize }}
                     >
@@ -1811,10 +1869,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 completeOnboarding();
                 focusOrOpen("Terminal", "__terminal__");
               }}
-              onOpenSymphony={() => {
-                completeOnboarding();
-                focusOrOpen("Symphony", "apps/symphony/index.html");
-              }}
               onSwitchCanvas={() => {
                 setDesktopMode("canvas");
                 setManualSetupVisible(true);
@@ -1919,9 +1973,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                 <CardHeader
                   className={cn(
                     "flex flex-row items-center gap-0 px-3 py-2 md:cursor-grab md:active:cursor-grabbing select-none space-y-0",
-                    // Terminal owns its chrome: the Card's light header bg + border
-                    // read as a white title bar over the dark terminal. Match the
-                    // terminal's dark drawer so the top is seamless, not framed.
+                    // Terminal keeps the main-branch host title bar styling;
+                    // only the Terminal app's own internal toolbar was removed.
                     terminalOwnsChrome ? "border-b-0" : "border-b border-border",
                   )}
                   style={terminalOwnsChrome ? { background: "var(--terminal-drawer-bg)", color: "var(--terminal-drawer-fg)" } : undefined}
@@ -1951,8 +2004,6 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat }: DesktopPr
                   {win.path.startsWith("__terminal__") ? (
                     <TerminalApp
                       launchTargetId={win.id}
-                      // Always use the shared CardHeader above (windowed and
-                      // fullscreen), so the terminal drops its own dark chrome.
                       embeddedChrome
                       windowControls={{
                         close: () => wmCloseWindow(win.id),

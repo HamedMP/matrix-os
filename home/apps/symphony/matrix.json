@@ -7,6 +7,7 @@
   "version": "1.0.0",
   "runtime": "vite",
   "slug": "symphony",
+  "hidden": true,
   "runtimeVersion": "^1.0.0",
   "scope": "personal",
   "build": {

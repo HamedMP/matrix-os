@@ -52,7 +52,14 @@ export function createPtyHandler(
         cols: 80,
         rows: 24,
         cwd: targetCwd,
-        env: { ...process.env },
+        env: {
+          ...process.env,
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          CLICOLOR: "1",
+          FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
+        },
       });
 
       ptyProcess.onData((data: string) => {

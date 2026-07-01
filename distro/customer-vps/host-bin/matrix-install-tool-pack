@@ -86,6 +86,14 @@ run_as_matrix() {
     "$@"
 }
 
+run_as_root() {
+  if [ "$(id -u)" = "0" ]; then
+    "$@"
+    return
+  fi
+  sudo "$@"
+}
+
 run_npm_install() {
   local timeout_bin
   timeout_bin="$(command -v timeout 2>/dev/null || true)"
@@ -212,7 +220,7 @@ install_coding_agents() {
 }
 
 install_code_server() {
-  if command -v code-server >/dev/null 2>&1; then
+  if [ -x "$MATRIX_RUNTIME_DIR/code-server/bin/code-server" ]; then
     log "code-server is already installed"
     return
   fi
@@ -224,10 +232,10 @@ install_code_server() {
     --connect-timeout 10 --max-time 180 \
     "$CODE_SERVER_URL" -o "$tmp_dir/$CODE_SERVER_ARCHIVE"
   tar -xzf "$tmp_dir/$CODE_SERVER_ARCHIVE" -C "$tmp_dir"
-  sudo rm -rf "$MATRIX_RUNTIME_DIR/code-server"
-  sudo mv "$tmp_dir/$CODE_SERVER_DIST" "$MATRIX_RUNTIME_DIR/code-server"
-  sudo chown -R root:matrix "$MATRIX_RUNTIME_DIR/code-server"
-  sudo chmod -R g+rwX "$MATRIX_RUNTIME_DIR/code-server"
+  run_as_root rm -rf "$MATRIX_RUNTIME_DIR/code-server"
+  run_as_root mv "$tmp_dir/$CODE_SERVER_DIST" "$MATRIX_RUNTIME_DIR/code-server"
+  run_as_root chown -R root:matrix "$MATRIX_RUNTIME_DIR/code-server"
+  run_as_root chmod -R g+rwX "$MATRIX_RUNTIME_DIR/code-server"
   cat > "$NODE_PREFIX/bin/code-server" <<'EOS'
 #!/usr/bin/env sh
 exec /opt/matrix/runtime/code-server/bin/code-server "$@"

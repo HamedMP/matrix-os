@@ -76,6 +76,12 @@ Click **Files** in the sidebar to open the file browser. It shows your Matrix ho
 
 Files you create or clone in the Terminal appear immediately in the file browser. Changes sync across the web shell and persist on your Matrix computer.
 
+## Refresh and PWA cache
+
+The browser and installed PWA keep a private shell snapshot on your device so refreshes can restore your theme, wallpaper, dock, launcher apps, and saved shell bootstrap before the network finishes. The snapshot is scoped to the signed-in account and runtime path, expires automatically, and is replaced after the shell revalidates with your Matrix computer.
+
+Static shell assets such as icons, fonts, bundled wallpapers, and Next.js chunks can be cached by the browser and service worker. Private APIs, auth pages, app documents, billing/provisioning routes, and owner data stay `no-store` and are never shared through the CDN cache.
+
 ## What persists
 
 - Shell sessions and terminal output.

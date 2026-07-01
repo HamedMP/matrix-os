@@ -2,6 +2,7 @@
   "pages": [
     "index",
     "quickstart",
+    "self-host",
     "cli",
     "shell",
     "coding-agents",

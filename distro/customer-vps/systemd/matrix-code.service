@@ -1,0 +1,19 @@
+[Unit]
+Description=Matrix OS customer code editor
+After=matrix-restore.service
+Requires=matrix-restore.service
+ConditionPathExists=/opt/matrix/restore-complete
+ConditionPathExists=/opt/matrix/bin/matrix-code
+
+[Service]
+User=matrix
+Group=matrix
+EnvironmentFile=/opt/matrix/env/host.env
+WorkingDirectory=/opt/matrix
+ExecStart=/opt/matrix/bin/matrix-code
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

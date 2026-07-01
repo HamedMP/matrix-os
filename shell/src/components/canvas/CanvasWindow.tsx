@@ -605,9 +605,6 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         <TerminalApp
           mobile={isMobile}
           launchTargetId={win.id}
-          // Use the shared Canvas title bar (floating, like every other window)
-          // instead of the terminal's own dark chrome; split/theme move into the
-          // slim embedded toolbar.
           embeddedChrome
           canvasZoom={isFullscreen ? 1 : zoom}
           windowControls={{
@@ -667,6 +664,14 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       )}
     </>
   );
+  const handleWindowMouseDownCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (isFullscreen || !terminalOwnsChrome || event.button !== 0) return;
+    focusWindow(win.id);
+  };
+  const handleWindowMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (isFullscreen || terminalOwnsChrome || event.button !== 0) return;
+    focusWindow(win.id);
+  };
 
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational positioning wrapper, not a control. The onMouseDown is a pure pointer convenience that raises window focus/z-index; keyboard users focus the window by tabbing into its own interactive children (title-bar buttons and the app content), so no role/onKeyDown is needed. Giving this whole-window container (which wraps an app iframe) a button role would mislabel it for assistive tech.
@@ -675,7 +680,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
       className="absolute"
       data-canvas-window={!isPreview && !isFullscreen || undefined}
       style={{ ...wrapperStyle, ...windowMotionStyle }}
-      onMouseDown={isFullscreen || terminalOwnsChrome ? undefined : () => focusWindow(win.id)}
+      onMouseDownCapture={handleWindowMouseDownCapture}
+      onMouseDown={handleWindowMouseDown}
     >
       {!isFullscreen && titleBar}
       <div

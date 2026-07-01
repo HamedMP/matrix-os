@@ -7,7 +7,22 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 
-This guide walks you through signing up, choosing a compute plan, completing billing, waiting for your Matrix computer to provision, and then authenticating GitHub and cloning a repository inside the web shell.
+This guide walks you through the two Matrix OS install paths: managed Matrix Cloud, or a manual VPS install for operators who want to bring their own Linux server.
+
+## Choose your install path
+
+<Cards>
+  <Card title="Managed Matrix Cloud" href="https://app.matrix-os.com">
+    Matrix provisions the cloud computer, routing, auth, updates, backups, billing, and integrations. This is the recommended path for daily work, teams, and pilots.
+  </Card>
+  <Card title="Manual VPS install" href="/docs/self-host">
+    Run the main-domain installer on an apt-based Linux VPS you control. You operate DNS, TLS, backups, upgrades, integrations, and server security.
+  </Card>
+</Cards>
+
+<Callout type="info" title="Manual installs can start from a server IP">
+  A domain is optional for first boot. For long-running public use, put the instance behind DNS plus TLS, Tailscale, Cloudflare Access, or another trusted edge.
+</Callout>
 
 ## Fastest path: paste the setup prompt
 
@@ -32,6 +47,10 @@ Do not scan my local machine for credentials. Do not upload local private keys. 
 Use `Ctrl-\ Ctrl-\` to detach from an attached terminal session without killing the remote process.
 
 ## Manual setup
+
+If you prefer to perform each step yourself instead of handing the flow to an agent, use the managed cloud walkthrough below. For a VPS you operate directly, follow the [self-host guide](/docs/self-host).
+
+## Managed setup
 
 <Steps>
   <Step>
@@ -116,6 +135,9 @@ Use `Ctrl-\ Ctrl-\` to detach from an attached terminal session without killing 
 <Cards>
   <Card title="Matrix CLI" href="/docs/cli">
     Install the CLI on your laptop to attach to shell sessions, sync files, and run coding agents from your local terminal.
+  </Card>
+  <Card title="Self-host" href="/docs/self-host">
+    Install Matrix OS on your own Linux VPS with the main-domain server installer.
   </Card>
   <Card title="Web shell" href="/docs/shell">
     Learn Terminal tabs, Canvas mode, the app sidebar, and shell keyboard shortcuts.

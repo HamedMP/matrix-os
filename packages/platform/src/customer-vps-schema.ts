@@ -6,6 +6,7 @@ export const CustomerVpsStatusSchema = z.enum([
   'running',
   'failed',
   'recovering',
+  'resizing',
   'deleted',
 ]);
 
@@ -48,6 +49,10 @@ export const RecoverRequestSchema = z.object({
   allowEmpty: z.boolean().optional().default(false),
 });
 
+export const ResizeMachineRequestSchema = z.object({
+  serverType: HetznerServerTypeSchema,
+});
+
 export const MachineIdParamSchema = z.object({
   machineId: z.uuid(),
 });
@@ -63,4 +68,5 @@ export const DeployRequestSchema = z.object({
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
+export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;
 export type DeployRequest = z.infer<typeof DeployRequestSchema>;

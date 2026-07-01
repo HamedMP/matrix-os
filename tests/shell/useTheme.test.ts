@@ -1,5 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
-import { DEFAULT_THEME, getThemeFallback, normalizeTheme, type Theme } from "../../shell/src/hooks/useTheme";
+// @vitest-environment jsdom
+
+import { renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { DEFAULT_THEME, getThemeFallback, normalizeTheme, saveTheme, useTheme, type Theme } from "../../shell/src/hooks/useTheme";
+import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
 
 vi.mock("../../shell/src/hooks/useFileWatcher", () => ({
   useFileWatcher: () => undefined,
@@ -17,7 +21,30 @@ function themeToCssVars(theme: Theme): Record<string, string> {
   return vars;
 }
 
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => Array.from(values.keys())[index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
+}
+
 describe("theme system", () => {
+  beforeEach(() => {
+    const storage = createMemoryStorage();
+    Object.defineProperty(window, "localStorage", {
+      value: storage,
+      configurable: true,
+    });
+    vi.restoreAllMocks();
+  });
+
   const REQUIRED_COLOR_KEYS = [
     "background",
     "foreground",
@@ -187,5 +214,44 @@ describe("theme system", () => {
     expect(theme.fonts.sans).toBe("system-ui, sans-serif");
     expect(theme.fonts.mono).toBe(fallback.fonts.mono);
     expect(theme.radius).toBe("1rem");
+  });
+
+  it("initializes from the scoped shell snapshot before revalidating from the server", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    saveShellSnapshot(scope, {
+      theme: {
+        ...DEFAULT_THEME,
+        name: "cached-dark",
+        mode: "dark",
+        colors: { ...DEFAULT_THEME.colors, background: "#101010" },
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...DEFAULT_THEME,
+        name: "fresh-light",
+        mode: "light",
+        colors: { ...DEFAULT_THEME.colors, background: "#ffffff" },
+      }),
+    }));
+
+    const { result } = renderHook(() => useTheme({ cacheScope: scope }));
+
+    expect(result.current.name).toBe("cached-dark");
+    expect(result.current.colors.background).toBe("#101010");
+    await waitFor(() => expect(result.current.name).toBe("fresh-light"));
+    expect(loadShellSnapshot(scope)?.theme?.name).toBe("fresh-light");
+  });
+
+  it("updates the scoped shell snapshot only after theme saves succeed", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+    await saveTheme({ ...DEFAULT_THEME, name: "saved-theme" }, { cacheScope: scope });
+
+    expect(loadShellSnapshot(scope)?.theme?.name).toBe("saved-theme");
   });
 });

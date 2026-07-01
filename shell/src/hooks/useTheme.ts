@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
+import {
+  loadShellSnapshot,
+  saveShellSnapshot,
+  type ShellSnapshotScope,
+} from "@/lib/shell-snapshot-cache";
 
 export interface Theme {
   name: string;
@@ -123,14 +128,35 @@ export function getThemeFallback(): Theme {
   return DEFAULT_THEME;
 }
 
-export function useTheme() {
+export interface ShellCacheHookOptions {
+  cacheScope?: ShellSnapshotScope | null;
+}
+
+export function useTheme(options: ShellCacheHookOptions = {}) {
   const fallbackTheme = getThemeFallback();
-  const [theme, setTheme] = useState<Theme>(fallbackTheme);
+  const cacheScope = options.cacheScope ?? null;
+  const cacheKey = cacheScope?.storageKey;
+  const [theme, setTheme] = useState<Theme>(() => (
+    cacheScope ? normalizeTheme(loadShellSnapshot(cacheScope)?.theme, fallbackTheme) : fallbackTheme
+  ));
+
+  useEffect(() => {
+    if (!cacheScope) return;
+    const cachedTheme = loadShellSnapshot(cacheScope)?.theme;
+    if (cachedTheme) setTheme(normalizeTheme(cachedTheme, fallbackTheme));
+  }, [cacheKey, cacheScope, fallbackTheme]);
 
   // Fetch theme from server on mount
   useEffect(() => {
-    fetchTheme(fallbackTheme).then(setTheme);
-  }, [fallbackTheme]);
+    const controller = new AbortController();
+    fetchTheme(fallbackTheme, controller.signal).then((nextTheme) => {
+      if (controller.signal.aborted) return;
+      setTheme(nextTheme);
+      saveShellSnapshot(cacheScope, { theme: nextTheme });
+    });
+
+    return () => controller.abort();
+  }, [fallbackTheme, cacheKey, cacheScope]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -138,14 +164,22 @@ export function useTheme() {
 
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
-      fetchTheme(fallbackTheme).then(setTheme);
+      fetchTheme(fallbackTheme).then((nextTheme) => {
+        setTheme(nextTheme);
+        saveShellSnapshot(cacheScope, { theme: nextTheme });
+      });
     }
   });
 
   return theme;
 }
 
-export async function saveTheme(theme: Theme): Promise<void> {
+export function saveTheme(theme: Theme): Promise<void>;
+export function saveTheme(theme: Theme, options: ShellCacheHookOptions): Promise<void>;
+export async function saveTheme(
+  theme: Theme,
+  options: ShellCacheHookOptions = {},
+): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
     signal: AbortSignal.timeout(10_000),
@@ -156,19 +190,26 @@ export async function saveTheme(theme: Theme): Promise<void> {
   if (!res.ok) {
     throw new Error("Failed to save theme");
   }
+  saveShellSnapshot(options.cacheScope, { theme });
   if (typeof document !== "undefined") {
     applyTheme(theme);
   }
 }
 
-async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME): Promise<Theme> {
+function settingsFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(10_000);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME, signal?: AbortSignal): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
     const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
-      signal: AbortSignal.timeout(10_000),
+      signal: settingsFetchSignal(signal),
     });
     if (res.ok) return normalizeTheme(await res.json(), defaultTheme);
   } catch (err: unknown) {
+    if (signal?.aborted) return defaultTheme;
     console.warn("[theme] Failed to fetch theme:", err instanceof Error ? err.message : String(err));
   }
   return defaultTheme;

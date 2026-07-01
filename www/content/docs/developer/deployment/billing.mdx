@@ -23,6 +23,8 @@ Stripe subscription webhooks project into Matrix billing entitlements. The platf
 
 Internal engineers can receive a production or staging override entitlement for testing plan changes without paying. Overrides are audit records with an expiry or revocation path; they must not delete, downgrade, or recreate a user's existing machines.
 
+Machine resize uses the same entitlement allowlist as provisioning. A running VPS may move only to a server type currently allowed by the effective entitlement. The resize path changes the Hetzner server type in place with disk growth disabled, so billing downgrades can move CPU/RAM down without replacing the machine or deleting owner data.
+
 ## Add-ons
 
 Extra machines, storage, and future Hetzner-backed capacity should be modeled as separate Stripe Prices. Matrix maps those prices to entitlement fields such as additional runtime slots or allowed machine capacity. Do not hardcode Hetzner prices into Stripe plan names; keep provider cost data in the Matrix runtime catalog so Hetzner price changes can be updated without renaming public plans.

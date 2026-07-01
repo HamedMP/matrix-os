@@ -13,7 +13,7 @@ import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
-import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
+import { buildXtermTheme } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
@@ -28,25 +28,6 @@ import {
   terminalWebSocketPathForSession,
 } from "./terminal-session-id";
 import { createXtermLogger } from "./xterm-logger";
-
-function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
-  if (terminalThemeId !== "system") {
-    return getTerminalThemePreset(terminalThemeId);
-  }
-
-  const bg = theme.colors.background || "#1a1a2e";
-  const fg = theme.colors.foreground || "#e0e0e0";
-  const slug = (theme as { slug?: string }).slug ?? "";
-  const ansi = getAnsiPalette(slug, bg);
-
-  return {
-    background: bg,
-    foreground: fg,
-    cursor: theme.colors.primary || "#c2703a",
-    selectionBackground: (theme.colors.primary || "#c2703a") + "44",
-    ...ansi,
-  };
-}
 
 const BRACKETED_PASTE_OPEN = "\x1b[200~";
 const BRACKETED_PASTE_CLOSE = "\x1b[201~";
@@ -675,7 +656,7 @@ export function TerminalPane({
         try {
           fitAddon.fit();
           sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
-          if (isFocusedRef.current) {
+          if (isFocusedRef.current && !suppressNativeKeyboard) {
             term.focus();
           }
         } catch (err: unknown) {
@@ -921,7 +902,7 @@ export function TerminalPane({
         }
       }
 
-      if (isFocusedRef.current) {
+      if (isFocusedRef.current && !suppressNativeKeyboard) {
         requestAnimationFrame(() => {
           if (!disposed) {
             term.focus();
@@ -1476,10 +1457,10 @@ export function TerminalPane({
   ]);
 
   useEffect(() => {
-    if (isFocused && termRef.current) {
+    if (isFocused && !suppressNativeKeyboard && termRef.current) {
       (termRef.current as { focus: () => void }).focus();
     }
-  }, [isFocused]);
+  }, [isFocused, suppressNativeKeyboard]);
 
   // Re-fit the terminal whenever the visual viewport changes (soft keyboard
   // open/close, URL-bar collapse, orientation). The container also shrinks via
@@ -1497,7 +1478,7 @@ export function TerminalPane({
           termRef.current as Parameters<typeof sendTerminalResize>[1],
           allowRemoteResizeRef.current,
         );
-        if (isFocusedRef.current) {
+        if (isFocusedRef.current && !suppressNativeKeyboard) {
           (termRef.current as { focus?: () => void } | null)?.focus?.();
         }
       } catch (err: unknown) {
@@ -1505,7 +1486,7 @@ export function TerminalPane({
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [viewportHeight, viewportOffsetTop, keyboardOpen]);
+  }, [viewportHeight, viewportOffsetTop, keyboardOpen, suppressNativeKeyboard]);
 
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.

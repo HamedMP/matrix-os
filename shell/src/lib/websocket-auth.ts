@@ -1,4 +1,5 @@
 import { getGatewayUrl, getGatewayWs } from "./gateway";
+import { isSelfHostedDocument } from "./self-host-mode";
 
 const WS_AUTH_PATH = "/api/auth/ws-token";
 const WS_TOKEN_REFRESH_SKEW_MS = 30_000;
@@ -74,6 +75,10 @@ export async function buildAuthenticatedWebSocketUrl(
     if (typeof value === "string" && value.length > 0) {
       gatewayUrl.searchParams.set(key, value);
     }
+  }
+
+  if (isSelfHostedDocument()) {
+    return gatewayUrl.toString();
   }
 
   const token = await getWebSocketAuthToken();

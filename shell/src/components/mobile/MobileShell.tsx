@@ -34,6 +34,12 @@ import { useChatContext } from "@/stores/chat-context";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
+import {
+  loadShellSnapshot,
+  saveShellSnapshot,
+  type ShellBootstrapSnapshot,
+  type ShellSnapshotScope,
+} from "@/lib/shell-snapshot-cache";
 import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
@@ -66,6 +72,34 @@ const BUILT_IN_APPS: MobileApp[] = [
     ? []
     : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
 ];
+
+function mobileAppsFromBootstrap(
+  bootstrap: ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[] | null | undefined,
+): MobileApp[] {
+  const list = Array.isArray(bootstrap) ? bootstrap : bootstrap?.apps;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((a) => {
+    if (typeof a.name !== "string" || typeof a.path !== "string") return [];
+    const relative = a.path.replace(/^\/files\//, "");
+    return [{
+      id: `app:${relative}`,
+      name: a.name,
+      path: relative,
+      iconSlug: a.icon ?? ("slug" in a && typeof a.slug === "string" ? a.slug : nameToSlug(a.name)),
+    }];
+  });
+}
+
+function mergeMobileApps(base: MobileApp[], installed: MobileApp[]): MobileApp[] {
+  const seen = new Set(base.map((p) => p.path));
+  const merged = [...base];
+  for (const app of installed) {
+    if (seen.has(app.path)) continue;
+    seen.add(app.path);
+    merged.push(app);
+  }
+  return merged;
+}
 
 const LAUNCHER_APP_BUTTON_STYLE: CSSProperties = {
   display: "flex",
@@ -148,13 +182,18 @@ const DOCK_BADGE_STYLE: CSSProperties = {
 interface MobileShellProps {
   launchAppPath?: string | null;
   onOpenCommandPalette?: () => void;
+  cacheScope?: ShellSnapshotScope | null;
 }
 
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (apps, openStack, view, settingsOpen, time) are independent concerns with separate update sites and lifecycles (registry load, foreground stack, view mode, settings dialog, clock tick), not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
-export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShellProps) {
+export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }: MobileShellProps) {
   const chat = useChatContext();
+  const cacheKey = cacheScope?.storageKey;
 
-  const [apps, setApps] = useState<MobileApp[]>(BUILT_IN_APPS);
+  const [apps, setApps] = useState<MobileApp[]>(() => mergeMobileApps(
+    BUILT_IN_APPS,
+    mobileAppsFromBootstrap(loadShellSnapshot(cacheScope)?.bootstrap),
+  ));
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -180,37 +219,24 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`${getGatewayUrl()}/api/apps`, {
+        const res = await fetch(`${getGatewayUrl()}/api/shell/bootstrap`, {
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
         if (!res.ok) return;
-        const list = (await res.json()) as { name: string; path: string; icon?: string }[];
+        const bootstrap = await res.json() as ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[];
         if (cancelled) return;
-        const installed: MobileApp[] = list.map((a) => {
-          const relative = a.path.replace(/^\/files\//, "");
-          return {
-            id: `app:${relative}`,
-            name: a.name,
-            path: relative,
-            iconSlug: a.icon ?? nameToSlug(a.name),
-          };
-        });
-        setApps((prev) => {
-          const seen = new Set(prev.map((p) => p.path));
-          const merged = [...prev];
-          for (const a of installed) {
-            if (!seen.has(a.path)) merged.push(a);
-          }
-          return merged;
-        });
+        if (!Array.isArray(bootstrap)) {
+          saveShellSnapshot(cacheScope, { bootstrap });
+        }
+        setApps((prev) => mergeMobileApps(prev, mobileAppsFromBootstrap(bootstrap)));
       } catch (err: unknown) {
-        console.warn("[mobile-shell] failed to load /api/apps:", err instanceof Error ? err.message : err);
+        console.warn("[mobile-shell] failed to load /api/shell/bootstrap:", err instanceof Error ? err.message : err);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [cacheKey, cacheScope]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
   const openApp = useCallback((app: MobileApp) => {
@@ -575,6 +601,7 @@ function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher
         {apps.map((app) => (
           <motion.button
             key={app.id}
+            data-testid={`mobile-launcher-app-${app.path}`}
             type="button"
             onClick={() => onOpen(app)}
             variants={fadeUp}

@@ -1,4 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
@@ -361,6 +363,119 @@ describe("proxy auth: trusted platform native app sessions", () => {
 
     expect(response).toBeInstanceOf(Response);
     expect(response.status).toBe(403);
+  });
+});
+
+describe("proxy auth: self-host mode", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.doUnmock("@clerk/nextjs/server");
+    vi.doUnmock("next/server");
+  });
+
+  it("serves shell pages without Clerk and still injects gateway auth for proxy paths", async () => {
+    vi.resetModules();
+    vi.stubEnv("MATRIX_SELF_HOSTED", "1");
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "self-host-gateway-token");
+    vi.stubEnv("GATEWAY_URL", "http://127.0.0.1:4000");
+
+    const clerkRequestHandler = vi.fn(async (request: unknown, event: unknown) => ({
+      kind: "clerk",
+      request,
+      event,
+    }));
+    const clerkMiddleware = vi.fn(() => clerkRequestHandler);
+    vi.doMock("@clerk/nextjs/server", () => ({ clerkMiddleware }));
+
+    const nextResponseNext = vi.fn((init?: unknown) => ({ kind: "next", init }));
+    const nextResponseRewrite = vi.fn((url: URL, init?: { request?: { headers?: Headers } }) => ({
+      kind: "rewrite",
+      url,
+      init,
+    }));
+    class MockNextResponse extends Response {
+      static next = nextResponseNext;
+      static rewrite = nextResponseRewrite;
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    const shellResponse = proxy({
+      headers: new Headers(),
+      nextUrl: {
+        host: "matrix.example.com",
+        pathname: "/",
+        protocol: "http:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    proxy({
+      headers: new Headers(),
+      nextUrl: {
+        host: "matrix.example.com",
+        pathname: "/api/shell/bootstrap",
+        protocol: "http:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(shellResponse).toEqual({ kind: "next", init: undefined });
+    expect(clerkMiddleware).toHaveBeenCalledTimes(1);
+    expect(clerkRequestHandler).not.toHaveBeenCalled();
+    expect(nextResponseRewrite).toHaveBeenCalledTimes(1);
+    const [url, init] = nextResponseRewrite.mock.calls[0] ?? [];
+    expect(url?.toString()).toBe("http://127.0.0.1:4000/api/shell/bootstrap");
+    expect(init?.request?.headers?.get("authorization")).toBe("Bearer self-host-gateway-token");
+  });
+
+  it("rejects reserved platform session markers in self-host mode", async () => {
+    vi.resetModules();
+    vi.stubEnv("MATRIX_SELF_HOSTED", "1");
+
+    vi.doMock("@clerk/nextjs/server", () => ({
+      clerkMiddleware: vi.fn((handler) => handler),
+    }));
+
+    class MockNextResponse extends Response {
+      static next = vi.fn((init?: unknown) => ({ kind: "next", init }));
+      static rewrite = vi.fn((url: URL, init?: unknown) => ({ kind: "rewrite", url, init }));
+      static redirect = vi.fn((url: URL) => ({ kind: "redirect", url }));
+    }
+    vi.doMock("next/server", () => ({ NextResponse: MockNextResponse }));
+
+    const { proxy } = await import("../../shell/src/proxy");
+
+    const response = proxy({
+      headers: new Headers({
+        "x-matrix-platform-session": "platform",
+      }),
+      nextUrl: {
+        host: "matrix.example.com",
+        pathname: "/",
+        protocol: "http:",
+        search: "",
+      },
+    } as Parameters<typeof proxy>[0], {} as Parameters<typeof proxy>[1]);
+
+    expect(response).toBeInstanceOf(Response);
+    expect(response.status).toBe(403);
+  });
+
+  it("skips ClerkProvider while disabling managed-cloud identity work in self-host mode", () => {
+    const layout = readFileSync(join(process.cwd(), "shell/src/app/layout.tsx"), "utf8");
+    const page = readFileSync(join(process.cwd(), "shell/src/app/page.tsx"), "utf8");
+
+    expect(layout).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
+    expect(layout).toContain('data-matrix-self-hosted={selfHostedMode ? "1" : undefined}');
+    expect(layout).toContain("return renderDocument(false);");
+    expect(layout).toContain("{renderDocument(true)}");
+    expect(layout).toContain("{includePostHogIdentify ? <PostHogIdentify /> : null}");
+    expect(page).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
+    expect(page).toContain("selfHostedMode || hasServerVerifiedMatrixSession");
   });
 });
 

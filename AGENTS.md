@@ -208,6 +208,13 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
 - **Optional developer tools provision out of band**: the post-payment Default installs step stores selected `codex`, `claude-code`, `opencode`, and `pi` tool IDs for provisioning, then first boot runs `matrix-developer-tools.service` to install them asynchronously. Failures should show up under `/var/lib/matrix-developer-tools/` (`*.log`, `failed-tools`, `installed-tools`) and retry via systemd; they must not block core Matrix readiness.
 
+## Customer Support Notes
+
+- **Public repo boundary**: support docs in this repository must stay public-safe. Document product behavior, invariants, validation steps, and escalation boundaries; do not include customer identifiers, IPs, access tokens, hostnames tied to private incidents, billing IDs, or copy-paste commands that expose secrets. Keep private operator runbooks in the private support system or secret manager.
+- **Machine resizing exists as a platform-internal support primitive**: `POST /vps/:machineId/resize` is protected by platform auth and is intended for support or platform automation, not direct customer UI use. It performs an in-place Hetzner `change_type` flow with graceful shutdown first, `upgrade_disk: false`, guarded `running -> resizing -> running` state, and stale resize reconciliation.
+- **Resize compatibility is constrained by Hetzner disk rules**: local root disks cannot shrink. Treat same-or-larger local disk x86 moves as eligible; reject smaller-disk downgrades before shutting down the customer VPS. For current plan shapes, `cpx22 -> cpx32/cpx52` and `cpx32 -> cpx52` are valid, while `cpx32 -> cpx22` and `cpx52 -> cpx32/cpx22` are not safe unless a separate migration/storage architecture proves the root data fits.
+- **Customer-facing plan changes are separate**: billing/Stripe may change a user's plan entitlement, but existing VPS resizing should remain support/platform-controlled until preflight compatibility checks and UX copy explicitly handle unsupported downgrades.
+
 ## Desktop Release Workflow
 
 - **Desktop OTA channels include `dev`**: treat `dev`, `canary`, `beta`, and `stable` as first-class update channels. Unsigned prerelease packaging must omit empty mac signing env vars rather than exporting blank values.
