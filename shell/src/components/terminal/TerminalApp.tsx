@@ -30,6 +30,7 @@ import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from 
 import { PaneGrid } from "./PaneGrid";
 import { useTheme } from "@/hooks/useTheme";
 import { getGatewayUrl } from "@/lib/gateway";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { drainTerminalLaunchQueue, TERMINAL_LAUNCH_EVENT } from "@/lib/terminal-launch";
 import { MATRIX_OS_APP_THEME_OPTIONS } from "@/lib/theme-presets";
@@ -5951,7 +5952,7 @@ function ShellCard({
         position: "relative",
         transform: dragging ? "translateY(-2px)" : undefined,
         transition: "border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 150ms ease",
-        zIndex: contextMenuOpen ? 30 : dragging ? 1 : undefined,
+        zIndex: contextMenuOpen ? SHELL_Z_INDEX.terminalSessionMenuCard : dragging ? 1 : undefined,
       }}
     >
       {dropTarget && (
