@@ -38,6 +38,7 @@ import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
 import { sessionAccent, twoWordSessionName } from "./terminal-session-names";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
+import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetail } from "./mobile-terminal-events";
 import {
   applyShellRefreshFailure,
   applyShellRefreshSilentFailure,
@@ -1421,6 +1422,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_TERMINAL_SIDEBAR_WIDTH);
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
+  const [mobileInputActive, setMobileInputActive] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<Tab[]>(tabs);
@@ -1453,6 +1455,26 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       ...details,
     });
   }, [focusedPaneId]);
+
+  const mobileTerminalInputId = launchTargetId ?? "mobile-terminal";
+
+  useEffect(() => {
+    if (!mobile) return;
+    const detail: MobileTerminalInputActiveDetail = {
+      active: mobileInputActive,
+      terminalId: mobileTerminalInputId,
+    };
+    window.dispatchEvent(new CustomEvent(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, { detail }));
+  }, [mobile, mobileInputActive, mobileTerminalInputId]);
+
+  useEffect(() => {
+    if (!mobile) return;
+    return () => {
+      window.dispatchEvent(new CustomEvent(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, {
+        detail: { active: false, terminalId: mobileTerminalInputId } satisfies MobileTerminalInputActiveDetail,
+      }));
+    };
+  }, [mobile, mobileTerminalInputId]);
 
   const persistLayoutNow = () => {
     const layout: TerminalLayout = {
@@ -2045,6 +2067,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }}
       role="application"
       aria-label="Terminal"
+      data-terminal-input-active={mobileInputActive ? "true" : "false"}
       onKeyDown={handleKeyDown}
     >
       <style>{SHELL_STATUS_DOT_CSS}</style>
@@ -2091,12 +2114,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                       background={terminalChromeBackground}
                       foreground={terminalChromeForeground}
                       accent={terminalChromeAccent}
+                      onFocusChange={setMobileInputActive}
                     />
                     <TerminalKeyBar
                       onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
                       background={terminalChromeBackground}
                       foreground={terminalChromeForeground}
                       accent={terminalChromeAccent}
+                      compactOnly={mobileInputActive}
                     />
                   </>
                 )}
@@ -3436,11 +3461,13 @@ function MobileCommandComposer({
   background,
   foreground,
   accent,
+  onFocusChange,
 }: {
   onSend: (data: string) => void;
   background: string;
   foreground: string;
   accent: string;
+  onFocusChange?: (active: boolean) => void;
 }) {
   const [value, setValue] = useState("");
   const submit = () => {
@@ -3477,6 +3504,8 @@ function MobileCommandComposer({
         autoComplete="off"
         enterKeyHint="send"
         spellCheck={false}
+        onFocus={() => onFocusChange?.(true)}
+        onBlur={() => onFocusChange?.(false)}
         style={{
           background: `color-mix(in srgb, ${foreground} 8%, transparent)`,
           border: `1px solid ${border}`,

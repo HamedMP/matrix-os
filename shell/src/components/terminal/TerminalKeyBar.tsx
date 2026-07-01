@@ -16,7 +16,6 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ClipboardPasteIcon } from "lucide-react";
-import { useVisualViewport } from "@/hooks/useVisualViewport";
 
 type KeyboardMode = "abc" | "sym" | "nav";
 
@@ -195,6 +194,7 @@ interface TerminalKeyBarProps {
   background?: string;
   foreground?: string;
   accent?: string;
+  compactOnly?: boolean;
 }
 
 function rowsForMode(mode: KeyboardMode): KeyDef[][] {
@@ -215,6 +215,7 @@ export function TerminalKeyBar({
   background = "var(--background)",
   foreground = "var(--foreground)",
   accent = "var(--primary)",
+  compactOnly = false,
 }: TerminalKeyBarProps) {
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<KeyboardMode>("abc");
@@ -222,21 +223,12 @@ export function TerminalKeyBar({
   const pasteInputRef = useRef<HTMLInputElement>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressedRef = useRef(false);
-  const { height: viewportHeight, keyboardOpen } = useVisualViewport();
 
-  // Publish the live on-screen-keyboard height so this bar (and toasts/sheets)
-  // can pin themselves just above the iOS keyboard. `innerHeight` is the layout
-  // viewport (it doesn't shrink for the keyboard on iOS); the visual viewport
-  // does, so the difference is the keyboard band. Reset to 0 on unmount.
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    const root = document.documentElement;
-    const keyboardHeight = keyboardOpen ? Math.max(0, window.innerHeight - viewportHeight) : 0;
-    root.style.setProperty("--terminal-keyboard-height", `${Math.round(keyboardHeight)}px`);
-    return () => {
-      root.style.setProperty("--terminal-keyboard-height", "0px");
-    };
-  }, [viewportHeight, keyboardOpen]);
+    if (!compactOnly) return;
+    setExpanded(false);
+    setPasteFallbackOpen(false);
+  }, [compactOnly]);
 
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount cleanup must clear the latest long-press timeout ref; capturing the initial value would leak timers created after mount
   useEffect(() => {
@@ -321,7 +313,7 @@ export function TerminalKeyBar({
     gap: 6,
     padding: "7px 6px max(7px, env(safe-area-inset-bottom))",
     position: "sticky",
-    bottom: "var(--terminal-keyboard-height, 0px)",
+    bottom: 0,
     zIndex: 5,
     background: "var(--mtk-bg)",
     borderTop: "1px solid color-mix(in srgb, var(--mtk-fg) 16%, transparent)",
@@ -386,7 +378,7 @@ export function TerminalKeyBar({
         </div>
       )}
 
-      {expanded ? (
+      {expanded && !compactOnly ? (
         <>
           <div
             role="tablist"
@@ -476,15 +468,17 @@ export function TerminalKeyBar({
           >
             <ClipboardPasteIcon size={16} strokeWidth={1.9} aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            className="mtk-ghost"
-            aria-label="Show more keys"
-            style={{ flex: "0 0 auto" }}
-            onClick={() => setExpanded(true)}
-          >
-            More
-          </button>
+          {!compactOnly ? (
+            <button
+              type="button"
+              className="mtk-ghost"
+              aria-label="Show more keys"
+              style={{ flex: "0 0 auto" }}
+              onClick={() => setExpanded(true)}
+            >
+              More
+            </button>
+          ) : null}
         </div>
       )}
     </div>

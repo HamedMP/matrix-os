@@ -397,12 +397,37 @@ describe("TerminalApp", () => {
 
     const keyBar = screen.getByTestId("terminal-key-bar");
     expect(keyBar.style.position).toBe("sticky");
-    expect(keyBar.style.bottom).toBe("var(--terminal-keyboard-height, 0px)");
-    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("0px");
+    expect(keyBar.style.bottom).toBe("0px");
+    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("");
     expect(keyBar.style.background).toBe("var(--mtk-bg)");
     expect(keyBar.style.getPropertyValue("--mtk-bg")).toBe("#15180F");
     expect(keyBar.style.getPropertyValue("--mtk-fg")).toBe("#C9C7B7");
     expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy();
+  });
+
+  it("marks mobile terminal input active while the command composer is focused", async () => {
+    render(<TerminalApp mobile />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const root = screen.getByRole("application", { name: "Terminal" });
+    const composer = screen.getByRole("textbox", { name: "Command composer" });
+
+    expect(root.getAttribute("data-terminal-input-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "Show more keys" })).toBeTruthy();
+
+    fireEvent.focus(composer);
+
+    expect(root.getAttribute("data-terminal-input-active")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Show more keys" })).toBeNull();
+
+    fireEvent.blur(composer);
+
+    expect(root.getAttribute("data-terminal-input-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "Show more keys" })).toBeTruthy();
   });
 
   it("does not let mobile terminal clients take ownership of the remote zellij size", async () => {
