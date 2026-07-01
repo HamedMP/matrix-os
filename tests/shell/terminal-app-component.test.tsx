@@ -62,6 +62,15 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
+import { getTerminalThemePreset } from "../../shell/src/components/terminal/terminal-themes.js";
+
+function normalizeCssColor(color: string) {
+  const element = document.createElement("div");
+  element.style.background = color;
+  return element.style.background;
+}
+
+const expectedDarkTerminalBackground = normalizeCssColor(getTerminalThemePreset("dark").background);
 
 class ResizeObserverMock {
   observe() {}
@@ -133,6 +142,16 @@ function revealSessionActions(name: string) {
   fireEvent.mouseMove(card);
 }
 
+async function openSessionContextMenu(name: string, displayName = `matrix-${name}`) {
+  const existingMenu = screen.queryByRole("menu", { name: `Actions for ${displayName}` });
+  if (existingMenu) return existingMenu;
+  revealSessionActions(name);
+  fireEvent.click(screen.getByRole("button", { name: `More actions for ${displayName}` }));
+  await Promise.resolve();
+  await Promise.resolve();
+  return screen.getByRole("menu", { name: `Actions for ${displayName}` });
+}
+
 describe("TerminalApp", () => {
   beforeEach(() => {
     paneGridSpy.mockReset();
@@ -170,7 +189,6 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("Canvas Terminal")).toBeTruthy();
     const props = paneGridSpy.mock.lastCall?.[0] as {
       paneTree: { type: "pane"; sessionId?: string };
     };
@@ -210,7 +228,7 @@ describe("TerminalApp", () => {
     const contentSurface = screen.getByTestId("terminal-content-surface");
 
     expect(contentSurface.style.padding).toBe("0px");
-    expect(contentSurface.style.background).toBe("rgb(12, 12, 12)");
+    expect(contentSurface.style.background).toBe(expectedDarkTerminalBackground);
   });
 
   it("does not immediately save after hydrating a saved terminal layout", async () => {
@@ -270,7 +288,7 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("button", { name: /close matrix-sess_run_db0dded67faaca6b/i })).toBeNull();
   });
 
-  it("uses its Paper chrome traffic lights for host window controls", async () => {
+  it("does not render desktop terminal traffic lights from the removed top chrome", async () => {
     const close = vi.fn();
     const minimize = vi.fn();
     const toggleFullscreen = vi.fn();
@@ -281,13 +299,12 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Close Terminal window" }));
-    fireEvent.click(screen.getByRole("button", { name: "Minimize Terminal window" }));
-    fireEvent.click(screen.getByRole("button", { name: "Toggle Terminal fullscreen" }));
-
-    expect(close).toHaveBeenCalledOnce();
-    expect(minimize).toHaveBeenCalledOnce();
-    expect(toggleFullscreen).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Close Terminal window" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Minimize Terminal window" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Toggle Terminal fullscreen" })).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+    expect(minimize).not.toHaveBeenCalled();
+    expect(toggleFullscreen).not.toHaveBeenCalled();
   });
 
   it("keeps the mobile terminal chrome clear of cwd badges that overlap zellij tabs", async () => {
@@ -351,6 +368,93 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Files" })).toBeNull();
     expect(screen.queryByText("Zellij")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Split right" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Split down" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close Terminal window" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Minimize Terminal window" })).toBeNull();
+  });
+
+  it("collapses and expands the Background session group accessibly", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] } as Response);
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", tabs: [] },
+              { name: "docs", status: "active", placement: "background", tabs: [] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const toggle = screen.getByRole("button", { name: "Toggle Background sessions" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-controls")).toBe("terminal-session-group-background-content");
+    expect(screen.getByTestId("terminal-session-card-docs")).toBeTruthy();
+
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const controlledRegion = document.getElementById("terminal-session-group-background-content");
+    expect(controlledRegion).toBeTruthy();
+    expect(controlledRegion?.hidden).toBe(true);
+    expect(screen.queryByTestId("terminal-session-card-docs")).toBeNull();
+    expect(screen.queryByText("Nothing running in background")).toBeNull();
+    expect(screen.getByTestId("terminal-session-background-chevron").style.transform).toBe("rotate(0deg)");
+
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("terminal-session-card-docs")).toBeTruthy();
+  });
+
+  it("sizes the drawer header logo against the title block", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const logo = screen.getByTestId("terminal-expanded-brand");
+    const mask = screen.getByTestId("terminal-expanded-brand-mask");
+    expect(logo.style.alignSelf).toBe("center");
+    expect(logo.style.height).toBe("38px");
+    expect(logo.style.width).toBe("38px");
+    expect(mask.style.height).toBe("22px");
+    expect(mask.style.width).toBe("22px");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
+
+    const collapsedLogo = screen.getByTestId("terminal-collapsed-brand");
+    const collapsedMask = screen.getByTestId("terminal-collapsed-brand-mask");
+    expect(screen.getByTestId("terminal-collapsed-rail").style.width).toBe("76px");
+    expect(collapsedLogo.style.width).toBe("40px");
+    expect(collapsedLogo.style.height).toBe("40px");
+    expect(collapsedMask.style.width).toBe("22px");
+    expect(collapsedMask.style.height).toBe("22px");
   });
 
   it("opens terminal-only app theme menu without Match system or global Matrix OS theme controls", async () => {
@@ -365,18 +469,29 @@ describe("TerminalApp", () => {
     fetchMock.mockClear();
 
     const button = screen.getByRole("button", { name: "Theme" });
+    const footer = screen.getByTestId("terminal-sidebar-footer");
+    expect(within(footer).getByRole("button", { name: "Theme" })).toBe(button);
+    expect(footer.style.justifyContent).toBe("flex-start");
+    expect(footer.style.borderTop).toBe("1px solid var(--terminal-drawer-border)");
     expect(button.textContent?.replace(/\s+/g, "")).toBe("☼Theme");
     expect(button.style.height).toBe("34px");
     expect(button.style.borderRadius).toBe("9px");
-    expect(button.style.background).toBe("var(--terminal-chrome-control-bg)");
-    expect(button.getAttribute("style")).toContain("border-color: var(--terminal-chrome-control-border)");
+    expect(button.style.background).toBe("var(--terminal-drawer-button-bg)");
+    expect(button.getAttribute("style")).toContain("border-color: var(--terminal-drawer-button-border)");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
+    expect(screen.queryByRole("button", { name: "Theme" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand sessions drawer" }));
 
     await act(async () => {
-      fireEvent.click(button);
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
       await Promise.resolve();
     });
 
     expect(screen.getByRole("menu", { name: "Theme" })).toBeTruthy();
+    expect(screen.getByRole("menu", { name: "Theme" }).style.bottom).toBe("100%");
+    expect(screen.getByRole("menu", { name: "Theme" }).style.left).toBe("0px");
+    expect(screen.getByRole("menu", { name: "Theme" }).style.top).toBe("auto");
     expect(screen.getByText("Warm paper")).toBeTruthy();
     expect(screen.getByText("Warm dark")).toBeTruthy();
     expect(screen.getByText("Phosphor green")).toBeTruthy();
@@ -396,7 +511,7 @@ describe("TerminalApp", () => {
 
     fetchMock.mockClear();
     await act(async () => {
-      fireEvent.click(button);
+      fireEvent.click(screen.getByRole("button", { name: "Theme" }));
       await Promise.resolve();
     });
 
@@ -441,7 +556,7 @@ describe("TerminalApp", () => {
 
     let terminalApp = screen.getByRole("application", { name: "Terminal" });
     const contentSurface = screen.getByTestId("terminal-content-surface");
-    expect(contentSurface.style.background).toBe("rgb(12, 12, 12)");
+    expect(contentSurface.style.background).toBe(expectedDarkTerminalBackground);
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#15180F");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#20241C");
 
@@ -461,7 +576,7 @@ describe("TerminalApp", () => {
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#FFFDF7");
     expect(screen.getByTestId("terminal-sidebar-shell").style.background).toBe("var(--terminal-drawer-bg)");
     expect(screen.getByTestId("terminal-session-card-main").style.background).toBe("var(--terminal-drawer-card-bg)");
-    expect(screen.getByTestId("terminal-content-surface").style.background).toBe("rgb(12, 12, 12)");
+    expect(screen.getByTestId("terminal-content-surface").style.background).toBe(expectedDarkTerminalBackground);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Theme" }));
@@ -479,7 +594,7 @@ describe("TerminalApp", () => {
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#0F1A12");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-fg")).toBe("#9BFFB5");
     expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-fg)");
-    expect(screen.getByTestId("terminal-content-surface").style.background).toBe("rgb(12, 12, 12)");
+    expect(screen.getByTestId("terminal-content-surface").style.background).toBe(expectedDarkTerminalBackground);
     expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
     expect(saveThemeSpy).not.toHaveBeenCalled();
   });
@@ -510,17 +625,24 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("dialog", { name: "Shell theme" })).toBeNull();
     expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
     expect(screen.getByRole("region", { name: "Shell theme" })).toBeTruthy();
-    expect(screen.getByTestId("terminal-shell-theme-panel")).toBeTruthy();
+    const shellThemePanel = screen.getByTestId("terminal-shell-theme-panel");
+    expect(shellThemePanel).toBeTruthy();
+    expect(shellThemePanel.style.bottom).toBe("100%");
+    expect(shellThemePanel.style.left).toBe("0px");
+    expect(shellThemePanel.style.right).toBe("auto");
+    expect(shellThemePanel.style.top).toBe("auto");
+    expect(shellThemePanel.style.width).toBe("280px");
+    expect(shellThemePanel.style.maxWidth).toBe("calc(100vw - 24px)");
     expect(screen.getByRole("button", { name: "Back to theme menu" })).toBeTruthy();
     expect(screen.getByText("Zellij default · best contrast")).toBeTruthy();
     expect(screen.getByText("gruvbox-light")).toBeTruthy();
     expect(screen.getByText("custom · green on black")).toBeTruthy();
     expect(screen.getAllByText("NOT FULLY TUNED")).toHaveLength(2);
-    expect(screen.getByTestId("terminal-shell-theme-panel").style.animation).toContain("terminalShellThemePanelIn");
+    expect(shellThemePanel.style.animation).toContain("terminalShellThemePanelIn");
     expect(screen.getByText("RECOMMENDED").style.fontSize).toBe("8px");
     expect(screen.getByText("RECOMMENDED").style.animation).toContain("terminalShellThemeBadgeIn");
     expect(screen.getByText("RECOMMENDED").parentElement?.style.justifyContent).toBe("flex-end");
-    expect(screen.getByText("RECOMMENDED").parentElement?.style.minWidth).toBe("132px");
+    expect(screen.getByText("RECOMMENDED").parentElement?.style.minWidth).toBe("86px");
     expect(screen.queryByRole("combobox", { name: "Theme" })).toBeNull();
     expect(saveThemeSpy).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -593,35 +715,95 @@ describe("TerminalApp", () => {
     });
 
     expect(screen.queryByText("matrix shell connect")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Command" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Copy Matrix shell connect command for matrix-main" })).toBeNull();
     const row = screen.getByRole("button", { name: "Open matrix-main" }).closest(".group");
     expect(row).toBeTruthy();
     fireEvent.mouseEnter(row!);
     const actions = screen.getByTestId("terminal-session-actions-main");
-    const copyButton = screen.getByTestId("terminal-session-copy-button-main");
     expect(row!.style.display).toBe("grid");
     expect(row!.style.gridTemplateColumns).toBe("minmax(0, 1fr)");
     expect(actions.style.position).toBe("absolute");
     expect(actions.style.right).toBe("-8px");
     expect(actions.style.top).toBe("50%");
     expect(actions.style.transform).toBe("translateY(-50%)");
-    expect(copyButton.style.width).toBe("24px");
     expect(screen.queryByText("matrix shell connect")).toBeNull();
     expect(actions.style.maxHeight).toBe("");
-    expect(within(actions).getByRole("button", { name: "Copy connect command for matrix-main" })).toBeTruthy();
-    expect(within(actions).getByRole("button", { name: "Close matrix-main" })).toBeTruthy();
+    expect(within(actions).getByRole("button", { name: "Rename matrix-main" })).toBeTruthy();
+    expect(within(actions).getByRole("button", { name: "More actions for matrix-main" })).toBeTruthy();
+    expect(within(actions).queryByRole("button", { name: "Copy Command" })).toBeNull();
+    expect(within(actions).queryByRole("button", { name: "Close" })).toBeNull();
 
+    let menu = await openSessionContextMenu("main");
+    const moveButton = within(menu).getByRole("menuitem", { name: "Move to Background" });
+    expect(moveButton).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: "Close" })).toBeTruthy();
+    expect(document.activeElement).toBe(moveButton);
+
+    fireEvent.keyDown(moveButton, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
+    expect(document.activeElement).toBe(within(actions).getByRole("button", { name: "More actions for matrix-main" }));
+
+    menu = await openSessionContextMenu("main");
+    const copyButton = within(menu).getByRole("menuitem", { name: "Copy Command" });
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
+      fireEvent.click(copyButton);
       await Promise.resolve();
     });
 
     expect(writeText).toHaveBeenCalledWith("matrix shell connect main");
-    expect(copyButton.style.width).toBe("24px");
-    expect(screen.getByTestId("terminal-session-copy-toast-main").textContent).toContain("Copied");
-    expect(screen.getByTestId("terminal-session-copy-toast-main").className).toContain("sr-only");
+    expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
+    expect(document.activeElement).toBe(within(actions).getByRole("button", { name: "More actions for matrix-main" }));
+    const copyFeedback = screen.getByTestId("terminal-session-copy-toast-main");
+    expect(copyFeedback.textContent).toContain("Copied");
+    expect(copyFeedback.className).not.toContain("sr-only");
+    expect(copyFeedback.style.display).toBe("inline-flex");
     expect(within(actions).queryByText("matrix shell connect")).toBeNull();
+  });
+
+  it("keeps session action menu above later session cards", async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) } as Response);
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+      }
+      if (url.endsWith("/api/terminal/sessions") && init?.method !== "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessions: [
+              { name: "main", status: "active", placement: "active", attachCommand: "mos shell attach main", attachedClients: 1, tabs: [{ idx: 0, name: "main", focused: true }] },
+              { name: "docs", status: "active", placement: "active", attachCommand: "mos shell attach docs", attachedClients: 0, tabs: [{ idx: 0, name: "docs", focused: true }] },
+              { name: "bench", status: "idle", placement: "active", attachCommand: "mos shell attach bench", attachedClients: 0, tabs: [{ idx: 0, name: "bench", focused: true }] },
+            ],
+          }),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) } as Response);
+    });
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const mainCard = screen.getByTestId("terminal-session-card-main");
+    const docsCard = screen.getByTestId("terminal-session-card-docs");
+    const benchCard = screen.getByTestId("terminal-session-card-bench");
+
+    await openSessionContextMenu("main");
+
+    expect(screen.getByRole("menu", { name: "Actions for matrix-main" })).toBeTruthy();
+    expect(Number(mainCard.style.zIndex)).toBeGreaterThan(Number(docsCard.style.zIndex || "0"));
+    expect(Number(mainCard.style.zIndex)).toBeGreaterThan(Number(benchCard.style.zIndex || "0"));
+    expect(docsCard.style.transform).toBe("");
+    expect(benchCard.style.transform).toBe("");
   });
 
   it("copies with the synchronous selection fallback and still shows the Paper copy confirmation", async () => {
@@ -666,10 +848,10 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    fireEvent.pointerMove(screen.getByTestId("terminal-session-card-main"));
+    await openSessionContextMenu("main");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Copy Command" }));
       await Promise.resolve();
     });
 
@@ -718,10 +900,10 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    revealSessionActions("main");
+    await openSessionContextMenu("main");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Copy Command" }));
       await Promise.resolve();
     });
 
@@ -1097,10 +1279,10 @@ describe("TerminalApp", () => {
 
     const row = screen.getByRole("button", { name: "Open claude-review" }).closest(".group");
     expect(row).toBeTruthy();
-    fireEvent.mouseEnter(row!);
 
+    let menu = await openSessionContextMenu("claude-review", "claude-review");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Close claude-review" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
 
@@ -1120,9 +1302,9 @@ describe("TerminalApp", () => {
     expect(screen.queryByRole("dialog", { name: "Close this session?" })).toBeNull();
     expect(screen.getByRole("button", { name: "Open claude-review" })).toBeTruthy();
 
-    fireEvent.mouseEnter(row!);
+    menu = await openSessionContextMenu("claude-review", "claude-review");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Close claude-review" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
     await act(async () => {
@@ -1169,8 +1351,9 @@ describe("TerminalApp", () => {
     expect(row).toBeTruthy();
     fireEvent.mouseEnter(row!);
 
+    const menu = await openSessionContextMenu("main");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Close matrix-main" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
 
@@ -1219,15 +1402,17 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("main")).toBeTruthy();
-    expect(screen.getByText("docs")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open docs" })).toBeTruthy();
 
+    let menu = await openSessionContextMenu("main");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Move matrix-main to background" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to Background" }));
       await Promise.resolve();
     });
+    menu = await openSessionContextMenu("docs", "docs");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Make docs active" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Make Active" }));
       await Promise.resolve();
     });
 
@@ -1414,12 +1599,13 @@ describe("TerminalApp", () => {
       fireEvent.click(screen.getByRole("button", { name: "Open matrix-main" }));
       await Promise.resolve();
     });
+    const menu = await openSessionContextMenu("main");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Move matrix-main to background" }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Move to Background" }));
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("button", { name: "Make matrix-main active" })).toBeTruthy();
+    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Make Active" })).toBeTruthy();
     expect(resolveMarkSeen).toBeDefined();
 
     await act(async () => {
@@ -1427,7 +1613,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole("button", { name: "Make matrix-main active" })).toBeTruthy();
+    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Make Active" })).toBeTruthy();
   });
 
   it("keeps a reopened background shell active when the placement patch fails after attach", async () => {
@@ -1464,16 +1650,17 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
+    const docsMenu = await openSessionContextMenu("docs", "docs");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Make docs active" }));
+      fireEvent.click(within(docsMenu).getByRole("menuitem", { name: "Make Active" }));
       await Promise.resolve();
     });
 
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: { sessionId: "docs" },
     });
-    expect(screen.getByRole("button", { name: "Move docs to background" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Make docs active" })).toBeNull();
+    expect(within(await openSessionContextMenu("docs", "docs")).getByRole("menuitem", { name: "Move to Background" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Make Active" })).toBeNull();
     expect(screen.queryByText("Failed to update session")).toBeNull();
     expect(screen.queryByText("Could not update session")).toBeNull();
     expect(vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
@@ -1523,7 +1710,8 @@ describe("TerminalApp", () => {
     expect(screen.getByText("matrix-os")).toBeTruthy();
     expect(screen.getByPlaceholderText("Find a session...")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Move matrix-main to background" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Move to Background" })).toBeNull();
+    expect(within(await openSessionContextMenu("main")).getByRole("menuitem", { name: "Move to Background" })).toBeTruthy();
     expect(screen.queryByText("Zellij")).toBeNull();
   });
 
@@ -1595,6 +1783,37 @@ describe("TerminalApp", () => {
 
     expect(screen.getByRole("menu", { name: "New session menu" })).toBeTruthy();
     expect(screen.getByTestId("terminal-sidebar-shell").style.overflow).toBe("visible");
+  });
+
+  it("uses compact new-session menu sizing from the drawer and collapsed rail", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await openNewSessionMenu();
+    });
+
+    let menu = screen.getByRole("menu", { name: "New session menu" });
+    expect(menu.style.width).toBe("244px");
+    expect(menu.style.padding).toBe("8px");
+    expect(menu.style.gap).toBe("4px");
+    expect(menu.style.right).toBe("0px");
+    expect(menu.style.top).toBe("calc(100% + 8px)");
+    expect(within(menu).getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i }).style.height).toBe("32px");
+
+    fireEvent.pointerDown(document.body);
+    fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
+    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+
+    menu = screen.getByRole("menu", { name: "New session menu" });
+    expect(menu.style.width).toBe("244px");
+    expect(menu.style.left).toBe("calc(100% + 8px)");
+    expect(menu.style.top).toBe("0px");
   });
 
   it("opens Matrix-named shell sessions from the new-session menu", async () => {
@@ -1718,7 +1937,7 @@ describe("TerminalApp", () => {
     expect(screen.getByLabelText("Search sessions")).toBeTruthy();
   });
 
-  it("keeps shell placement badges inside their row height", async () => {
+  it("keeps row actions compact and moves placement into the overflow menu", async () => {
     render(<TerminalApp />);
 
     await act(async () => {
@@ -1727,11 +1946,37 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    const activeToggle = screen.getByRole("button", { name: "Move matrix-main to background" });
-    expect(activeToggle.style.height).toBe("20px");
-    expect(activeToggle.style.boxSizing).toBe("border-box");
-    expect(activeToggle.style.overflow).toBe("hidden");
-    expect(activeToggle.style.alignSelf).toBe("center");
+    revealSessionActions("main");
+    const actions = screen.getByTestId("terminal-session-actions-main");
+    expect(within(actions).getByRole("button", { name: "Rename matrix-main" })).toBeTruthy();
+    const moreButton = within(actions).getByRole("button", { name: "More actions for matrix-main" });
+    expect(moreButton.style.width).toBe("24px");
+    expect(moreButton.style.height).toBe("24px");
+    expect(screen.queryByRole("button", { name: "Move to Background" })).toBeNull();
+    const menu = await openSessionContextMenu("main");
+    expect(menu.style.minWidth).toBe("152px");
+    expect(menu.style.padding).toBe("5px");
+    const moveItem = within(menu).getByRole("menuitem", { name: "Move to Background" });
+    const copyItem = within(menu).getByRole("menuitem", { name: "Copy Command" });
+    const closeItem = within(menu).getByRole("menuitem", { name: "Close" });
+    expect(moveItem.style.height).toBe("28px");
+    expect(document.activeElement).toBe(moveItem);
+    fireEvent.keyDown(moveItem, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(copyItem);
+    fireEvent.keyDown(copyItem, { key: "End" });
+    expect(document.activeElement).toBe(closeItem);
+    fireEvent.keyDown(closeItem, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(moveItem);
+    fireEvent.keyDown(moveItem, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(closeItem);
+    fireEvent.keyDown(closeItem, { key: "Home" });
+    expect(document.activeElement).toBe(moveItem);
+    fireEvent.keyDown(moveItem, { key: "Tab" });
+    expect(screen.queryByRole("menu", { name: "Actions for matrix-main" })).toBeNull();
+    expect(document.activeElement).toBe(moreButton);
+    expect(screen.queryByRole("menuitem", { name: "Move matrix-main to background" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Close matrix-main" })).toBeNull();
   });
 
   it("lets desktop users resize the terminal sessions drawer", async () => {
@@ -1814,7 +2059,7 @@ describe("TerminalApp", () => {
     expect(sidebarShell.style.width).toBe("456px");
   });
 
-  it("does not treat terminal chrome control double-clicks as title-bar zooms", async () => {
+  it("does not treat drawer controls as title-bar zooms after desktop top chrome removal", async () => {
     const handleTitleDoubleClick = vi.fn();
     render(<TerminalApp windowControls={{ dragHandleProps: { onDoubleClick: handleTitleDoubleClick } }} />);
 
@@ -1824,7 +2069,8 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Toggle Terminal fullscreen" }));
+    expect(screen.queryByRole("button", { name: "Toggle Terminal fullscreen" })).toBeNull();
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Theme" }));
 
     expect(handleTitleDoubleClick).not.toHaveBeenCalled();
   });
@@ -2012,6 +2258,9 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Open codex-backend" }).textContent).toBe("cba");
     expect(screen.getByRole("button", { name: "Open deploy-logs" }).textContent).toBe("dlo");
     expect(screen.getByRole("button", { name: "Open hotfix-auth" }).textContent).toBe("hau");
+    expect(screen.getByTestId("terminal-collapsed-background-divider").style.marginTop).toBe("2px");
+    expect(screen.getByTestId("terminal-collapsed-background-divider").style.width).toBe("36px");
+    expect(screen.getByRole("button", { name: "Open deploy-logs" }).style.opacity).toBe("0.72");
   });
 
   it("keeps collapsed rail sessions visible after hiding a filtered drawer", async () => {
@@ -2100,10 +2349,10 @@ describe("TerminalApp", () => {
       await Promise.resolve();
     });
 
-    revealSessionActions("main");
+    await openSessionContextMenu("main");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Copy connect command for matrix-main" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Copy Command" }));
       await Promise.resolve();
     });
 
@@ -2589,10 +2838,11 @@ describe("TerminalApp", () => {
     expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
     expect(screen.getByText("bench")).toBeTruthy();
     const mainCard = screen.getByTestId("terminal-session-card-main");
-    const mainPlacementToggle = screen.getByRole("button", { name: "Move matrix-main to background" });
-    expect(mainPlacementToggle.parentElement).toBe(mainCard);
-    expect(mainPlacementToggle.style.position).toBe("relative");
-    expect(mainPlacementToggle.style.zIndex).toBe("1");
+    revealSessionActions("main");
+    const mainActions = screen.getByTestId("terminal-session-actions-main");
+    expect(within(mainActions).getByRole("button", { name: "Rename matrix-main" })).toBeTruthy();
+    expect(within(mainActions).getByRole("button", { name: "More actions for matrix-main" }).closest(".group")).toBe(mainCard);
+    expect(screen.queryByRole("button", { name: "Move to Background" })).toBeNull();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /open bench/i }));
@@ -2615,10 +2865,10 @@ describe("TerminalApp", () => {
     ));
     expect(createCalls).toHaveLength(1);
 
-    revealSessionActions("main");
+    const closeMenu = await openSessionContextMenu("main");
 
     await act(async () => {
-      const deleteButton = screen.getByRole("button", { name: /close matrix-main/i });
+      const deleteButton = within(closeMenu).getByRole("menuitem", { name: "Close" });
       fireEvent.click(deleteButton);
       fireEvent.click(deleteButton);
       await Promise.resolve();
@@ -2695,10 +2945,10 @@ describe("TerminalApp", () => {
       paneTree: { sessionId: "bench" },
     });
 
-    revealSessionActions("bench");
+    const benchMenu = await openSessionContextMenu("bench", "bench");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /close bench/i }));
+      fireEvent.click(within(benchMenu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
     await act(async () => {
@@ -2859,7 +3109,7 @@ describe("TerminalApp", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getAllByText("main").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Open matrix-main" })).toBeTruthy();
     const shellListCallsBeforeWait = vi.mocked(global.fetch).mock.calls.filter(([input, init]) => (
       String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST"
     )).length;
@@ -2875,7 +3125,7 @@ describe("TerminalApp", () => {
       String(input).endsWith("/api/terminal/sessions") && init?.method !== "POST"
     )).length;
     expect(shellListCallsAfterWait).toBeGreaterThan(shellListCallsBeforeWait);
-    expect(screen.queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Command" })).toBeNull();
   });
 
   it("does not clobber a concurrent Shells refresh when delete rollback runs", async () => {
@@ -2916,10 +3166,10 @@ describe("TerminalApp", () => {
     });
     expect(screen.getByTestId("terminal-session-card-main")).toBeTruthy();
 
-    revealSessionActions("main");
+    const menu = await openSessionContextMenu("main");
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /close matrix-main/i }));
+      fireEvent.click(within(menu).getByRole("menuitem", { name: "Close" }));
       await Promise.resolve();
     });
     expect(screen.getByRole("dialog", { name: "Close this session?" })).toBeTruthy();
@@ -2929,7 +3179,7 @@ describe("TerminalApp", () => {
       fireEvent.click(within(screen.getByRole("dialog", { name: "Close this session?" })).getByRole("button", { name: "Delete" }));
       await Promise.resolve();
     });
-    expect(screen.queryByRole("button", { name: "Copy connect command for matrix-main" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Command" })).toBeNull();
 
     await act(async () => {
       shellList = [{ name: "bench", status: "active" }];

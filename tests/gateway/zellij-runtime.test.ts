@@ -75,7 +75,14 @@ describe("zellij-runtime", () => {
         cols: 120,
         rows: 40,
         cwd: launch.cwd,
-        env: expect.objectContaining(launch.env),
+        env: expect.objectContaining({
+          ...launch.env,
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          CLICOLOR: "1",
+          FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
+        }),
       }),
     );
     expect(runCommand).not.toHaveBeenCalledWith("zellij", expect.arrayContaining(["--layout"]), expect.any(Object));

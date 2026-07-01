@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { capturePostHogEvent } from "@/lib/posthog-client";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 
 type TrackableElement = HTMLElement & {
   dataset: DOMStringMap & {
@@ -17,7 +18,7 @@ function isTrackableElement(element: Element | null): element is TrackableElemen
 
 export function LandingTelemetry() {
   useEffect(() => {
-    capturePostHogEvent("marketing_landing_viewed", {
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.MARKETING_LANDING_VIEWED, {
       surface: "www",
       page: "landing",
       path: window.location.pathname,
@@ -32,12 +33,17 @@ export function LandingTelemetry() {
 
       const eventName = target.dataset.phEvent;
       if (!eventName) return;
+      const targetName = target.dataset.phTarget;
+      const resolvedEventName =
+        eventName === "marketing_cta_clicked" && (targetName === "get_started" || targetName === "sign_up")
+          ? MATRIX_TELEMETRY_EVENTS.MARKETING_SIGNUP_CLICKED
+          : eventName;
 
-      capturePostHogEvent(eventName, {
+      capturePostHogEvent(resolvedEventName, {
         surface: "www",
         page: "landing",
         location: target.dataset.phLocation,
-        target: target.dataset.phTarget,
+        target: targetName,
         path: window.location.pathname,
       });
     };

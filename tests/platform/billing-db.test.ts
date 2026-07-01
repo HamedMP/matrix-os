@@ -155,7 +155,7 @@ describe('platform billing db', () => {
     };
 
     await upsertBillingOverride(db, override);
-    await expect(getBillingOverride(db, 'user_123')).resolves.toMatchObject({
+    await expect(getBillingOverride(db, 'user_123', '2026-06-01T00:00:00.000Z')).resolves.toMatchObject({
       id: 'override_123',
       reason: 'engineer test',
       revokedAt: null,
@@ -164,7 +164,7 @@ describe('platform billing db', () => {
     await expect(revokeBillingOverride(db, 'override_123', '2026-06-01T00:00:00.000Z')).resolves.toBe(true);
     await expect(revokeBillingOverride(db, 'override_123', '2026-06-02T00:00:00.000Z')).resolves.toBe(false);
 
-    await expect(getBillingOverride(db, 'user_123')).resolves.toBeUndefined();
+    await expect(getBillingOverride(db, 'user_123', '2026-06-01T00:00:00.000Z')).resolves.toBeUndefined();
     await expect(
       db.executor
         .selectFrom('billing_entitlement_overrides')
@@ -179,7 +179,7 @@ describe('platform billing db', () => {
       revokedAt: null,
     });
 
-    await expect(getBillingOverride(db, 'user_123')).resolves.toBeUndefined();
+    await expect(getBillingOverride(db, 'user_123', '2026-06-01T00:00:00.000Z')).resolves.toBeUndefined();
     await expect(revokeBillingOverride(db, 'missing_override', '2026-06-01T00:00:00.000Z')).resolves.toBe(false);
   });
 

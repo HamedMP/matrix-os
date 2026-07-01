@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 2
     outputs:
       should_run: ${{ steps.changed.outputs.should_run }}
+      docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -37,6 +38,7 @@ jobs:
           # Manual and merge-queue runs must execute CI regardless of changed paths.
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
             echo "CI relevant changes: true ($GITHUB_EVENT_NAME always runs)"
             exit 0
           fi
@@ -51,6 +53,7 @@ jobs:
 
           if [ "$should_run_trigger" != "true" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
             echo "CI trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually."
             exit 0
           fi
@@ -68,18 +71,21 @@ jobs:
           fi
 
           should_run=false
+          docs_contract_tests=false
           while IFS= read -r file; do
             [ -z "$file" ] && continue
             case "$file" in
-              docs/*|specs/*|www/*|*.md) ;;
-              *) should_run=true; break ;;
+              docs/*|specs/*|www/*|*.md) docs_contract_tests=true ;;
+              *) should_run=true; docs_contract_tests=false; break ;;
             esac
           done <<EOF
           $changed_files
           EOF
 
           echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+          echo "docs_contract_tests=$docs_contract_tests" >> "$GITHUB_OUTPUT"
           echo "CI relevant changes: $should_run"
+          echo "Docs contract tests: $docs_contract_tests"
 
   # ── Gate 1: Mechanical checks ──
   typecheck:
@@ -153,7 +159,7 @@ jobs:
           NEXT_PUBLIC_CLERK_SIGN_UP_URL: /sign-up
           NEXT_PUBLIC_POSTHOG_KEY: phc_ci_shell_build
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: phc_ci_shell_build
-          NEXT_PUBLIC_POSTHOG_HOST: https://eu.i.posthog.com
+          NEXT_PUBLIC_POSTHOG_HOST: https://eu.posthog.com
           NEXT_PUBLIC_POSTHOG_API_HOST: /relay
         run: bun run build:shell:production
 
@@ -338,6 +344,35 @@ jobs:
       - run: bun run test -- --shard=${{ matrix.shard }}/4
         if: needs.changes.outputs.should_run == 'true'
 
+  docs-contract:
+    name: Docs Contract Tests
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Skip docs contract tests
+        if: needs.changes.outputs.docs_contract_tests != 'true'
+        run: echo "No docs-only changes detected; skipping docs contract tests."
+
+      - uses: actions/checkout@v6
+        if: needs.changes.outputs.docs_contract_tests == 'true'
+
+      - uses: pnpm/action-setup@v6
+        if: needs.changes.outputs.docs_contract_tests == 'true'
+
+      - uses: actions/setup-node@v6
+        if: needs.changes.outputs.docs_contract_tests == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: needs.changes.outputs.docs_contract_tests == 'true'
+
+      - name: Run docs contract tests
+        if: needs.changes.outputs.docs_contract_tests == 'true'
+        run: pnpm exec vitest run tests/www/self-host-docs.test.ts
+
   e2e:
     name: E2E Tests
     needs: [changes, sync-client, unit]
@@ -386,7 +421,7 @@ jobs:
 
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, docs-contract, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -401,6 +436,7 @@ jobs:
           REACT_DOCTOR_RESULT: ${{ needs.react-doctor.result }}
           SYNC_CLIENT_RESULT: ${{ needs.sync-client.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
+          DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           set -euo pipefail
@@ -421,11 +457,12 @@ jobs:
             echo "| React Doctor | $REACT_DOCTOR_RESULT |"
             echo "| Sync Client Package (Node 20) | $SYNC_CLIENT_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
+            echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;

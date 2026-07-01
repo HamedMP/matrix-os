@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 const installUrl = "https://matrix-os.com/install-server.sh";
+const privateServicePorts = ["3000", "4000", "8787", "8788", "5432"] as const;
 
 describe("self-host public docs", () => {
   it("documents the main-domain server installer in docs and README", () => {
@@ -21,7 +22,11 @@ describe("self-host public docs", () => {
     expect(docs).toContain("Manual Install Telemetry");
     expect(docs).toContain("MATRIX_NO_TELEMETRY=1");
     expect(docs).toContain("does not send your Matrix handle");
-    expect(docs).toContain("Do not expose ports `3000`, `4000`, `8787`, `8788`, or `5432` publicly");
+    const publicPortWarning = docs.match(/^Do not expose ports `[^\n]+ publicly/m)?.[0] ?? "";
+    expect(publicPortWarning).toContain("Do not expose ports");
+    for (const port of privateServicePorts) {
+      expect(publicPortWarning).toContain(`\`${port}\``);
+    }
     expect(meta).toContain("\"self-host\"");
     expect(readme).toContain("### Managed Matrix Cloud");
     expect(readme).toContain("### Manual VPS Install");

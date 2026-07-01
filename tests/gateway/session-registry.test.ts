@@ -123,6 +123,24 @@ describe("SessionRegistry", () => {
       });
     });
 
+    it("passes truecolor terminal hints to spawned PTYs", () => {
+      const mockSpawn = createMockSpawn();
+      const registry = createRegistry({}, mockSpawn);
+
+      registry.create("/home");
+
+      expect(mockSpawn.mock.calls[0]?.[2]).toMatchObject({
+        name: "xterm-256color",
+        env: expect.objectContaining({
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          CLICOLOR: "1",
+          FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
+        }),
+      });
+    });
+
     it("falls back to homePath if spawn fails for a vanished cwd", () => {
       const homePath = mkdtempSync(join(tmpdir(), "matrix-os-session-registry-"));
       mkdirSync(join(homePath, "system"), { recursive: true });

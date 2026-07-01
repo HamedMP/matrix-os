@@ -5,7 +5,6 @@ import { fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const shared = vi.hoisted(() => ({
-  saveThemeMock: vi.fn(),
   saveDesktopConfigMock: vi.fn(),
   setDockMock: vi.fn(),
   config: {
@@ -17,18 +16,6 @@ const shared = vi.hoisted(() => ({
 
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({ mode: "dark" }),
-  saveTheme: shared.saveThemeMock,
-  DEFAULT_THEME: {
-    style: "flat",
-    colors: { background: "#ffffff" },
-  },
-}));
-
-vi.mock("@/lib/theme-presets", () => ({
-  RETRO_THEME: {
-    style: "neumorphic",
-    colors: { background: "#d4d4d4" },
-  },
 }));
 
 vi.mock("@/hooks/useDesktopConfig", () => ({
@@ -64,7 +51,6 @@ class FileReaderMock {
 
 describe("AppearanceSection warning logs", () => {
   beforeEach(() => {
-    shared.saveThemeMock.mockReset();
     shared.saveDesktopConfigMock.mockReset();
     shared.setDockMock.mockReset();
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
@@ -90,6 +76,21 @@ describe("AppearanceSection warning logs", () => {
         expect.any(Error),
       );
     });
+  });
+
+  it("does not render global theme preset controls", async () => {
+    const { queryByRole, getByRole, getByAltText } = render(<AppearanceSection />);
+
+    await waitFor(() => {
+      expect(getByAltText("forest.png")).toBeTruthy();
+    });
+
+    expect(getByRole("heading", { name: "Appearance" })).toBeTruthy();
+    expect(getByRole("heading", { name: "Background" })).toBeTruthy();
+    expect(getByRole("heading", { name: "Dock" })).toBeTruthy();
+    expect(queryByRole("heading", { name: "Theme" })).toBeNull();
+    expect(queryByRole("button", { name: /Sage/i })).toBeNull();
+    expect(queryByRole("button", { name: /Retro/i })).toBeNull();
   });
 
   it("logs upload failures when the wallpaper POST fails", async () => {

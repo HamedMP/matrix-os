@@ -60,6 +60,7 @@ function isBypassed(url) {
     p.startsWith("/__session") ||
     p.startsWith("/sign-in") ||
     p.startsWith("/sign-up") ||
+    p.startsWith("/files/apps/") ||
     p.includes("/__nextjs_") ||
     p.startsWith("/_next/data/")
   );
@@ -71,10 +72,16 @@ function isStaticAsset(url) {
     p.startsWith("/_next/static/") ||
     p.startsWith("/icons/") ||
     p.startsWith("/wallpapers/") ||
+    p.startsWith("/files/system/wallpapers/") ||
     p.startsWith("/textures/") ||
     p.startsWith("/fonts/") ||
     /\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|css|js|wav|mp3)$/.test(p)
   );
+}
+
+function isShellNavigation(url) {
+  const p = url.pathname;
+  return p === "/" || p.startsWith("/vm/");
 }
 
 self.addEventListener("fetch", (event) => {
@@ -84,7 +91,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (isBypassed(url)) return;
 
-  if (req.mode === "navigate" || req.headers.get("accept")?.includes("text/html")) {
+  if ((req.mode === "navigate" || req.headers.get("accept")?.includes("text/html")) && isShellNavigation(url)) {
     event.respondWith(networkFirstHtml(req));
     return;
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
 import { useDesktopConfig } from "@/hooks/useDesktopConfig";
 import { useChatState } from "@/hooks/useChatState";
@@ -15,6 +16,7 @@ import { MobileShell } from "@/components/mobile/MobileShell";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
+import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -40,8 +42,11 @@ const getLaunchPathServerSnapshot = (): string | null => null;
 
 export function ShellHome() {
   const isMobile = useMobileViewport();
-  useTheme();
-  useDesktopConfig();
+  const { userId } = useAuth();
+  const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
+  const cacheScope = createShellSnapshotScope({ userId, pathname: cachePathname });
+  useTheme({ cacheScope });
+  useDesktopConfig({ cacheScope });
 
   const chat = useChatState();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -91,12 +96,14 @@ export function ShellHome() {
               <MobileShell
                 launchAppPath={launchAppPath}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
+                cacheScope={cacheScope}
               />
             ) : (
               <Desktop
                 launchAppPath={launchAppPath}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 chat={chat}
+                cacheScope={cacheScope}
               />
             )}
           </div>
