@@ -199,7 +199,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [time, setTime] = useState("--:--");
-  const [terminalInputActive, setTerminalInputActive] = useState(false);
+  const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
   const launchPathConsumedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -208,7 +208,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
 
   const top = openStack[openStack.length - 1];
   const topIsTerminal = view === "app" && !!top?.app.path.startsWith("__terminal__");
-  const hideBottomDock = topIsTerminal && terminalInputActive;
+  const hideBottomDock = topIsTerminal && terminalInputActiveId === top?.id;
 
   useEffect(() => {
     const tick = () => setTime(formatClock(new Date()));
@@ -221,17 +221,22 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   useEffect(() => {
     const handleTerminalInputActive = (event: Event) => {
       const detail = (event as CustomEvent<MobileTerminalInputActiveDetail>).detail;
-      setTerminalInputActive(detail?.active === true);
+      if (!detail || typeof detail.terminalId !== "string") return;
+      if (detail.active) {
+        setTerminalInputActiveId(detail.terminalId);
+        return;
+      }
+      setTerminalInputActiveId((current) => (current === detail.terminalId ? null : current));
     };
     window.addEventListener(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, handleTerminalInputActive);
     return () => window.removeEventListener(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, handleTerminalInputActive);
   }, []);
 
   useEffect(() => {
-    if (!topIsTerminal) {
-      setTerminalInputActive(false);
+    if (!topIsTerminal || terminalInputActiveId !== top?.id) {
+      setTerminalInputActiveId(null);
     }
-  }, [topIsTerminal]);
+  }, [terminalInputActiveId, top?.id, topIsTerminal]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded mount load of the installed-apps registry: it runs once on mount, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. A data-fetching library would be overkill for this single shell-bootstrap read.
   useEffect(() => {

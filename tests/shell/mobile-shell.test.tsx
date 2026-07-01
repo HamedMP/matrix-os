@@ -11,12 +11,16 @@ import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
-  TerminalApp: () => (
+  TerminalApp: ({ launchTargetId }: { launchTargetId?: string }) => (
     <div data-testid="terminal-app">
       <input
         aria-label="Command composer"
-        onFocus={() => window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", { detail: { active: true } }))}
-        onBlur={() => window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", { detail: { active: false } }))}
+        onFocus={() => window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", {
+          detail: { active: true, terminalId: launchTargetId ?? "mock-terminal" },
+        }))}
+        onBlur={() => window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", {
+          detail: { active: false, terminalId: launchTargetId ?? "mock-terminal" },
+        }))}
       />
     </div>
   ),
@@ -257,6 +261,14 @@ describe("mobile shell", () => {
     expect(dock.style.display).toBe("flex");
 
     fireEvent.focus(screen.getByRole("textbox", { name: "Command composer" }));
+
+    expect(dock.style.display).toBe("none");
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", {
+        detail: { active: false, terminalId: "background-terminal" },
+      }));
+    });
 
     expect(dock.style.display).toBe("none");
 

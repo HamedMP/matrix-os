@@ -45,6 +45,7 @@ const restorePlan = vi.hoisted(() => ({
         attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
         clearSelection: ReturnType<typeof vi.fn>;
         getSelection: ReturnType<typeof vi.fn>;
+        scrollToBottom: ReturnType<typeof vi.fn>;
       };
       fitAddon: { fit: ReturnType<typeof vi.fn> };
       webglAddon: null;
@@ -83,6 +84,7 @@ vi.mock("@xterm/xterm", () => ({
     attachCustomKeyEventHandler = vi.fn();
     clearSelection = vi.fn();
     getSelection = vi.fn(() => "");
+    scrollToBottom = vi.fn();
     registerLinkProvider = vi.fn();
 
     open(container: HTMLElement) {
@@ -250,6 +252,7 @@ function createCachedTerminal() {
       attachCustomKeyEventHandler: vi.fn(),
       clearSelection: vi.fn(),
       getSelection: vi.fn(() => ""),
+      scrollToBottom: vi.fn(),
     },
     viewport,
   };
@@ -396,6 +399,7 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(fitAddon.fit).toHaveBeenCalled());
     expect(terminal.focus).not.toHaveBeenCalled();
+    expect(terminal.scrollToBottom).toHaveBeenCalled();
   });
 
   it("does not programmatically focus xterm on mount when native keyboard is suppressed", async () => {

@@ -1424,20 +1424,25 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
     });
   }, [focusedPaneId]);
 
+  const mobileTerminalInputId = launchTargetId ?? "mobile-terminal";
+
   useEffect(() => {
     if (!mobile) return;
-    const detail: MobileTerminalInputActiveDetail = { active: mobileInputActive };
+    const detail: MobileTerminalInputActiveDetail = {
+      active: mobileInputActive,
+      terminalId: mobileTerminalInputId,
+    };
     window.dispatchEvent(new CustomEvent(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, { detail }));
-  }, [mobile, mobileInputActive]);
+  }, [mobile, mobileInputActive, mobileTerminalInputId]);
 
   useEffect(() => {
     if (!mobile) return;
     return () => {
       window.dispatchEvent(new CustomEvent(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, {
-        detail: { active: false } satisfies MobileTerminalInputActiveDetail,
+        detail: { active: false, terminalId: mobileTerminalInputId } satisfies MobileTerminalInputActiveDetail,
       }));
     };
-  }, [mobile]);
+  }, [mobile, mobileTerminalInputId]);
 
   const persistLayoutNow = () => {
     const layout: TerminalLayout = {

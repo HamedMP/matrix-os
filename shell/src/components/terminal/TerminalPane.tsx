@@ -62,9 +62,7 @@ function shouldDisableWebglRenderer(suppressNativeKeyboard: boolean): boolean {
 }
 
 function scrollTerminalViewportToBottom(term: Terminal | null): void {
-  const viewport = (term as { viewport?: HTMLElement | null } | null)?.viewport;
-  if (!viewport) return;
-  viewport.scrollTop = viewport.scrollHeight;
+  term?.scrollToBottom();
 }
 
 const AUTH_BANNER_BASE_STYLE: CSSProperties = {
