@@ -21,7 +21,7 @@ describe("self-host public docs", () => {
     expect(docs).toContain("Manual Install Telemetry");
     expect(docs).toContain("MATRIX_NO_TELEMETRY=1");
     expect(docs).toContain("does not send your Matrix handle");
-    expect(docs).toContain("Do not expose ports `3000`, `4000`, `8787`, or `5432` publicly");
+    expect(docs).toContain("Do not expose ports `3000`, `4000`, `8787`, `8788`, or `5432` publicly");
     expect(meta).toContain("\"self-host\"");
     expect(readme).toContain("### Managed Matrix Cloud");
     expect(readme).toContain("### Manual VPS Install");

@@ -1375,10 +1375,13 @@ describe("platform proxy routing", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("ignores stale legacy containers on app.matrix-os.com when VPS-native routing is configured", async () => {
+  it("routes stale legacy-container users to billing setup in VPS-native mode", async () => {
     await updateContainerStatus(db, "alice", "stopped", "stale-container-id");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
+      new Response("auth shell billing", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
     );
     const orchestrator = stubOrchestrator();
     const app = createApp({
@@ -1390,23 +1393,26 @@ describe("platform proxy routing", () => {
       platformSecret: "platform-secret-123",
       customerVpsService: {} as CustomerVpsService,
       env: {
+        AUTH_SHELL_HOST: "auth-shell.test",
+        AUTH_SHELL_PORT: "3200",
         MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
       } as NodeJS.ProcessEnv,
     });
 
-    const res = await app.request("/", {
+    const res = await app.request("/?billing=setup", {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
       },
     });
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Preparing Matrix OS");
+    expect(html).toBe("auth shell billing");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://auth-shell.test:3200/?billing=setup");
+    expect(html).not.toContain("Preparing Matrix OS");
     expect(html).not.toContain('http-equiv="refresh"');
     expect(html).not.toContain("Failed to wake container");
-    expect(fetchMock).not.toHaveBeenCalled();
     expect(orchestrator.start).not.toHaveBeenCalled();
   });
 
