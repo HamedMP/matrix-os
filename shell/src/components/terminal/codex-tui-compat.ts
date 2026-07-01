@@ -6,8 +6,6 @@ const CODEX_TUI_REVERSE_BG = "#30363D";
 
 export interface CodexTuiCompatTheme {
   foreground: string;
-  background: string;
-  selectionBackground: string;
 }
 
 export interface CodexTuiCompatTransform {
@@ -28,13 +26,25 @@ function rgbSgr(prefix: 38 | 48, color: [number, number, number]): string {
   return `${prefix};2;${color[0]};${color[1]};${color[2]}`;
 }
 
+function sgrColorGroupLength(params: string[], index: number): number {
+  const colorTarget = params[index];
+  if (colorTarget !== "38" && colorTarget !== "48") {
+    return 0;
+  }
+
+  const colorMode = params[index + 1];
+  if (colorMode === "2" && params.length >= index + 5) {
+    return 5;
+  }
+  if (colorMode === "5" && params.length >= index + 3) {
+    return 3;
+  }
+  return 0;
+}
+
 function rewriteSgr(sequence: string, theme: CodexTuiCompatTheme): string {
   const body = sequence.slice(2, -1);
   const params = body.length === 0 ? ["0"] : body.split(";");
-  if (!params.some((param) => param === "0" || param === "7" || param === "27")) {
-    return sequence;
-  }
-
   const foreground = parseHexColor(theme.foreground, "D6D8DD");
   const reverseBackground = parseHexColor(CODEX_TUI_REVERSE_BG, "30363D");
   const output: string[] = [];
@@ -46,7 +56,15 @@ function rewriteSgr(sequence: string, theme: CodexTuiCompatTheme): string {
     pending = [];
   };
 
-  for (const param of params) {
+  for (let index = 0; index < params.length; index += 1) {
+    const colorGroupLength = sgrColorGroupLength(params, index);
+    if (colorGroupLength > 0) {
+      pending.push(...params.slice(index, index + colorGroupLength));
+      index += colorGroupLength - 1;
+      continue;
+    }
+
+    const param = params[index] ?? "";
     if (param === "0" || param === "") {
       flushPending();
       output.push("\x1b[0m");

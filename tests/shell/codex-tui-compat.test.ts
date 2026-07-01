@@ -6,8 +6,6 @@ import {
 
 const theme = {
   foreground: "#D6D8DD",
-  background: "#11161C",
-  selectionBackground: "#30363DAA",
 };
 
 describe("Codex TUI ANSI compatibility transform", () => {
@@ -42,6 +40,22 @@ describe("Codex TUI ANSI compatibility transform", () => {
     const cursorMove = "\x1b[2J\x1b[3;4H";
 
     expect(transform.write(`${osc52}${cursorMove}`)).toBe(`${osc52}${cursorMove}`);
+  });
+
+  it("preserves truecolor and indexed colors that contain zero components", () => {
+    const transform = createCodexTuiCompatTransform(theme);
+
+    expect(transform.write("\x1b[38;2;255;0;0mred\x1b[48;2;0;16;32mbg\x1b[38;5;0mblack")).toBe(
+      "\x1b[38;2;255;0;0mred\x1b[48;2;0;16;32mbg\x1b[38;5;0mblack",
+    );
+  });
+
+  it("handles reverse-video controls after truecolor parameters", () => {
+    const transform = createCodexTuiCompatTransform(theme);
+
+    expect(transform.write("\x1b[38;2;255;0;0;7mactive\x1b[27;48;2;0;16;32mplain")).toBe(
+      "\x1b[38;2;255;0;0m\x1b[38;2;214;216;221;48;2;48;54;61mactive\x1b[39;49m\x1b[48;2;0;16;32mplain",
+    );
   });
 
   it("leaves non-Codex terminal output byte-for-byte unchanged", () => {

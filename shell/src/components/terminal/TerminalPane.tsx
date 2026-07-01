@@ -1442,12 +1442,15 @@ export function TerminalPane({
   ]);
 
   useEffect(() => {
+    const xtermTheme = buildXtermTheme(theme, terminalThemeId);
+    codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
+
     if (termRef.current && fitAddonRef.current) {
       applyTerminalAppearance(
         termRef.current as Parameters<typeof applyTerminalAppearance>[0],
         fitAddonRef.current as Parameters<typeof applyTerminalAppearance>[1],
         {
-          theme: buildXtermTheme(theme, terminalThemeId),
+          theme: xtermTheme,
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           fontSize: terminalFontSize,
           cursorBlink,
