@@ -380,4 +380,30 @@ describe("TerminalPane scrolling", () => {
     await waitFor(() => expect(fitAddon.fit).toHaveBeenCalled());
     expect(terminal.focus).not.toHaveBeenCalled();
   });
+
+  it("does not programmatically focus xterm on mount when native keyboard is suppressed", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-mobile-initial-focus-test"
+        cwd=""
+        theme={theme}
+        isFocused
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        suppressNativeKeyboard
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(createdTerminals).toHaveLength(1));
+    await waitFor(() => expect(createdFitAddons).toHaveLength(1));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    expect(createdFitAddons[0].fit).toHaveBeenCalled();
+    expect(createdTerminals[0].focus).not.toHaveBeenCalled();
+  });
 });

@@ -1716,9 +1716,9 @@ export async function upsertBillingOverride(db: PlatformDB, record: NewBillingEn
 export async function getBillingOverride(
   db: PlatformDB,
   clerkUserId: string,
+  nowIso = new Date().toISOString(),
 ): Promise<BillingEntitlementOverrideRecord | undefined> {
   await db.ready;
-  const now = new Date().toISOString();
   const row = await db.executor
     .selectFrom('billing_entitlement_overrides')
     .selectAll()
@@ -1726,7 +1726,7 @@ export async function getBillingOverride(
     .where('revoked_at', 'is', null)
     .where((eb) => eb.or([
       eb('expires_at', 'is', null),
-      eb('expires_at', '>', now),
+      eb('expires_at', '>', nowIso),
     ]))
     .orderBy('created_at', 'desc')
     .executeTakeFirst();

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { createHomeMirror as createHomeMirrorImpl } from "../../../packages/gateway/src/sync/home-mirror.js";
 import {
   createPeerRegistry,
@@ -504,7 +504,9 @@ describe("createHomeMirror", () => {
 
     it("refuses traversal paths on remote writes", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
-      const outsidePath = join(tmpRoot, "..", "escaped-write.txt");
+      const outsideRoot = await mkdtemp(join(tmpdir(), "home-mirror-outside-"));
+      const outsidePath = join(outsideRoot, "escaped-write.txt");
+      const traversalPath = relative(tmpRoot, outsidePath);
       const mirror = createHomeMirror({
         r2,
         manifestDb: db,
@@ -518,7 +520,7 @@ describe("createHomeMirror", () => {
 
       registry.broadcastChange("alice", "laptop-1", {
         type: "sync:change",
-        files: [{ path: "../escaped-write.txt", hash: sha256(Buffer.from("evil")), size: 4, action: "update" }],
+        files: [{ path: traversalPath, hash: sha256(Buffer.from("evil")), size: 4, action: "update" }],
         peerId: "laptop-1",
         manifestVersion: 2,
       });
@@ -527,16 +529,18 @@ describe("createHomeMirror", () => {
 
       await expect(stat(outsidePath)).rejects.toThrow(/ENOENT/);
       expect(logger.error).toHaveBeenCalledWith(
-        expect.stringContaining("remote-change failed for ../escaped-write.txt:"),
+        expect.stringContaining(`remote-change failed for ${traversalPath}:`),
         expect.stringMatching(/invalid/i),
       );
 
       await mirror.stop();
+      await rm(outsideRoot, { recursive: true, force: true });
     });
 
     it("does not follow local symlinks on remote writes", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
-      const target = join(tmpRoot, "..", "outside-target.txt");
+      const outsideRoot = await mkdtemp(join(tmpdir(), "home-mirror-outside-"));
+      const target = join(outsideRoot, "outside-target.txt");
       const link = join(tmpRoot, "linked.txt");
       await writeFile(target, "outside");
       await (await import("node:fs/promises")).symlink(target, link);
@@ -572,6 +576,7 @@ describe("createHomeMirror", () => {
       );
 
       await mirror.stop();
+      await rm(outsideRoot, { recursive: true, force: true });
     });
 
     it("logs non-Error failures during remote pulls without losing the reason", async () => {
@@ -670,7 +675,9 @@ describe("createHomeMirror", () => {
 
     it("refuses traversal paths on remote deletes", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
-      const outsidePath = join(tmpRoot, "..", "escaped-delete.txt");
+      const outsideRoot = await mkdtemp(join(tmpdir(), "home-mirror-outside-"));
+      const outsidePath = join(outsideRoot, "escaped-delete.txt");
+      const traversalPath = relative(tmpRoot, outsidePath);
       await writeFile(outsidePath, "keep me");
 
       const mirror = createHomeMirror({
@@ -686,7 +693,7 @@ describe("createHomeMirror", () => {
 
       registry.broadcastChange("alice", "laptop-1", {
         type: "sync:change",
-        files: [{ path: "../escaped-delete.txt", hash: "sha256:" + "0".repeat(64), size: 0, action: "delete" }],
+        files: [{ path: traversalPath, hash: "sha256:" + "0".repeat(64), size: 0, action: "delete" }],
         peerId: "laptop-1",
         manifestVersion: 2,
       });
@@ -696,11 +703,12 @@ describe("createHomeMirror", () => {
       const remaining = await readFile(outsidePath, "utf8");
       expect(remaining).toBe("keep me");
       expect(logger.error).toHaveBeenCalledWith(
-        expect.stringContaining("remote-change failed for ../escaped-delete.txt:"),
+        expect.stringContaining(`remote-change failed for ${traversalPath}:`),
         expect.stringMatching(/invalid/i),
       );
 
       await mirror.stop();
+      await rm(outsideRoot, { recursive: true, force: true });
     });
 
     it("ignores broadcasts for ignored paths (e.g. node_modules and browser profiles)", async () => {

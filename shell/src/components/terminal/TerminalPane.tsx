@@ -656,7 +656,7 @@ export function TerminalPane({
         try {
           fitAddon.fit();
           sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
-          if (isFocusedRef.current) {
+          if (isFocusedRef.current && !suppressNativeKeyboard) {
             term.focus();
           }
         } catch (err: unknown) {
@@ -902,7 +902,7 @@ export function TerminalPane({
         }
       }
 
-      if (isFocusedRef.current) {
+      if (isFocusedRef.current && !suppressNativeKeyboard) {
         requestAnimationFrame(() => {
           if (!disposed) {
             term.focus();
@@ -1457,10 +1457,10 @@ export function TerminalPane({
   ]);
 
   useEffect(() => {
-    if (isFocused && termRef.current) {
+    if (isFocused && !suppressNativeKeyboard && termRef.current) {
       (termRef.current as { focus: () => void }).focus();
     }
-  }, [isFocused]);
+  }, [isFocused, suppressNativeKeyboard]);
 
   // Re-fit the terminal whenever the visual viewport changes (soft keyboard
   // open/close, URL-bar collapse, orientation). The container also shrinks via
