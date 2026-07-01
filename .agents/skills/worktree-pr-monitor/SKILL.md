@@ -17,6 +17,8 @@ git worktree flow for isolated PR publication.
 
 - `gh` is installed and authenticated.
 - The current repository is `HamedMP/matrix-os`.
+- The repository has a label exactly named `ready-for-ci`; if it is missing,
+  stop and report the blocker instead of creating the label silently.
 - The requester wants a PR in a worktree, not only a local patch.
 - The requester explicitly asked for a worktree or invoked this workflow.
 
@@ -33,6 +35,8 @@ git worktree flow for isolated PR publication.
   trusted Greptile result is `5/5`.
 - Add the `ready-for-ci` label only after the latest trusted Greptile result is
   `5/5`; this label triggers the broader PR CI workflows.
+- If the repository label `ready-for-ci` is missing, report the blocker instead
+  of creating the label or treating the PR as CI-ready.
 - If label-triggered CI fails, remove `ready-for-ci`, fix the failures, commit
   and push, then return to the Greptile fulfillment loop before re-adding the
   label.
@@ -92,6 +96,9 @@ git worktree flow for isolated PR publication.
      push, and continue monitoring.
 
 8. Trigger and monitor label-gated CI.
+   - Before labeling, verify that the repository label exists:
+     `gh label list --search ready-for-ci --json name`. If the exact
+     `ready-for-ci` label is missing, stop and report the blocker.
    - Once the latest trusted Greptile result is `5/5`, add the `ready-for-ci`
      label with `gh pr edit --add-label ready-for-ci`.
    - Wait for the triggered checks with `gh pr checks --watch` or equivalent
@@ -125,6 +132,7 @@ bun run check:patterns
 bun run test
 git push -u origin HEAD
 gh pr view --json number,url,title,state,headRefName,baseRefName
+gh label list --search ready-for-ci --json name
 gh pr edit --add-label ready-for-ci
 gh pr edit --remove-label ready-for-ci
 gh pr checks --watch
