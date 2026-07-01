@@ -14,7 +14,7 @@ describe("terminal settings defaults", () => {
     expect(DEFAULT_TERMINAL_APP_THEME_ID).toBe("matrix-dark");
   });
 
-  it("defaults new terminal sessions to a roomy font size", () => {
-    expect(DEFAULT_TERMINAL_FONT_SIZE).toBe(15);
+  it("defaults new terminal sessions to the compact terminal font size", () => {
+    expect(DEFAULT_TERMINAL_FONT_SIZE).toBe(13);
   });
 });

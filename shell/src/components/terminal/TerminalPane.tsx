@@ -21,6 +21,7 @@ import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./term
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { applyTerminalAppearance } from "./terminal-appearance";
 import { buildTerminalFontStack } from "./terminal-fonts";
+import { createCodexTuiCompatTransform, transformTerminalOutputForCompat, type CodexTuiCompatTransform } from "./codex-tui-compat";
 import { sendTerminalResize } from "./terminal-remote-resize";
 import {
   isCanonicalShellSessionId,
@@ -28,6 +29,7 @@ import {
   terminalWebSocketPathForSession,
 } from "./terminal-session-id";
 import { createXtermLogger } from "./xterm-logger";
+import type { TerminalCompatMode } from "@/stores/terminal-store";
 
 const BRACKETED_PASTE_OPEN = "\x1b[200~";
 const BRACKETED_PASTE_CLOSE = "\x1b[201~";
@@ -286,6 +288,7 @@ interface TerminalPaneProps {
   sessionId?: string;
   claudeMode?: boolean;
   startupCommand?: string;
+  compatMode?: TerminalCompatMode;
   onFocus?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   isClosing?: boolean;
@@ -313,6 +316,7 @@ export function TerminalPane({
   sessionId: initialSessionId,
   claudeMode,
   startupCommand,
+  compatMode,
   onFocus,
   onSessionAttached,
   isClosing,
@@ -363,6 +367,8 @@ export function TerminalPane({
   const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
   const isFocusedRef = useRef(isFocused);
   const allowRemoteResizeRef = useRef(allowRemoteResize);
+  const compatModeRef = useRef<TerminalCompatMode | undefined>(compatMode);
+  const codexCompatTransformRef = useRef<CodexTuiCompatTransform | null>(null);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
   // (and the cleanup it returns) read current prop values without re-running and
@@ -379,6 +385,8 @@ export function TerminalPane({
   isFocusedRef.current = isFocused;
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   allowRemoteResizeRef.current = allowRemoteResize;
+  // react-doctor-disable-next-line react-hooks-js/refs -- latest-value ref consumed by the long-lived WebSocket output handler without reconnecting on metadata changes.
+  compatModeRef.current = compatMode;
 
   // Keep a stable ref to the current canvasZoom so the effect below can read
   // the latest value without being re-run (and re-registering listeners) on
@@ -648,6 +656,8 @@ export function TerminalPane({
       let fitAddon: FitAddon;
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
+      const xtermTheme = buildXtermTheme(theme, terminalThemeId);
+      codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
 
       const refitAndFocus = () => {
         if (disposed) {
@@ -766,8 +776,6 @@ export function TerminalPane({
         const { FitAddon } = await import("@xterm/addon-fit");
 
         if (disposed) return;
-
-        const xtermTheme = buildXtermTheme(theme, terminalThemeId);
 
         const xterm = new XTerm({
           cursorBlink,
@@ -1082,7 +1090,11 @@ export function TerminalPane({
               break;
 
             case "output":
-              term.write(msg.data);
+              term.write(transformTerminalOutputForCompat(
+                msg.data,
+                compatModeRef.current,
+                codexCompatTransformRef.current ?? createCodexTuiCompatTransform(buildXtermTheme(theme, terminalThemeId)),
+              ));
               if (msg.seq !== null) {
                 lastSeqRef.current = msg.seq + 1;
               }
@@ -1430,12 +1442,15 @@ export function TerminalPane({
   ]);
 
   useEffect(() => {
+    const xtermTheme = buildXtermTheme(theme, terminalThemeId);
+    codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
+
     if (termRef.current && fitAddonRef.current) {
       applyTerminalAppearance(
         termRef.current as Parameters<typeof applyTerminalAppearance>[0],
         fitAddonRef.current as Parameters<typeof applyTerminalAppearance>[1],
         {
-          theme: buildXtermTheme(theme, terminalThemeId),
+          theme: xtermTheme,
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           fontSize: terminalFontSize,
           cursorBlink,

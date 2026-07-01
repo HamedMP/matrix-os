@@ -21,15 +21,15 @@ function assertCompleteAnsiPalette(palette: AnsiPalette) {
 }
 
 describe("Terminal Themes", () => {
-  it("uses the polished dark shell theme as the default terminal palette", () => {
+  it("uses the original dark shell theme as the default terminal palette", () => {
     const preset = getTerminalThemePreset("dark");
 
     expect(preset).toMatchObject({
       label: "Dark",
-      background: "#11161C",
-      foreground: "#D6D8DD",
+      background: "#0C0C0C",
+      foreground: "#BFBFBF",
       cursor: "#0AD18B",
-      selectionBackground: "#30363DAA",
+      selectionBackground: "#00E5C033",
       cyan: "#00E5C0",
       blue: "#6AA0FF",
     });
@@ -176,7 +176,7 @@ describe("Terminal Themes", () => {
       background: "#101418",
       foreground: "#E6E8EC",
       cursor: "#F8F8F2",
-      selectionBackground: "#30363DAA",
+      selectionBackground: "#F8F8F244",
     });
     assertCompleteAnsiPalette(xtermTheme);
   });

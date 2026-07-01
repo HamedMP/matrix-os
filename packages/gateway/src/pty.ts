@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolveWithinHome } from "./path-security.js";
+import { applyTerminalTruecolorEnv } from "./terminal-env.js";
 
 type IPty = import("node-pty").IPty;
 
@@ -52,14 +53,9 @@ export function createPtyHandler(
         cols: 80,
         rows: 24,
         cwd: targetCwd,
-        env: {
+        env: applyTerminalTruecolorEnv({
           ...process.env,
-          TERM: "xterm-256color",
-          COLORTERM: "truecolor",
-          CLICOLOR: "1",
-          FORCE_COLOR: "3",
-          COLORFGBG: "15;0",
-        },
+        }),
       });
 
       ptyProcess.onData((data: string) => {

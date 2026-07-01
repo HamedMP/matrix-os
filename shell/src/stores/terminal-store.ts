@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { getGatewayUrl } from "@/lib/gateway";
 
+export type TerminalCompatMode = "codex-tui";
+
 export type PaneNode =
   | {
       type: "pane";
@@ -9,6 +11,7 @@ export type PaneNode =
       sessionId?: string;
       claudeMode?: boolean;
       startupCommand?: string;
+      compatMode?: TerminalCompatMode;
     }
   | { type: "split"; direction: "horizontal" | "vertical"; children: [PaneNode, PaneNode]; ratio: number };
 
@@ -144,6 +147,26 @@ function getAllPaneIds(node: PaneNode): string[] {
   return [...getAllPaneIds(node.children[0]), ...getAllPaneIds(node.children[1])];
 }
 
+function compatModeForSessionId(sessionId: string | undefined): TerminalCompatMode | undefined {
+  return sessionId?.startsWith("codex-") ? "codex-tui" : undefined;
+}
+
+function applyCompatModeToPaneTree(node: PaneNode): PaneNode {
+  if (node.type === "pane") {
+    return {
+      ...node,
+      compatMode: node.compatMode ?? compatModeForSessionId(node.sessionId),
+    };
+  }
+  return {
+    ...node,
+    children: [
+      applyCompatModeToPaneTree(node.children[0]),
+      applyCompatModeToPaneTree(node.children[1]),
+    ],
+  };
+}
+
 function getAdjacentPaneId(node: PaneNode, paneId: string, direction: 1 | -1): string | null {
   const ids = getAllPaneIds(node);
   const idx = ids.indexOf(paneId);
@@ -274,7 +297,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   setSessionId: (paneId, sessionId) => {
     function setSessionIdInTree(node: PaneNode): PaneNode {
       if (node.type === "pane") {
-        return node.id === paneId ? { ...node, sessionId } : node;
+        return node.id === paneId ? { ...node, sessionId, compatMode: compatModeForSessionId(sessionId) } : node;
       }
       return { ...node, children: [setSessionIdInTree(node.children[0]), setSessionIdInTree(node.children[1])] };
     }
@@ -307,7 +330,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       const data = (await res.json()) as Partial<TerminalLayout>;
       if (data.tabs && data.tabs.length > 0) {
         set({
-          tabs: data.tabs,
+          tabs: data.tabs.map((tab) => ({ ...tab, paneTree: applyCompatModeToPaneTree(tab.paneTree) })),
           activeTabId: data.activeTabId ?? data.tabs[0].id,
           sidebarOpen: data.sidebarOpen ?? true,
           sidebarWidth: data.sidebarWidth ?? 200,
