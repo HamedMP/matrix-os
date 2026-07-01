@@ -62,6 +62,15 @@ vi.mock("@/stores/terminal-settings", () => {
 });
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
+import { getTerminalThemePreset } from "../../shell/src/components/terminal/terminal-themes.js";
+
+function normalizeCssColor(color: string) {
+  const element = document.createElement("div");
+  element.style.background = color;
+  return element.style.background;
+}
+
+const expectedDarkTerminalBackground = normalizeCssColor(getTerminalThemePreset("dark").background);
 
 class ResizeObserverMock {
   observe() {}
@@ -219,7 +228,7 @@ describe("TerminalApp", () => {
     const contentSurface = screen.getByTestId("terminal-content-surface");
 
     expect(contentSurface.style.padding).toBe("0px");
-    expect(contentSurface.style.background).toBe("rgb(12, 12, 12)");
+    expect(contentSurface.style.background).toBe(expectedDarkTerminalBackground);
   });
 
   it("does not immediately save after hydrating a saved terminal layout", async () => {
@@ -547,7 +556,7 @@ describe("TerminalApp", () => {
 
     let terminalApp = screen.getByRole("application", { name: "Terminal" });
     const contentSurface = screen.getByTestId("terminal-content-surface");
-    expect(contentSurface.style.background).toBe("rgb(12, 12, 12)");
+    expect(contentSurface.style.background).toBe(expectedDarkTerminalBackground);
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-bg")).toBe("#15180F");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#20241C");
 
@@ -567,7 +576,7 @@ describe("TerminalApp", () => {
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#FFFDF7");
     expect(screen.getByTestId("terminal-sidebar-shell").style.background).toBe("var(--terminal-drawer-bg)");
     expect(screen.getByTestId("terminal-session-card-main").style.background).toBe("var(--terminal-drawer-card-bg)");
-    expect(screen.getByTestId("terminal-content-surface").style.background).toBe("rgb(12, 12, 12)");
+    expect(screen.getByTestId("terminal-content-surface").style.background).toBe(expectedDarkTerminalBackground);
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Theme" }));
@@ -585,7 +594,7 @@ describe("TerminalApp", () => {
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-card-bg")).toBe("#0F1A12");
     expect(terminalApp.style.getPropertyValue("--terminal-drawer-fg")).toBe("#9BFFB5");
     expect(screen.getByTestId("terminal-session-name-main").style.color).toBe("var(--terminal-drawer-fg)");
-    expect(screen.getByTestId("terminal-content-surface").style.background).toBe("rgb(12, 12, 12)");
+    expect(screen.getByTestId("terminal-content-surface").style.background).toBe(expectedDarkTerminalBackground);
     expect(terminalSettingsState.setThemeId).not.toHaveBeenCalled();
     expect(saveThemeSpy).not.toHaveBeenCalled();
   });
