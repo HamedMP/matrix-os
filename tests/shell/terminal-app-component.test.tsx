@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
 import React from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
@@ -517,6 +518,39 @@ describe("TerminalApp", () => {
 
     expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("terminal-scopes the sessions drawer scrollbar and resize boundary", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const scrollSurface = screen.getByTestId("terminal-sessions-scroll");
+    expect(scrollSurface.classList.contains("terminal-sessions-scroll")).toBe(true);
+    expect(scrollSurface.getAttribute("data-terminal-scrollbar")).toBe("drawer");
+
+    const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
+    expect(resizeHandle.classList.contains("terminal-drawer-resize-handle")).toBe(true);
+    expect(resizeHandle.style.background).toBe("var(--terminal-drawer-resize-handle-bg)");
+    expect(resizeHandle.style.outline).toBe("none");
+    expect(resizeHandle.getAttribute("style")).toContain("--terminal-drawer-resize-handle-bg");
+    expect(resizeHandle.getAttribute("style")).not.toContain("--muted-foreground");
+
+    const terminalApp = screen.getByRole("application", { name: "Terminal" });
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-resize-handle-bg")).toContain("--terminal-drawer-border");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-resize-handle-hover")).toBe("var(--terminal-drawer-border)");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-scrollbar-thumb")).toContain("--terminal-drawer-border");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-scrollbar-thumb-hover")).toBe("var(--terminal-drawer-border)");
+
+    const globalsCss = readFileSync("shell/src/app/globals.css", "utf8");
+    expect(globalsCss).toContain(".terminal-sessions-scroll::-webkit-scrollbar-thumb");
+    expect(globalsCss).toContain("[data-theme-style=\"neumorphic\"] .terminal-sessions-scroll::-webkit-scrollbar-thumb");
+    expect(globalsCss).toContain("background: var(--terminal-drawer-scrollbar-thumb)");
+    expect(globalsCss).not.toMatch(/terminal-sessions-scroll[\s\S]{0,400}--muted-foreground/);
   });
 
   it("updates terminal app theme without saving the global Matrix OS theme", async () => {
@@ -2027,14 +2061,16 @@ describe("TerminalApp", () => {
     const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
     const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
 
-    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(36, 39, 31)");
-    expect(resizeHandle.style.background).toBe("rgb(36, 39, 31)");
+    expect(sidebarShell.style.borderRight).toBe("1px solid var(--terminal-drawer-border)");
+    expect(resizeHandle.style.background).toBe("var(--terminal-drawer-resize-handle-bg)");
+    expect(resizeHandle.getAttribute("style")).toContain("--terminal-drawer-resize-handle-bg");
+    expect(resizeHandle.getAttribute("style")).not.toContain("--muted-foreground");
     expect(resizeHandle.style.background).not.toContain("transparent");
     expect(resizeHandle.style.background).not.toContain("197, 196, 180");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
-    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(36, 39, 31)");
+    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid var(--terminal-drawer-border)");
   });
 
   it("stops terminal drawer resizing when the drag is canceled", async () => {

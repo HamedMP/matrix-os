@@ -622,6 +622,61 @@ pre {
     -1px -1px 2px var(--neu-shadow-light);
 }
 
+.terminal-sessions-scroll {
+  scrollbar-color: var(--terminal-drawer-scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+.terminal-sessions-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-sessions-scroll::-webkit-scrollbar-track {
+  background: var(--terminal-drawer-scrollbar-track);
+}
+
+.terminal-sessions-scroll::-webkit-scrollbar-thumb {
+  background: var(--terminal-drawer-scrollbar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.terminal-sessions-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--terminal-drawer-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+[data-theme-style="neumorphic"] .terminal-sessions-scroll::-webkit-scrollbar-thumb {
+  background: var(--terminal-drawer-scrollbar-thumb);
+  background-clip: padding-box;
+  box-shadow: none;
+}
+
+[data-theme-style="neumorphic"] .terminal-sessions-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--terminal-drawer-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+.terminal-drawer-resize-handle {
+  transition: background-color 140ms ease-out;
+}
+
+.terminal-drawer-resize-handle:hover,
+.terminal-drawer-resize-handle:active {
+  background: var(--terminal-drawer-resize-handle-hover) !important;
+}
+
+.terminal-drawer-resize-handle:focus {
+  outline: none;
+}
+
+.terminal-drawer-resize-handle:focus-visible {
+  background: var(--terminal-drawer-resize-handle-hover) !important;
+  outline: 1px solid var(--terminal-drawer-resize-handle-focus) !important;
+  outline-offset: -2px;
+}
+
 /* --- Skeleton: inset --- */
 [data-theme-style="neumorphic"] [data-slot="skeleton"] {
   box-shadow:
