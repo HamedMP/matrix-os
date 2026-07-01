@@ -67,7 +67,8 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogToken: 'phc_public',
     posthogProjectToken: 'phc_project',
     posthogHost: 'https://eu.i.posthog.com',
-    posthogApiHost: '/ingest',
+    posthogPublicHost: 'https://eu.posthog.com',
+    posthogApiHost: '/relay',
   };
 
   function runMatrixctlExistsWithFakeAws(exitCode: number, stderr: string) {
@@ -214,8 +215,8 @@ exit 99
     expect(rendered).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
     expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
     expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
-    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
-    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.posthog.com');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/relay');
   });
 
   it('renders valid YAML for the production customer cloud-init', () => {
