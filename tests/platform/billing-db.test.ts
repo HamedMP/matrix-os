@@ -149,7 +149,7 @@ describe('platform billing db', () => {
       allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
       reason: 'engineer test',
       createdBy: 'ops-user',
-      expiresAt: '2026-07-01T00:00:00.000Z',
+      expiresAt: '2027-07-01T00:00:00.000Z',
       revokedAt: null,
       createdAt: '2026-05-30T00:00:00.000Z',
     };
@@ -213,7 +213,7 @@ describe('platform billing db', () => {
       allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
       reason: 'engineer test',
       createdBy: 'ops-user',
-      expiresAt: '2026-07-01T00:00:00.000Z',
+      expiresAt: '2027-07-01T00:00:00.000Z',
       revokedAt: null,
       createdAt: '2026-05-30T00:00:00.000Z',
     });

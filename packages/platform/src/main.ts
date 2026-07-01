@@ -1701,6 +1701,7 @@ async function resolveAppDomainIdentity(opts: {
   db: PlatformDB;
   platformJwtSecret: string;
   allowUnroutedClerkIdentity?: boolean;
+  legacyContainerRoutingEnabled?: boolean;
   requestedHandle?: string | null;
   runtimeSlot: string;
   wsToken?: string | null;
@@ -1724,7 +1725,9 @@ async function resolveAppDomainIdentity(opts: {
           }
         }
       }
-      const record = await getContainer(opts.db, claims.handle);
+      const record = opts.legacyContainerRoutingEnabled === false
+        ? undefined
+        : await getContainer(opts.db, claims.handle);
       if (record?.clerkUserId === claims.sub) {
         return {
           handle: record.handle,
@@ -1787,7 +1790,9 @@ async function resolveAppDomainIdentity(opts: {
     }
   }
 
-  const record = await getContainerByClerkId(opts.db, result.userId);
+  const record = opts.legacyContainerRoutingEnabled === false
+    ? undefined
+    : await getContainerByClerkId(opts.db, result.userId);
   if (record) {
     return {
       handle: record.handle,
@@ -2923,6 +2928,7 @@ export function createApp(deps: {
           cookieHeader: undefined,
           db,
           platformJwtSecret,
+          legacyContainerRoutingEnabled,
           runtimeSlot: requestedRuntimeSlot,
         });
         if (nativeIdentity) {
@@ -3204,6 +3210,7 @@ export function createApp(deps: {
       clerkAuth,
       db,
       platformJwtSecret,
+      legacyContainerRoutingEnabled,
       allowUnroutedClerkIdentity: Boolean(explicitVmRoute) || allowAuthShellUnroutedIdentity,
       requestedHandle: requestedRouteHandle,
       runtimeSlot: requestRuntimeSlot,
@@ -4852,6 +4859,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         clerkAuth,
         db,
         platformJwtSecret: PLATFORM_JWT_SECRET,
+        legacyContainerRoutingEnabled,
         runtimeSlot: requestRuntimeSlot,
         wsToken,
       });
