@@ -1395,6 +1395,7 @@ describe("platform proxy routing", () => {
       env: {
         AUTH_SHELL_HOST: "auth-shell.test",
         AUTH_SHELL_PORT: "3200",
+        // VPS-native routing wins over the legacy env flag when customerVpsService is configured.
         MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
       } as NodeJS.ProcessEnv,
     });
