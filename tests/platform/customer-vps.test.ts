@@ -54,7 +54,8 @@ describe('platform/customer-vps', () => {
         POSTHOG_TOKEN: 'phc_public',
         POSTHOG_PROJECT_TOKEN: 'phc_project',
         POSTHOG_HOST: 'https://eu.i.posthog.com',
-        NEXT_PUBLIC_POSTHOG_API_HOST: '/ingest',
+        NEXT_PUBLIC_POSTHOG_HOST: 'https://eu.posthog.com',
+        NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
       }),
       ...overrides,
     };
@@ -777,8 +778,8 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
     expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
     expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
-    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
-    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.posthog.com');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/relay');
   });
 
   it('records a failed status with a generic failure code when Hetzner create fails', async () => {

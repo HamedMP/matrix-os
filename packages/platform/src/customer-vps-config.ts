@@ -18,6 +18,7 @@ export interface CustomerVpsConfig {
   posthogToken: string;
   posthogProjectToken: string;
   posthogHost: string;
+  posthogPublicHost: string;
   posthogApiHost: string;
   provisionEtaSeconds: number;
   registrationTokenTtlMs: number;
@@ -63,6 +64,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
       env.NEXT_PUBLIC_POSTHOG_KEY ??
       '',
     posthogHost: env.POSTHOG_HOST ?? env.NEXT_PUBLIC_POSTHOG_HOST ?? '',
+    posthogPublicHost: env.NEXT_PUBLIC_POSTHOG_HOST ?? env.POSTHOG_HOST ?? '',
     posthogApiHost: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? '',
     provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),
     registrationTokenTtlMs: numberFromEnv(env.CUSTOMER_VPS_REGISTRATION_TOKEN_TTL_MS, 15 * 60 * 1000),

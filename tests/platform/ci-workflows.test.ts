@@ -262,6 +262,27 @@ describe('CI workflows', () => {
     expect(workflow).not.toContain('--max-time 10 "$CANDIDATE_URL/sign-in"');
   });
 
+  it('builds browser PostHog clients against the same-origin relay and UI host', () => {
+    const root = process.cwd();
+    const browserBuildWorkflows = [
+      readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'),
+      readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'),
+      readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8'),
+    ];
+    const platformWorkflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    for (const workflow of browserBuildWorkflows) {
+      expect(workflow).toMatch(/NEXT_PUBLIC_POSTHOG_API_HOST:[^\n]*['"]?\/relay['"]?/);
+      expect(workflow).toMatch(/NEXT_PUBLIC_POSTHOG_HOST:[^\n]*https:\/\/eu\.posthog\.com/);
+      expect(workflow).not.toMatch(/NEXT_PUBLIC_POSTHOG_(?:HOST|API_HOST):[^\n]*https:\/\/eu\.i\.posthog\.com/);
+    }
+
+    expect(platformWorkflow).toContain("POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}");
+    expect(platformWorkflow).toContain("POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}");
+    expect(platformWorkflow).toContain('_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST');
+    expect(platformWorkflow).toContain('_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST');
+  });
+
   it('redeploys the platform when the Cloud Run workflow itself changes', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
