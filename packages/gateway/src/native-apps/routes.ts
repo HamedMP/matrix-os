@@ -53,8 +53,27 @@ interface NativeWebSocketState {
   _nativeAddPendingBytes?: (bytes: number) => void;
   _nativePending?: unknown[];
   _nativePendingBytes?: () => number;
+  _nativeResetPendingBytes?: () => void;
   _nativeUpstream?: { close(): void; send(data: never): void };
   _nativeUpstreamOpen?: () => boolean;
+}
+
+function ensureNativeWebSocketPendingState(ws: NativeWebSocketState): unknown[] {
+  if (ws._nativePending && ws._nativePendingBytes && ws._nativeAddPendingBytes && ws._nativeUpstreamOpen) {
+    return ws._nativePending;
+  }
+  const pending: unknown[] = [];
+  let pendingBytes = 0;
+  ws._nativePending = pending;
+  ws._nativePendingBytes = () => pendingBytes;
+  ws._nativeAddPendingBytes = (bytes) => {
+    pendingBytes += bytes;
+  };
+  ws._nativeResetPendingBytes = () => {
+    pendingBytes = 0;
+  };
+  ws._nativeUpstreamOpen = () => false;
+  return pending;
 }
 
 function mapError(c: Context, err: unknown): Response {
@@ -166,14 +185,8 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
 
   return {
     onOpen(_evt: unknown, ws: NativeWebSocketState) {
-      const pending: unknown[] = [];
-      let pendingBytes = 0;
+      const pending = ensureNativeWebSocketPendingState(ws);
       let upstreamOpen = false;
-      ws._nativePending = pending;
-      ws._nativePendingBytes = () => pendingBytes;
-      ws._nativeAddPendingBytes = (bytes) => {
-        pendingBytes += bytes;
-      };
       ws._nativeUpstreamOpen = () => upstreamOpen;
 
       import("ws").then(({ WebSocket }) => {
@@ -181,7 +194,7 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
         upstream.on("open", () => {
           upstreamOpen = true;
           for (const item of pending.splice(0)) upstream.send(item as never);
-          pendingBytes = 0;
+          ws._nativeResetPendingBytes?.();
         });
         upstream.on("message", (data) => {
           if (typeof data === "string") ws.send?.(data);
@@ -201,17 +214,17 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
       if (ws._nativeUpstream && ws._nativeUpstreamOpen?.()) {
         ws._nativeUpstream.send(evt.data as never);
       } else {
+        const pending = ensureNativeWebSocketPendingState(ws);
         const nextBytes = websocketPayloadBytes(evt.data);
         if (
-          !ws._nativePending
-          || ws._nativePending.length >= WS_PENDING_MAX_MESSAGES
+          pending.length >= WS_PENDING_MAX_MESSAGES
           || (ws._nativePendingBytes?.() ?? 0) + nextBytes > WS_PENDING_MAX_BYTES
         ) {
           ws.close();
           return;
         }
         ws._nativeAddPendingBytes?.(nextBytes);
-        ws._nativePending?.push(evt.data);
+        pending.push(evt.data);
       }
     },
     onClose(_evt: unknown, ws: NativeWebSocketState) {
