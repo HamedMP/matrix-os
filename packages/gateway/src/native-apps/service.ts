@@ -32,6 +32,7 @@ export interface NativeAppSession {
 interface NativeAppSessionRecord extends NativeAppSession {
   app: NativeAppDefinition;
   child: NativeAppChildProcess | null;
+  released: boolean;
   streamToken: string;
 }
 
@@ -108,6 +109,7 @@ function sessionView(record: NativeAppSessionRecord): NativeAppSession {
   const {
     app: _app,
     child: _child,
+    released: _released,
     streamToken: _streamToken,
     ...session
   } = record;
@@ -270,6 +272,7 @@ export class NativeAppSessionService {
       lastTouched: now,
       expiresAt: now + this.sessionTtlMs,
       child: null,
+      released: false,
       streamToken,
     };
     this.sessions.set(id, record);
@@ -537,6 +540,8 @@ export class NativeAppSessionService {
   }
 
   private releaseRecord(record: NativeAppSessionRecord): void {
+    if (record.released) return;
+    record.released = true;
     record.child = null;
     record.pid = null;
     this.portPool.release(record.port);

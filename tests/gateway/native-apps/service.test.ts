@@ -141,6 +141,32 @@ describe("NativeAppSessionService", () => {
     expect(portPool.inUse()).toEqual([]);
   });
 
+  it("releases process resources once when SIGTERM also emits child exit", async () => {
+    const portPool = {
+      allocate: vi.fn(() => 47000),
+      release: vi.fn(),
+      inUse: vi.fn(() => []),
+    } as unknown as PortPool;
+    const displayPool = {
+      allocate: vi.fn(() => 100),
+      release: vi.fn(),
+      inUse: vi.fn(() => []),
+    } as unknown as PortPool;
+    const { service, children } = createService({ portPool, displayPool });
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    children[0].kill = vi.fn((signal?: NodeJS.Signals) => {
+      if (signal === "SIGTERM") {
+        children[0].emit("exit", 0, signal);
+      }
+      return true;
+    });
+
+    await service.terminateSession("alice", session.id);
+
+    expect(portPool.release).toHaveBeenCalledTimes(1);
+    expect(displayPool.release).toHaveBeenCalledTimes(1);
+  });
+
   it("enforces max sessions per owner", async () => {
     const { service } = createService({ maxSessionsPerOwner: 1 });
 
