@@ -19,9 +19,6 @@ export interface NativeAppSession {
   appId: string;
   status: NativeAppSessionStatus;
   streamUrl: string;
-  display: number;
-  port: number;
-  pid: number | null;
   width: number;
   height: number;
   createdAt: number;
@@ -32,6 +29,9 @@ export interface NativeAppSession {
 interface NativeAppSessionRecord extends NativeAppSession {
   app: NativeAppDefinition;
   child: NativeAppChildProcess | null;
+  display: number;
+  pid: number | null;
+  port: number;
   released: boolean;
   streamToken: string;
 }
@@ -109,6 +109,9 @@ function sessionView(record: NativeAppSessionRecord): NativeAppSession {
   const {
     app: _app,
     child: _child,
+    display: _display,
+    pid: _pid,
+    port: _port,
     released: _released,
     streamToken: _streamToken,
     ...session

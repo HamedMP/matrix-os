@@ -129,6 +129,9 @@ describe("native app routes", () => {
       status: "running",
       streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/",
     });
+    expect(body.session).not.toHaveProperty("port");
+    expect(body.session).not.toHaveProperty("display");
+    expect(body.session).not.toHaveProperty("pid");
     expect(response.headers.get("set-cookie")).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
   });
