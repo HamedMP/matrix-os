@@ -14,6 +14,7 @@ import {
   markAuthContextReady,
   requireRequestPrincipal,
 } from "./request-principal.js";
+import { SAFE_NATIVE_SESSION_ID } from "./native-apps/registry.js";
 
 export { AUTH_CONTEXT_READY_CONTEXT_KEY, JWT_CLAIMS_CONTEXT_KEY, markAuthContextReady };
 
@@ -76,7 +77,10 @@ const PUBLIC_PREFIXES = [
 // Single prefix -- no /files/apps/ entry because iframe navigation uses
 // /apps/:slug/* after spec 063.
 const APP_IFRAME_PREFIXES = ["/apps/"];
-const NATIVE_APP_STREAM_PATH = /^\/api\/native-apps\/sessions\/[^/]+\/stream(?:\/|$)/;
+const NATIVE_APP_SESSION_ID_SEGMENT = SAFE_NATIVE_SESSION_ID.source.replace(/^\^/, "").replace(/\$$/, "");
+const NATIVE_APP_STREAM_PATH = new RegExp(
+  `^/api/native-apps/sessions/${NATIVE_APP_SESSION_ID_SEGMENT}/stream(?:/|$)`,
+);
 // Paths that authenticate by HMAC signature rather than bearer token.
 // They bypass bearer auth but MUST still pass through a rate limiter --
 // HMAC verification is not cheap enough to absorb a flood, and invalid

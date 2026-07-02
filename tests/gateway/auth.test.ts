@@ -383,6 +383,25 @@ describe("T133: Auth token middleware", () => {
 
     expect(nextCalled).toBe(false);
   });
+
+  it("only exempts native app stream paths with validated session IDs", async () => {
+    const mw = authMiddleware("secret-token");
+    let validNextCalled = false;
+    let malformedNextCalled = false;
+
+    await mw(
+      mockContext("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/"),
+      async () => { validNextCalled = true; },
+    );
+    const malformed = await mw(
+      mockContext("/api/native-apps/sessions/not-a-session/stream/", undefined, undefined, "203.0.113.201"),
+      async () => { malformedNextCalled = true; },
+    );
+
+    expect(validNextCalled).toBe(true);
+    expect(malformedNextCalled).toBe(false);
+    expect(malformed?.status).toBe(401);
+  });
 });
 
 // Integration tests share the module-level failed-auth rate limiter with the

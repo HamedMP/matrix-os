@@ -450,14 +450,13 @@ export class NativeAppSessionService {
   }
 
   private async waitForReadiness(port: number): Promise<void> {
-    const serviceDeadline = this.now() + this.readinessTimeoutMs;
-    const wallClockDeadline = Date.now() + this.readinessTimeoutMs;
+    const deadline = this.now() + this.readinessTimeoutMs;
     do {
       if (await this.readinessProbe(port)) return;
-      const remaining = Math.min(serviceDeadline - this.now(), wallClockDeadline - Date.now());
+      const remaining = deadline - this.now();
       if (remaining <= 0) break;
       await sleep(Math.min(this.readinessRetryMs, remaining));
-    } while (this.now() <= serviceDeadline && Date.now() <= wallClockDeadline);
+    } while (this.now() <= deadline);
     throw new Error("native app stream did not become ready");
   }
 

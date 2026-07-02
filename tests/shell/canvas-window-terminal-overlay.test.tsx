@@ -8,6 +8,7 @@ import { useWindowManager, type AppWindow } from "../../shell/src/hooks/useWindo
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 
 const appViewerRender = vi.hoisted(() => vi.fn());
+const nativeAppViewerRender = vi.hoisted(() => vi.fn());
 const terminalRender = vi.hoisted(() => vi.fn());
 const terminalChildPointerFocusRecorder = vi.hoisted(() => vi.fn());
 const originalFocusWindow = useWindowManager.getState().focusWindow;
@@ -40,6 +41,13 @@ vi.mock("../../shell/src/components/AppViewer.js", () => ({
   AppViewer: (props: { path: string }) => {
     appViewerRender(props);
     return <iframe title="App iframe" />;
+  },
+}));
+
+vi.mock("../../shell/src/components/NativeAppViewer.js", () => ({
+  NativeAppViewer: (props: { appId: string; windowId: string }) => {
+    nativeAppViewerRender(props);
+    return <iframe title="Native app stream" />;
   },
 }));
 
@@ -82,9 +90,17 @@ const iframeWindow: AppWindow = {
   path: "apps/notes",
 };
 
+const nativeWindow: AppWindow = {
+  ...terminalWindow,
+  id: "win-native",
+  title: "Xterm",
+  path: "native:xterm",
+};
+
 describe("CanvasWindow terminal interactivity", () => {
   beforeEach(() => {
     appViewerRender.mockClear();
+    nativeAppViewerRender.mockClear();
     terminalRender.mockClear();
     terminalChildPointerFocusRecorder.mockReset();
     document.getElementById("matrix-canvas-window-motion-styles")?.remove();
@@ -369,6 +385,15 @@ describe("CanvasWindow terminal interactivity", () => {
     expect(appViewerRender).not.toHaveBeenCalled();
     expect(screen.queryByTitle("App iframe")).toBeNull();
     expect(screen.getByLabelText("Notes will load when visible")).toBeTruthy();
+    expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
+  });
+
+  it("does not mount NativeAppViewer when Canvas defers offscreen native app content", () => {
+    const { container } = render(<CanvasWindow win={nativeWindow} deferAppContent />);
+
+    expect(nativeAppViewerRender).not.toHaveBeenCalled();
+    expect(screen.queryByTitle("Native app stream")).toBeNull();
+    expect(screen.getByLabelText("Xterm will load when visible")).toBeTruthy();
     expect(container.querySelector("[data-canvas-interaction-overlay]")).toBeTruthy();
   });
 });
