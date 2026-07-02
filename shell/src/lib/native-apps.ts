@@ -1,6 +1,13 @@
 export const NATIVE_APP_PATH_PREFIX = "native:";
 export const SAFE_NATIVE_APP_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+export interface NativeAppSummary {
+  id: string;
+  name: string;
+  runtime: "linux-native";
+  enabled: boolean;
+}
+
 export function isNativeAppPath(path: string): boolean {
   return path.startsWith(NATIVE_APP_PATH_PREFIX) && SAFE_NATIVE_APP_ID.test(path.slice(NATIVE_APP_PATH_PREFIX.length));
 }

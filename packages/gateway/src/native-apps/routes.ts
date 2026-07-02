@@ -47,6 +47,16 @@ export interface NativeAppRoutesOptions {
   upgradeWebSocket?: (handler: (c: Context) => any) => MiddlewareHandler;
 }
 
+interface NativeWebSocketState {
+  close(): void;
+  send?(data: string | ArrayBuffer | Uint8Array<ArrayBuffer>): void;
+  _nativeAddPendingBytes?: (bytes: number) => void;
+  _nativePending?: unknown[];
+  _nativePendingBytes?: () => number;
+  _nativeUpstream?: { close(): void; send(data: never): void };
+  _nativeUpstreamOpen?: () => boolean;
+}
+
 function mapError(c: Context, err: unknown): Response {
   if (err instanceof z.ZodError) {
     return c.json({ error: "Invalid request" }, 400);
@@ -135,7 +145,7 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
   });
 }
 
-function createNativeWebSocketHandler(c: Context, service: NativeAppSessionService) {
+export function createNativeWebSocketHandler(c: Context, service: NativeAppSessionService) {
   const parsed = NativeSessionIdSchema.safeParse(c.req.param("sessionId"));
   if (!parsed.success) {
     return {
@@ -155,45 +165,39 @@ function createNativeWebSocketHandler(c: Context, service: NativeAppSessionServi
   const upstreamUrl = `ws://127.0.0.1:${target.port}${subPath}${search}`;
 
   return {
-    onOpen(_evt: unknown, ws: { send(data: string | ArrayBuffer | Uint8Array<ArrayBuffer>): void; close(): void }) {
+    onOpen(_evt: unknown, ws: NativeWebSocketState) {
+      const pending: unknown[] = [];
+      let pendingBytes = 0;
+      let upstreamOpen = false;
+      ws._nativePending = pending;
+      ws._nativePendingBytes = () => pendingBytes;
+      ws._nativeAddPendingBytes = (bytes) => {
+        pendingBytes += bytes;
+      };
+      ws._nativeUpstreamOpen = () => upstreamOpen;
+
       import("ws").then(({ WebSocket }) => {
         const upstream = new WebSocket(upstreamUrl);
-        let upstreamOpen = false;
-        const pending: unknown[] = [];
-        let pendingBytes = 0;
         upstream.on("open", () => {
           upstreamOpen = true;
           for (const item of pending.splice(0)) upstream.send(item as never);
           pendingBytes = 0;
         });
         upstream.on("message", (data) => {
-          if (typeof data === "string") ws.send(data);
-          else if (data instanceof ArrayBuffer) ws.send(data);
-          else if (Array.isArray(data)) ws.send(uint8ArrayFromBuffer(Buffer.concat(data)));
-          else ws.send(uint8ArrayFromBuffer(data));
+          if (typeof data === "string") ws.send?.(data);
+          else if (data instanceof ArrayBuffer) ws.send?.(data);
+          else if (Array.isArray(data)) ws.send?.(uint8ArrayFromBuffer(Buffer.concat(data)));
+          else ws.send?.(uint8ArrayFromBuffer(data));
         });
         upstream.on("close", () => ws.close());
         upstream.on("error", () => ws.close());
-        (ws as typeof ws & { _nativeUpstream?: InstanceType<typeof WebSocket>; _nativePending?: unknown[] })._nativeUpstream = upstream;
-        (ws as typeof ws & { _nativePending?: unknown[] })._nativePending = pending;
-        (ws as typeof ws & { _nativePendingBytes?: () => number })._nativePendingBytes = () => pendingBytes;
-        (ws as typeof ws & { _nativeAddPendingBytes?: (bytes: number) => void })._nativeAddPendingBytes = (bytes) => {
-          pendingBytes += bytes;
-        };
-        (ws as typeof ws & { _nativeUpstreamOpen?: () => boolean })._nativeUpstreamOpen = () => upstreamOpen;
+        ws._nativeUpstream = upstream;
       }).catch((err: unknown) => {
         console.warn("[native-apps] websocket proxy setup failed:", err instanceof Error ? err.message : String(err));
         ws.close();
       });
     },
-    onMessage(evt: { data: unknown }, ws: {
-      close(): void;
-      _nativeAddPendingBytes?: (bytes: number) => void;
-      _nativePending?: unknown[];
-      _nativePendingBytes?: () => number;
-      _nativeUpstream?: { send(data: never): void };
-      _nativeUpstreamOpen?: () => boolean;
-    }) {
+    onMessage(evt: { data: unknown }, ws: NativeWebSocketState) {
       if (ws._nativeUpstream && ws._nativeUpstreamOpen?.()) {
         ws._nativeUpstream.send(evt.data as never);
       } else {
@@ -210,10 +214,10 @@ function createNativeWebSocketHandler(c: Context, service: NativeAppSessionServi
         ws._nativePending?.push(evt.data);
       }
     },
-    onClose(_evt: unknown, ws: { _nativeUpstream?: { close(): void } }) {
+    onClose(_evt: unknown, ws: NativeWebSocketState) {
       ws._nativeUpstream?.close();
     },
-    onError(_evt: unknown, ws: { _nativeUpstream?: { close(): void } }) {
+    onError(_evt: unknown, ws: NativeWebSocketState) {
       ws._nativeUpstream?.close();
     },
   };

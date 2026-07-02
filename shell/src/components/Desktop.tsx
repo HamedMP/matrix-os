@@ -69,7 +69,7 @@ import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/featur
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { nativeAppIdFromPath } from "@/lib/native-apps";
+import { nativeAppIdFromPath, type NativeAppSummary } from "@/lib/native-apps";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import {
   loadShellSnapshot,
@@ -245,13 +245,6 @@ interface ShellBootstrap {
   modules?: ModuleRegistryEntry[];
   apps?: { name: string; path: string; icon?: string; slug?: string }[];
   icons?: Record<string, ShellBootstrapIcon>;
-}
-
-interface NativeAppSummary {
-  id: string;
-  name: string;
-  runtime: "linux-native";
-  enabled: boolean;
 }
 
 function registryPathToRelativePath(path: string): string | null {

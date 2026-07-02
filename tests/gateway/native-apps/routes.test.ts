@@ -6,6 +6,7 @@ import {
   createDefaultNativeAppRegistry,
   type NativeAppChildProcess,
 } from "../../../packages/gateway/src/native-apps/index.js";
+import { createNativeWebSocketHandler } from "../../../packages/gateway/src/native-apps/routes.js";
 import { JWT_CLAIMS_CONTEXT_KEY, markAuthContextReady } from "../../../packages/gateway/src/request-principal.js";
 
 function createChild(): NativeAppChildProcess {
@@ -159,5 +160,37 @@ describe("native app routes", () => {
     expect(await stream.text()).toBe("<html>xpra</html>");
     expect(stream.headers.get("set-cookie")).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("buffers early websocket frames before the upstream ws import resolves", async () => {
+    const { service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    const context = {
+      req: {
+        param: (name: string) => name === "sessionId" ? session.id : "",
+        path: `/api/native-apps/sessions/${session.id}/stream/websocket`,
+        raw: { headers: new Headers({ Cookie: `${service.streamCookieName(session.id)}=${streamToken}` }) },
+        url: `http://matrix.local/api/native-apps/sessions/${session.id}/stream/websocket`,
+      },
+    };
+    const handler = createNativeWebSocketHandler(context as never, service);
+    const ws = {
+      close: vi.fn(),
+      send: vi.fn(),
+    } as {
+      close: ReturnType<typeof vi.fn>;
+      send: ReturnType<typeof vi.fn>;
+      _nativePending?: unknown[];
+      _nativePendingBytes?: () => number;
+    };
+
+    handler.onOpen(null, ws);
+    handler.onMessage({ data: "hello" }, ws);
+
+    expect(ws.close).not.toHaveBeenCalled();
+    expect(ws._nativePending).toEqual(["hello"]);
+    expect(ws._nativePendingBytes?.()).toBe(5);
+    handler.onClose(null, ws);
   });
 });

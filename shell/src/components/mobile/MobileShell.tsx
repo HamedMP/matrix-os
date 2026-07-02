@@ -50,7 +50,7 @@ import { NativeAppViewer } from "@/components/NativeAppViewer";
 import { Settings } from "@/components/Settings";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
-import { nativeAppIdFromPath } from "@/lib/native-apps";
+import { nativeAppIdFromPath, type NativeAppSummary } from "@/lib/native-apps";
 
 interface MobileApp {
   id: string;
@@ -63,13 +63,6 @@ interface OpenApp {
   id: string;
   app: MobileApp;
   openedAt: number;
-}
-
-interface NativeAppSummary {
-  id: string;
-  name: string;
-  runtime: "linux-native";
-  enabled: boolean;
 }
 
 const FETCH_TIMEOUT_MS = 10_000;
