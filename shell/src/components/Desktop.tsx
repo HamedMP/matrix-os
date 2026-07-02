@@ -544,7 +544,17 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
-    const timeout = window.setTimeout(() => controller.abort(), GATEWAY_FETCH_TIMEOUT_MS);
+    let settled = false;
+    const resolveFirstRunStatus = (nextStatus: DesktopFirstRunStatus) => {
+      if (cancelled || settled) return;
+      settled = true;
+      firstRunStatusRef.current = nextStatus;
+      setFirstRunStatus(nextStatus);
+    };
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+      resolveFirstRunStatus("ready");
+    }, GATEWAY_FETCH_TIMEOUT_MS);
     void fetch("/api/settings/onboarding-status", {
       cache: "no-store",
       signal: controller.signal,
@@ -552,19 +562,13 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       .then(async (res) => {
         if (!res.ok) throw new Error("onboarding status unavailable");
         const nextStatus = parseDesktopFirstRunStatus(await res.json());
-        if (!cancelled) {
-          firstRunStatusRef.current = nextStatus;
-          setFirstRunStatus(nextStatus);
-        }
+        resolveFirstRunStatus(nextStatus);
       })
       .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && !settled) {
           console.warn("[desktop] first-run status check failed:", err);
         }
-        if (!cancelled) {
-          firstRunStatusRef.current = "ready";
-          setFirstRunStatus("ready");
-        }
+        resolveFirstRunStatus("ready");
       })
       .finally(() => {
         window.clearTimeout(timeout);

@@ -183,6 +183,7 @@ describe("Desktop launcher dock button by mode", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -203,6 +204,28 @@ describe("Desktop launcher dock button by mode", () => {
       expect(screen.getByTestId("dock-tasks")).toBeTruthy();
       expect(screen.getByTestId("dock-settings")).toBeTruthy();
     });
+  });
+
+  it("leaves the loading screen when onboarding status fetch never settles", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return new Promise<Response>(() => undefined);
+      if (url.includes("/api/shell/bootstrap")) return jsonResponse({ layout: { windows: [] }, apps: [], modules: [] });
+      return jsonResponse({});
+    }));
+    resetShellMode("dev", true);
+
+    render(<DesktopComponent />);
+
+    expect(screen.getByText("Loading Matrix")).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(screen.queryByText("Loading Matrix")).toBeNull();
+    expect(screen.getByTestId("dock-tasks")).toBeTruthy();
   });
 
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
