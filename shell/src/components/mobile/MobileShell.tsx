@@ -262,7 +262,10 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
           return null;
         });
         if (nativeRes?.ok) {
-          const nativeBody = await nativeRes.json().catch(() => ({})) as { apps?: NativeAppSummary[] };
+          const nativeBody = await nativeRes.json().catch((err: unknown) => {
+            console.warn("[mobile-shell] failed to parse /api/native-apps:", err instanceof Error ? err.message : String(err));
+            return {};
+          }) as { apps?: NativeAppSummary[] };
           if (Array.isArray(nativeBody.apps)) {
             nextApps = [
               ...nextApps,

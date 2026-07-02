@@ -39,7 +39,10 @@ async function launchNativeSession(appId: string): Promise<NativeAppSession> {
     body: JSON.stringify({}),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  const body = await response.json().catch(() => ({}));
+  const body = await response.json().catch((err: unknown) => {
+    console.warn("[native-app-viewer] failed to parse launch response:", err instanceof Error ? err.message : String(err));
+    return {};
+  });
   if (!response.ok) {
     throw new Error(safeViewerMessage(body));
   }
