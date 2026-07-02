@@ -2759,6 +2759,7 @@ export function createApp(deps: {
         jwtSecret: platformJwtSecret,
         platformUrl: deviceAuthPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
+        ignoreLegacyContainers: Boolean(deps.customerVpsService),
         fetchUserProfile: (clerkUserId) => fetchDeviceDisplayProfile(clerkUserId, process.env),
         captureEvent: (event, properties) => {
           capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN, {
@@ -2962,7 +2963,9 @@ export function createApp(deps: {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const record = await getContainerByClerkId(db, result.userId);
+    const record = legacyContainerRoutingEnabled
+      ? await getContainerByClerkId(db, result.userId)
+      : undefined;
     const machine = record ? undefined : await getActiveUserMachineByClerkId(db, result.userId, requestedRuntimeSlot);
     const handle = record?.handle ?? machine?.handle;
     if (!handle) {

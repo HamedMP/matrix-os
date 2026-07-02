@@ -3086,6 +3086,45 @@ describe("platform proxy routing", () => {
     expect(setCookie).toContain("Max-Age=0");
   });
 
+  it("returns billing_required for stale legacy-container users in VPS-native app-session exchange", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    process.env.MATRIX_BILLING_PROVIDER = "stripe";
+    process.env.STRIPE_SECRET_KEY = "sk_test_matrix";
+    await updateContainerStatus(db, "alice", "stopped", "stale-container-id");
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: {} as CustomerVpsService,
+      env: {
+        MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
+        MATRIX_BILLING_PROVIDER: "stripe",
+        STRIPE_SECRET_KEY: "sk_test_matrix",
+      } as NodeJS.ProcessEnv,
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(exchange.status).toBe(402);
+    await expect(exchange.json()).resolves.toEqual({
+      error: "Billing upgrade required",
+      code: "billing_required",
+    });
+    const setCookie = combinedSetCookie(exchange.headers);
+    expect(setCookie).toContain("matrix_app_session=;");
+    expect(setCookie).toContain("matrix_native_app_session=;");
+    expect(setCookie).toContain("Max-Age=0");
+  });
+
   it("serves the shell billing gate from auth-shell for signed-in users before a VPS exists", async () => {
     process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "false";
     process.env.AUTH_SHELL_HOST = "auth-shell.test";

@@ -34,6 +34,7 @@ export interface AuthRoutesConfig {
   jwtSecret: string;
   platformUrl: string; // e.g. https://platform.matrix-os.com
   gatewayUrlForHandle: (handle: string) => string;
+  ignoreLegacyContainers?: boolean;
   // Optional non-secret display profile (name/avatar) for the signing-in
   // client. Must NEVER throw or block token issuance — return null on any
   // failure (the avatar is a nice-to-have, the token is not).
@@ -722,7 +723,9 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     expiresInSec: DEVICE_EXPIRES_IN_SEC,
     now: config.now,
     issueToken: async ({ clerkUserId }) => {
-      const container = await getContainerByClerkId(config.db, clerkUserId);
+      const container = config.ignoreLegacyContainers
+        ? undefined
+        : await getContainerByClerkId(config.db, clerkUserId);
       const machine = container ? undefined : await getActiveUserMachineByClerkId(config.db, clerkUserId);
       const handle = container?.handle ?? machine?.handle;
       if (!handle) {
