@@ -170,6 +170,15 @@ describe("NativeAppSessionService", () => {
     expect(service.inspectSession("alice", session.id)?.status).toBe("running");
   });
 
+  it("requires the exact stream token for stream targets", async () => {
+    const { service } = createService();
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const token = service.streamCookieValue(session.id);
+
+    expect(service.getStreamTarget(session.id, `${token}x`)).toBeNull();
+    expect(service.getStreamTarget(session.id, token ?? "")).toEqual({ port: 46000 });
+  });
+
   it("cleans up stale sessions and releases child processes", async () => {
     let now = 1_000;
     const { service, children } = createService({

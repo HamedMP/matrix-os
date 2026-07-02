@@ -103,6 +103,28 @@ function readPrincipal(c: Context): string {
   }).userId;
 }
 
+function configuredPublicSchemeIsHttps(): boolean | null {
+  const configuredUrl = process.env.MATRIX_PUBLIC_APP_URL
+    ?? process.env.NEXT_PUBLIC_MATRIX_APP_URL
+    ?? process.env.PUBLIC_APP_URL;
+  if (!configuredUrl) return null;
+  try {
+    return new URL(configuredUrl).protocol === "https:";
+  } catch (err: unknown) {
+    console.warn("[native-apps] invalid public app URL for stream cookie security:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+function shouldUseSecureStreamCookie(c: Context): boolean {
+  if (process.env.MATRIX_NATIVE_APP_INSECURE_COOKIES === "1") return false;
+  if (process.env.MATRIX_NATIVE_APP_SECURE_COOKIES === "1") return true;
+  const configuredHttps = configuredPublicSchemeIsHttps();
+  if (configuredHttps !== null) return configuredHttps;
+  if (process.env.NODE_ENV === "production") return true;
+  return c.req.url.startsWith("https://");
+}
+
 function sanitizeProxyHeaders(headers: Headers): Headers {
   const out = new Headers(headers);
   for (const header of HOP_BY_HOP) out.delete(header);
@@ -265,7 +287,7 @@ export function createNativeAppRoutes(options: NativeAppRoutesOptions) {
       const session = await service.launchSession({ ownerId, appId, ...body });
       const streamToken = service.streamCookieValue(session.id);
       if (!streamToken) return c.json({ error: "Native app request failed" }, 500);
-      const secureCookie = c.req.url.startsWith("https://");
+      const secureCookie = shouldUseSecureStreamCookie(c);
       setCookie(c, service.streamCookieName(session.id), streamToken, {
         httpOnly: true,
         path: session.streamUrl,

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createConnection } from "node:net";
 import { PortPool } from "../app-runtime/port-pool.js";
+import { timingSafeStringEquals } from "../security/timing-safe.js";
 import {
   SAFE_NATIVE_APP_ID,
   SAFE_NATIVE_SESSION_ID,
@@ -318,7 +319,7 @@ export class NativeAppSessionService {
 
   getStreamTarget(sessionId: string, streamToken: string): { port: number } | null {
     const record = this.sessions.get(sessionId);
-    if (!record || record.streamToken !== streamToken || record.status !== "running") return null;
+    if (!record || !timingSafeStringEquals(streamToken, record.streamToken) || record.status !== "running") return null;
     record.lastTouched = this.now();
     return { port: record.port };
   }
