@@ -31,5 +31,5 @@
 - [ ] Integration test compose env generation.
 - [ ] Integration test local forwarding lifecycle.
 - [ ] Integration test two concurrent dev instances.
-- [ ] Stretch goal: security test public preview authz.
+- [ ] Stretch goal: security test public preview authz and rejection of the old local bypass token after expose mode switch.
 - [ ] Agent-doc test or fixture verifying preferred workflow appears in skills/docs.

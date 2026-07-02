@@ -257,9 +257,11 @@ Public preview mode must never rely on the local bypass. It must use platform-ow
 2. Verify the caller owns or can administer the instance.
 3. Verify the instance is healthy locally or start it.
 4. Refuse exposure if local auth bypass is enabled and public auth cannot be configured; otherwise rewrite env to public mode and remove the local bypass validation secret.
-5. Ask the platform to provision a tunnel/route.
-6. Persist public exposure metadata only after platform route creation succeeds.
-7. Verify the public URL returns an authenticated shell response.
+5. Restart shell/gateway so any in-process local bypass validation secret is evicted before public routing begins.
+6. Verify the old local bypass token is rejected after restart.
+7. Ask the platform to provision a tunnel/route.
+8. Persist public exposure metadata only after platform route creation succeeds.
+9. Verify the public URL returns an authenticated shell response and still rejects the old local bypass token.
 
 ### Cross-Package Communication
 
