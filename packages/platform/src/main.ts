@@ -95,6 +95,11 @@ import { createBillingRoutes } from './billing-routes.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
 import { backfillFirstRunRecords } from './journey.js';
 import { appDomainServiceWorkerResponse } from './app-domain-service-worker.js';
+import { isPostHogRelayPath, proxyPostHogRelay } from './posthog-relay.js';
+import {
+  applyNoStoreResponseHeaders,
+  sanitizeProxyResponseHeaders,
+} from './proxy-headers.js';
 import { appOrigin } from './origins.js';
 import {
   createStripeBillingClient,
@@ -170,9 +175,6 @@ const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const PROXY_TIMEOUT_MS = 30_000;
 const AUTH_SHELL_PROXY_TIMEOUT_MS = 5_000;
-const POSTHOG_RELAY_TIMEOUT_MS = 10_000;
-const POSTHOG_INGEST_HOST = 'https://eu.i.posthog.com';
-const POSTHOG_ASSET_HOST = 'https://eu-assets.i.posthog.com';
 const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
 const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
 const CLERK_USER_LOOKUP_TIMEOUT_MS = 10_000;
@@ -231,31 +233,6 @@ const SENSITIVE_PROXY_HEADERS = new Set([
   PLATFORM_SESSION_PROXY_HEADER,
   'x-matrix-code-proxy-token',
 ]);
-const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'trailers',
-  'transfer-encoding',
-  'upgrade',
-]);
-const DECODED_FETCH_RESPONSE_HEADERS = new Set([
-  'content-encoding',
-  'content-length',
-]);
-const POSTHOG_RELAY_FORWARD_HEADERS = new Set([
-  'accept',
-  'accept-language',
-  'content-type',
-  'dnt',
-  'origin',
-  'referer',
-  'user-agent',
-]);
-
 const HostBundleReleaseBodySchema = z.object({
   version: z.string().regex(HOST_BUNDLE_IMAGE_VERSION_PATTERN),
   gitCommit: z.string().min(7).max(64),
@@ -312,17 +289,6 @@ const ClerkUserProfileSchema = z.object({
     email_address: z.string().optional(),
   }).passthrough()).optional(),
 }).passthrough();
-
-function sanitizeProxyResponseHeaders(headers: Headers): Headers {
-  const sanitized = new Headers(headers);
-  for (const header of HOP_BY_HOP_RESPONSE_HEADERS) {
-    sanitized.delete(header);
-  }
-  for (const header of DECODED_FETCH_RESPONSE_HEADERS) {
-    sanitized.delete(header);
-  }
-  return sanitized;
-}
 
 function collectTenantPublicTelemetryEnv(
   env: Record<string, string | undefined> = process.env,
@@ -707,83 +673,6 @@ function applyNoStoreHeaders(c: import('hono').Context): void {
   c.header('Cloudflare-CDN-Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   c.header('Expires', '0');
-}
-
-function applyNoStoreResponseHeaders(headers: Headers): void {
-  headers.set('cache-control', 'no-store, private');
-  headers.set('cdn-cache-control', 'no-store');
-  headers.set('cloudflare-cdn-cache-control', 'no-store');
-  headers.set('pragma', 'no-cache');
-  headers.set('expires', '0');
-}
-
-function isPostHogRelayPath(path: string): boolean {
-  return path === '/relay' || path.startsWith('/relay/');
-}
-
-function isPostHogAssetRelayPath(upstreamPath: string): boolean {
-  return (
-    upstreamPath === '/static' ||
-    upstreamPath.startsWith('/static/') ||
-    upstreamPath === '/array' ||
-    upstreamPath.startsWith('/array/')
-  );
-}
-
-function buildPostHogRelayHeaders(c: Context, upstream: URL): Headers {
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(c.req.header())) {
-    const lowerKey = key.toLowerCase();
-    if (
-      value &&
-      (POSTHOG_RELAY_FORWARD_HEADERS.has(lowerKey) || lowerKey.startsWith('sec-ch-ua'))
-    ) {
-      headers.set(key, value);
-    }
-  }
-  headers.set('host', upstream.host);
-  headers.set('accept-encoding', 'identity');
-  headers.set('connection', 'close');
-  return headers;
-}
-
-async function proxyPostHogRelay(c: Context): Promise<Response> {
-  const requestUrl = new URL(c.req.url);
-  const upstreamPath = requestUrl.pathname.slice('/relay'.length) || '/';
-  const upstreamBase = isPostHogAssetRelayPath(upstreamPath)
-    ? POSTHOG_ASSET_HOST
-    : POSTHOG_INGEST_HOST;
-  const upstream = new URL(upstreamBase);
-  upstream.pathname = upstreamPath;
-  upstream.search = requestUrl.search;
-
-  try {
-    const response = await fetch(upstream.toString(), {
-      method: c.req.method,
-      headers: buildPostHogRelayHeaders(c, upstream),
-      redirect: 'manual',
-      signal: AbortSignal.timeout(POSTHOG_RELAY_TIMEOUT_MS),
-      body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-    });
-    const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
-    if (!isPostHogAssetRelayPath(upstreamPath)) {
-      applyNoStoreResponseHeaders(responseHeaders);
-    }
-    return new Response(response.body, {
-      status: response.status,
-      headers: responseHeaders,
-    });
-  } catch (err: unknown) {
-    logPlatformRouteError('app-domain posthog relay proxy', err);
-    return new Response('Telemetry relay unavailable', {
-      status: 502,
-      headers: {
-        'cache-control': 'no-store, private',
-        'cdn-cache-control': 'no-store',
-        'cloudflare-cdn-cache-control': 'no-store',
-      },
-    });
-  }
 }
 
 function isPostgresUniqueViolation(err: unknown): boolean {
@@ -3006,7 +2895,7 @@ export function createApp(deps: {
       return appDomainServiceWorkerResponse();
     }
     if (isAppDomain && isPostHogRelayPath(reqPath)) {
-      return proxyPostHogRelay(c);
+      return proxyPostHogRelay(c, { logRouteError: logPlatformRouteError });
     }
     if (isAppDomain && (
       reqPath === '/auth/device' ||
