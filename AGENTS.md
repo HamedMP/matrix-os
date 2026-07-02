@@ -45,6 +45,7 @@ Key principles:
 - **Landing-adjacent UI uses `@matrix-os/brand`**: auth, onboarding, billing, provisioning, and related shell/www surfaces should consume tokens/primitives from `packages/brand/` instead of ad-hoc hex values or forked brand helpers
 - **Kernel prompt**: keep under 7K tokens
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
+- **Large files are refactor debt**: aim for <500 LOC for composition entrypoints, containers, hooks, helpers, and focused tests. Treat 500-1000 LOC as a review smell that needs one clear responsibility; do not add behavior to 1000+ LOC files without an extraction plan, and split 2000+ LOC files before adding behavior. See `docs/dev/large-file-refactoring.md`.
 - After major features: run `/update-docs` to sync all documentation
 
 ## Mandatory Code Patterns
