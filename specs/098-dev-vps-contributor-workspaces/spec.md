@@ -401,7 +401,7 @@ The terminal should support named session attach, dev logs/shells, `mos dev up`,
 - Local forwarding through Matrix CLI transport.
 - `mos dev list/open/logs/stop/rm`.
 
-### Phase 3: Public Preview
+### Stretch Goal: Public Preview
 
 - Platform-owned tunnel provisioning.
 - Per-instance hostname lifecycle.
@@ -409,7 +409,7 @@ The terminal should support named session attach, dev logs/shells, `mos dev up`,
 - Authz for expose and access.
 - Cleanup of stale tunnel routes.
 
-### Phase 4: Agent and Terminal Integration
+### Phase 3: Agent and Terminal Integration
 
 - Update `matrix-dev-vps` skill.
 - Add agent docs and examples.

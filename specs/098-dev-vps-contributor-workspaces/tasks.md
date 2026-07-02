@@ -7,7 +7,7 @@
 - [ ] Decide local-first vs public-first default.
 - [ ] Decide CLI command names and flags.
 - [ ] Decide instance metadata source of truth.
-- [ ] Confirm public preview hostname shape: prefer single-label opaque `*.dev.matrix-os.com`; path route fallback if wildcard TLS/routing is unavailable.
+- [ ] Stretch goal: confirm public preview hostname shape: prefer single-label opaque `*.dev.matrix-os.com`; path route fallback if wildcard TLS/routing is unavailable.
 - [ ] Decide whether terminal work belongs in this feature or a follow-up spec.
 
 ## Implementation Follow-Ups
@@ -17,8 +17,8 @@
 - [ ] Add per-instance env generation outside the repo.
 - [ ] Add compose project isolation.
 - [ ] Add `mos dev list/open/logs/stop/rm`.
-- [ ] Add `mos dev expose/unexpose` with platform-owned tunnel provisioning.
-- [ ] Add authz and cleanup for public preview routes.
+- [ ] Stretch goal: add `mos dev expose/unexpose` with platform-owned tunnel provisioning.
+- [ ] Stretch goal: add authz and cleanup for public preview routes.
 - [ ] Update `matrix-dev-vps` skill and contributor docs.
 - [ ] Add terminal integration follow-up for TermX/WASM Ghostty/native shell access.
 
@@ -31,5 +31,5 @@
 - [ ] Integration test compose env generation.
 - [ ] Integration test local forwarding lifecycle.
 - [ ] Integration test two concurrent dev instances.
-- [ ] Security test public preview authz.
+- [ ] Stretch goal: security test public preview authz.
 - [ ] Agent-doc test or fixture verifying preferred workflow appears in skills/docs.
