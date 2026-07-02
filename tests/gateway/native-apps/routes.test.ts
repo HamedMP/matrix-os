@@ -1,5 +1,23 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const wsMock = vi.hoisted(() => {
+  const instances: Array<{ close: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; url: string }> = [];
+  const WebSocket = vi.fn(function MockWebSocket(this: { close: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn>; url: string }, url: string) {
+    this.url = url;
+    this.close = vi.fn();
+    this.send = vi.fn();
+    this.on = vi.fn(() => this);
+    instances.push(this);
+    return this;
+  });
+  return { instances, WebSocket };
+});
+
+vi.mock("ws", () => ({
+  WebSocket: wsMock.WebSocket,
+}));
+
 import {
   createNativeAppRoutes,
   NativeAppSessionService,
@@ -46,6 +64,8 @@ function createApp(ownerId?: string) {
 describe("native app routes", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    wsMock.instances.splice(0);
+    wsMock.WebSocket.mockClear();
   });
 
   it("requires auth for listing native apps", async () => {
@@ -197,6 +217,30 @@ describe("native app routes", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("caps proxied stream request bodies before forwarding to xpra", async () => {
+    const { app } = createApp("alice");
+    const launch = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    const scopedCookie = launch.headers.get("set-cookie")?.split(";")[0];
+    const fetchMock = vi.fn(async () => new Response("unexpected"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stream = await app.request("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/upload", {
+      method: "POST",
+      headers: {
+        Cookie: scopedCookie ?? "",
+        "Content-Type": "application/octet-stream",
+      },
+      body: "x".repeat(4096),
+    });
+
+    expect(stream.status).toBe(413);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("buffers early websocket frames before the upstream ws import resolves", async () => {
     const { service } = createApp("alice");
     const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
@@ -227,5 +271,30 @@ describe("native app routes", () => {
     expect(ws._nativePending).toEqual(["hello"]);
     expect(ws._nativePendingBytes?.()).toBe(5);
     handler.onClose(null, ws);
+  });
+
+  it("does not create an upstream websocket after the downstream socket closes during setup", async () => {
+    const { service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    const context = {
+      req: {
+        param: (name: string) => name === "sessionId" ? session.id : "",
+        path: `/api/native-apps/sessions/${session.id}/stream/websocket`,
+        raw: { headers: new Headers({ Cookie: `${service.streamCookieName(session.id)}=${streamToken}` }) },
+        url: `http://matrix.local/api/native-apps/sessions/${session.id}/stream/websocket`,
+      },
+    };
+    const handler = createNativeWebSocketHandler(context as never, service);
+    const ws = {
+      close: vi.fn(),
+      send: vi.fn(),
+    };
+
+    handler.onOpen(null, ws);
+    handler.onClose(null, ws);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(wsMock.WebSocket).not.toHaveBeenCalled();
   });
 });

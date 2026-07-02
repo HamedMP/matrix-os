@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import { PortPool } from "../../../packages/gateway/src/app-runtime/port-pool.js";
 import {
   NativeAppSessionService,
   createDefaultNativeAppRegistry,
@@ -126,6 +127,18 @@ describe("NativeAppSessionService", () => {
     await expect(service.launchSession({ ownerId: "alice", appId: "xterm" })).resolves.toMatchObject({
       status: "running",
     });
+  });
+
+  it("releases an allocated port when display allocation fails", async () => {
+    const portPool = new PortPool({ min: 47000, max: 47000, cap: 1 });
+    const displayPool = new PortPool({ min: 100, max: 100, cap: 1 });
+    displayPool.allocate();
+    const { service } = createService({ portPool, displayPool });
+
+    await expect(service.launchSession({ ownerId: "alice", appId: "xterm" }))
+      .rejects.toMatchObject({ clientMessage: "Native apps are not available on this runtime" });
+
+    expect(portPool.inUse()).toEqual([]);
   });
 
   it("enforces max sessions per owner", async () => {

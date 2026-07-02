@@ -249,8 +249,7 @@ export class NativeAppSessionService {
       throw new NativeAppError("misconfigured", 500, "Native apps are not available on this runtime", "invalid generated session id");
     }
     const streamToken = this.randomId("stream");
-    const port = this.portPool.allocate();
-    const display = this.displayPool.allocate();
+    const { port, display } = this.allocateSessionResources();
     const now = this.now();
     const width = input.width ?? app.defaultWidth;
     const height = input.height ?? app.defaultHeight;
@@ -381,6 +380,21 @@ export class NativeAppSessionService {
     };
   }
 
+  private allocateSessionResources(): { port: number; display: number } {
+    let port: number | null = null;
+    let display: number | null = null;
+    try {
+      port = this.portPool.allocate();
+      display = this.displayPool.allocate();
+      return { port, display };
+    } catch (err: unknown) {
+      if (port !== null) this.portPool.release(port);
+      if (display !== null) this.displayPool.release(display);
+      console.warn("[native-apps] resource allocation failed:", err instanceof Error ? err.message : String(err));
+      throw new NativeAppError("spawn_failed", 503, "Native apps are not available on this runtime");
+    }
+  }
+
   private attachChildHandlers(record: NativeAppSessionRecord, child: NativeAppChildProcess): void {
     let stderrTail = "";
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -430,13 +444,14 @@ export class NativeAppSessionService {
   }
 
   private async waitForReadiness(port: number): Promise<void> {
-    const deadline = Date.now() + this.readinessTimeoutMs;
+    const serviceDeadline = this.now() + this.readinessTimeoutMs;
+    const wallClockDeadline = Date.now() + this.readinessTimeoutMs;
     do {
       if (await this.readinessProbe(port)) return;
-      const remaining = deadline - Date.now();
+      const remaining = Math.min(serviceDeadline - this.now(), wallClockDeadline - Date.now());
       if (remaining <= 0) break;
       await sleep(Math.min(this.readinessRetryMs, remaining));
-    } while (Date.now() <= deadline);
+    } while (this.now() <= serviceDeadline && Date.now() <= wallClockDeadline);
     throw new Error("native app stream did not become ready");
   }
 

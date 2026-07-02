@@ -51,6 +51,8 @@ interface NativeWebSocketState {
   close(): void;
   send?(data: string | ArrayBuffer | Uint8Array<ArrayBuffer>): void;
   _nativeAddPendingBytes?: (bytes: number) => void;
+  _nativeClosed?: () => boolean;
+  _nativeMarkClosed?: () => void;
   _nativePending?: unknown[];
   _nativePendingBytes?: () => number;
   _nativeResetPendingBytes?: () => void;
@@ -59,15 +61,27 @@ interface NativeWebSocketState {
 }
 
 function ensureNativeWebSocketPendingState(ws: NativeWebSocketState): unknown[] {
-  if (ws._nativePending && ws._nativePendingBytes && ws._nativeAddPendingBytes && ws._nativeUpstreamOpen) {
+  if (
+    ws._nativePending
+    && ws._nativePendingBytes
+    && ws._nativeAddPendingBytes
+    && ws._nativeClosed
+    && ws._nativeMarkClosed
+    && ws._nativeUpstreamOpen
+  ) {
     return ws._nativePending;
   }
   const pending: unknown[] = [];
   let pendingBytes = 0;
+  let closed = false;
   ws._nativePending = pending;
   ws._nativePendingBytes = () => pendingBytes;
   ws._nativeAddPendingBytes = (bytes) => {
     pendingBytes += bytes;
+  };
+  ws._nativeClosed = () => closed;
+  ws._nativeMarkClosed = () => {
+    closed = true;
   };
   ws._nativeResetPendingBytes = () => {
     pendingBytes = 0;
@@ -162,6 +176,13 @@ function websocketPayloadBytes(data: unknown): number {
   return 0;
 }
 
+function streamRequestHasBody(c: Context): boolean {
+  if (c.req.method === "GET" || c.req.method === "HEAD") return false;
+  const contentLength = c.req.header("content-length");
+  if (contentLength && Number(contentLength) > 0) return true;
+  return c.req.raw.body !== null;
+}
+
 async function proxyStreamRequest(c: Context, service: NativeAppSessionService): Promise<Response> {
   const parsed = NativeSessionIdSchema.safeParse(c.req.param("sessionId"));
   if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
@@ -170,13 +191,14 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
   if (!token) return c.json({ error: "Unauthorized" }, 401);
   const target = service.getStreamTarget(sessionId, token);
   if (!target) return c.json({ error: "Unauthorized" }, 401);
+  if (streamRequestHasBody(c)) return c.json({ error: "Native app stream request body is too large" }, 413);
 
   const upstream = new URL(`http://127.0.0.1:${target.port}${streamSubPath(c, sessionId)}`);
   upstream.search = new URL(c.req.url).search;
   const response = await fetch(upstream, {
     method: c.req.method,
     headers: sanitizeProxyRequestHeaders(c.req.raw.headers),
-    body: c.req.method === "GET" || c.req.method === "HEAD" ? undefined : c.req.raw.body,
+    body: undefined,
     redirect: "error",
     signal: AbortSignal.timeout(STREAM_FETCH_TIMEOUT_MS),
   });
@@ -212,7 +234,13 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
       ws._nativeUpstreamOpen = () => upstreamOpen;
 
       import("ws").then(({ WebSocket }) => {
+        if (ws._nativeClosed?.()) return;
         const upstream = new WebSocket(upstreamUrl);
+        ws._nativeUpstream = upstream;
+        if (ws._nativeClosed?.()) {
+          upstream.close();
+          return;
+        }
         upstream.on("open", () => {
           upstreamOpen = true;
           for (const item of pending.splice(0)) upstream.send(item as never);
@@ -226,13 +254,13 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
         });
         upstream.on("close", () => ws.close());
         upstream.on("error", () => ws.close());
-        ws._nativeUpstream = upstream;
       }).catch((err: unknown) => {
         console.warn("[native-apps] websocket proxy setup failed:", err instanceof Error ? err.message : String(err));
         ws.close();
       });
     },
     onMessage(evt: { data: unknown }, ws: NativeWebSocketState) {
+      if (ws._nativeClosed?.()) return;
       if (ws._nativeUpstream && ws._nativeUpstreamOpen?.()) {
         ws._nativeUpstream.send(evt.data as never);
       } else {
@@ -250,9 +278,11 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
       }
     },
     onClose(_evt: unknown, ws: NativeWebSocketState) {
+      ws._nativeMarkClosed?.();
       ws._nativeUpstream?.close();
     },
     onError(_evt: unknown, ws: NativeWebSocketState) {
+      ws._nativeMarkClosed?.();
       ws._nativeUpstream?.close();
     },
   };
@@ -328,7 +358,7 @@ export function createNativeAppRoutes(options: NativeAppRoutesOptions) {
     app.get("/sessions/:sessionId/stream/*", options.upgradeWebSocket((c) => createNativeWebSocketHandler(c, service)));
   }
 
-  app.all("/sessions/:sessionId/stream/*", async (c) => {
+  app.all("/sessions/:sessionId/stream/*", limited, async (c) => {
     try {
       return await proxyStreamRequest(c, service);
     } catch (err) {
