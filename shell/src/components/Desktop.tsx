@@ -857,6 +857,29 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       const data = await response.json() as T;
       return isLoadAborted() ? null : data;
     };
+    const queueSavedNativeLayouts = (
+      bootstrap: ShellBootstrap,
+      nativeApps: NativeAppSummary[],
+    ) => {
+      if (isLoadAborted() || isPreVpsBillingSetupRoute()) return;
+
+      const savedWindows = (bootstrap.layout?.windows ?? []).map(normalizeBuiltInLayoutWindow);
+      const layoutMap = new Map(savedWindows.map((w) => [w.path, w]));
+      const layoutToLoad: LayoutWindow[] = [];
+      const queuedLayoutPaths = new Set<string>();
+
+      for (const nativeApp of nativeApps) {
+        if (!nativeApp.enabled || nativeApp.runtime !== "linux-native") continue;
+        const saved = layoutMap.get(`native:${nativeApp.id}`);
+        if (!saved || queuedLayoutPaths.has(saved.path)) continue;
+        queuedLayoutPaths.add(saved.path);
+        layoutToLoad.push(saved);
+      }
+
+      if (layoutToLoad.length > 0) {
+        wmLoadLayout(layoutToLoad);
+      }
+    };
     const applyBootstrap = async (
       bootstrap: ShellBootstrap,
       options: { resolveModuleMetadata: boolean },
@@ -1010,6 +1033,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (bootstrap === null) return;
       if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
       await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
+      const nativeLayoutBootstrap = bootstrapRes?.ok ? bootstrap : cachedBootstrap;
       const nativeRes = await fetchForLoad(`${GATEWAY_URL}/api/native-apps`).catch((err) => {
         if (isLoadAborted()) return null;
         console.warn("[desktop] Failed to fetch native app registry:", err);
@@ -1023,6 +1047,9 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             if (isLoadAborted()) return;
             if (!nativeApp.enabled || nativeApp.runtime !== "linux-native") continue;
             addApp(nativeApp.name, `native:${nativeApp.id}`, "terminal", iconUrlForSlug("terminal"));
+          }
+          if (nativeLayoutBootstrap) {
+            queueSavedNativeLayouts(nativeLayoutBootstrap, nativeRegistry.apps);
           }
         }
       }

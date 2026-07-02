@@ -168,6 +168,27 @@ describe("native app routes", () => {
     }
   });
 
+  it("sets a secure stream cookie when the public gateway URL is HTTPS", async () => {
+    const previous = process.env.NEXT_PUBLIC_GATEWAY_URL;
+    process.env.NEXT_PUBLIC_GATEWAY_URL = "https://matrix-tunnel.example";
+    try {
+      const { app } = createApp("alice");
+
+      const response = await app.request("/api/native-apps/xterm/sessions", {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      expect(response.status).toBe(201);
+      expect(response.headers.get("set-cookie")).toContain("SameSite=None");
+      expect(response.headers.get("set-cookie")).toContain("Secure");
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_PUBLIC_GATEWAY_URL;
+      else process.env.NEXT_PUBLIC_GATEWAY_URL = previous;
+    }
+  });
+
   it("does not let another owner inspect or terminate a session", async () => {
     const { app, service } = createApp("bob");
     await service.launchSession({ ownerId: "alice", appId: "xterm" });

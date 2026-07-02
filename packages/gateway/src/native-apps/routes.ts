@@ -135,6 +135,10 @@ function readPrincipal(c: Context): string {
 function configuredPublicSchemeIsHttps(): boolean | null {
   const configuredUrl = process.env.MATRIX_PUBLIC_APP_URL
     ?? process.env.NEXT_PUBLIC_MATRIX_APP_URL
+    ?? process.env.NEXT_PUBLIC_GATEWAY_URL
+    ?? process.env.NEXT_PUBLIC_MATRIX_GATEWAY_URL
+    ?? process.env.MATRIX_PUBLIC_GATEWAY_URL
+    ?? process.env.PUBLIC_GATEWAY_URL
     ?? process.env.PUBLIC_APP_URL;
   if (!configuredUrl) return null;
   try {

@@ -231,6 +231,55 @@ describe("Desktop launcher dock button by mode", () => {
     });
   });
 
+  it("restores saved native app windows after the native registry loads", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) {
+        return jsonResponse({
+          layout: {
+            windows: [{
+              id: "native-window",
+              title: "Xterm",
+              path: "native:xterm",
+              x: 80,
+              y: 90,
+              width: 900,
+              height: 640,
+              minimized: false,
+              zIndex: 4,
+            }],
+          },
+          apps: [],
+          modules: [],
+        });
+      }
+      if (url.includes("/api/native-apps")) {
+        return jsonResponse({
+          apps: [{
+            id: "xterm",
+            name: "Xterm",
+            runtime: "linux-native",
+            enabled: true,
+            defaultWidth: 900,
+            defaultHeight: 640,
+            command: ["xterm"],
+            permissions: { filesystem: "none", network: false, clipboard: false },
+          }],
+        });
+      }
+      return jsonResponse({});
+    }));
+    resetShellMode("dev", true);
+
+    render(<DesktopComponent />);
+
+    await waitFor(() => {
+      expect(windowManagerStore.getState().apps.some((app) => app.path === "native:xterm")).toBe(true);
+      expect(windowManagerStore.getState().windows.some((win) => win.path === "native:xterm")).toBe(true);
+    });
+  });
+
   it("ignores stale bootstrap responses after cache scope changes", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
