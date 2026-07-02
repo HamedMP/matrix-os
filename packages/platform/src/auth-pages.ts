@@ -14,6 +14,14 @@ function deviceReturnTargetFromRedirectPath(redirectTarget: string): string {
   }
 }
 
+export function buildBillingSetupTarget(appShellOrigin: string, redirectTarget: string): string {
+  const url = new URL('/', appShellOrigin);
+  url.searchParams.set('billing', 'setup');
+  const deviceReturnTarget = deviceReturnTargetFromRedirectPath(redirectTarget);
+  if (deviceReturnTarget) url.searchParams.set('device_return', deviceReturnTarget);
+  return url.toString();
+}
+
 export function escapeHtmlAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -39,11 +47,13 @@ export function getAuthPage(
   mode: 'sign-in' | 'sign-up',
   scriptNonce: string,
   redirectTarget: string,
+  appShellOrigin: string,
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
   const deviceReturnTargetJson = escapeInlineScriptJson(deviceReturnTargetFromRedirectPath(redirectTarget));
   const signOutTargetJson = escapeInlineScriptJson(mode === 'sign-up' ? '/sign-up' : '/sign-in');
+  const billingSetupTargetJson = escapeInlineScriptJson(buildBillingSetupTarget(appShellOrigin, redirectTarget));
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
   const modeDetail = mode === 'sign-up'
     ? 'Start with a free account. The 3-day hosted Matrix trial begins only when you provision your cloud computer.'
@@ -451,6 +461,7 @@ export function getAuthPage(
     var redirectTarget = ${redirectTargetJson};
     var deviceReturnTarget = ${deviceReturnTargetJson};
     var signOutTarget = ${signOutTargetJson};
+    var billingSetupTarget = ${billingSetupTargetJson};
     var SIGN_OUT_TIMEOUT_MS = ${BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS};
     var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
@@ -773,10 +784,9 @@ export function getAuthPage(
       );
     }
     function billingSetupPath() {
-      var url = new URL('/', window.location.origin);
-      url.searchParams.set('billing', 'setup');
-      if (deviceReturnTarget) url.searchParams.set('device_return', deviceReturnTarget);
-      return url.pathname + url.search;
+      var url = new URL(billingSetupTarget);
+      if (url.origin === window.location.origin) return url.pathname + url.search;
+      return url.toString();
     }
     function openBillingSettingsFromClerkSession() {
       var target = billingSetupPath();
@@ -792,74 +802,6 @@ export function getAuthPage(
       }
       clearBillingSetupRetryCount();
       window.location.replace(target);
-    }
-    function showCheckoutUnavailableState() {
-      renderSessionState(
-        'Checkout unavailable',
-        'Billing checkout is temporarily unavailable. Try again shortly.',
-        'Try again',
-        startBillingCheckoutFromClerkSession
-      );
-    }
-    function rememberBillingCheckoutAttempt() {
-      try {
-        window.sessionStorage.setItem(checkoutAttemptStorageKey, String(Date.now()));
-      } catch (err) {
-        console.warn('[matrix] Unable to write checkout attempt state', err instanceof Error ? err.message : String(err));
-      }
-    }
-    function startBillingCheckoutFromClerkSession() {
-      showLoadingState('Opening secure checkout...');
-      if (!window.Clerk.session) {
-        showSignedInRecoveryState();
-        return;
-      }
-      window.Clerk.session.getToken()
-        .then(function(token) {
-          if (!token) {
-            showSignedInRecoveryState();
-            return null;
-          }
-          var controller = new AbortController();
-          var timeoutId = window.setTimeout(function() { controller.abort(); }, 10000);
-          var checkoutBody = {
-            planSlug: 'matrix_builder',
-            interval: 'monthly',
-            regionSlug: 'region_fsn1'
-          };
-          if (deviceReturnTarget) checkoutBody.returnPath = redirectTarget;
-          return fetch('/billing/checkout', {
-            method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + token,
-              'Content-Type': 'application/json',
-              Accept: 'application/json'
-            },
-            body: JSON.stringify(checkoutBody),
-            credentials: 'same-origin',
-            signal: controller.signal
-          }).finally(function() {
-            window.clearTimeout(timeoutId);
-          });
-        })
-        .then(function(res) {
-          if (!res) return null;
-          return res.json().catch(function(err) {
-            console.warn('[matrix] Unable to parse checkout response', err instanceof Error ? err.message : String(err));
-            return null;
-          }).then(function(body) {
-            if (!res.ok || !body || typeof body.url !== 'string') {
-              showCheckoutUnavailableState();
-              return;
-            }
-            rememberBillingCheckoutAttempt();
-            window.location.assign(body.url);
-          });
-        })
-        .catch(function(err) {
-          console.error('[matrix] Billing checkout failed', err instanceof Error ? err.message : String(err));
-          showCheckoutUnavailableState();
-        });
     }
     function pollProvisioningSession() {
       provisioningPolls += 1;

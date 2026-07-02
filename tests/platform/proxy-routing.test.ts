@@ -24,6 +24,7 @@ import {
 } from "../../packages/platform/src/main.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
+import { buildBillingSetupTarget } from "../../packages/platform/src/auth-pages.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
@@ -3003,15 +3004,16 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var maxBillingSetupReloads = 3;");
     expect(html).toContain("Billing settings are still loading");
     expect(html).toContain("2000 + retryCount * 1000");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toContain("Stripe opens only after you continue from Billing.");
-    expect(html).toContain("fetch('/billing/checkout'");
-    expect(html).toContain("planSlug: 'matrix_builder'");
-    expect(html).toContain("Checkout unavailable");
-    expect(html).toContain("showCheckoutUnavailableState();");
-    expect(html).toContain("Opening secure checkout");
+    expect(html).not.toContain("fetch('/billing/checkout'");
+    expect(html).not.toContain("planSlug: 'matrix_builder'");
+    expect(html).not.toContain("Checkout unavailable");
+    expect(html).not.toContain("showCheckoutUnavailableState();");
+    expect(html).not.toContain("Opening secure checkout");
     expect(html).toContain("retryProvisioningAfterBillingDelay(developerTools)");
     expect(html).toContain("Confirming billing");
     expect(html).toContain("provisioning_conflict");
@@ -3047,10 +3049,55 @@ describe("platform proxy routing", () => {
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
     expect(html).toContain("Billing settings are still loading");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toContain("'Start checkout',\n        startBillingCheckoutFromClerkSession");
+    expect(html).not.toContain("fetch('/billing/checkout'");
+  });
+
+  it("builds billing setup targets on the app origin while preserving device return", () => {
+    expect(buildBillingSetupTarget(
+      "https://app.matrix-os.com",
+      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    )).toBe(
+      "https://app.matrix-os.com/?billing=setup&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    expect(buildBillingSetupTarget(
+      "https://app.matrix-os.com",
+      "/?device_return=https%3A%2F%2Fevil.example%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    )).toBe("https://app.matrix-os.com/?billing=setup");
+  });
+
+  it("sends code-domain billing setup handoffs back to the app shell origin", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    delete process.env.MATRIX_APP_ORIGIN;
+    const app = createApp({
+      db,
+      env: {
+        ...process.env,
+        MATRIX_APP_ORIGIN: "https://staging-app.matrix-os.com",
+      },
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/sign-up?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK", {
+      headers: { host: "code.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      'var billingSetupTarget = "https://staging-app.matrix-os.com/?billing=setup\\u0026device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";',
+    );
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
+    expect(html).toContain("return url.toString();");
+    expect(html).not.toContain("var url = new URL('/', window.location.origin);");
   });
 
   it("returns billing_required for signed-in app-session exchange before a Stripe entitlement exists", async () => {
@@ -3344,7 +3391,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var maxBillingSetupReloads = 3;");
     expect(html).toContain("Billing settings are still loading");
     expect(html).toContain("2000 + retryCount * 1000");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Matrix OS shell unavailable");
     expect(html).not.toContain("Open Billing settings");
@@ -3383,7 +3431,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain('var redirectTarget = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";');
     expect(html).toContain('var deviceReturnTarget = "/auth/device?user_code=BCDF-GHJK";');
     expect(html).toContain("Opening Billing settings");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).toContain("window.location.replace(deviceReturnTarget || payload.redirectTo || redirectTarget);");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
@@ -3425,7 +3474,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain('var redirectTarget = "/";');
     expect(html).toContain('var deviceReturnTarget = "";');
     expect(html).toContain("Opening Billing settings");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toContain("Stripe opens only after you continue from Billing.");
