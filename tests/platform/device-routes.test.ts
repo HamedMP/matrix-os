@@ -470,6 +470,82 @@ describe("device routes", () => {
       expect(claims.sub).toBe("user_bob");
       expect(claims.handle).toBe("bob");
     });
+
+    it("ignores stale legacy containers when issuing VPS-native device tokens", async () => {
+      await insertContainer(db, {
+        handle: "stale-bob",
+        clerkUserId: "user_bob",
+        port: 5101,
+        shellPort: 6101,
+        status: "stopped",
+      });
+      await insertUserMachine(db, {
+        machineId: "machine_bob",
+        clerkUserId: "user_bob",
+        handle: "bob",
+        status: "running",
+        provisionedAt: new Date().toISOString(),
+      });
+      const authApp = createAuthRoutes({
+        db,
+        clerkAuth: createClerkAuth({
+          verifyToken: vi.fn().mockResolvedValue({ sub: "user_bob" }),
+        }),
+        jwtSecret: JWT_SECRET,
+        platformUrl: "https://app.matrix-os.com",
+        gatewayUrlForHandle: (handle) => `https://${handle}.matrix.test`,
+        ignoreLegacyContainers: true,
+      });
+      const code = await authApp
+        .request("/api/auth/device/code", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "matrixos-cli" }),
+        })
+        .then((r) => r.json());
+
+      const setCookieRes = await authApp.request(
+        `/auth/device?user_code=${code.userCode}`,
+      );
+      const csrf = (setCookieRes.headers.get("set-cookie") ?? "").match(
+        /device_csrf=([^;]+)/,
+      )![1];
+
+      const approveRes = await authApp.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-bob",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf,
+        }).toString(),
+      });
+      expect(approveRes.status).toBe(200);
+
+      const tokenRes = await authApp.request("/api/auth/device/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceCode: code.deviceCode,
+          clientId: "matrixos-cli",
+        }),
+      });
+
+      expect(tokenRes.status).toBe(200);
+      const body = await tokenRes.json();
+      expect(body).toMatchObject({
+        accessToken: expect.any(String),
+        userId: "user_bob",
+        handle: "bob",
+      });
+      const claims = await verifySyncJwt(body.accessToken, { secret: JWT_SECRET });
+      expect(claims.sub).toBe("user_bob");
+      expect(claims.handle).toBe("bob");
+      expect(claims.gateway_url).toBe("https://bob.matrix.test");
+    });
   });
 
   describe("POST /auth/device/approve", () => {
