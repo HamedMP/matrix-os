@@ -76,6 +76,7 @@ const PUBLIC_PREFIXES = [
 // Single prefix -- no /files/apps/ entry because iframe navigation uses
 // /apps/:slug/* after spec 063.
 const APP_IFRAME_PREFIXES = ["/apps/"];
+const NATIVE_APP_STREAM_PATH = /^\/api\/native-apps\/sessions\/[^/]+\/stream(?:\/|$)/;
 // Paths that authenticate by HMAC signature rather than bearer token.
 // They bypass bearer auth but MUST still pass through a rate limiter --
 // HMAC verification is not cheap enough to absorb a flood, and invalid
@@ -166,6 +167,10 @@ export function authMiddleware(
     // not by bearer token. Exempt them here so the session middleware
     // (mounted separately) is the single verifier.
     if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return nextWithReady(c, next);
+    }
+
+    if (NATIVE_APP_STREAM_PATH.test(normalizedPath)) {
       return nextWithReady(c, next);
     }
 

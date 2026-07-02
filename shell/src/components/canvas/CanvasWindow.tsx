@@ -6,7 +6,9 @@ import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { useCanvasSettings } from "@/stores/canvas-settings";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { nativeAppIdFromPath } from "@/lib/native-apps";
 import { AppViewer } from "../AppViewer";
+import { NativeAppViewer } from "../NativeAppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
@@ -598,6 +600,7 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
   const contentStyle: React.CSSProperties = isFullscreen
     ? { width: vw, height: vh }
     : { width: win.width, height: win.height };
+  const nativeAppId = nativeAppIdFromPath(win.path);
 
   const appContent = (
     <>
@@ -645,6 +648,8 @@ export function CanvasWindow({ win, hidden = false, deferAppContent = false }: C
         </div>
       ) : win.path === "__activity-monitor__" ? (
         <ActivityMonitorApp />
+      ) : nativeAppId ? (
+        <NativeAppViewer appId={nativeAppId} windowId={win.id} />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"

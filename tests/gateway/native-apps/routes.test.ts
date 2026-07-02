@@ -1,0 +1,122 @@
+import { Hono } from "hono";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createNativeAppRoutes,
+  NativeAppSessionService,
+  createDefaultNativeAppRegistry,
+  type NativeAppChildProcess,
+} from "../../../packages/gateway/src/native-apps/index.js";
+import { JWT_CLAIMS_CONTEXT_KEY, markAuthContextReady } from "../../../packages/gateway/src/request-principal.js";
+
+function createChild(): NativeAppChildProcess {
+  return {
+    pid: 1234,
+    stderr: { on: vi.fn() },
+    on: vi.fn(),
+    once: vi.fn(),
+    kill: vi.fn(() => true),
+  };
+}
+
+function createApp(ownerId?: string) {
+  const service = new NativeAppSessionService({
+    registry: createDefaultNativeAppRegistry(),
+    commandExists: vi.fn(async () => true),
+    getuid: () => 1000,
+    randomId: vi.fn()
+      .mockReturnValueOnce("session_aaaaaaaaaaaaaaaaaaaaaaaa")
+      .mockReturnValueOnce("stream_bbbbbbbbbbbbbbbbbbbbbbbb"),
+    reaperIntervalMs: 0,
+    spawn: vi.fn(() => createChild()),
+  });
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    markAuthContextReady(c);
+    if (ownerId) {
+      c.set(JWT_CLAIMS_CONTEXT_KEY as never, { sub: ownerId } as never);
+    }
+    await next();
+  });
+  app.route("/api/native-apps", createNativeAppRoutes({ service }));
+  return { app, service };
+}
+
+describe("native app routes", () => {
+  it("requires auth for listing native apps", async () => {
+    const { app } = createApp();
+
+    const response = await app.request("/api/native-apps");
+
+    expect(response.status).toBe(401);
+  });
+
+  it("lists curated native apps for an authenticated owner", async () => {
+    const { app } = createApp("alice");
+
+    const response = await app.request("/api/native-apps");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.apps).toEqual([
+      expect.objectContaining({ id: "xterm", runtime: "linux-native", command: ["xterm"] }),
+    ]);
+  });
+
+  it("rejects invalid app IDs at the route boundary", async () => {
+    const { app } = createApp("alice");
+
+    const response = await app.request("/api/native-apps/INVALID/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects arbitrary command payloads instead of casting them", async () => {
+    const { app } = createApp("alice");
+
+    const response = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({ command: ["rm", "-rf", "/"], width: 800 }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("launches a session and sets a scoped stream cookie", async () => {
+    const { app } = createApp("alice");
+
+    const response = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({ width: 900, height: 700 }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.session).toMatchObject({
+      id: "session_aaaaaaaaaaaaaaaaaaaaaaaa",
+      appId: "xterm",
+      status: "running",
+      streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/",
+    });
+    expect(response.headers.get("set-cookie")).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
+    expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+  });
+
+  it("does not let another owner inspect or terminate a session", async () => {
+    const { app, service } = createApp("bob");
+    await service.launchSession({ ownerId: "alice", appId: "xterm" });
+
+    const inspect = await app.request("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(inspect.status).toBe(404);
+
+    const terminate = await app.request("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa", {
+      method: "DELETE",
+    });
+    expect(terminate.status).toBe(404);
+  });
+});

@@ -18,6 +18,7 @@ import {
   type DesktopFirstRunStatus,
 } from "@/lib/desktop-first-run";
 import { AppViewer } from "./AppViewer";
+import { NativeAppViewer } from "./NativeAppViewer";
 import { TerminalApp } from "./terminal/TerminalApp";
 import { WorkspaceApp } from "./workspace/WorkspaceApp";
 import { FileBrowser } from "./file-browser/FileBrowser";
@@ -68,6 +69,7 @@ import { HERMES_CHAT_HIDDEN, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/featur
 import { isMainSectionApp, applyOrder } from "@/lib/dock-sections";
 import { MATRIX_ONBOARDING_BRAND_VERSION } from "@/lib/onboarding-brand";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { nativeAppIdFromPath } from "@/lib/native-apps";
 import { enqueueTerminalLaunch, TERMINAL_SETUP_WINDOW_PATH } from "@/lib/terminal-launch";
 import {
   loadShellSnapshot,
@@ -243,6 +245,13 @@ interface ShellBootstrap {
   modules?: ModuleRegistryEntry[];
   apps?: { name: string; path: string; icon?: string; slug?: string }[];
   icons?: Record<string, ShellBootstrapIcon>;
+}
+
+interface NativeAppSummary {
+  id: string;
+  name: string;
+  runtime: "linux-native";
+  enabled: boolean;
 }
 
 function registryPathToRelativePath(path: string): string | null {
@@ -1008,6 +1017,22 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       if (bootstrap === null) return;
       if (bootstrapRes?.ok) saveShellSnapshot(cacheScope, { bootstrap });
       await applyBootstrap(bootstrap, { resolveModuleMetadata: true });
+      const nativeRes = await fetchForLoad(`${GATEWAY_URL}/api/native-apps`).catch((err) => {
+        if (isLoadAborted()) return null;
+        console.warn("[desktop] Failed to fetch native app registry:", err);
+        return undefined;
+      });
+      if (nativeRes === null) return;
+      if (nativeRes?.ok) {
+        const nativeRegistry = await readJsonForLoad<{ apps?: NativeAppSummary[] }>(nativeRes);
+        if (nativeRegistry?.apps) {
+          for (const nativeApp of nativeRegistry.apps) {
+            if (isLoadAborted()) return;
+            if (!nativeApp.enabled || nativeApp.runtime !== "linux-native") continue;
+            addApp(nativeApp.name, `native:${nativeApp.id}`, "terminal", iconUrlForSlug("terminal"));
+          }
+        }
+      }
     } catch (err) {
       if (isLoadAborted()) return;
       console.warn("[desktop] Failed to load desktop modules:", err);
@@ -1911,6 +1936,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
             const isMinimizing = minimizingIds.has(win.id);
             const isHidden = win.minimized && !isMinimizing && !isFullscreen;
             const terminalOwnsChrome = win.path.startsWith("__terminal__");
+            const nativeAppId = nativeAppIdFromPath(win.path);
 
             // Compute dock target for suck animation
             let dockTargetX = 0;
@@ -2041,6 +2067,8 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
                     </div>
                   ) : win.path === "__activity-monitor__" ? (
                     <ActivityMonitorApp />
+                  ) : nativeAppId ? (
+                    <NativeAppViewer appId={nativeAppId} windowId={win.id} />
                   ) : (
                     <AppViewer path={win.path} onOpenApp={openWindow} />
                   )}

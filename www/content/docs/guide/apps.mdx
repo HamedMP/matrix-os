@@ -50,6 +50,24 @@ Matrix ships with a growing set of default apps, including:
 
 These default apps are bundled into the Matrix host bundle so every user starts with a useful workspace.
 
+## Native Linux Apps MVP
+
+Matrix can also surface a small curated set of native Linux apps from your Matrix runtime. The current MVP starts with Xterm and streams it into a normal Matrix window through an authenticated xpra session.
+
+Native app sessions run as the non-root Matrix runtime user on your VPS. The gateway owns the session, enforces owner checks, caps active sessions, cleans up stale sessions, and proxies the xpra stream through a same-origin Matrix URL.
+
+To enable the MVP on a Linux runtime, install:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y xpra xterm
+sudo systemctl restart matrix-gateway
+```
+
+<Callout type="warn" title="MVP limitation">
+  Xterm is curated and launched by Matrix, but this MVP is not a full native-app sandbox. Do not treat Chrome, Spotify, or arbitrary native apps as supported until Matrix adds stronger filesystem, network, and process isolation.
+</Callout>
+
 ## Asking Matrix To Build An App
 
 Good app requests include:

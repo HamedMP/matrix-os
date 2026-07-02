@@ -46,9 +46,11 @@ import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetai
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { ChatApp } from "@/components/ChatApp";
 import { AppViewer } from "@/components/AppViewer";
+import { NativeAppViewer } from "@/components/NativeAppViewer";
 import { Settings } from "@/components/Settings";
 import { WorkspaceApp } from "@/components/workspace/WorkspaceApp";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
+import { nativeAppIdFromPath } from "@/lib/native-apps";
 
 interface MobileApp {
   id: string;
@@ -61,6 +63,13 @@ interface OpenApp {
   id: string;
   app: MobileApp;
   openedAt: number;
+}
+
+interface NativeAppSummary {
+  id: string;
+  name: string;
+  runtime: "linux-native";
+  enabled: boolean;
 }
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -252,7 +261,27 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
         if (!Array.isArray(bootstrap)) {
           saveShellSnapshot(cacheScope, { bootstrap });
         }
-        setApps((prev) => mergeMobileApps(prev, mobileAppsFromBootstrap(bootstrap)));
+        let nextApps = mobileAppsFromBootstrap(bootstrap);
+        const nativeRes = await fetch(`${getGatewayUrl()}/api/native-apps`, {
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        }).catch((err: unknown) => {
+          console.warn("[mobile-shell] failed to load /api/native-apps:", err instanceof Error ? err.message : err);
+          return null;
+        });
+        if (nativeRes?.ok) {
+          const nativeBody = await nativeRes.json().catch(() => ({})) as { apps?: NativeAppSummary[] };
+          if (Array.isArray(nativeBody.apps)) {
+            nextApps = [
+              ...nextApps,
+              ...nativeBody.apps.flatMap((app) => (
+                app.enabled && app.runtime === "linux-native"
+                  ? [{ id: `native:${app.id}`, name: app.name, path: `native:${app.id}`, iconSlug: "terminal" }]
+                  : []
+              )),
+            ];
+          }
+        }
+        setApps((prev) => mergeMobileApps(prev, nextApps));
       } catch (err: unknown) {
         console.warn("[mobile-shell] failed to load /api/shell/bootstrap:", err instanceof Error ? err.message : err);
       }
@@ -571,6 +600,10 @@ function MobileAppFrame({
         onSubmit={chat.submitMessage}
       />
     );
+  }
+  const nativeAppId = nativeAppIdFromPath(app.path);
+  if (nativeAppId) {
+    return <NativeAppViewer appId={nativeAppId} windowId={openId} />;
   }
   if (app.path.startsWith("__")) {
     // Unknown built-in path: render a clear message instead of falling through
