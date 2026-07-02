@@ -24,6 +24,16 @@ const HOP_BY_HOP = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+const SAFE_UPSTREAM_REQUEST_HEADERS = [
+  "accept",
+  "accept-language",
+  "cache-control",
+  "content-type",
+  "if-modified-since",
+  "if-none-match",
+  "pragma",
+  "range",
+] as const;
 
 const NativeAppIdSchema = z.string().regex(SAFE_NATIVE_APP_ID);
 const NativeSessionIdSchema = z.string().regex(SAFE_NATIVE_SESSION_ID);
@@ -72,6 +82,15 @@ function sanitizeProxyHeaders(headers: Headers): Headers {
   return out;
 }
 
+function sanitizeProxyRequestHeaders(headers: Headers): Headers {
+  const out = new Headers();
+  for (const header of SAFE_UPSTREAM_REQUEST_HEADERS) {
+    const value = headers.get(header);
+    if (value !== null) out.set(header, value);
+  }
+  return out;
+}
+
 function streamSubPath(c: Context, sessionId: string): string {
   const prefix = `/api/native-apps/sessions/${sessionId}/stream`;
   const raw = c.req.path.slice(prefix.length) || "/";
@@ -105,7 +124,7 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
   upstream.search = new URL(c.req.url).search;
   const response = await fetch(upstream, {
     method: c.req.method,
-    headers: sanitizeProxyHeaders(c.req.raw.headers),
+    headers: sanitizeProxyRequestHeaders(c.req.raw.headers),
     body: c.req.method === "GET" || c.req.method === "HEAD" ? undefined : c.req.raw.body,
     redirect: "error",
     signal: AbortSignal.timeout(STREAM_FETCH_TIMEOUT_MS),

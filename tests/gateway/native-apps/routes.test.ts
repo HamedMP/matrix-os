@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createNativeAppRoutes,
   NativeAppSessionService,
@@ -26,6 +26,7 @@ function createApp(ownerId?: string) {
     randomId: vi.fn()
       .mockReturnValueOnce("session_aaaaaaaaaaaaaaaaaaaaaaaa")
       .mockReturnValueOnce("stream_bbbbbbbbbbbbbbbbbbbbbbbb"),
+    readinessProbe: vi.fn(async () => true),
     reaperIntervalMs: 0,
     spawn: vi.fn(() => createChild()),
   });
@@ -42,6 +43,10 @@ function createApp(ownerId?: string) {
 }
 
 describe("native app routes", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("requires auth for listing native apps", async () => {
     const { app } = createApp();
 
@@ -118,5 +123,41 @@ describe("native app routes", () => {
       method: "DELETE",
     });
     expect(terminate.status).toBe(404);
+  });
+
+  it("does not forward Matrix credentials to the xpra stream proxy", async () => {
+    const { app } = createApp("alice");
+    const launch = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    const scopedCookie = launch.headers.get("set-cookie")?.split(";")[0];
+    expect(scopedCookie).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
+
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("cookie")).toBeNull();
+      expect(headers.get("accept")).toBe("text/html");
+      return new Response("<html>xpra</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html", "Set-Cookie": "xpra=leak" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stream = await app.request("/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/", {
+      headers: {
+        Accept: "text/html",
+        Authorization: "Bearer matrix-secret",
+        Cookie: `${scopedCookie}; __session=clerk-secret`,
+      },
+    });
+
+    expect(stream.status).toBe(200);
+    expect(await stream.text()).toBe("<html>xpra</html>");
+    expect(stream.headers.get("set-cookie")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

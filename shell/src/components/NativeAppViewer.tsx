@@ -94,7 +94,7 @@ export function NativeAppViewer({ appId, windowId }: NativeAppViewerProps) {
         title={`${appId} native app`}
         src={state.session.streamUrl}
         className="ph-no-capture h-full w-full border-0 bg-black"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-pointer-lock allow-popups"
+        sandbox="allow-scripts allow-forms allow-pointer-lock allow-popups"
       />
     );
   }

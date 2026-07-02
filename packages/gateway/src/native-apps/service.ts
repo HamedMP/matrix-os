@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { createConnection } from "node:net";
 import { PortPool } from "../app-runtime/port-pool.js";
 import {
   SAFE_NATIVE_APP_ID,
@@ -80,6 +81,9 @@ export interface NativeAppSessionServiceOptions {
   now?: () => number;
   portPool?: PortPool;
   randomId?: (prefix: "session" | "stream") => string;
+  readinessProbe?: (port: number) => Promise<boolean>;
+  readinessRetryMs?: number;
+  readinessTimeoutMs?: number;
   reaperIntervalMs?: number;
   sessionTtlMs?: number;
   stopGraceMs?: number;
@@ -88,6 +92,8 @@ export interface NativeAppSessionServiceOptions {
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
 const COMMAND_CHECK_TIMEOUT_MS = 3000;
+const READINESS_RETRY_MS = 100;
+const READINESS_TIMEOUT_MS = 5000;
 const SIGTERM_GRACE_MS = 5000;
 const SAFE_XPRA_CHILD_ARG = /^[A-Za-z0-9_./:@%+=,-]+$/;
 
@@ -134,6 +140,28 @@ async function defaultCommandExists(command: string): Promise<boolean> {
   });
 }
 
+async function defaultReadinessProbe(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    const finish = (ready: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ready);
+    };
+    socket.setTimeout(500);
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.once("timeout", () => finish(false));
+  });
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
 export class NativeAppSessionService {
   private readonly commandExists: (command: string) => Promise<boolean>;
   private readonly displayPool: PortPool;
@@ -143,6 +171,9 @@ export class NativeAppSessionService {
   private readonly now: () => number;
   private readonly portPool: PortPool;
   private readonly randomId: (prefix: "session" | "stream") => string;
+  private readonly readinessProbe: (port: number) => Promise<boolean>;
+  private readonly readinessRetryMs: number;
+  private readonly readinessTimeoutMs: number;
   private readonly registry: NativeAppDefinition[];
   private readonly sessionTtlMs: number;
   private readonly stopGraceMs: number;
@@ -160,6 +191,9 @@ export class NativeAppSessionService {
     this.now = options.now ?? Date.now;
     this.portPool = options.portPool ?? new PortPool({ min: 46000, max: 46063, cap: 32 });
     this.randomId = options.randomId ?? defaultRandomId;
+    this.readinessProbe = options.readinessProbe ?? defaultReadinessProbe;
+    this.readinessRetryMs = options.readinessRetryMs ?? READINESS_RETRY_MS;
+    this.readinessTimeoutMs = options.readinessTimeoutMs ?? READINESS_TIMEOUT_MS;
     this.sessionTtlMs = options.sessionTtlMs ?? DEFAULT_TTL_MS;
     this.stopGraceMs = options.stopGraceMs ?? SIGTERM_GRACE_MS;
     this.spawnProcess = options.spawn ?? ((command, args, spawnOptions) =>
@@ -252,11 +286,15 @@ export class NativeAppSessionService {
       });
       record.child = child;
       record.pid = child.pid ?? null;
-      record.status = "running";
       this.attachChildHandlers(record, child);
+      await this.waitForReadiness(record.port);
+      if (record.status !== "starting") {
+        throw new Error("native app exited before stream became ready");
+      }
+      record.status = "running";
       return sessionView(record);
     } catch (err: unknown) {
-      this.releaseRecord(record);
+      await this.stopRecord(record, "failed");
       this.sessions.delete(id);
       console.warn("[native-apps] launch failed:", err instanceof Error ? err.message : String(err));
       throw new NativeAppError("spawn_failed", 503, "Native apps are not available on this runtime");
@@ -369,6 +407,17 @@ export class NativeAppSessionService {
       }
     }
     return count;
+  }
+
+  private async waitForReadiness(port: number): Promise<void> {
+    const deadline = Date.now() + this.readinessTimeoutMs;
+    do {
+      if (await this.readinessProbe(port)) return;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await sleep(Math.min(this.readinessRetryMs, remaining));
+    } while (Date.now() <= deadline);
+    throw new Error("native app stream did not become ready");
   }
 
   private getOwnedRecord(ownerId: string, sessionId: string): NativeAppSessionRecord | null {

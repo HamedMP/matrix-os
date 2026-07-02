@@ -31,6 +31,9 @@ function createService(options: Partial<ConstructorParameters<typeof NativeAppSe
       .mockReturnValueOnce("session_gggggggggggggggggggggggg")
       .mockReturnValueOnce("stream_hhhhhhhhhhhhhhhhhhhhhhhh"),
     reaperIntervalMs: 0,
+    readinessProbe: vi.fn(async () => true),
+    readinessRetryMs: 1,
+    readinessTimeoutMs: 20,
     stopGraceMs: 1,
     spawn: (command, args) => {
       launched.push({ command, args });
@@ -91,6 +94,36 @@ describe("NativeAppSessionService", () => {
       "--daemon=no",
     ]));
     expect(launched[0].args.join(" ")).not.toContain("rm -rf");
+  });
+
+  it("waits for xpra readiness before returning the session", async () => {
+    const readinessProbe = vi.fn(async () => readinessProbe.mock.calls.length >= 2);
+    const { service } = createService({ readinessProbe });
+
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+
+    expect(session.status).toBe("running");
+    expect(readinessProbe).toHaveBeenCalledTimes(2);
+    expect(readinessProbe).toHaveBeenCalledWith(46000);
+  });
+
+  it("terminates and releases a session when xpra never becomes ready", async () => {
+    let ready = false;
+    const { service, children } = createService({
+      readinessProbe: vi.fn(async () => ready),
+      readinessTimeoutMs: 1,
+    });
+
+    await expect(service.launchSession({ ownerId: "alice", appId: "xterm" }))
+      .rejects.toMatchObject({
+        code: "spawn_failed",
+        clientMessage: "Native apps are not available on this runtime",
+      });
+    expect(children[0].kill).toHaveBeenCalledWith("SIGTERM");
+    ready = true;
+    await expect(service.launchSession({ ownerId: "alice", appId: "xterm" })).resolves.toMatchObject({
+      status: "running",
+    });
   });
 
   it("enforces max sessions per owner", async () => {
