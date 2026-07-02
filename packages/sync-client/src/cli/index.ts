@@ -15,6 +15,7 @@ import { runCommand } from "./commands/run.js";
 import { uploadCommand } from "./commands/upload.js";
 import { downloadCommand } from "./commands/download.js";
 import { agentCommand } from "./commands/agent.js";
+import { devCommand } from "./commands/dev.js";
 import { forwardAliasCommand, portCommand } from "./commands/port.js";
 import { normalizeLeadingGlobalFlags } from "./global-flags.js";
 import { shouldRunStandaloneDaemon } from "./standalone-runtime.js";
@@ -36,6 +37,7 @@ const subCommands = {
   upload: uploadCommand,
   download: downloadCommand,
   agent: agentCommand,
+  dev: devCommand,
   port: portCommand,
   forward: forwardAliasCommand,
   doctor: doctorCommand,
