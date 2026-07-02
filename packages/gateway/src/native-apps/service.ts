@@ -367,6 +367,7 @@ export class NativeAppSessionService {
       "--html=on",
       "--daemon=no",
       app.permissions.clipboard ? "--clipboard=yes" : "--clipboard=no",
+      ...(app.permissions.filesystem === "none" ? ["--file-transfer=no", "--open-files=no"] : []),
     ];
   }
 

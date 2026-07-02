@@ -92,6 +92,8 @@ describe("NativeAppSessionService", () => {
       "--bind-tcp=127.0.0.1:46000",
       "--html=on",
       "--daemon=no",
+      "--file-transfer=no",
+      "--open-files=no",
     ]));
     expect(launched[0].args.join(" ")).not.toContain("rm -rf");
   });
