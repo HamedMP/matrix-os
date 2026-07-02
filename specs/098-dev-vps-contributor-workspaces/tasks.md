@@ -7,7 +7,7 @@
 - [ ] Decide local-first vs public-first default.
 - [ ] Decide CLI command names and flags.
 - [ ] Decide instance metadata source of truth.
-- [ ] Decide public preview hostname shape.
+- [ ] Confirm public preview hostname shape: prefer single-label opaque `*.dev.matrix-os.com`; path route fallback if wildcard TLS/routing is unavailable.
 - [ ] Decide whether terminal work belongs in this feature or a follow-up spec.
 
 ## Implementation Follow-Ups
