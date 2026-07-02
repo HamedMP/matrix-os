@@ -15,7 +15,7 @@ const wsMock = vi.hoisted(() => {
 });
 
 vi.mock("ws", () => ({
-  WebSocket: wsMock.WebSocket,
+  default: wsMock.WebSocket,
 }));
 
 import {
@@ -270,6 +270,32 @@ describe("native app routes", () => {
     expect(ws.close).not.toHaveBeenCalled();
     expect(ws._nativePending).toEqual(["hello"]);
     expect(ws._nativePendingBytes?.()).toBe(5);
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    handler.onClose(null, ws);
+  });
+
+  it("creates the upstream websocket using the ws default export", async () => {
+    const { service } = createApp("alice");
+    const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const streamToken = service.streamCookieValue(session.id);
+    const context = {
+      req: {
+        param: (name: string) => name === "sessionId" ? session.id : "",
+        path: `/api/native-apps/sessions/${session.id}/stream/websocket`,
+        raw: { headers: new Headers({ Cookie: `${service.streamCookieName(session.id)}=${streamToken}` }) },
+        url: `http://matrix.local/api/native-apps/sessions/${session.id}/stream/websocket`,
+      },
+    };
+    const handler = createNativeWebSocketHandler(context as never, service);
+    const ws = {
+      close: vi.fn(),
+      send: vi.fn(),
+    };
+
+    handler.onOpen(null, ws);
+    await vi.waitFor(() => expect(wsMock.WebSocket).toHaveBeenCalledTimes(1));
+
+    expect(wsMock.instances[0]?.url).toBe("ws://127.0.0.1:46000/websocket");
     handler.onClose(null, ws);
   });
 

@@ -60,6 +60,12 @@ interface NativeWebSocketState {
   _nativeUpstreamOpen?: () => boolean;
 }
 
+type WebSocketConstructor = new (url: string) => {
+  close(): void;
+  on(event: string, listener: (...args: any[]) => void): unknown;
+  send(data: never): void;
+};
+
 function ensureNativeWebSocketPendingState(ws: NativeWebSocketState): unknown[] {
   if (
     ws._nativePending
@@ -88,6 +94,15 @@ function ensureNativeWebSocketPendingState(ws: NativeWebSocketState): unknown[] 
   };
   ws._nativeUpstreamOpen = () => false;
   return pending;
+}
+
+function resolveWebSocketConstructor(wsModule: unknown): WebSocketConstructor {
+  const candidate = (wsModule as { default?: unknown; WebSocket?: unknown }).default
+    ?? (wsModule as { WebSocket?: unknown }).WebSocket;
+  if (typeof candidate !== "function") {
+    throw new Error("ws constructor unavailable");
+  }
+  return candidate as WebSocketConstructor;
 }
 
 function mapError(c: Context, err: unknown): Response {
@@ -233,7 +248,8 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
       let upstreamOpen = false;
       ws._nativeUpstreamOpen = () => upstreamOpen;
 
-      import("ws").then(({ WebSocket }) => {
+      import("ws").then((wsModule) => {
+        const WebSocket = resolveWebSocketConstructor(wsModule);
         if (ws._nativeClosed?.()) return;
         const upstream = new WebSocket(upstreamUrl);
         ws._nativeUpstream = upstream;
