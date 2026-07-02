@@ -134,6 +134,33 @@ describe("NativeAppSessionService", () => {
       .rejects.toMatchObject({ code: "session_limit" });
   });
 
+  it("rechecks owner capacity after asynchronous xpra availability checks", async () => {
+    const resolvers: Array<(available: boolean) => void> = [];
+    const commandExists = vi.fn(async () => new Promise<boolean>((resolve) => {
+      resolvers.push(resolve);
+    }));
+    const { service, launched } = createService({
+      commandExists,
+      maxSessionsPerOwner: 1,
+    });
+
+    const first = service.launchSession({ ownerId: "alice", appId: "xterm" });
+    const second = service.launchSession({ ownerId: "alice", appId: "xterm" });
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
+    for (const resolve of resolvers) resolve(true);
+
+    const results = await Promise.allSettled([first, second]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({ code: "session_limit" }),
+        status: "rejected",
+      }),
+    ]);
+    expect(launched).toHaveLength(1);
+  });
+
   it("prevents users from inspecting or terminating another user's session", async () => {
     const { service } = createService();
     const session = await service.launchSession({ ownerId: "alice", appId: "xterm" });

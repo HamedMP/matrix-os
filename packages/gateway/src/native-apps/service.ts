@@ -237,18 +237,11 @@ export class NativeAppSessionService {
     if (this.getuid() === 0) {
       throw new NativeAppError("misconfigured", 500, "Native apps are not available on this runtime", "root launch refused");
     }
-    if (this.activeSessionCountForOwner(input.ownerId) >= this.maxSessionsPerOwner) {
-      throw new NativeAppError("session_limit", 409, "Native app session limit reached");
-    }
-    if (this.sessions.size >= this.maxSessionsTotal) {
-      await this.evictLeastRecentlyTouched();
-    }
-    if (this.sessions.size >= this.maxSessionsTotal) {
-      throw new NativeAppError("session_limit", 409, "Native app session limit reached");
-    }
+    await this.enforceSessionCapacity(input.ownerId);
     if (!await this.cachedCommandExists("xpra")) {
       throw new NativeAppError("native_unavailable", 503, "Native apps are not available on this runtime", "xpra missing");
     }
+    this.assertSessionCapacity(input.ownerId);
 
     const id = this.randomId("session");
     if (!SAFE_NATIVE_SESSION_ID.test(id) || this.sessions.has(id)) {
@@ -462,6 +455,31 @@ export class NativeAppSessionService {
     if (candidate) {
       await this.stopRecord(candidate, "terminated");
       this.sessions.delete(candidate.id);
+    }
+  }
+
+  private async enforceSessionCapacity(ownerId: string): Promise<void> {
+    this.assertOwnerSessionCapacity(ownerId);
+    if (this.sessions.size >= this.maxSessionsTotal) {
+      await this.evictLeastRecentlyTouched();
+    }
+    this.assertTotalSessionCapacity();
+  }
+
+  private assertSessionCapacity(ownerId: string): void {
+    this.assertOwnerSessionCapacity(ownerId);
+    this.assertTotalSessionCapacity();
+  }
+
+  private assertOwnerSessionCapacity(ownerId: string): void {
+    if (this.activeSessionCountForOwner(ownerId) >= this.maxSessionsPerOwner) {
+      throw new NativeAppError("session_limit", 409, "Native app session limit reached");
+    }
+  }
+
+  private assertTotalSessionCapacity(): void {
+    if (this.sessions.size >= this.maxSessionsTotal) {
+      throw new NativeAppError("session_limit", 409, "Native app session limit reached");
     }
   }
 

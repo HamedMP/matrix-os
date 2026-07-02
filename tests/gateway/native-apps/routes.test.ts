@@ -113,6 +113,20 @@ describe("native app routes", () => {
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
   });
 
+  it("sets an HTTPS stream cookie that survives an opaque iframe sandbox", async () => {
+    const { app } = createApp("alice");
+
+    const response = await app.request("https://matrix.local/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.headers.get("set-cookie")).toContain("SameSite=None");
+    expect(response.headers.get("set-cookie")).toContain("Secure");
+  });
+
   it("does not let another owner inspect or terminate a session", async () => {
     const { app, service } = createApp("bob");
     await service.launchSession({ ownerId: "alice", appId: "xterm" });

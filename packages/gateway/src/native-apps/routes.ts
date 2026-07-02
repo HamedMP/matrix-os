@@ -265,11 +265,12 @@ export function createNativeAppRoutes(options: NativeAppRoutesOptions) {
       const session = await service.launchSession({ ownerId, appId, ...body });
       const streamToken = service.streamCookieValue(session.id);
       if (!streamToken) return c.json({ error: "Native app request failed" }, 500);
+      const secureCookie = c.req.url.startsWith("https://");
       setCookie(c, service.streamCookieName(session.id), streamToken, {
         httpOnly: true,
         path: session.streamUrl,
-        sameSite: "Strict",
-        secure: c.req.url.startsWith("https://"),
+        sameSite: secureCookie ? "None" : "Lax",
+        secure: secureCookie,
         maxAge: 30 * 60,
       });
       return c.json({ session }, 201);
