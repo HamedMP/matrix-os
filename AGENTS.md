@@ -298,7 +298,7 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 
 **Focused test reruns**: if `bun run test -- <path>` or `pnpm run test -- <path>` ignores the file filter and fans out into a broad repo run, fall back to `pnpm exec vitest run <path>` (or `pnpm exec vitest <path>` for watch mode) after the usual prerequisite builds are up to date.
 
-**Agent CLI matrix changes need cross-surface sync**: if you add, remove, or rename a supported coding agent, keep `packages/platform/src/developer-tools.ts`, `shell/src/components/terminal/TerminalApp.tsx`, `distro/customer-vps/host-bin/matrix-install-tool-pack`, `tests/platform/agent-install-matrix.ts`, `.github/workflows/agent-install-smoke.yml`, and the user docs aligned. The scheduled smoke path currently exercises `npm,pnpm,bun,yarn`.
+**Agent CLI matrix changes need cross-surface sync**: if you add, remove, or rename a supported coding agent, keep `packages/platform/src/developer-tools.ts`, `shell/src/components/terminal/terminal-agent-options.ts`, `shell/src/components/terminal/TerminalApp.tsx`, `distro/customer-vps/host-bin/matrix-install-tool-pack`, `tests/platform/agent-install-matrix.ts`, `.github/workflows/agent-install-smoke.yml`, and the user docs aligned. The scheduled smoke path currently exercises `npm,pnpm,bun,yarn`.
 
 **Screenshot evidence (mandatory for frontend-facing changes)**: every PR that changes
 user-visible UI, visual styling, layout, frontend copy, app surfaces, or screenshots must include

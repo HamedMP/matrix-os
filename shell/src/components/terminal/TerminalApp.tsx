@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, use, useCallback, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
-import Image from "next/image";
 import {
   BotIcon,
   ChevronLeftIcon,
@@ -22,7 +21,6 @@ import {
   Rows2Icon,
   SearchIcon,
   SquareTerminalIcon,
-  TerminalIcon,
   Trash2Icon,
 } from "lucide-react";
 import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
@@ -40,6 +38,13 @@ import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-sess
 import { sessionAccent, twoWordSessionName } from "./terminal-session-names";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetail } from "./mobile-terminal-events";
+import { NewSessionMenu } from "./NewSessionMenu";
+import {
+  parseTerminalAgentStatuses,
+  terminalAgentVisibleInstallCommand,
+  type TerminalAgentId,
+  type TerminalAgentOption,
+} from "./terminal-agent-options";
 import {
   applyShellRefreshFailure,
   applyShellRefreshSilentFailure,
@@ -1014,10 +1019,6 @@ function terminalSessionName(prefix = "matrix") {
     return `${safePrefix}-${genId()}`.slice(0, 31);
   }
   return twoWordSessionName();
-}
-
-function shellQuote(value: string) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 async function readShellErrorCode(res: Response): Promise<string | null> {
@@ -3570,127 +3571,6 @@ interface WorkspaceSessionSummary {
   transcriptPath?: string;
 }
 
-type TerminalAgentId = "claude" | "codex" | "opencode" | "pi";
-
-interface TerminalAgentOption {
-  id: TerminalAgentId;
-  label: string;
-  color: string;
-  logoSrc: string;
-  shortcut?: string;
-  launchCommand?: string;
-  installPackage: string;
-  installFlags?: string[];
-  claudeMode?: boolean;
-  fallbackInstalled: boolean;
-}
-
-interface TerminalAgentStatus {
-  id: TerminalAgentId;
-  installed: boolean;
-}
-
-const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
-  {
-    id: "claude",
-    label: "Claude Code",
-    color: "#D8792C",
-    logoSrc: "/agent-logos/claude-code.png",
-    shortcut: "⌘⇧C",
-    installPackage: "@anthropic-ai/claude-code@latest",
-    claudeMode: true,
-    fallbackInstalled: true,
-  },
-  {
-    id: "codex",
-    label: "Codex",
-    color: "#465243",
-    logoSrc: "/agent-logos/codex.png",
-    shortcut: "⌘⇧X",
-    launchCommand: "codex",
-    installPackage: "@openai/codex@latest",
-    fallbackInstalled: true,
-  },
-  {
-    id: "opencode",
-    label: "OpenCode",
-    color: "#111111",
-    logoSrc: "/agent-logos/opencode-white.png",
-    launchCommand: "opencode",
-    installPackage: "opencode-ai@latest",
-    fallbackInstalled: false,
-  },
-  {
-    id: "pi",
-    label: "Pi",
-    color: "#1E2F5C",
-    logoSrc: "/agent-logos/pi-coding-agent.png",
-    launchCommand: "pi",
-    installPackage: "@earendil-works/pi-coding-agent@latest",
-    installFlags: ["--ignore-scripts"],
-    fallbackInstalled: false,
-  },
-];
-
-const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
-  alignItems: "center",
-  border: "1px solid rgba(255, 255, 255, 0.56)",
-  borderRadius: 7,
-  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.36) inset, 0 4px 9px rgba(49, 54, 45, 0.14)",
-  boxSizing: "border-box",
-  color: "#FFFDF7",
-  display: "flex",
-  flex: "0 0 22px",
-  fontFamily: "Inter, system-ui, sans-serif",
-  fontSize: 11,
-  fontWeight: 900,
-  height: 22,
-  justifyContent: "center",
-  letterSpacing: 0,
-  lineHeight: "22px",
-  overflow: "hidden",
-  width: 22,
-};
-
-const TERMINAL_AGENT_LOGO_IMAGE_STYLE: CSSProperties = {
-  display: "block",
-  height: 15,
-  objectFit: "contain",
-  width: 15,
-};
-
-function isTerminalAgentId(value: unknown): value is TerminalAgentId {
-  return value === "claude" || value === "codex" || value === "opencode" || value === "pi";
-}
-
-function parseTerminalAgentStatuses(value: unknown): TerminalAgentStatus[] {
-  if (!value || typeof value !== "object" || !("agents" in value) || !Array.isArray(value.agents)) {
-    return [];
-  }
-  return value.agents
-    .filter((agent): agent is { id: TerminalAgentId; installed: boolean } => (
-      Boolean(agent) &&
-      typeof agent === "object" &&
-      isTerminalAgentId((agent as { id?: unknown }).id) &&
-      typeof (agent as { installed?: unknown }).installed === "boolean"
-    ))
-    .map((agent) => ({ id: agent.id, installed: agent.installed }));
-}
-
-function terminalAgentInstallCommand(option: TerminalAgentOption): string {
-  const flags = option.installFlags?.join(" ") ?? "";
-  const extraFlags = flags ? `${flags} ` : "";
-  return [
-    'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
-    `npm install -g ${extraFlags}--prefix "$MATRIX_NODE_PREFIX" ${option.installPackage}`,
-  ].join("; ");
-}
-
-function terminalAgentVisibleInstallCommand(option: TerminalAgentOption): string {
-  const command = terminalAgentInstallCommand(option);
-  return `sh -lc ${shellQuote(`printf '%s\\n' ${shellQuote(command)}; ${command}; exec "\${SHELL:-sh}" -l`)}`;
-}
-
 function getShellTabCount(shell: ShellSessionSummary): number | null {
   if (!Array.isArray(shell.tabs)) return null;
   return shell.tabs.reduce((count, tab) => {
@@ -4833,228 +4713,6 @@ function formatCloseConfirmationMeta(shell: ShellSessionSummary): string {
     ? Math.max(0, shell.latestSeq - shell.lastSeenSeq)
     : shell.unread ? 1 : 0;
   return unreadCount > 0 ? `${placement} · ${unreadCount} unread` : placement;
-}
-
-function NewSessionMenu({
-  align,
-  onClose,
-  onCreateShell,
-  onCreateAgent,
-  agentStatuses,
-  ignoreLightDismissRef,
-}: {
-  align: "left" | "right" | "mobile";
-  onClose: () => void;
-  onCreateShell: () => void;
-  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
-  agentStatuses: Record<TerminalAgentId, boolean> | null;
-  ignoreLightDismissRef?: React.RefObject<HTMLElement | null>;
-}) {
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const closeMenu = useEffectEvent(onClose);
-
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") closeMenu();
-    };
-    const onPointerDown = (event: globalThis.PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && menuRef.current?.contains(target)) return;
-      if (target instanceof Node && ignoreLightDismissRef?.current?.contains(target)) return;
-      closeMenu();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("pointerdown", onPointerDown, true);
-    };
-  }, [ignoreLightDismissRef]);
-
-  return (
-    <div
-      ref={menuRef}
-      role="menu"
-      aria-label="New session menu"
-      onPointerDown={(event) => event.stopPropagation()}
-      onMouseDown={(event) => event.stopPropagation()}
-      style={{
-        background: "var(--terminal-drawer-card-bg)",
-        border: "1px solid var(--terminal-drawer-card-border)",
-        borderRadius: 9,
-        boxShadow: "0 16px 36px var(--terminal-drawer-card-shadow)",
-        boxSizing: "border-box",
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        padding: 8,
-        position: "absolute",
-        ...(align === "mobile"
-          ? { bottom: "calc(100% + 8px)", left: 0 }
-          : align === "right"
-          ? { right: 0, top: "calc(100% + 8px)" }
-          : { left: "calc(100% + 8px)", top: 0 }),
-        width: 244,
-        // Sits above the collapsed rail's right divider and the terminal
-        // content so the NEW TAB menu never paints behind that edge.
-        zIndex: 120,
-      }}
-    >
-      <div style={{ padding: "0 4px 1px" }}>
-        <div
-          style={{
-            color: "var(--terminal-drawer-subtle)",
-            fontFamily: "Inter, system-ui, sans-serif",
-            fontSize: 12,
-            fontWeight: 800,
-            letterSpacing: "0.08em",
-            lineHeight: "15px",
-            textTransform: "uppercase",
-          }}
-        >
-          NEW TAB
-        </div>
-      </div>
-      <NewSessionMenuItem
-        label="Shell"
-        active
-        icon={(
-          <TerminalIcon
-            aria-hidden="true"
-            size={16}
-            strokeWidth={2.1}
-            style={{ color: "var(--terminal-drawer-selected-stripe)", flexShrink: 0 }}
-          />
-        )}
-        onClick={onCreateShell}
-      />
-      {TERMINAL_AGENT_OPTIONS.map((option) => {
-        const installed = agentStatuses?.[option.id] ?? option.fallbackInstalled;
-        return (
-          <NewSessionMenuItem
-            key={option.id}
-            label={option.label}
-            install={!installed}
-            icon={<TerminalAgentLogo muted={!installed} option={option} />}
-            onClick={() => onCreateAgent(option, installed)}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; muted: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      data-testid={`terminal-agent-logo-${option.id}`}
-      style={{
-        ...TERMINAL_AGENT_LOGO_STYLE,
-        background: option.color,
-        opacity: muted ? 0.86 : 1,
-      }}
-    >
-      <Image
-        alt=""
-        data-testid={`terminal-agent-logo-image-${option.id}`}
-        draggable={false}
-        height={17}
-        src={option.logoSrc}
-        style={TERMINAL_AGENT_LOGO_IMAGE_STYLE}
-        width={17}
-      />
-    </span>
-  );
-}
-
-function NewSessionMenuItem({
-  label,
-  icon,
-  active = false,
-  install = false,
-  onClick,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  active?: boolean;
-  install?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      style={{
-        alignItems: "center",
-        background: active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent",
-        border: 0,
-        borderRadius: 7,
-        boxSizing: "border-box",
-        color: "var(--terminal-drawer-fg)",
-        cursor: "pointer",
-        display: "flex",
-        flexShrink: 0,
-        gap: 9,
-        height: 32,
-        padding: "0 9px",
-        textAlign: "left",
-      }}
-      onMouseEnter={(event) => {
-        event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent";
-      }}
-    >
-      {icon}
-      <span
-        style={{
-          flex: "1 1 auto",
-          fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 13,
-          fontWeight: active ? 700 : 600,
-          lineHeight: "17px",
-          minWidth: 0,
-          color: install ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
-        }}
-      >
-        {label}
-      </span>
-      {install ? (
-        <span
-          style={{
-            alignItems: "center",
-            display: "flex",
-            flexShrink: 0,
-            justifyContent: "flex-end",
-          }}
-        >
-          <span
-            data-testid="terminal-agent-install-pill"
-            style={{
-              alignItems: "center",
-              background: "var(--terminal-drawer-action-bg)",
-              border: "1px solid var(--terminal-drawer-action-border)",
-              borderRadius: 999,
-              boxSizing: "border-box",
-              color: "var(--terminal-drawer-action-fg)",
-              display: "flex",
-              fontFamily: "Inter, system-ui, sans-serif",
-              fontSize: 12,
-              fontWeight: 700,
-              height: 18,
-              lineHeight: "14px",
-              padding: "0 6px",
-            }}
-          >
-            Install
-          </span>
-        </span>
-      ) : null}
-    </button>
-  );
 }
 
 function ShellCloseConfirmation({
