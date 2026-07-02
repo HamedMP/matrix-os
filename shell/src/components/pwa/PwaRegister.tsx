@@ -3,12 +3,9 @@
 import { useEffect } from "react";
 
 /**
- * Registers the PWA service worker. New SW versions are *not* activated
- * mid-session: forcing `skipWaiting` while the page is open lets the new SW
- * `clients.claim()` and prune old caches, breaking static chunk lookups for
- * code the running page still needs. Instead, an installed-and-waiting SW
- * stays in `waiting` state and activates on the next full page load, which
- * is the standard safe pattern.
+ * Registers the PWA service worker. The worker owns only public shell/offline
+ * assets; runtime VM documents bypass it so hashed VPS shell chunks cannot be
+ * pinned to stale HTML after a preview or host-bundle rollout.
  */
 export function PwaRegister() {
   useEffect(() => {

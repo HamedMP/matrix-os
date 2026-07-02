@@ -21,6 +21,13 @@ describe("shell service worker", () => {
     expect(source).toContain('p.startsWith("/sign-up")');
   });
 
+  it("keeps explicit VM shell documents out of the HTML cache", async () => {
+    const source = await readFile("shell/public/service-worker.js", "utf8");
+
+    expect(source).toContain('p.startsWith("/vm/")');
+    expect(source).not.toContain('return p === "/" || p.startsWith("/vm/");');
+  });
+
   it("limits app-domain static caching to shell assets and safe image/font files", async () => {
     const source = await readFile("shell/public/service-worker.js", "utf8");
 
