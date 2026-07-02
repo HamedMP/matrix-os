@@ -74,6 +74,7 @@ export class NativeAppError extends Error {
 export interface NativeAppSessionServiceOptions {
   registry: NativeAppDefinition[];
   commandExists?: (command: string) => Promise<boolean>;
+  commandExistsCacheTtlMs?: number;
   displayPool?: PortPool;
   getuid?: () => number | undefined;
   maxSessionsTotal?: number;
@@ -91,6 +92,7 @@ export interface NativeAppSessionServiceOptions {
 }
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
+const COMMAND_CHECK_CACHE_TTL_MS = 5 * 60 * 1000;
 const COMMAND_CHECK_TIMEOUT_MS = 3000;
 const READINESS_RETRY_MS = 100;
 const READINESS_TIMEOUT_MS = 5000;
@@ -164,6 +166,8 @@ async function sleep(ms: number): Promise<void> {
 
 export class NativeAppSessionService {
   private readonly commandExists: (command: string) => Promise<boolean>;
+  private commandExistsCache: { available: boolean; checkedAt: number; command: string } | null = null;
+  private readonly commandExistsCacheTtlMs: number;
   private readonly displayPool: PortPool;
   private readonly getuid: () => number | undefined;
   private readonly maxSessionsPerOwner: number;
@@ -184,6 +188,7 @@ export class NativeAppSessionService {
   constructor(options: NativeAppSessionServiceOptions) {
     this.registry = options.registry;
     this.commandExists = options.commandExists ?? defaultCommandExists;
+    this.commandExistsCacheTtlMs = options.commandExistsCacheTtlMs ?? COMMAND_CHECK_CACHE_TTL_MS;
     this.displayPool = options.displayPool ?? new PortPool({ min: 100, max: 199, cap: 32 });
     this.getuid = options.getuid ?? (() => process.getuid?.());
     this.maxSessionsPerOwner = options.maxSessionsPerOwner ?? 3;
@@ -241,7 +246,7 @@ export class NativeAppSessionService {
     if (this.sessions.size >= this.maxSessionsTotal) {
       throw new NativeAppError("session_limit", 409, "Native app session limit reached");
     }
-    if (!await this.commandExists("xpra")) {
+    if (!await this.cachedCommandExists("xpra")) {
       throw new NativeAppError("native_unavailable", 503, "Native apps are not available on this runtime", "xpra missing");
     }
 
@@ -388,11 +393,17 @@ export class NativeAppSessionService {
       if (stderrTail.length > 4096) stderrTail = stderrTail.slice(-2048);
     });
     child.on("error", (err) => {
-      console.warn("[native-apps] child error:", err.message);
+      const stderr = stderrTail.trim();
+      if (stderr) console.warn("[native-apps] child error:", err.message, "stderr:", stderr);
+      else console.warn("[native-apps] child error:", err.message);
       record.status = "failed";
       this.releaseRecord(record);
     });
-    child.on("exit", () => {
+    child.on("exit", (code, signal) => {
+      const stderr = stderrTail.trim();
+      if (stderr && record.status !== "terminated") {
+        console.warn("[native-apps] child exited:", { code, signal, stderr });
+      }
       if (record.status !== "terminated") record.status = "exited";
       this.releaseRecord(record);
       this.sessions.delete(record.id);
@@ -407,6 +418,20 @@ export class NativeAppSessionService {
       }
     }
     return count;
+  }
+
+  private async cachedCommandExists(command: string): Promise<boolean> {
+    const now = this.now();
+    if (
+      this.commandExistsCache
+      && this.commandExistsCache.command === command
+      && now - this.commandExistsCache.checkedAt < this.commandExistsCacheTtlMs
+    ) {
+      return this.commandExistsCache.available;
+    }
+    const available = await this.commandExists(command);
+    this.commandExistsCache = { command, available, checkedAt: now };
+    return available;
   }
 
   private async waitForReadiness(port: number): Promise<void> {

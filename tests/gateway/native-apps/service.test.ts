@@ -170,6 +170,29 @@ describe("NativeAppSessionService", () => {
       });
   });
 
+  it("caches xpra availability checks across launches", async () => {
+    const commandExists = vi.fn(async () => true);
+    const { service } = createService({ commandExists });
+
+    await service.launchSession({ ownerId: "alice", appId: "xterm" });
+    await service.launchSession({ ownerId: "alice", appId: "xterm" });
+
+    expect(commandExists).toHaveBeenCalledTimes(1);
+    expect(commandExists).toHaveBeenCalledWith("xpra");
+  });
+
+  it("logs bounded xpra stderr when a child process errors", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { service, children } = createService();
+    await service.launchSession({ ownerId: "alice", appId: "xterm" });
+
+    (children[0].stderr as EventEmitter).emit("data", Buffer.from("display failed"));
+    children[0].emit("error", new Error("spawn exploded"));
+
+    expect(warn).toHaveBeenCalledWith("[native-apps] child error:", "spawn exploded", "stderr:", "display failed");
+    warn.mockRestore();
+  });
+
   it("refuses to launch native apps from a root gateway process", async () => {
     const { service } = createService({ getuid: () => 0 });
 
