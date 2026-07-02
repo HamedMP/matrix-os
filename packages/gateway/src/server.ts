@@ -16,10 +16,13 @@ import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
+import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
+import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
+import { logTerminalDebug } from "./terminal-debug.js";
+import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
 import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
 import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
@@ -242,6 +245,16 @@ import {
 } from "./client-error-log.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
 
+export {
+  buildAllowedOrigins,
+  createAllowedOriginController,
+} from "./allowed-origins.js";
+export {
+  registerTerminalSessionRoutes,
+  TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
+  type TerminalSessionRouteRegistry,
+} from "./terminal-session-routes.js";
+
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 
 function isSafeIconStem(value: unknown): value is string {
@@ -266,55 +279,6 @@ const ApiMessageBodySchema = z.object({
     displayName: z.string().optional(),
   }).optional(),
 });
-
-const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
-
-function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
-  if (!TERMINAL_DEBUG_ENABLED) {
-    return;
-  }
-  console.info("[terminal-debug][gateway]", event, details);
-}
-
-export const TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES = 1024;
-
-export type TerminalSessionRouteRegistry = Pick<SessionRegistry, "list" | "getSession" | "destroy">;
-
-export function registerTerminalSessionRoutes(
-  app: Hono,
-  options: { homePath: string; sessionRegistry: TerminalSessionRouteRegistry },
-): void {
-  const { homePath, sessionRegistry } = options;
-  const terminalSessionDeleteBodyLimit = bodyLimit({
-    maxSize: TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
-  });
-
-  app.get("/api/terminal/pty-sessions", (c) => {
-    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
-      const displayCwd = relative(homePath, session.cwd) || "~";
-      return {
-        sessionId: session.sessionId,
-        cwd: displayCwd,
-        state: session.state,
-        exitCode: session.exitCode,
-        createdAt: session.createdAt,
-        lastAttachedAt: session.lastAttachedAt,
-        attachedClients: session.attachedClients,
-      };
-    });
-    return c.json(publicSessions);
-  });
-
-  app.delete("/api/terminal/pty-sessions/:id", terminalSessionDeleteBodyLimit, (c) => {
-    const id = c.req.param("id");
-    logTerminalDebug("rest-destroy-request", { sessionId: id });
-    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
-    const session = sessionRegistry.getSession(id);
-    if (!session) return c.json({ ok: true }, 200);
-    sessionRegistry.destroy(id);
-    return c.json({ ok: true });
-  });
-}
 
 export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
   await mkdirAsync(dirname(persistPath), { recursive: true });
@@ -434,56 +398,6 @@ const CONVERSATION_RECONNECT_GRACE_MS = 30_000;
 const MAX_RECONNECTABLE_ABORT_CONTROLLERS = 100;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
-
-export function buildAllowedOrigins(options: {
-  shellOrigin?: string;
-  proxyOrigin?: string;
-  symphonyPort?: number;
-  symphonyPorts?: number[];
-}): string[] {
-  const symphonyPorts = Array.from(new Set([
-    options.symphonyPort,
-    ...(options.symphonyPorts ?? []),
-  ].filter((port): port is number => typeof port === "number")));
-  return Array.from(new Set(
-    [
-      options.shellOrigin,
-      options.proxyOrigin,
-      "http://localhost:3000",
-      "http://localhost:4001",
-      "http://localhost:4766",
-      "http://127.0.0.1:4766",
-      ...symphonyPorts.flatMap((port) => [
-        `http://localhost:${port}`,
-        `http://127.0.0.1:${port}`,
-      ]),
-    ].filter((origin): origin is string => Boolean(origin)),
-  ));
-}
-
-export function createAllowedOriginController(options: {
-  shellOrigin?: string;
-  proxyOrigin?: string;
-  symphonyPort?: number;
-}) {
-  const baseOptions = {
-    shellOrigin: options.shellOrigin,
-    proxyOrigin: options.proxyOrigin,
-  };
-  let symphonyPorts = options.symphonyPort ? [options.symphonyPort] : [];
-  let allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
-
-  return {
-    resolve(origin: string | undefined): string | undefined {
-      if (!origin) return undefined;
-      return allowedOrigins.includes(origin) ? origin : undefined;
-    },
-    updateSymphonyPort(port: number, additionalPorts: number[] = []): void {
-      symphonyPorts = Array.from(new Set([port, ...additionalPorts]));
-      allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
-    },
-  };
-}
 
 type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
 
