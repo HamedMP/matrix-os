@@ -429,7 +429,7 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
 
-    expect(output.write).toHaveBeenLastCalledWith("\r\u001b[2K\u001b[1A\r\u001b[2K");
+    expect(output.write).toHaveBeenLastCalledWith("\r\u001b[2K\u001b[1A\r\u001b[2K\u001b[1A\r\u001b[2K");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
     await expect(attached).resolves.toEqual({ detached: false });
   });

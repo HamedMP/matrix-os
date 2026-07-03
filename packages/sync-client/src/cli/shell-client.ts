@@ -83,7 +83,7 @@ const SHELL_ATTACH_RECONNECT_BASE_DELAY_MS = 500;
 const SHELL_ATTACH_RECONNECT_MAX_DELAY_MS = 5_000;
 const SHELL_ATTACH_HEARTBEAT_MISSES_BEFORE_RECONNECT = 2;
 const SHELL_ATTACH_RECONNECT_NOTICE = "\r\n\u001b[7m Matrix shell disconnected. Waiting for the gateway to come back; this session will reconnect automatically. \u001b[0m\r\n";
-const SHELL_ATTACH_RECONNECT_NOTICE_CLEAR = "\r\u001b[2K\u001b[1A\r\u001b[2K";
+const SHELL_ATTACH_RECONNECT_NOTICE_CLEAR = "\r\u001b[2K\u001b[1A\r\u001b[2K\u001b[1A\r\u001b[2K";
 const LOCAL_TERMINAL_INPUT_RESET = [
   "\u001b[?1000l",
   "\u001b[?1002l",
