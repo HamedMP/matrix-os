@@ -276,7 +276,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, o
 
   return (
     <>
-      <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-7 items-center px-3 text-[13px] leading-7 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
+      <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-8 items-center px-3 text-[13px] leading-8 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
         {/* Left: app icon + app menu + global menus */}
         <div className="flex items-center gap-0.5">
           <div className="flex items-center px-2 py-0.5 rounded">
