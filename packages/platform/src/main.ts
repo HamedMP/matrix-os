@@ -9,9 +9,7 @@ import {
   MATRIX_TELEMETRY_EVENTS,
   type MatrixTelemetryEvent,
 } from '@matrix-os/observability';
-import { createConnection, type Socket } from 'node:net';
-import { connect as createTlsConnection } from 'node:tls';
-import type { IncomingMessage, Server } from 'node:http';
+import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import { Agent } from 'undici';
 import { z } from 'zod/v4';
@@ -43,12 +41,8 @@ import type { MatrixProvisioner } from './matrix-provisioning.js';
 import { createAuthRoutes } from './auth-routes.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
 import {
-  getWebSocketUpgradeToken,
   isAppDomainHost,
   isCodeDomainHost,
-  isSessionRoutedHost,
-  isSafeWebSocketUpgradePath,
-  stripWebSocketUpgradeToken,
 } from './ws-upgrade.js';
 import {
   buildPlatformVerificationToken,
@@ -83,7 +77,6 @@ import {
   createUnavailableStripeBillingClient,
 } from './stripe-billing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
-import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import {
   createLaunchReadinessService,
@@ -123,27 +116,19 @@ import {
 } from './session-cookies.js';
 import {
   buildForwardedQueryString,
-  readRuntimeSlot,
 } from './request-routing.js';
 import {
   APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS,
-  EDGE_SECRET_HEADER,
   shouldForwardProxyHeader,
 } from './session-routing-proxy.js';
 import {
   resolveAppDomainIdentity,
-  type AppDomainIdentity,
 } from './session-routing-identity.js';
-import {
-  buildPlatformWebSocketUpgradeHeaders,
-  classifySessionRoutedHost,
-  classifyWebSocketPath,
-  getTrustedSessionRoutedWebSocketHost,
-} from './session-routing-websocket.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
+import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 export { escapeInlineScriptJson } from './auth-pages.js';
 export { buildPostAuthRedirectPath } from './request-routing.js';
 export {
@@ -1528,246 +1513,18 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
 
-  // WebSocket upgrade handler
-  (server as import('node:http').Server).on('upgrade', async (req: IncomingMessage, socket, head) => {
-    try {
-      const handledInternalGeminiLive = await handleInternalGeminiLiveProxyUpgrade({
-        req,
-        socket: socket as Socket,
-        head,
-        db,
-        platformSecret: PLATFORM_SECRET,
-        geminiApiKey: process.env.GEMINI_API_KEY ?? '',
-      });
-      if (handledInternalGeminiLive) return;
-    } catch (err: unknown) {
-      console.warn('[platform] internal Gemini Live proxy failed:', describeError(err));
-      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UPSTREAM_FAILED, {
-        pathClass: 'internal-gemini-live',
-        errorKind: err instanceof Error ? err.name : typeof err,
-      });
-      socket.destroy();
-      return;
-    }
-
-    const path = req.url ?? '/';
-    const pathClass = classifyWebSocketPath(path);
-    const host = getTrustedSessionRoutedWebSocketHost(
-      req.headers.host,
-      req.headers['x-forwarded-host'],
-      req.headers[EDGE_SECRET_HEADER],
-      appEnv.EDGE_ROUTER_SECRET,
-      path,
-    );
-    if (!isSessionRoutedHost(host)) {
-      socket.destroy();
-      return;
-    }
-    const isCodeDomain = isCodeDomainHost(host);
-    const hostClass = classifySessionRoutedHost(host);
-
-    const requestRuntimeSlot = readRuntimeSlot(path);
-    const wsToken = getWebSocketUpgradeToken(path);
-    let identity: AppDomainIdentity | null;
-    try {
-      identity = await resolveAppDomainIdentity({
-        authHeader: req.headers.authorization as string | undefined,
-        cookieHeader: req.headers.cookie,
-        clerkAuth,
-        db,
-        platformJwtSecret: PLATFORM_JWT_SECRET,
-        legacyContainerRoutingEnabled,
-        runtimeSlot: requestRuntimeSlot,
-        wsToken,
-      });
-    } catch (err: unknown) {
-      console.warn(
-        `[platform] websocket auth failed host=${host} pathClass=${pathClass} error=${describeError(err)}`,
-      );
-      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_AUTH_FAILED, {
-        hostClass,
-        pathClass,
-        runtimeSlot: requestRuntimeSlot,
-        hasToken: Boolean(wsToken),
-        hasCookie: Boolean(req.headers.cookie),
-        errorKind: err instanceof Error ? err.name : typeof err,
-      });
-      socket.destroy();
-      return;
-    }
-    if (!identity) {
-      console.warn(`[platform] websocket unauthenticated host=${host} pathClass=${pathClass} hasCookie=${Boolean(req.headers.cookie)} hasToken=${Boolean(wsToken)}`);
-      app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UNAUTHENTICATED, {
-        hostClass,
-        pathClass,
-        runtimeSlot: requestRuntimeSlot,
-        hasToken: Boolean(wsToken),
-        hasCookie: Boolean(req.headers.cookie),
-      });
-      socket.destroy();
-      return;
-    }
-
-    let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
-    let requestedActiveMachine: UserMachineRecord | undefined;
-    let runningMachine = identity.userId
-      ? await getRunningUserMachineByClerkId(db, identity.userId, runtimeSlot)
-      : await getRunningUserMachineByHandle(db, identity.handle);
-    if (!runningMachine && identity.userId) {
-      requestedActiveMachine = await getActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
-      if (!requestedActiveMachine) {
-        const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
-        if (handleMachine?.clerkUserId === identity.userId) {
-          runningMachine = handleMachine;
-        }
-      }
-    }
-    if (runningMachine) {
-      runtimeSlot = runningMachine.runtimeSlot;
-    }
-    const record = legacyContainerRoutingEnabled
-      ? await getContainer(db, identity.handle)
-      : undefined;
-    if (!runningMachine && !record) { socket.destroy(); return; }
-    const entitlement = runningMachine
-      ? await getRuntimeEntitlementDecisionForUser(db, runningMachine.clerkUserId, appEnv)
-      : requestedActiveMachine
-        ? await getRuntimeEntitlementDecisionForUser(db, requestedActiveMachine.clerkUserId, appEnv)
-      : getRuntimeEntitlementDecision(appEnv);
-    let activeUpstream: Socket | null = null;
-    const onSocketError = () => activeUpstream?.destroy();
-    socket.on('error', onSocketError);
-
-    const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
-      buildPlatformWebSocketUpgradeHeaders({
-        incomingHeaders: req.headers,
-        externalHost: host,
-        handle,
-        userId: identity.userId,
-        platformSecret: PLATFORM_SECRET,
-        includePlatformProof,
-        isCodeDomain,
-      })
-    );
-
-    const writeUpgradeRequest = (
-      upstream: Socket,
-      upstreamHostHeader: string,
-      headers: string,
-    ): void => {
-      if (!isSafeWebSocketUpgradePath(path)) {
-        socket.destroy();
-        upstream.destroy();
-        return;
-      }
-      const upstreamPath = stripWebSocketUpgradeToken(path);
-      upstream.write(
-        `${req.method} ${upstreamPath} HTTP/1.1\r\nHost: ${upstreamHostHeader}\r\n${headers}\r\n\r\n`
-      );
-      if (head.length > 0) upstream.write(head);
-
-      upstream.pipe(socket);
-      socket.pipe(upstream);
-    };
-
-    if (runningMachine) {
-      if (!entitlement.runtimeProxyAllowed) {
-        console.warn(
-          `[platform] websocket runtime proxy denied by entitlement handle=${runningMachine.handle} pathClass=${pathClass}`,
-        );
-        app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_ENTITLEMENT_DENIED, {
-          handle: runningMachine.handle,
-          runtimeSlot,
-          pathClass,
-        });
-        socket.destroy();
-        return;
-      }
-      if (!runningMachine.publicIPv4) {
-        console.warn(
-          `[platform] websocket runtime proxy missing upstream address handle=${runningMachine.handle} pathClass=${pathClass}`,
-        );
-        socket.destroy();
-        return;
-      }
-      const upstreamHostHeader = isCodeDomain ? host : 'app.matrix-os.com';
-      const headers = buildUpgradeHeaders(runningMachine.handle, true);
-      const upstreamServerName = upstreamHostHeader.split(':')[0] ?? upstreamHostHeader;
-      const upstream = createTlsConnection({
-        host: runningMachine.publicIPv4,
-        port: 443,
-        servername: upstreamServerName,
-        rejectUnauthorized: shouldVerifyCustomerVpsTls(),
-      }, () => {
-        activeUpstream = upstream;
-        writeUpgradeRequest(upstream, upstreamHostHeader, headers);
-      });
-      upstream.on('error', (err) => {
-        upstream.destroy();
-        console.warn(
-          `[platform] websocket vps upstream failed handle=${runningMachine.handle} host=${runningMachine.publicIPv4} pathClass=${pathClass} error=${describeError(err)}`,
-        );
-        app.capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.PLATFORM_WS_UPSTREAM_FAILED, {
-          handle: runningMachine.handle,
-          runtimeSlot,
-          pathClass,
-          errorKind: err instanceof Error ? err.name : typeof err,
-        });
-        socket.destroy();
-      });
-      return;
-    }
-
-    if (!record) { socket.destroy(); return; }
-    if (!entitlement.runtimeProxyAllowed) {
-      console.warn(
-        `[platform] websocket legacy container proxy denied by entitlement handle=${record.handle} pathClass=${pathClass}`,
-      );
-      socket.destroy();
-      return;
-    }
-    const connectUpstream = async (attempt: number): Promise<void> => {
-      const endpoint = await resolveContainerEndpoint(docker, db, record.handle, record.containerId);
-      if (!endpoint) {
-        console.warn(
-          `[platform] websocket upstream unresolved handle=${record.handle} attempt=${attempt + 1} pathClass=${pathClass}`,
-        );
-        socket.destroy();
-        return;
-      }
-
-      let connected = false;
-      const targetPort = isCodeDomain ? CODE_SERVER_PORT : 4000;
-      const upstream = createConnection({ host: endpoint.host, port: targetPort }, () => {
-        connected = true;
-        activeUpstream = upstream;
-        const upstreamHostHeader = isCodeDomain ? host : `${endpoint.host}:${targetPort}`;
-        writeUpgradeRequest(
-          upstream,
-          upstreamHostHeader,
-          buildUpgradeHeaders(record.handle, !isCodeDomain),
-        );
-      });
-
-      upstream.on('error', (err) => {
-        upstream.destroy();
-        console.warn(
-          `[platform] websocket upstream failed handle=${record.handle} attempt=${attempt + 1} host=${endpoint.host} source=${endpoint.source} containerId=${endpoint.containerId ?? 'null'} pathClass=${pathClass} error=${describeError(err)}`,
-        );
-        if (!connected && attempt === 0 && !socket.destroyed) {
-          void connectUpstream(attempt + 1).catch((retryErr) => {
-            console.error('[platform] websocket upstream retry fatal error:', describeError(retryErr));
-            socket.destroy();
-          });
-          return;
-        }
-        socket.destroy();
-      });
-    };
-
-    void connectUpstream(0).catch((err) => {
-      console.error('[platform] websocket upstream fatal error:', describeError(err));
-      socket.destroy();
-    });
+  registerPlatformWebSocketUpgradeHandler({
+    server: server as Server,
+    app,
+    db,
+    docker,
+    clerkAuth,
+    env: appEnv,
+    platformSecret: PLATFORM_SECRET,
+    platformJwtSecret: PLATFORM_JWT_SECRET,
+    legacyContainerRoutingEnabled,
+    codeServerPort: CODE_SERVER_PORT,
+    getRuntimeEntitlementDecision,
+    getRuntimeEntitlementDecisionForUser,
   });
 }
