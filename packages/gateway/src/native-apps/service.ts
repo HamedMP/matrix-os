@@ -294,7 +294,7 @@ export class NativeAppSessionService {
       record.child = child;
       record.pid = child.pid ?? null;
       this.attachChildHandlers(record, child);
-      await this.waitForReadiness(record.port);
+      await this.waitForReadiness(record);
       if (record.status !== "starting") {
         throw new Error("native app exited before stream became ready");
       }
@@ -422,7 +422,8 @@ export class NativeAppSessionService {
       if (stderr && record.status !== "terminated") {
         console.warn("[native-apps] child exited:", { code, signal, stderr });
       }
-      if (record.status !== "terminated") record.status = "exited";
+      if (record.status === "starting") record.status = "failed";
+      else if (record.status !== "terminated" && record.status !== "failed") record.status = "exited";
       this.releaseRecord(record);
       this.sessions.delete(record.id);
     });
@@ -452,10 +453,16 @@ export class NativeAppSessionService {
     return available;
   }
 
-  private async waitForReadiness(port: number): Promise<void> {
+  private async waitForReadiness(record: NativeAppSessionRecord): Promise<void> {
     const deadline = this.now() + this.readinessTimeoutMs;
     do {
-      if (await this.readinessProbe(port)) return;
+      if (record.status !== "starting") {
+        throw new Error("native app exited before stream became ready");
+      }
+      if (await this.readinessProbe(record.port)) return;
+      if (record.status !== "starting") {
+        throw new Error("native app exited before stream became ready");
+      }
       const remaining = deadline - this.now();
       if (remaining <= 0) break;
       await sleep(Math.min(this.readinessRetryMs, remaining));

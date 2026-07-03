@@ -139,6 +139,15 @@ const webhookRateLimiter = createRateLimiter({
   lockoutMs: 30_000,
 });
 
+// xpra stream paths serve the HTML5 client assets and WebSocket upgrades after
+// route-level cookie/token authentication, so they need a higher ceiling than
+// failed bearer auth while still avoiding an unbounded auth-bypass surface.
+const nativeAppStreamRateLimiter = createRateLimiter({
+  maxAttempts: 240,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
   const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   return (
@@ -175,6 +184,10 @@ export function authMiddleware(
     }
 
     if (NATIVE_APP_STREAM_PATH.test(normalizedPath)) {
+      const ip = getClientIp(c);
+      if (!nativeAppStreamRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
       return nextWithReady(c, next);
     }
 

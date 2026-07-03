@@ -129,6 +129,28 @@ describe("NativeAppSessionService", () => {
     });
   });
 
+  it("fails launch promptly when xpra exits before readiness", async () => {
+    let spawnedChildren: Array<NativeAppChildProcess & EventEmitter> = [];
+    const readinessProbe = vi.fn(async () => {
+      spawnedChildren[0]?.emit("exit", 1, null);
+      return false;
+    });
+    const { service, children } = createService({
+      readinessProbe,
+      readinessRetryMs: 50,
+      readinessTimeoutMs: 1_000,
+    });
+    spawnedChildren = children;
+
+    await expect(service.launchSession({ ownerId: "alice", appId: "xterm" }))
+      .rejects.toMatchObject({
+        code: "spawn_failed",
+        clientMessage: "Native apps are not available on this runtime",
+      });
+    expect(service.inspectSession("alice", "session_aaaaaaaaaaaaaaaaaaaaaaaa")).toBeNull();
+    expect(readinessProbe).toHaveBeenCalledTimes(1);
+  });
+
   it("releases an allocated port when display allocation fails", async () => {
     const portPool = new PortPool({ min: 47000, max: 47000, cap: 1 });
     const displayPool = new PortPool({ min: 100, max: 100, cap: 1 });
