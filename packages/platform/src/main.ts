@@ -112,6 +112,12 @@ import {
   fetchDeviceDisplayProfile,
   selectProvisionIdentityForClerkUser,
 } from './provisioning-identity.js';
+import {
+  buildRuntimePickerMachines,
+  probeCustomerVpsRelease,
+  probeCustomerVpsRuntime,
+  releaseVersionFromProbe,
+} from './runtime-probes.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
@@ -125,7 +131,6 @@ import {
   getNoContainerPage,
   getRuntimePickerPage,
   getVpsBootPage,
-  type RuntimePickerMachine,
 } from './auth-pages.js';
 import {
   APP_ROUTE_COOKIE,
@@ -167,8 +172,6 @@ const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const PROXY_TIMEOUT_MS = 30_000;
 const AUTH_SHELL_PROXY_TIMEOUT_MS = 5_000;
 const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
-const VPS_RELEASE_PROBE_TIMEOUT_MS = 10_000;
-const RUNTIME_PICKER_PROBE_TIMEOUT_MS = 2_500;
 const VPS_RUNTIME_METRICS_TTL_MS = 45_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
@@ -1278,153 +1281,6 @@ async function resolveAppDomainIdentity(opts: {
   };
 }
 
-async function probeCustomerVpsRelease(machine: UserMachineRecord, platformSecret: string, options: {
-  timeoutMs?: number;
-} = {}): Promise<{
-  reachable: boolean;
-  statusCode?: number;
-  release?: unknown;
-  startedAt?: string;
-  error?: string;
-}> {
-  const targetUrl = buildCustomerVpsProxyUrl(machine, '/api/system/info');
-  if (!targetUrl) {
-    return { reachable: false, error: 'VPS unreachable' };
-  }
-  if (!platformSecret) {
-    return { reachable: false, error: 'Platform auth unavailable' };
-  }
-  const headers = new Headers({
-    authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`,
-    host: 'app.matrix-os.com',
-    'x-forwarded-host': 'app.matrix-os.com',
-    'x-forwarded-proto': 'https',
-    connection: 'close',
-  });
-  try {
-    const response = await fetch(targetUrl, {
-      method: 'GET',
-      headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(options.timeoutMs ?? VPS_RELEASE_PROBE_TIMEOUT_MS),
-      dispatcher: customerVpsProxyDispatcher,
-    } as RequestInit & { dispatcher: Agent });
-    if (!response.ok) {
-      return { reachable: false, statusCode: response.status, error: 'System info unavailable' };
-    }
-    const info = await response.json() as { release?: unknown; startedAt?: string };
-    return {
-      reachable: true,
-      statusCode: response.status,
-      release: info.release,
-      startedAt: info.startedAt,
-    };
-  } catch (err: unknown) {
-    console.warn(
-      `[platform] VPS release probe failed handle=${machine.handle} machine=${machine.machineId} error=${describeError(err)}`,
-    );
-    return { reachable: false, error: 'VPS release probe failed' };
-  }
-}
-
-async function probeCustomerVpsRuntime(
-  machine: { handle: string; publicIPv4: string | null },
-  platformSecret: string,
-): Promise<{
-  healthy: boolean;
-  runtimeVersion?: string | null;
-  probeLatencyMs?: number;
-  load1?: number | null;
-  cpuCount?: number | null;
-  memoryTotalBytes?: number | null;
-  memoryFreeBytes?: number | null;
-  diskTotalBytes?: number | null;
-  diskFreeBytes?: number | null;
-}> {
-  if (!machine.publicIPv4) return { healthy: false };
-  if (!platformSecret) return { healthy: false };
-  const token = buildPlatformVerificationToken(machine.handle, platformSecret);
-  const started = performance.now();
-  try {
-    const res = await fetch(`https://${machine.publicIPv4}:443/api/system/info`, {
-      headers: {
-        authorization: `Bearer ${token}`,
-        host: 'app.matrix-os.com',
-        'x-forwarded-host': 'app.matrix-os.com',
-        'x-forwarded-proto': 'https',
-      },
-      dispatcher: customerVpsProxyDispatcher,
-      signal: AbortSignal.timeout(8_000),
-    } as RequestInit & { dispatcher: Agent });
-    const probeLatencyMs = performance.now() - started;
-    if (!res.ok) return { healthy: false, probeLatencyMs };
-
-    const info = await res.json() as {
-      release?: {
-        version?: unknown;
-      };
-      resources?: {
-        cpuCount?: number;
-        loadAverage?: unknown;
-        memoryTotalBytes?: number;
-        memoryFreeBytes?: number;
-        diskTotalBytes?: number | null;
-        diskFreeBytes?: number | null;
-      };
-    };
-    const loadAverage = Array.isArray(info.resources?.loadAverage) ? info.resources.loadAverage : [];
-    const load1 = typeof loadAverage[0] === 'number' ? loadAverage[0] : null;
-    return {
-      healthy: true,
-      runtimeVersion: typeof info.release?.version === 'string' ? info.release.version : null,
-      probeLatencyMs,
-      load1,
-      cpuCount: typeof info.resources?.cpuCount === 'number' ? info.resources.cpuCount : null,
-      memoryTotalBytes: typeof info.resources?.memoryTotalBytes === 'number' ? info.resources.memoryTotalBytes : null,
-      memoryFreeBytes: typeof info.resources?.memoryFreeBytes === 'number' ? info.resources.memoryFreeBytes : null,
-      diskTotalBytes: typeof info.resources?.diskTotalBytes === 'number' ? info.resources.diskTotalBytes : null,
-      diskFreeBytes: typeof info.resources?.diskFreeBytes === 'number' ? info.resources.diskFreeBytes : null,
-    };
-  } catch (err: unknown) {
-    console.warn(`[fleet-probe] system info failed for ${machine.handle}:`, err instanceof Error ? err.message : String(err));
-    return { healthy: false, probeLatencyMs: performance.now() - started };
-  }
-}
-
-function releaseVersionFromProbe(probe: Awaited<ReturnType<typeof probeCustomerVpsRelease>>): string | null {
-  const release = probe.release;
-  if (!release || typeof release !== 'object' || !('version' in release)) {
-    return null;
-  }
-  const version = (release as { version?: unknown }).version;
-  return typeof version === 'string' && version.trim() ? version : null;
-}
-
-async function buildRuntimePickerMachines(
-  machines: UserMachineRecord[],
-  platformSecret: string,
-): Promise<RuntimePickerMachine[]> {
-  const enriched = await Promise.allSettled(machines.map(async (machine): Promise<RuntimePickerMachine> => {
-    if (machine.status !== 'running' || !platformSecret) {
-      return { ...machine, displayVersion: machine.imageVersion ?? 'Version pending' };
-    }
-    const probe = await probeCustomerVpsRelease(machine, platformSecret, {
-      timeoutMs: RUNTIME_PICKER_PROBE_TIMEOUT_MS,
-    });
-    return {
-      ...machine,
-      displayVersion: releaseVersionFromProbe(probe) ?? machine.imageVersion ?? 'Version pending',
-    };
-  }));
-  return enriched.map((result, index) => {
-    if (result.status === 'fulfilled') return result.value;
-    return {
-      ...machines[index]!,
-      displayVersion: machines[index]?.imageVersion ?? 'Version pending',
-    };
-  });
-}
-
 function getGatewayUrlForHandle(handle: string): string {
   const safeHandle = requireValidHandle(handle);
   const tmpl = process.env.GATEWAY_URL_TEMPLATE;
@@ -1581,7 +1437,7 @@ export function createApp(deps: {
       machines.map(async (machine): Promise<VpsRuntimeMetricInput> => ({
         handle: machine.handle,
         ...(machine.status === 'running'
-          ? await probeCustomerVpsRuntime(machine, platformSecret)
+          ? await probeCustomerVpsRuntime(machine, platformSecret, customerVpsProxyDispatcher)
           : { healthy: false }),
       })),
     ).then((probed) => {
@@ -2302,7 +2158,7 @@ export function createApp(deps: {
         return c.redirect('/');
       }
       if (path === '/runtime' || machines.length > 1) {
-        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret);
+        const pickerMachines = await buildRuntimePickerMachines(machines, platformSecret, customerVpsProxyDispatcher);
         applyNoStoreHeaders(c);
         c.header('X-Frame-Options', 'DENY');
         c.header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
@@ -2698,7 +2554,7 @@ export function createApp(deps: {
     const machines = await listUserMachines(db);
     const rows = await Promise.all(machines.map(async (machine) => {
       const probe = machine.status === 'running'
-        ? await probeCustomerVpsRelease(machine, platformSecret)
+        ? await probeCustomerVpsRelease(machine, platformSecret, { dispatcher: customerVpsProxyDispatcher })
         : { reachable: false, error: 'VPS not running' };
       return {
         machineId: machine.machineId,
@@ -2718,7 +2574,7 @@ export function createApp(deps: {
   });
   if (deps.customerVpsService) {
     async function probeMachineRuntime(machine: { machineId: string; handle: string; publicIPv4: string | null }) {
-      return probeCustomerVpsRuntime(machine, platformSecret);
+      return probeCustomerVpsRuntime(machine, platformSecret, customerVpsProxyDispatcher);
     }
 
     async function probeMachineHealth(machine: { machineId: string; handle: string; publicIPv4: string | null }): Promise<boolean> {
