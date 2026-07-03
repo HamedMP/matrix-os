@@ -323,6 +323,37 @@ function sanitizeProxyResponseHeaders(headers: Headers): Headers {
   return sanitized;
 }
 
+function readSetCookieHeaders(headers: Headers): string[] {
+  const getSetCookie = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+  if (typeof getSetCookie === 'function') {
+    return getSetCookie.call(headers);
+  }
+  const single = headers.get('set-cookie');
+  return single ? [single] : [];
+}
+
+function rewriteNativeAppStreamCookiePathsForExplicitVm(headers: Headers, handle: string): void {
+  const cookies = readSetCookieHeaders(headers);
+  if (cookies.length === 0) return;
+
+  let changed = false;
+  const rewritten = cookies.map((cookie) => {
+    if (!/^matrix_native_session__session_[A-Za-z0-9_-]{24,96}=/.test(cookie)) {
+      return cookie;
+    }
+    const next = cookie.replace(
+      /;\s*Path=(\/api\/native-apps\/sessions\/session_[A-Za-z0-9_-]{24,96}\/stream\/)(?=;|$)/,
+      `; Path=/vm/${handle}$1`,
+    );
+    if (next !== cookie) changed = true;
+    return next;
+  });
+
+  if (!changed) return;
+  headers.delete('set-cookie');
+  for (const cookie of rewritten) headers.append('set-cookie', cookie);
+}
+
 function collectTenantPublicTelemetryEnv(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
@@ -3384,6 +3415,7 @@ export function createApp(deps: {
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
+        rewriteNativeAppStreamCookiePathsForExplicitVm(responseHeaders, machine.handle);
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
         return await buildAppDomainProxyResponse({
           upstream,

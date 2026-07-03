@@ -3689,6 +3689,57 @@ describe("platform proxy routing", () => {
     expect(claims.runtime_slot).toBe("staging");
   });
 
+  it("rewrites native app stream cookies for explicit VM routes", async () => {
+    await deleteContainer(db, "alice");
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff139",
+      clerkUserId: "user_alice",
+      handle: "alice-staging",
+      runtimeSlot: "staging",
+      status: "running",
+      hetznerServerId: 123483,
+      publicIPv4: "203.0.113.33",
+      imageVersion: "v082-login-shell-8935a7cd",
+      provisionedAt: "2026-05-25T11:23:51.076Z",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<html>xpra</html>", {
+        status: 200,
+        headers: {
+          "content-type": "text/html",
+          "set-cookie": "matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=stream_bbbbbbbbbbbbbbbbbbbbbbbb; Path=/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/; HttpOnly; SameSite=None; Secure",
+        },
+      }),
+    );
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request(
+      "/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb",
+      {
+        headers: {
+          host: "app.matrix-os.com",
+          authorization: "Bearer clerk-session",
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://203.0.113.33:443/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb",
+    );
+    const setCookie = combinedSetCookie(res.headers);
+    expect(setCookie).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
+    expect(setCookie).toContain("Path=/vm/alice-staging/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/");
+    expect(setCookie).not.toContain("Path=/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/");
+  });
+
   it("routes signed explicit VM Vite app assets with null-origin CORS without browser cookies", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {
