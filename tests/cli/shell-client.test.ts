@@ -396,9 +396,40 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
     const second = ControlledWebSocket.last!;
     expect(errorOutput.write).toHaveBeenCalledWith("\r\nConnection restored.\r\n");
-    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("connection restored"));
+    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("\u001b[1A"));
+    expect(output.write).not.toHaveBeenCalledWith(expect.stringContaining("connection restored"));
     await vi.advanceTimersByTimeAsync(80);
     expect(second.closed).toBe(false);
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false });
+  });
+
+  it("clears the reconnect banner from terminal output once attach is restored", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachSession("main", {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    ControlledWebSocket.last?.emit("close");
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(output.write).toHaveBeenCalledWith(expect.stringContaining("Matrix shell disconnected"));
+
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+
+    expect(output.write).toHaveBeenLastCalledWith("\r\u001b[2K\u001b[1A\r\u001b[2K");
     ControlledWebSocket.last?.emit("message", JSON.stringify({ type: "exit", code: 0 }));
     await expect(attached).resolves.toEqual({ detached: false });
   });

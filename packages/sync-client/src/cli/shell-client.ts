@@ -83,7 +83,7 @@ const SHELL_ATTACH_RECONNECT_BASE_DELAY_MS = 500;
 const SHELL_ATTACH_RECONNECT_MAX_DELAY_MS = 5_000;
 const SHELL_ATTACH_HEARTBEAT_MISSES_BEFORE_RECONNECT = 2;
 const SHELL_ATTACH_RECONNECT_NOTICE = "\r\n\u001b[7m Matrix shell disconnected. Waiting for the gateway to come back; this session will reconnect automatically. \u001b[0m\r\n";
-const SHELL_ATTACH_RESTORED_NOTICE = "\r\n\u001b[7m Matrix shell connection restored. \u001b[0m\r\n";
+const SHELL_ATTACH_RECONNECT_NOTICE_CLEAR = "\r\u001b[2K\u001b[1A\r\u001b[2K";
 const LOCAL_TERMINAL_INPUT_RESET = [
   "\u001b[?1000l",
   "\u001b[?1002l",
@@ -467,6 +467,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         let heartbeatTimeout: ReturnType<typeof setTimeout> | undefined;
         let heartbeatPending = false;
         let missedHeartbeats = 0;
+        let reconnectNoticeVisible = false;
         const cleanup = () => {
           clearTimeout(attachTimeout);
           clearTimeout(reconnectTimer);
@@ -598,6 +599,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           if (!reconnecting) {
             errorOutput.write("\r\nConnection lost. Reconnecting...\r\n");
             output.write(SHELL_ATTACH_RECONNECT_NOTICE);
+            reconnectNoticeVisible = true;
           }
           reconnecting = true;
           const backoffExponent = Math.min(reconnectAttempt, 31);
@@ -744,7 +746,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             if (reconnecting) {
               reconnecting = false;
               errorOutput.write("\r\nConnection restored.\r\n");
-              output.write(SHELL_ATTACH_RESTORED_NOTICE);
+              if (reconnectNoticeVisible) {
+                output.write(SHELL_ATTACH_RECONNECT_NOTICE_CLEAR);
+                reconnectNoticeVisible = false;
+              }
             }
             schedulePostAttachResizeFrames();
           } else if (msg.type === "output" && typeof msg.data === "string") {
