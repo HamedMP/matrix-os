@@ -21,6 +21,7 @@ type ViewerState =
   | { status: "terminated" };
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const SAFE_VM_HANDLE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
 function safeViewerMessage(value: unknown): string {
   if (!value || typeof value !== "object") return "Native apps are not available on this runtime";
@@ -32,8 +33,27 @@ function safeViewerMessage(value: unknown): string {
   return error;
 }
 
+function currentVmApiPrefix(): string {
+  if (typeof window === "undefined") return "";
+  const match = /^\/vm\/([^/?#]+)(?:[/?#]|$)/.exec(window.location.pathname);
+  if (!match) return "";
+  const handle = decodeURIComponent(match[1] ?? "");
+  if (!SAFE_VM_HANDLE.test(handle)) return "";
+  return `/vm/${handle}`;
+}
+
+function nativeApiPath(path: string, vmPrefix = currentVmApiPrefix()): string {
+  return `${vmPrefix}/api/native-apps${path}`;
+}
+
+function nativeStreamUrl(streamUrl: string, vmPrefix = currentVmApiPrefix()): string {
+  if (!vmPrefix || !streamUrl.startsWith("/api/native-apps/")) return streamUrl;
+  return `${vmPrefix}${streamUrl}`;
+}
+
 async function launchNativeSession(appId: string): Promise<NativeAppSession> {
-  const response = await fetch(`/api/native-apps/${appId}/sessions`, {
+  const vmPrefix = currentVmApiPrefix();
+  const response = await fetch(nativeApiPath(`/${appId}/sessions`, vmPrefix), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
@@ -46,11 +66,12 @@ async function launchNativeSession(appId: string): Promise<NativeAppSession> {
   if (!response.ok) {
     throw new Error(safeViewerMessage(body));
   }
-  return (body as { session: NativeAppSession }).session;
+  const session = (body as { session: NativeAppSession }).session;
+  return { ...session, streamUrl: nativeStreamUrl(session.streamUrl, vmPrefix) };
 }
 
 async function terminateNativeSession(sessionId: string): Promise<void> {
-  await fetch(`/api/native-apps/sessions/${sessionId}`, {
+  await fetch(nativeApiPath(`/sessions/${sessionId}`), {
     method: "DELETE",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   }).catch((err: unknown) => {
