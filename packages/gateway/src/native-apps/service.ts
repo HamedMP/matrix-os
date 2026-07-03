@@ -113,10 +113,13 @@ function sessionView(record: NativeAppSessionRecord): NativeAppSession {
     pid: _pid,
     port: _port,
     released: _released,
-    streamToken: _streamToken,
+    streamToken,
     ...session
   } = record;
-  return { ...session };
+  return {
+    ...session,
+    streamUrl: `${session.streamUrl}?nativeStreamToken=${encodeURIComponent(streamToken)}`,
+  };
 }
 
 async function defaultCommandExists(command: string): Promise<boolean> {

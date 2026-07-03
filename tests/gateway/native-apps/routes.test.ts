@@ -127,13 +127,57 @@ describe("native app routes", () => {
       id: "session_aaaaaaaaaaaaaaaaaaaaaaaa",
       appId: "xterm",
       status: "running",
-      streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/",
+      streamUrl: "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/?nativeStreamToken=stream_bbbbbbbbbbbbbbbbbbbbbbbb",
     });
     expect(body.session).not.toHaveProperty("port");
     expect(body.session).not.toHaveProperty("display");
     expect(body.session).not.toHaveProperty("pid");
     expect(response.headers.get("set-cookie")).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+  });
+
+  it("bootstraps the stream cookie from the launch stream URL when the launch Set-Cookie is unavailable", async () => {
+    const { app } = createApp("alice");
+    const launch = await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    const body = await launch.json() as { session: { streamUrl: string } };
+
+    const fetchMock = vi.fn(async (url: URL) => {
+      expect(url.searchParams.has("nativeStreamToken")).toBe(false);
+      return new Response("<html>xpra</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stream = await app.request(body.session.streamUrl, {
+      headers: { Accept: "text/html" },
+    });
+
+    expect(stream.status).toBe(200);
+    expect(await stream.text()).toBe("<html>xpra</html>");
+    expect(stream.headers.get("set-cookie")).toContain("matrix_native_session__session_aaaaaaaaaaaaaaaaaaaaaaaa=");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed native stream bootstrap tokens at the route boundary", async () => {
+    const { app } = createApp("alice");
+    await app.request("/api/native-apps/xterm/sessions", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const stream = await app.request(
+      "/api/native-apps/sessions/session_aaaaaaaaaaaaaaaaaaaaaaaa/stream/?nativeStreamToken=../../etc/passwd",
+    );
+
+    expect(stream.status).toBe(400);
+    expect(await stream.json()).toEqual({ error: "Invalid request" });
   });
 
   it("sets an HTTPS stream cookie that survives an opaque iframe sandbox", async () => {

@@ -65,9 +65,9 @@ Display numbers and ports are allocated from bounded local pools and released on
 | `POST` | `/api/native-apps/:appId/sessions` | Matrix gateway auth + `bodyLimit` | `{ width?: number, height?: number }` | `201 { session }` plus scoped HttpOnly stream cookie |
 | `GET` | `/api/native-apps/sessions/:sessionId` | Matrix gateway auth | none | `{ session }` for owner only |
 | `DELETE` | `/api/native-apps/sessions/:sessionId` | Matrix gateway auth + `bodyLimit` | ignored | `{ session }` after termination |
-| `GET/ALL` | `/api/native-apps/sessions/:sessionId/stream/*` | scoped stream cookie | proxied | same-origin proxy to loopback xpra |
+| `GET/ALL` | `/api/native-apps/sessions/:sessionId/stream/*` | scoped stream cookie, or launch-returned bootstrap token that mints the cookie | proxied | same-origin proxy to loopback xpra |
 
-`appId` and `sessionId` are validated at the route boundary. Launch bodies are strict: command payloads or unknown keys are rejected.
+`appId`, `sessionId`, and stream bootstrap tokens are validated at the route boundary. Launch bodies are strict: command payloads or unknown keys are rejected.
 
 ## Security Model
 
@@ -76,8 +76,9 @@ Display numbers and ports are allocated from bounded local pools and released on
 - `spawn()` is called with argv arrays.
 - Launch refuses if the gateway process is running as uid `0`.
 - Session IDs are unguessable `session_*` values.
-- Stream access uses a per-session HttpOnly cookie scoped to the exact stream path.
-- The bearer/JWT auth middleware bypasses only `/api/native-apps/sessions/:id/stream/*`; that route performs stream-cookie validation before proxying to `127.0.0.1`.
+- Stream access uses a per-session HttpOnly cookie scoped to the exact stream path. The launch response also returns a same-origin bootstrap stream URL so the first stream request can mint the cookie if an app-domain proxy or browser path drops the launch `Set-Cookie`.
+- Bootstrap stream tokens are unguessable `stream_*` values, tied to the session, validated at the route boundary, and stripped before proxying to `127.0.0.1`.
+- The bearer/JWT auth middleware bypasses only `/api/native-apps/sessions/:id/stream/*`; that route performs stream-cookie or bootstrap-token validation before proxying to `127.0.0.1`.
 - Client responses use generic errors. Detailed process/xpra errors are logged server-side only.
 - In-memory session state is capped and TTL-cleaned.
 - Max active sessions per owner defaults to `3`.

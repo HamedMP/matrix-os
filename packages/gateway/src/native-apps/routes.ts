@@ -1,13 +1,13 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { getCookie, setCookie } from "hono/cookie";
+import { generateCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod/v4";
 import {
   isRequestPrincipalError,
   mapRequestPrincipalError,
   requireRequestPrincipal,
 } from "../request-principal.js";
-import { SAFE_NATIVE_APP_ID, SAFE_NATIVE_SESSION_ID } from "./registry.js";
+import { SAFE_NATIVE_APP_ID, SAFE_NATIVE_SESSION_ID, SAFE_NATIVE_STREAM_TOKEN } from "./registry.js";
 import { NativeAppError, type NativeAppSessionService } from "./service.js";
 
 const NATIVE_APP_BODY_LIMIT = 2048;
@@ -37,10 +37,12 @@ const SAFE_UPSTREAM_REQUEST_HEADERS = [
 
 const NativeAppIdSchema = z.string().regex(SAFE_NATIVE_APP_ID);
 const NativeSessionIdSchema = z.string().regex(SAFE_NATIVE_SESSION_ID);
+const NativeStreamTokenSchema = z.string().regex(SAFE_NATIVE_STREAM_TOKEN);
 const LaunchBodySchema = z.object({
   width: z.number().int().min(320).max(3840).optional(),
   height: z.number().int().min(240).max(2160).optional(),
 }).strict();
+const NATIVE_STREAM_TOKEN_PARAM = "nativeStreamToken";
 
 export interface NativeAppRoutesOptions {
   service: NativeAppSessionService;
@@ -158,6 +160,29 @@ function shouldUseSecureStreamCookie(c: Context): boolean {
   return c.req.url.startsWith("https://");
 }
 
+function streamCookiePath(sessionId: string): string {
+  return `/api/native-apps/sessions/${sessionId}/stream/`;
+}
+
+function nativeStreamCookieOptions(c: Context, sessionId: string) {
+  const secureCookie = shouldUseSecureStreamCookie(c);
+  return {
+    httpOnly: true,
+    path: streamCookiePath(sessionId),
+    sameSite: secureCookie ? "None" : "Lax",
+    secure: secureCookie,
+    maxAge: 30 * 60,
+  } as const;
+}
+
+function nativeStreamCookieHeader(c: Context, service: NativeAppSessionService, sessionId: string, streamToken: string): string {
+  return generateCookie(service.streamCookieName(sessionId), streamToken, nativeStreamCookieOptions(c, sessionId));
+}
+
+function setNativeStreamCookie(c: Context, service: NativeAppSessionService, sessionId: string, streamToken: string): void {
+  setCookie(c, service.streamCookieName(sessionId), streamToken, nativeStreamCookieOptions(c, sessionId));
+}
+
 function sanitizeProxyHeaders(headers: Headers): Headers {
   const out = new Headers(headers);
   for (const header of HOP_BY_HOP) out.delete(header);
@@ -179,6 +204,18 @@ function streamSubPath(c: Context, sessionId: string): string {
   const prefix = `/api/native-apps/sessions/${sessionId}/stream`;
   const raw = c.req.path.slice(prefix.length) || "/";
   return raw.startsWith("/") ? raw : `/${raw}`;
+}
+
+function streamSearchWithoutBootstrapToken(c: Context): string {
+  const url = new URL(c.req.url);
+  url.searchParams.delete(NATIVE_STREAM_TOKEN_PARAM);
+  return url.search;
+}
+
+function streamBootstrapToken(c: Context): string | null {
+  const raw = new URL(c.req.url).searchParams.get(NATIVE_STREAM_TOKEN_PARAM);
+  if (raw === null) return null;
+  return NativeStreamTokenSchema.parse(raw);
 }
 
 function uint8ArrayFromBuffer(buffer: Buffer): Uint8Array<ArrayBuffer> {
@@ -206,14 +243,21 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
   const parsed = NativeSessionIdSchema.safeParse(c.req.param("sessionId"));
   if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
   const sessionId = parsed.data;
-  const token = getCookie(c, service.streamCookieName(sessionId));
+  let bootstrapToken: string | null;
+  try {
+    bootstrapToken = streamBootstrapToken(c);
+  } catch (err) {
+    if (err instanceof z.ZodError) return c.json({ error: "Invalid request" }, 400);
+    throw err;
+  }
+  const token = getCookie(c, service.streamCookieName(sessionId)) ?? bootstrapToken;
   if (!token) return c.json({ error: "Unauthorized" }, 401);
   const target = service.getStreamTarget(sessionId, token);
   if (!target) return c.json({ error: "Unauthorized" }, 401);
   if (streamRequestHasBody(c)) return c.json({ error: "Native app stream request body is too large" }, 413);
 
   const upstream = new URL(`http://127.0.0.1:${target.port}${streamSubPath(c, sessionId)}`);
-  upstream.search = new URL(c.req.url).search;
+  upstream.search = streamSearchWithoutBootstrapToken(c);
   const response = await fetch(upstream, {
     method: c.req.method,
     headers: sanitizeProxyRequestHeaders(c.req.raw.headers),
@@ -221,9 +265,13 @@ async function proxyStreamRequest(c: Context, service: NativeAppSessionService):
     redirect: "error",
     signal: AbortSignal.timeout(STREAM_FETCH_TIMEOUT_MS),
   });
+  const headers = sanitizeProxyHeaders(response.headers);
+  if (bootstrapToken) {
+    headers.append("Set-Cookie", nativeStreamCookieHeader(c, service, sessionId, bootstrapToken));
+  }
   return new Response(response.body, {
     status: response.status,
-    headers: sanitizeProxyHeaders(response.headers),
+    headers,
   });
 }
 
@@ -235,7 +283,16 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
     };
   }
   const sessionId = parsed.data;
-  const token = getCookie(c, service.streamCookieName(sessionId));
+  let bootstrapToken: string | null;
+  try {
+    bootstrapToken = streamBootstrapToken(c);
+  } catch (err: unknown) {
+    if (!(err instanceof z.ZodError)) {
+      console.warn("[native-apps] unexpected websocket stream token parse error:", err instanceof Error ? err.message : String(err));
+    }
+    bootstrapToken = null;
+  }
+  const token = getCookie(c, service.streamCookieName(sessionId)) ?? bootstrapToken;
   const target = token ? service.getStreamTarget(sessionId, token) : null;
   if (!target) {
     return {
@@ -243,7 +300,7 @@ export function createNativeWebSocketHandler(c: Context, service: NativeAppSessi
     };
   }
   const subPath = streamSubPath(c, sessionId);
-  const search = new URL(c.req.url).search;
+  const search = streamSearchWithoutBootstrapToken(c);
   const upstreamUrl = `ws://127.0.0.1:${target.port}${subPath}${search}`;
 
   return {
@@ -337,14 +394,7 @@ export function createNativeAppRoutes(options: NativeAppRoutesOptions) {
       const session = await service.launchSession({ ownerId, appId, ...body });
       const streamToken = service.streamCookieValue(session.id);
       if (!streamToken) return c.json({ error: "Native app request failed" }, 500);
-      const secureCookie = shouldUseSecureStreamCookie(c);
-      setCookie(c, service.streamCookieName(session.id), streamToken, {
-        httpOnly: true,
-        path: session.streamUrl,
-        sameSite: secureCookie ? "None" : "Lax",
-        secure: secureCookie,
-        maxAge: 30 * 60,
-      });
+      setNativeStreamCookie(c, service, session.id, streamToken);
       return c.json({ session }, 201);
     } catch (err) {
       return mapError(c, err);
