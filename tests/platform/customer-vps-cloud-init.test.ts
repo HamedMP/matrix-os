@@ -512,6 +512,17 @@ exit 99
     expect(bundleScript).toContain('matrix-install-linux-tools');
   });
 
+  it('provisions host packages required by native Linux apps', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-linux-tools'), 'utf8');
+
+    for (const pkg of ['dbus-x11', 'xauth', 'xpra', 'xterm']) {
+      expect(cloudInit).toContain(pkg);
+      expect(installer).toContain(pkg);
+    }
+  });
+
   it('installs a customer host code-server service behind restore completion', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');

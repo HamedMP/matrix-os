@@ -454,6 +454,11 @@ runcmd:
     apt_get_update
 
     DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl sudo unzip
+    native_app_packages="dbus-x11 xauth xpra xterm"
+    if apt-cache show xpra-html5 >/dev/null 2>&1; then
+      native_app_packages="${native_app_packages} xpra-html5"
+    fi
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ${native_app_packages}
     curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors --connect-timeout 10 --max-time 120 https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
