@@ -47,6 +47,7 @@ export interface CodingAgentRuntimeSummaryOptions {
   capabilities?: {
     workspace?: boolean;
     approvals?: boolean;
+    review?: boolean;
   };
   terminalOwnerId?: string;
   now?: () => Date;
@@ -229,6 +230,7 @@ export function createCodingAgentRuntimeSummaryService(
       const threadsEnabled = Boolean(options.threads);
       const workspaceEnabled = threadsEnabled && options.capabilities?.workspace === true;
       const approvalsEnabled = threadsEnabled && options.capabilities?.approvals === true;
+      const reviewEnabled = options.capabilities?.review === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
         canReadTerminalSessions(principal, options.terminalOwnerId);
 
@@ -246,7 +248,7 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsMobileWorkspace", enabled: workspaceEnabled }),
           capability({ id: "codingAgentsThreadCreate", enabled: threadsEnabled }),
           capability({ id: "codingAgentsApprovals", enabled: approvalsEnabled }),
-          capability({ id: "codingAgentsReview", enabled: false }),
+          capability({ id: "codingAgentsReview", enabled: reviewEnabled }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
         ],
         providers,

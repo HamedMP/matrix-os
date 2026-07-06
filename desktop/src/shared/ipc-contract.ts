@@ -6,7 +6,10 @@ import { z } from "zod/v4";
 import {
   AgentThreadSnapshotSchema,
   CreateAgentThreadRequestSchema,
+  CursorSchema,
+  ReviewSummarySchema,
   RuntimeSummarySchema,
+  boundedListSchema,
 } from "@matrix-os/contracts";
 
 const Empty = z.object({}).strict();
@@ -102,6 +105,10 @@ export const INVOKE_CHANNELS = {
   "runtime:get-summary": {
     request: Empty,
     response: RuntimeSummarySchema,
+  },
+  "runtime:get-reviews": {
+    request: z.object({ cursor: CursorSchema.optional() }).strict(),
+    response: boundedListSchema(ReviewSummarySchema, 50),
   },
   "runtime:create-thread": {
     request: CreateAgentThreadRequestSchema,

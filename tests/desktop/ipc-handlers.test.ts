@@ -37,6 +37,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     onRuntimeChanged: vi.fn(),
     getUpdateStatus: vi.fn(() => "disabled"),
     fetchRuntimeSummary: vi.fn(),
+    fetchReviewSummaries: vi.fn(),
     createAgentThread: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
@@ -166,6 +167,45 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-summary")).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-summary")).rejects.not.toThrow("10.0.0.5");
+  });
+
+  it("returns coding agent review summaries through a strict trusted-core IPC channel", async () => {
+    const reviews = {
+      items: [
+        {
+          id: "rev_desktop_1",
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          status: "reviewing",
+          pullRequestNumber: 757,
+          round: 1,
+          maxRounds: 3,
+          reviewer: "codex",
+          implementer: "claude",
+          findings: { total: 1, high: 0, medium: 1, low: 0 },
+          updatedAt: "2026-07-06T00:00:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    };
+    const fetchReviewSummaries = vi.fn().mockResolvedValue(reviews);
+    const harness = makeHarness({ fetchReviewSummaries } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-reviews")).resolves.toEqual(reviews);
+    await expect(harness.invoke("runtime:get-reviews", { cursor: "rev_desktop_1" })).resolves.toEqual(reviews);
+    expect(fetchReviewSummaries).toHaveBeenNthCalledWith(1, {});
+    expect(fetchReviewSummaries).toHaveBeenNthCalledWith(2, { cursor: "rev_desktop_1" });
+  });
+
+  it("maps review summary failures to a generic IPC error", async () => {
+    const fetchReviewSummaries = vi
+      .fn()
+      .mockRejectedValue(new Error("Postgres failed at /home/matrix/home"));
+    const harness = makeHarness({ fetchReviewSummaries } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-reviews")).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:get-reviews")).rejects.not.toThrow("/home/matrix");
   });
 
   it("creates agent threads through trusted-core IPC without exposing credentials", async () => {

@@ -9,6 +9,7 @@ import {
   FileMetadataSchema,
   PreviewSessionSummarySchema,
   ReviewFileDiffSchema,
+  ReviewSummarySchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
   TerminalClientFrameSchema,
@@ -269,6 +270,40 @@ describe("coding agent contracts", () => {
       updatedAt: now,
     }).path).toBe("src/index.ts");
     expect(() => FileMetadataSchema.parse({ path: "../secret", kind: "file" })).toThrow();
+
+    expect(ReviewSummarySchema.parse({
+      id: "rev_123",
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      status: "reviewing",
+      pullRequestNumber: 757,
+      round: 1,
+      maxRounds: 3,
+      reviewer: "codex",
+      implementer: "claude",
+      findings: {
+        total: 2,
+        high: 1,
+        medium: 1,
+        low: 0,
+      },
+      updatedAt: now,
+    }).findings.total).toBe(2);
+    expect(() =>
+      ReviewSummarySchema.parse({
+        id: "rev_123",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        safeStatus: "Postgres failed at /home/matrix/home",
+        updatedAt: now,
+      }),
+    ).toThrow();
 
     expect(ReviewFileDiffSchema.parse({
       path: "src/index.ts",

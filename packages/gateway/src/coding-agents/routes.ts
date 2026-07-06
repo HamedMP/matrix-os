@@ -13,6 +13,7 @@ import {
   UserInputAnswerRequestSchema,
   boundedListSchema,
   AgentThreadSummarySchema,
+  ReviewSummarySchema,
 } from "@matrix-os/contracts";
 import {
   isRequestPrincipalError,
@@ -26,10 +27,12 @@ import {
   safeThreadError,
   type CodingAgentThreadStore,
 } from "./thread-store.js";
+import type { CodingAgentReviewSummaryStore } from "./review-summary.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
   threads?: CodingAgentThreadStore;
+  reviews?: CodingAgentReviewSummaryStore;
   getPrincipal?: (c: Context) => RequestPrincipal;
 }
 
@@ -43,6 +46,7 @@ const AbortThreadBodySchema = z.object({
 }).strict();
 
 const ThreadListSchema = boundedListSchema(AgentThreadSummarySchema, 50);
+const ReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
 
 function summaryUnavailable() {
   return SafeClientErrorSchema.parse({
@@ -57,6 +61,15 @@ function threadsUnavailable() {
   return SafeClientErrorSchema.parse({
     code: "thread_store_unavailable",
     safeMessage: "Agent thread state is temporarily unavailable. Try again.",
+    retryable: true,
+    recoveryActions: ["retry"],
+  });
+}
+
+function reviewsUnavailable() {
+  return SafeClientErrorSchema.parse({
+    code: "review_state_unavailable",
+    safeMessage: "Review state is temporarily unavailable. Try again.",
     retryable: true,
     recoveryActions: ["retry"],
   });
@@ -183,6 +196,27 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         return c.json(await deps.threads!.submitInput(principal, threadId, inputRequestId, body));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
+      }
+    });
+  }
+
+  if (deps.reviews) {
+    app.get("/reviews", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const rawCursor = c.req.query("cursor");
+        const cursor = rawCursor ? CursorSchema.parse(rawCursor) : undefined;
+        return c.json(ReviewListSchema.parse(await deps.reviews!.listReviews(principal, { cursor })));
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        console.warn("[coding-agents] review route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: reviewsUnavailable() }, 503);
       }
     });
   }

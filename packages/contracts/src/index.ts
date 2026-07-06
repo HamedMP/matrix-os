@@ -652,6 +652,39 @@ export const ReviewFileDiffSchema = z.object({
   partial: z.boolean(),
 }).strict();
 
+export const ReviewSummarySchema = z.object({
+  id: referenceId(128),
+  projectId: ProjectIdSchema,
+  worktreeId: WorktreeIdSchema,
+  status: z.enum([
+    "queued",
+    "reviewing",
+    "implementing",
+    "verifying",
+    "converged",
+    "stalled",
+    "failed",
+    "failed_parse",
+    "stopped",
+    "approved",
+  ]),
+  pullRequestNumber: z.number().int().min(1).max(10_000_000),
+  round: z.number().int().min(0).max(100),
+  maxRounds: z.number().int().min(1).max(100),
+  reviewer: ProviderIdSchema,
+  implementer: ProviderIdSchema,
+  findings: z.object({
+    total: z.number().int().min(0).max(1_000_000),
+    high: z.number().int().min(0).max(1_000_000),
+    medium: z.number().int().min(0).max(1_000_000),
+    low: z.number().int().min(0).max(1_000_000),
+  }).strict().optional(),
+  safeStatus: SafeDisplayStringSchema.optional(),
+  updatedAt: IsoTimestampSchema,
+}).strict();
+
+export type ReviewSummary = z.infer<typeof ReviewSummarySchema>;
+
 export const PreviewSessionSummarySchema = z.object({
   id: referenceId(128),
   label: SafeDisplayStringSchema,

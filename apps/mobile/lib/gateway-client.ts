@@ -6,9 +6,12 @@ import {
 } from "@/lib/terminal-state";
 import {
   AgentThreadSnapshotSchema,
+  CursorSchema,
+  ReviewSummarySchema,
   RuntimeSummarySchema,
   type CreateAgentThreadRequest,
   type RuntimeSummary,
+  boundedListSchema,
 } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 
@@ -81,6 +84,12 @@ export type CodingAgentRuntimeSummaryResult =
 export type CodingAgentThreadCreateResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
   | { ok: false; error: "Agent run could not be started. Try again." };
+
+const CodingAgentReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
+
+export type CodingAgentReviewsResult =
+  | { ok: true; reviews: z.infer<typeof CodingAgentReviewListSchema> }
+  | { ok: false; error: "Review state unavailable" };
 
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
@@ -551,6 +560,34 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/coding-agents/threads unavailable");
       return { ok: false, error: "Agent run could not be started. Try again." };
+    }
+  }
+
+  async getCodingAgentReviews(options: { cursor?: string } = {}): Promise<CodingAgentReviewsResult> {
+    try {
+      let path = "/api/coding-agents/reviews";
+      if (options.cursor) {
+        const parsedCursor = CursorSchema.safeParse(options.cursor);
+        if (!parsedCursor.success) {
+          return { ok: false, error: "Review state unavailable" };
+        }
+        path += `?${new URLSearchParams({ cursor: parsedCursor.data }).toString()}`;
+      }
+      const res = await this.fetchGateway(path);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/reviews unavailable", res.status);
+        return { ok: false, error: "Review state unavailable" };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentReviewListSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/reviews returned invalid payload");
+        return { ok: false, error: "Review state unavailable" };
+      }
+      return { ok: true, reviews: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/reviews unavailable");
+      return { ok: false, error: "Review state unavailable" };
     }
   }
 

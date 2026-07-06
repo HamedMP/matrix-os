@@ -1,16 +1,44 @@
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
+import {
+  ReviewSummarySchema,
+  RuntimeSummarySchema,
+  boundedListSchema,
+} from "../../packages/contracts/src/index.js";
 import {
   createCodingAgentRuntimeSummaryService,
   type CodingAgentTerminalSessionRegistry,
 } from "../../packages/gateway/src/coding-agents/runtime-summary.js";
+import {
+  createCodingAgentReviewSummaryStore,
+  type ReviewLoopStore,
+} from "../../packages/gateway/src/coding-agents/review-summary.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = new Date("2026-07-06T12:00:00.000Z");
+
+function reviewRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "rev_1",
+    projectSlug: "matrix-os",
+    worktreeId: "wt_abc123def456",
+    pr: 758,
+    status: "reviewing",
+    round: 1,
+    maxRounds: 3,
+    reviewer: "codex",
+    implementer: "claude",
+    convergenceGate: "findings_only",
+    verificationCommands: [],
+    rounds: [],
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    ...overrides,
+  };
+}
 
 function registryWith(count: number): CodingAgentTerminalSessionRegistry {
   return {
@@ -319,5 +347,172 @@ describe("coding agent runtime summary", () => {
         recoveryActions: ["retry"],
       },
     });
+  });
+
+  it("serves authenticated capped review summaries through a safe coding-agent route", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      terminalRegistry: registryWith(0),
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+    const app = new Hono();
+    app.route("/api/coding-agents", createCodingAgentRoutes({
+      service,
+      reviews: {
+        listReviews: async () => ({
+          items: Array.from({ length: 50 }, (_, index) => ReviewSummarySchema.parse({
+            id: `rev_${index}`,
+            projectId: "matrix-os",
+            worktreeId: "wt_abc123def456",
+            status: index === 0 ? "reviewing" : "queued",
+            pullRequestNumber: 700 + index,
+            round: index,
+            maxRounds: 3,
+            reviewer: "codex",
+            implementer: "claude",
+            findings: {
+              total: index,
+              high: 0,
+              medium: index,
+              low: 0,
+            },
+            updatedAt: new Date(now.getTime() - index * 1000).toISOString(),
+          })),
+          hasMore: true,
+          limit: 50,
+        }),
+      },
+      getPrincipal: () => testPrincipal,
+    }));
+
+    const res = await app.request("/api/coding-agents/reviews");
+
+    expect(res.status).toBe(200);
+    const body = boundedListSchema(ReviewSummarySchema, 50).parse(await res.json());
+    expect(body.items).toHaveLength(50);
+    expect(body.hasMore).toBe(true);
+    expect(body.items[0]).toMatchObject({
+      id: "rev_0",
+      status: "reviewing",
+      findings: { total: 0, high: 0, medium: 0, low: 0 },
+    });
+    expect(JSON.stringify(body)).not.toMatch(/\/home\/matrix|Postgres|token|secret/i);
+  });
+
+  it("withholds owner-local review summaries from other principals", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      listReviews: async () => ({ ok: true, reviews: [reviewRecord()], nextCursor: null }),
+    } as ReviewLoopStore, { ownerId: "owner_user" });
+    const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "configured-container" };
+
+    await expect(store.listReviews(otherPrincipal)).resolves.toEqual({
+      items: [],
+      hasMore: false,
+      limit: 50,
+    });
+  });
+
+  it("allows validated jwt review readers even when the configured owner id uses another owner identifier", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      listReviews: async () => ({ ok: true, reviews: [reviewRecord()], nextCursor: null }),
+    } as ReviewLoopStore, { ownerId: "owner_user", principalOwnerIds: ["clerk_owner_subject"] });
+    const jwtPrincipal: RequestPrincipal = { userId: "clerk_owner_subject", source: "jwt" };
+
+    await expect(store.listReviews(jwtPrincipal)).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: "rev_1" })],
+      hasMore: false,
+      limit: 50,
+    });
+  });
+
+  it("withholds owner-local review summaries from jwt principals outside the owner id allowlist", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      listReviews: async () => ({ ok: true, reviews: [reviewRecord()], nextCursor: null }),
+    } as ReviewLoopStore, { ownerId: "owner_user", principalOwnerIds: ["clerk_owner_subject"] });
+    const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };
+
+    await expect(store.listReviews(otherPrincipal)).resolves.toEqual({
+      items: [],
+      hasMore: false,
+      limit: 50,
+    });
+  });
+
+  it("does not report more review pages only because malformed records were dropped", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      listReviews: async () => ({
+        ok: true,
+        reviews: [
+          reviewRecord({ id: "../bad", projectSlug: "/home/matrix/private" }),
+          reviewRecord({ id: "rev_good" }),
+        ],
+        nextCursor: null,
+      }),
+    } as ReviewLoopStore);
+
+    await expect(store.listReviews(testPrincipal)).resolves.toEqual({
+      items: [expect.objectContaining({ id: "rev_good" })],
+      hasMore: false,
+      limit: 50,
+    });
+  });
+
+  it("preserves review hasMore only when valid review summaries exceed the page cap", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      listReviews: async () => ({
+        ok: true,
+        reviews: Array.from({ length: 51 }, (_, index) => reviewRecord({ id: `rev_${index}` })),
+        nextCursor: null,
+      }),
+    } as ReviewLoopStore);
+
+    const result = await store.listReviews(testPrincipal);
+
+    expect(result.items).toHaveLength(50);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextCursor).toBe("rev_49");
+  });
+
+  it("skips malformed overflow records while preserving a usable review cursor", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      listReviews: async () => ({
+        ok: true,
+        reviews: [
+          ...Array.from({ length: 50 }, (_, index) => reviewRecord({ id: `rev_${index}` })),
+          reviewRecord({ id: "../bad", projectSlug: "/home/matrix/private" }),
+          reviewRecord({ id: "rev_older_valid" }),
+        ],
+        nextCursor: null,
+      }),
+    } as ReviewLoopStore);
+
+    const result = await store.listReviews(testPrincipal);
+
+    expect(result.items).toHaveLength(50);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextCursor).toBe("rev_49");
+  });
+
+  it("keeps a review cursor when malformed raw pages consume the scan window", async () => {
+    let page = 0;
+    const store = createCodingAgentReviewSummaryStore({
+      listReviews: async ({ cursor }) => {
+        page += 1;
+        return {
+          ok: true,
+          reviews: cursor
+            ? Array.from({ length: 100 }, (_, index) => reviewRecord({ id: `../bad_${page}_${index}` }))
+            : Array.from({ length: 50 }, (_, index) => reviewRecord({ id: `rev_${index}` })),
+          nextCursor: cursor ? `rev_after_malformed_page_${page}` : "rev_49",
+        };
+      },
+    } as ReviewLoopStore);
+
+    const result = await store.listReviews(testPrincipal);
+
+    expect(result.items).toHaveLength(50);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextCursor).toBe("rev_49");
   });
 });
