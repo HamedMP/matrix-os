@@ -3,6 +3,7 @@ import {
   SafeDisplayStringSchema,
   TerminalSessionIdSchema,
   type AgentProviderSummary,
+  type AgentThreadSummary,
   type RuntimeSummary,
   type TerminalSessionSummary,
 } from "@matrix-os/contracts";
@@ -34,10 +35,15 @@ export interface CodingAgentRuntimeSummaryService {
   getSummary(principal: RequestPrincipal): Promise<RuntimeSummary>;
 }
 
+export interface CodingAgentThreadSummaryStore {
+  listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
+}
+
 export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
   terminalRegistry?: CodingAgentTerminalSessionRegistry;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
+  threads?: CodingAgentThreadSummaryStore;
   terminalOwnerId?: string;
   now?: () => Date;
   runtime?: {
@@ -152,6 +158,19 @@ async function readProviders(
   }
 }
 
+async function readActiveThreads(
+  store: CodingAgentThreadSummaryStore | undefined,
+  principal: RequestPrincipal,
+): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }> {
+  if (!store) return { items: [], hasMore: false, limit: 20 };
+  try {
+    return await store.listThreads(principal);
+  } catch (err: unknown) {
+    console.warn("[coding-agents] thread summary unavailable:", err instanceof Error ? err.message : String(err));
+    return { items: [], hasMore: false, limit: 20 };
+  }
+}
+
 async function readTerminalSessions(
   registry: CodingAgentTerminalSessionRegistry | undefined,
   homePath: string,
@@ -196,6 +215,7 @@ export function createCodingAgentRuntimeSummaryService(
         options.terminalOwnerId,
       );
       const providers = await readProviders(options.agentCredentials, principal);
+      const activeThreads = await readActiveThreads(options.threads, principal);
 
       return RuntimeSummarySchema.parse({
         runtime: {
@@ -209,14 +229,18 @@ export function createCodingAgentRuntimeSummaryService(
           { id: "codingAgentsRuntimeSummary", enabled: true },
           { id: "codingAgentsDesktopWorkspace", enabled: false, reason: "Not enabled yet" },
           { id: "codingAgentsMobileWorkspace", enabled: false, reason: "Not enabled yet" },
-          { id: "codingAgentsThreadCreate", enabled: false, reason: "Not enabled yet" },
+          {
+            id: "codingAgentsThreadCreate",
+            enabled: Boolean(options.threads),
+            reason: options.threads ? undefined : "Not enabled yet",
+          },
           { id: "codingAgentsApprovals", enabled: false, reason: "Not enabled yet" },
           { id: "codingAgentsReview", enabled: false, reason: "Not enabled yet" },
           { id: "codingAgentsNativeMobileTerminal", enabled: false, reason: "Not enabled yet" },
         ],
         providers,
         projects: { items: [], hasMore: false, limit: 20 },
-        activeThreads: { items: [], hasMore: false, limit: 20 },
+        activeThreads,
         terminalSessions: await terminalSessions,
         recentActivity: { items: [], hasMore: false, limit: 30 },
         limits: {
