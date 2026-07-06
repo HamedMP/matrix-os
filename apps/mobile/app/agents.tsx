@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -18,8 +18,11 @@ export default function AgentsScreen() {
   const { client } = useGateway();
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
   const [refreshing, setRefreshing] = useState(false);
+  const requestGeneration = useRef(0);
 
   const loadSummary = useCallback(async () => {
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
     if (!CODING_AGENTS_MOBILE_WORKSPACE) {
       setState({ status: "error", summary: null, error: "Runtime summary unavailable" });
       return;
@@ -29,6 +32,7 @@ export default function AgentsScreen() {
       return;
     }
     const result = await client.getCodingAgentRuntimeSummary();
+    if (generation !== requestGeneration.current) return;
     if (result.ok) {
       setState({ status: "ready", summary: result.summary, error: null });
       return;

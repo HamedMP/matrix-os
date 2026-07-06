@@ -28,7 +28,8 @@ import { colors } from "@/lib/theme";
 
 const H_PADDING = 16;
 
-// Chat lives elsewhere, and the launcher should not show a self-entry.
+// Chat intentionally stays out of the launcher grid; the Apps launcher also
+// hides itself because it is the current surface.
 const HIDDEN_APP_SLUGS = new Set<string>(["apps", "chat"]);
 
 // Fallback monogram-tile palette: tinted background + legible glyph colour,
@@ -510,10 +511,12 @@ export default function AppsScreen() {
   useEffect(() => {
     let cancelled = false;
     if (!client) {
-      queueMicrotask(() => {
+      Promise.resolve().then(() => {
         if (!cancelled) setAuthHeader(undefined);
       });
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
     client
       .getAuthorizationHeader()

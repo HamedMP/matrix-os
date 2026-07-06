@@ -2,8 +2,12 @@ jest.mock("@/app/_layout", () => ({
   useGateway: jest.fn(),
 }));
 
+jest.mock("@/lib/feature-flags", () => ({
+  CODING_AGENTS_MOBILE_WORKSPACE: true,
+}));
+
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react-native";
+import { act, render, screen, waitFor } from "@testing-library/react-native";
 import AgentsScreen from "../app/agents";
 import { useGateway } from "@/app/_layout";
 import type { GatewayClient } from "../lib/gateway-client";
@@ -90,6 +94,14 @@ function summaryFixture() {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
 describe("AgentsScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -131,5 +143,58 @@ describe("AgentsScreen", () => {
 
     await waitFor(() => expect(screen.getByText("Runtime summary unavailable")).toBeTruthy());
     expect(screen.queryByText(/home\/matrix/)).toBeNull();
+  });
+
+  it("ignores a delayed summary from a previous gateway client", async () => {
+    const oldRequest = deferred<{ ok: true; summary: ReturnType<typeof summaryFixture> }>();
+    const oldClient = {
+      getCodingAgentRuntimeSummary: jest.fn(() => oldRequest.promise),
+    };
+    const newClient = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: {
+          ...summaryFixture(),
+          runtime: {
+            id: "rt_new",
+            label: "New runtime",
+            status: "available",
+          },
+        },
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: oldClient as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const view = render(<AgentsScreen />);
+
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: newClient as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+    view.rerender(<AgentsScreen />);
+    await screen.findByText("New runtime");
+
+    await act(async () => {
+      oldRequest.resolve({
+        ok: true,
+        summary: {
+          ...summaryFixture(),
+          runtime: {
+            id: "rt_old",
+            label: "Old runtime",
+            status: "available",
+          },
+        },
+      });
+      await oldRequest.promise;
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Old runtime")).toBeNull();
+      expect(screen.getByText("New runtime")).toBeTruthy();
+    });
   });
 });
