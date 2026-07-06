@@ -12,6 +12,7 @@ describe("IPC contract", () => {
       "auth:poll",
       "auth:status",
       "auth:sign-out",
+      "runtime:get-summary",
       "runtime:select",
       "state:get",
       "state:set",
@@ -27,6 +28,54 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("validates runtime:get-summary responses and rejects credential leakage shapes", () => {
+    const schema = INVOKE_CHANNELS["runtime:get-summary"].response;
+    const valid = {
+      runtime: {
+        id: "rt_primary",
+        label: "Primary",
+        status: "available",
+      },
+      capabilities: [
+        {
+          id: "codingAgentsRuntimeSummary",
+          enabled: true,
+        },
+      ],
+      providers: [],
+      projects: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      activeThreads: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      terminalSessions: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      recentActivity: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      limits: {
+        maxPromptBytes: 16384,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 8192,
+        maxListItems: 20,
+      },
+      serverTime: "2026-07-06T00:00:00.000Z",
+    };
+
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
   });
 
   it("validates auth:poll responses and rejects token leakage shapes", () => {

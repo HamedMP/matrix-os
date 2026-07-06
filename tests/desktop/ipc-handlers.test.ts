@@ -36,6 +36,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     notify: vi.fn(),
     onRuntimeChanged: vi.fn(),
     getUpdateStatus: vi.fn(() => "disabled"),
+    fetchRuntimeSummary: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
 
@@ -105,5 +106,64 @@ describe("registerIpcHandlers", () => {
     const harness = makeHarness({ getUpdateStatus: vi.fn(() => "ready") });
 
     await expect(harness.invoke("update:check")).resolves.toEqual({ status: "ready" });
+  });
+
+  it("returns the runtime summary through a strict trusted-core IPC channel", async () => {
+    const summary = {
+      runtime: {
+        id: "rt_primary",
+        label: "Primary",
+        status: "available",
+      },
+      capabilities: [
+        {
+          id: "codingAgentsRuntimeSummary",
+          enabled: true,
+        },
+      ],
+      providers: [],
+      projects: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      activeThreads: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      terminalSessions: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      recentActivity: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      limits: {
+        maxPromptBytes: 16384,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 8192,
+        maxListItems: 20,
+      },
+      serverTime: "2026-07-06T00:00:00.000Z",
+    };
+    const fetchRuntimeSummary = vi.fn().mockResolvedValue(summary);
+    const harness = makeHarness({ fetchRuntimeSummary } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-summary")).resolves.toEqual(summary);
+    expect(fetchRuntimeSummary).toHaveBeenCalledWith();
+  });
+
+  it("maps runtime summary failures to a generic IPC error", async () => {
+    const fetchRuntimeSummary = vi
+      .fn()
+      .mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.5:4000"));
+    const harness = makeHarness({ fetchRuntimeSummary } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-summary")).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:get-summary")).rejects.not.toThrow("10.0.0.5");
   });
 });

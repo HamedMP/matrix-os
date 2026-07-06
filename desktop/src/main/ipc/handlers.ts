@@ -6,6 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
+import type { RuntimeSummary } from "@matrix-os/contracts";
 
 interface IpcMainLike {
   handle(
@@ -23,6 +24,7 @@ export interface HandlerContext {
   notify: (input: { threadId: string; title: string; body: string; kind: string }) => void;
   onRuntimeChanged: (slot: string) => void;
   getUpdateStatus: () => UpdateStatus;
+  fetchRuntimeSummary: () => Promise<RuntimeSummary>;
 }
 
 type Handler<C extends InvokeChannel> = (
@@ -78,6 +80,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     ctx.onRuntimeChanged(slot);
     return { ok: true };
   });
+  handle("runtime:get-summary", () => ctx.fetchRuntimeSummary());
 
   handle("state:get", async ({ key }) => ({
     value: await ctx.store.get(key as LocalStoreKey),
