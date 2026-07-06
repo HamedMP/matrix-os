@@ -371,6 +371,100 @@ describe("coding agent thread lifecycle", () => {
     );
   });
 
+  it("forces provider abort output to finish with an aborted thread", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+      abortThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    const aborted = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_nonterminal");
+
+    expect(aborted.thread.status).toBe("aborted");
+    expect(aborted.events.items.at(-1)).toMatchObject({
+      type: "thread.completed",
+      outcome: "aborted",
+      threadId: created.snapshot.thread.id,
+    });
+  });
+
+  it("rejects provider events for the wrong thread before storing them", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    let wrongThreadId = "thread_other";
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+      abortThread({ now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.completed",
+            eventId: nextEventId(),
+            threadId: wrongThreadId,
+            occurredAt: providerNow().toISOString(),
+            outcome: "aborted",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+    const other = await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      clientRequestId: "req_create_other",
+    });
+    wrongThreadId = other.snapshot.thread.id;
+    const rawBefore = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf-8"));
+    const wrongThreadEventCount = rawBefore.events.filter((event: { threadId?: string }) => event.threadId === wrongThreadId).length;
+
+    const aborted = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_wrong_thread");
+    const rawAfter = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf-8"));
+
+    expect(aborted.thread.status).toBe("aborted");
+    expect(aborted.events.items.every((event) => event.threadId === created.snapshot.thread.id)).toBe(true);
+    expect(rawAfter.events.filter((event: { threadId?: string }) => event.threadId === wrongThreadId)).toHaveLength(wrongThreadEventCount);
+  });
+
   it("rejects unauthenticated, oversized, invalid provider, and unsafe route input", async () => {
     const { app, setPrincipal } = await createHarness();
 

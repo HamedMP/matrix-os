@@ -334,8 +334,16 @@ function defaultAbortEvents(threadId: string, now: () => Date, eventId: () => st
   ];
 }
 
-function parseProviderEvents(events: AgentThreadEvent[]): AgentThreadEvent[] {
-  return events.map((event) => AgentThreadEventSchema.parse(event));
+function parseProviderEvents(events: AgentThreadEvent[], threadId: string): AgentThreadEvent[] {
+  const parsed = events.map((event) => AgentThreadEventSchema.parse(event));
+  if (parsed.some((event) => event.threadId !== threadId)) {
+    throw new Error("Provider emitted event for another thread");
+  }
+  return parsed;
+}
+
+function includesAbortedCompletion(events: AgentThreadEvent[]): boolean {
+  return events.some((event) => event.type === "thread.completed" && event.outcome === "aborted");
 }
 
 export function safeThreadError(code: CodingAgentThreadError["code"]) {
@@ -449,7 +457,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
             request,
             now,
             nextEventId,
-          }));
+          }), thread.id);
         } catch (err: unknown) {
           console.warn("[coding-agents] provider start failed:", err instanceof Error ? err.message : String(err));
           providerEvents = safeProviderRunFailureEvents(thread.id, now, nextEventId);
@@ -509,7 +517,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
               clientRequestId,
               now,
               nextEventId,
-            }));
+            }), threadId);
             if (abortEvents.length === 0) {
               abortEvents = defaultAbortEvents(threadId, now, nextEventId);
             }
@@ -523,6 +531,13 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         let nextThread = thread;
         for (const event of abortEvents) {
           nextThread = applyEvent(nextThread, event);
+        }
+        if (nextThread.status !== "aborted" || !includesAbortedCompletion(abortEvents)) {
+          const fallbackEvents = defaultAbortEvents(threadId, now, nextEventId);
+          abortEvents = [...abortEvents, ...fallbackEvents];
+          for (const event of fallbackEvents) {
+            nextThread = applyEvent(nextThread, event);
+          }
         }
         nextThread = {
           ...nextThread,
