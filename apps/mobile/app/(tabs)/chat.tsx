@@ -1,3 +1,4 @@
+import "@/lib/hermes-polyfills";
 import { useEffect, useState, useRef, useCallback, useEffectEvent } from "react";
 import {
   View,

@@ -1,3 +1,4 @@
+import "@/lib/hermes-polyfills";
 import { useEffect, useReducer, useCallback, useMemo } from "react";
 import {
   View,
@@ -7,9 +8,12 @@ import {
   Switch,
   Linking,
   RefreshControl,
+  Alert,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
+import { useAuth } from "@clerk/clerk-expo";
+import { useRouter } from "expo-router";
 import { useGateway } from "../_layout";
 import { ChannelBadge } from "@/components/ChannelBadge";
 import {
@@ -34,14 +38,17 @@ function SettingsRow({
   icon,
   onPress,
   right,
+  tone = "default",
 }: {
   label: string;
   value?: string;
   icon?: keyof typeof Ionicons.glyphMap;
   onPress?: () => void;
   right?: React.ReactNode;
+  tone?: "default" | "danger";
 }) {
   const { theme } = useUnistyles();
+  const isDanger = tone === "danger";
   return (
     <Pressable
       onPress={onPress}
@@ -53,11 +60,11 @@ function SettingsRow({
     >
       <View style={styles.rowLeft}>
         {icon && (
-          <View style={styles.rowIcon}>
-            <Ionicons name={icon} size={18} color={theme.colors.primary} />
+          <View style={isDanger ? styles.rowIconDanger : styles.rowIcon}>
+            <Ionicons name={icon} size={18} color={isDanger ? theme.colors.destructive : theme.colors.primary} />
           </View>
         )}
-        <Text style={styles.rowLabel}>{label}</Text>
+        <Text style={isDanger ? styles.rowLabelDanger : styles.rowLabel}>{label}</Text>
       </View>
       {value ? (
         <Text selectable style={styles.rowValue}>{value}</Text>
@@ -125,6 +132,8 @@ function settingsReducer(state: SettingsState, action: SettingsAction): Settings
 }
 
 export default function SettingsScreen() {
+  const router = useRouter();
+  const { signOut } = useAuth();
   const { client, connectionState, gateway } = useGateway();
   const [state, dispatch] = useReducer(settingsReducer, INITIAL_SETTINGS_STATE);
   const { settings, channels, systemInfo, aiProfile, biometricLabel, biometricAvailable, refreshing } = state;
@@ -176,6 +185,24 @@ export default function SettingsScreen() {
     [],
   );
 
+  const handleSignOut = useCallback(() => {
+    Alert.alert("Sign out?", "You’ll return to sign in and can choose a Matrix OS computer URL.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign out",
+        style: "destructive",
+        onPress: () => {
+          void signOut()
+            .then(() => router.replace("/sign-in" as any))
+            .catch((err: unknown) => {
+              console.warn("[mobile] sign-out failed", err instanceof Error ? err.message : String(err));
+              Alert.alert("Sign out failed", "Try again in a moment.");
+            });
+        },
+      },
+    ]);
+  }, [router, signOut]);
+
   if (!settings) return null;
 
   return (
@@ -189,8 +216,10 @@ export default function SettingsScreen() {
       refreshing={refreshing}
       connectionState={connectionState}
       gatewayName={gateway?.name ?? null}
+      gatewayUrl={gateway?.url ?? null}
       onRefresh={handleRefresh}
       updateSetting={updateSetting}
+      onSignOut={handleSignOut}
     />
   );
 }
@@ -205,8 +234,10 @@ interface SettingsContentProps {
   refreshing: boolean;
   connectionState: string;
   gatewayName: string | null;
+  gatewayUrl: string | null;
   onRefresh: () => void;
   updateSetting: (key: keyof AppSettings, value: boolean | string) => void;
+  onSignOut: () => void;
 }
 
 function SettingsContent({
@@ -219,8 +250,10 @@ function SettingsContent({
   refreshing,
   connectionState,
   gatewayName,
+  gatewayUrl,
   onRefresh,
   updateSetting,
+  onSignOut,
 }: SettingsContentProps) {
   const { theme: uniTheme } = useUnistyles();
   const refreshControl = useMemo(
@@ -241,7 +274,7 @@ function SettingsContent({
         <SettingsRow
           label={gatewayName ?? "Not connected"}
           icon="server-outline"
-          value={connectionState === "connected" ? "app.matrix-os.com" : connectionState}
+          value={gatewayUrl ?? connectionState}
         />
       </SettingsSection>
 
@@ -386,6 +419,15 @@ function SettingsContent({
           <Text style={styles.actionButtonText}>matrix-os.com</Text>
         </Pressable>
       </SettingsSection>
+
+      <SettingsSection title="Account">
+        <SettingsRow
+          label="Sign out"
+          icon="log-out-outline"
+          tone="danger"
+          onPress={onSignOut}
+        />
+      </SettingsSection>
     </ScrollView>
   );
 }
@@ -443,16 +485,33 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  rowIconDanger: {
+    width: 32,
+    height: 32,
+    borderRadius: theme.radius.sm,
+    borderCurve: "continuous" as const,
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   rowLabel: {
     fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
     color: theme.colors.foreground,
     flex: 1,
   },
+  rowLabelDanger: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 14,
+    color: theme.colors.destructive,
+    flex: 1,
+  },
   rowValue: {
     fontFamily: theme.fonts.sansMedium,
     fontSize: 13,
     color: theme.colors.mutedForeground,
+    maxWidth: "54%",
+    textAlign: "right",
   },
   emptyRow: {
     flexDirection: "row",

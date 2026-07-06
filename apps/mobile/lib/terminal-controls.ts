@@ -5,15 +5,26 @@ import type { TerminalControlKey } from "./terminal-state";
 // caption is the human-readable action for discoverability.
 export const TERMINAL_CONTROL_KEYS: Array<{ label: string; caption: string; key: TerminalControlKey }> = [
   { label: "^C", caption: "interrupt", key: "ctrl-c" },
+  { label: "^P", caption: "zellij pane mode", key: "ctrl-p" },
+  { label: "^O", caption: "zellij session mode", key: "ctrl-o" },
+  { label: "^T", caption: "zellij tab mode", key: "ctrl-t" },
+  { label: "^W", caption: "zellij window/word", key: "ctrl-w" },
+  { label: "^N", caption: "next", key: "ctrl-n" },
   { label: "^D", caption: "eof", key: "ctrl-d" },
   { label: "^Z", caption: "suspend", key: "ctrl-z" },
   { label: "^L", caption: "clear", key: "ctrl-l" },
   { label: "^R", caption: "search", key: "ctrl-r" },
+  { label: "^S", caption: "scroll/search mode", key: "ctrl-s" },
+  { label: "^Q", caption: "quit/flow", key: "ctrl-q" },
+  { label: "^G", caption: "locked mode", key: "ctrl-g" },
+  { label: "^B", caption: "back", key: "ctrl-b" },
+  { label: "^F", caption: "forward", key: "ctrl-f" },
+  { label: "^H", caption: "delete", key: "ctrl-h" },
+  { label: "^J", caption: "down", key: "ctrl-j" },
+  { label: "^K", caption: "up/kill", key: "ctrl-k" },
   { label: "^A", caption: "line start", key: "ctrl-a" },
   { label: "^E", caption: "line end", key: "ctrl-e" },
   { label: "^U", caption: "clear line", key: "ctrl-u" },
-  { label: "^K", caption: "kill", key: "ctrl-k" },
-  { label: "^W", caption: "del word", key: "ctrl-w" },
 ];
 
 // Special keys shown on the keyboard's home row.

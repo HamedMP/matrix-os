@@ -48,6 +48,7 @@ export default function SessionsScreen() {
   const { client } = useGateway();
   const terminalClient = useMemo(() => (client ? new MobileTerminalClient(client) : null), [client]);
   const [sessions, setSessions] = useState<MobileTerminalSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -72,6 +73,14 @@ export default function SessionsScreen() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    loadMobileShellState()
+      .then((state) => setActiveSessionId(state.lastActiveTerminalSessionId))
+      .catch((err: unknown) => {
+        console.warn("[mobile] failed to load active terminal session", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
+
   const openSession = useCallback(async (name: string) => {
     try {
       const saved = await loadMobileShellState();
@@ -81,10 +90,11 @@ export default function SessionsScreen() {
         lastActiveTerminalSessionId: name,
         updatedAt: new Date().toISOString(),
       });
+      setActiveSessionId(name);
     } catch (err: unknown) {
       console.warn("[mobile] failed to persist active session", err instanceof Error ? err.message : String(err));
     }
-    router.push("/terminal");
+    router.replace("/terminal");
   }, [router]);
 
   const createSession = useCallback(async () => {
@@ -125,6 +135,7 @@ export default function SessionsScreen() {
           <SessionRow
             key={session.sessionId}
             session={session}
+            active={session.sessionId === activeSessionId}
             onOpen={() => openSession(session.sessionId)}
             onEnd={() => endSession(session.sessionId)}
           />
@@ -180,10 +191,12 @@ export default function SessionsScreen() {
 
 function SessionRow({
   session,
+  active,
   onOpen,
   onEnd,
 }: {
   session: MobileTerminalSession;
+  active: boolean;
   onOpen: () => void;
   onEnd: () => void;
 }) {
@@ -191,14 +204,19 @@ function SessionRow({
   const status = session.visualStatus ? STATUS_META[session.visualStatus] : STATUS_META.running;
   const onDesktop = (session.attachedClients ?? 0) > 1;
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`Open ${session.sessionId}`} onPress={onOpen} style={styles.row}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${active ? "Current session" : "Open"} ${session.sessionId}`}
+      onPress={onOpen}
+      style={[styles.row, active && styles.rowActive]}
+    >
       <View style={styles.dotLane}>
         <View style={[styles.dot, { backgroundColor: status.hollow ? "transparent" : status.color, borderColor: status.color, borderWidth: status.hollow ? 1.5 : 0 }]} />
       </View>
       <View style={styles.rowBody}>
         <Text style={styles.rowTitle} numberOfLines={1}>{session.sessionId}</Text>
         <Text style={[styles.statusText, session.visualStatus === "waiting" && styles.statusWaiting]} numberOfLines={1}>
-          {status.label}
+          {active ? "current" : status.label}
         </Text>
         {onDesktop ? (
           <View style={styles.desktopBadge}>
@@ -298,6 +316,10 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.line,
     backgroundColor: theme.colors.panel,
+  },
+  rowActive: {
+    borderColor: theme.colors.accentInk,
+    backgroundColor: theme.colors.secondary,
   },
   desktopText: { fontFamily: theme.fonts.sansMedium, fontSize: 11, color: theme.colors.accentInk },
   endButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },

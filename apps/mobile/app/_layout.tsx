@@ -1,3 +1,4 @@
+import "@/lib/hermes-polyfills";
 import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
 import { Stack, useRouter } from "expo-router";
@@ -24,7 +25,7 @@ import {
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClerkProvider, useAuth } from "@clerk/clerk-expo";
 import { GatewayClient, type ConnectionState } from "@/lib/gateway-client";
-import { HOSTED_GATEWAY, type GatewayConnection } from "@/lib/storage";
+import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
 
@@ -187,6 +188,9 @@ function GatewayShell() {
   }, []);
 
   const setGateway = useCallback((gw: GatewayConnection) => {
+    const nextKey = `${gw.url}:${gw.token ?? ""}`;
+    if (connectionKeyRef.current === nextKey) return;
+    connectionKeyRef.current = nextKey;
     clientRef.current?.disconnect();
     const newClient = new GatewayClient(gw.url, gw.token);
     newClient.onStateChange(setConnectionState);
@@ -201,8 +205,30 @@ function GatewayShell() {
 
     let cancelled = false;
 
-    async function connectHostedGateway() {
+    async function connectSelectedGateway() {
+      const selectedGateway = await getSelectedGatewayConnection();
+      if (cancelled) return;
+
       if (!isSignedIn) {
+        if (!isHostedGatewayUrl(selectedGateway.url) && selectedGateway.token) {
+          const nextKey = `${selectedGateway.url}:${selectedGateway.token}`;
+          if (connectionKeyRef.current === nextKey) return;
+          connectionKeyRef.current = nextKey;
+
+          clientRef.current?.disconnect();
+          const nextClient = new GatewayClient(selectedGateway.url, selectedGateway.token);
+          clientRef.current = nextClient;
+          setClient(nextClient);
+          setGatewayState(selectedGateway);
+          setConnectionState("connecting");
+          nextClient.onStateChange(setConnectionState);
+          const wsToken = await nextClient.getWsToken();
+          if (cancelled || clientRef.current !== nextClient) return;
+          if (wsToken) nextClient.setWebSocketToken(wsToken);
+          nextClient.connect();
+          return;
+        }
+
         if (connectionKeyRef.current === null) return;
         connectionKeyRef.current = null;
         clientRef.current?.disconnect();
@@ -226,19 +252,21 @@ function GatewayShell() {
         return;
       }
 
-      const hostedGateway: GatewayConnection = {
-        ...HOSTED_GATEWAY,
-        token,
+      const authenticatedGateway: GatewayConnection = {
+        ...selectedGateway,
+        token: selectedGateway.token ?? token,
       };
-      const nextKey = `${hostedGateway.url}:${hostedGateway.token ?? ""}`;
+      const nextKey = `${authenticatedGateway.url}:${authenticatedGateway.token ?? ""}`;
       if (connectionKeyRef.current === nextKey) return;
       connectionKeyRef.current = nextKey;
 
       clientRef.current?.disconnect();
-      const nextClient = new GatewayClient(hostedGateway.url, () => getTokenRef.current());
+      const nextClient = selectedGateway.token
+        ? new GatewayClient(authenticatedGateway.url, selectedGateway.token)
+        : new GatewayClient(authenticatedGateway.url, () => getTokenRef.current());
       clientRef.current = nextClient;
       setClient(nextClient);
-      setGatewayState(hostedGateway);
+      setGatewayState(authenticatedGateway);
       setConnectionState("connecting");
 
       nextClient.onStateChange(setConnectionState);
@@ -253,7 +281,7 @@ function GatewayShell() {
       nextClient.connect();
     }
 
-    connectHostedGateway();
+    connectSelectedGateway();
 
     return () => {
       cancelled = true;
@@ -287,7 +315,6 @@ function GatewayShell() {
           <Stack.Screen name="index" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="apps" options={{ headerShown: false }} />
-          <Stack.Screen name="terminal" options={{ headerShown: false }} />
           <Stack.Screen name="runtime" options={{ headerShown: false }} />
           <Stack.Screen name="canvas/index" options={{ headerShown: false }} />
           <Stack.Screen name="sessions" options={{ headerShown: false, presentation: "modal" }} />

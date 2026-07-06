@@ -5,6 +5,11 @@ import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 
+// Chat is hidden from the tab bar, so land on Apps by default.
+export const unstable_settings = {
+  initialRouteName: "apps",
+};
+
 const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
   chat: { outline: "chatbubble-outline", filled: "chatbubble" },
   apps: { outline: "apps-outline", filled: "apps" },
@@ -38,7 +43,7 @@ function ConnectionDot({ connected }: { connected: boolean }) {
 
 export default function TabsLayout() {
   const { theme } = useUnistyles();
-  const { connectionState, unreadCount } = useGateway();
+  const { connectionState } = useGateway();
   const isConnected = connectionState === "connected";
 
   return (
@@ -59,15 +64,8 @@ export default function TabsLayout() {
         headerRight: () => <ConnectionDot connected={isConnected} />,
       }}
     >
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: "Chat",
-          tabBarIcon: ({ focused }) => <TabIcon name="chat" focused={focused} />,
-          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
-          tabBarBadgeStyle: unreadCount > 0 ? styles.badge : undefined,
-        }}
-      />
+      {/* Chat is intentionally hidden from the tab bar; route kept for deep links. */}
+      <Tabs.Screen name="chat" options={{ href: null }} />
       <Tabs.Screen
         name="apps"
         options={{
@@ -100,30 +98,29 @@ export default function TabsLayout() {
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create((theme, rt) => ({
+  // Full-width frosted bar anchored to the bottom edge — no floating gaps, so the
+  // paper background never peeks around it. Content scrolls under the blur.
   tabBar: {
     position: "absolute" as const,
-    left: 14,
-    right: 14,
-    bottom: process.env.EXPO_OS === "ios" ? 12 : 10,
-    height: process.env.EXPO_OS === "ios" ? 78 : 66,
-    paddingTop: 8,
-    paddingBottom: process.env.EXPO_OS === "ios" ? 18 : 8,
-    borderTopWidth: 0,
-    borderRadius: 26,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: theme.glass.border,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: (process.env.EXPO_OS === "ios" ? 56 : 60) + rt.insets.bottom,
+    paddingTop: 10,
+    paddingBottom: rt.insets.bottom > 0 ? rt.insets.bottom - 4 : 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.glass.border,
     backgroundColor: theme.glass.tint,
-    overflow: "hidden",
-    boxShadow: theme.shadows.nav,
+    elevation: 0,
+    boxShadow: "0 -1px 14px rgba(50, 61, 46, 0.05)",
   },
   tabBarBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: theme.glass.tint,
   },
   tabBarItem: {
-    borderRadius: 20,
+    borderRadius: 18,
     borderCurve: "continuous" as const,
   },
   tabBarLabel: {

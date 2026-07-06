@@ -31,35 +31,37 @@ describe("GatewayClient", () => {
     expect(client.httpUrl).toBe("http://localhost:4000");
   });
 
-  it("allows token transport over HTTPS and loopback HTTP only", () => {
+  it("allows self-hosted token transport over HTTP but keeps Matrix OS Cloud HTTPS-only", () => {
     expect(() => new GatewayClient("https://app.matrix-os.com", "token")).not.toThrow();
     expect(() => new GatewayClient("http://localhost:4000", "token")).not.toThrow();
     expect(() => new GatewayClient("http://127.0.0.1:4000", "token")).not.toThrow();
     expect(() => new GatewayClient("http://[::1]:4000", "token")).not.toThrow();
+    expect(() => new GatewayClient("http://203.0.113.10:4000", "token")).not.toThrow();
     expect(() => new GatewayClient("http://app.matrix-os.com", "token")).toThrow(
-      "Gateway tokens require HTTPS/WSS unless connecting to localhost.",
+      "Matrix OS Cloud requires HTTPS/WSS.",
     );
   });
 
-  it("rejects insecure remote gateway URLs for deferred token sources", () => {
+  it("rejects insecure Matrix OS Cloud URLs for deferred token sources", () => {
     const getToken = jest.fn<Promise<string | null>, []>().mockResolvedValue("token");
     expect(() => new GatewayClient("http://app.matrix-os.com", getToken)).toThrow(
-      "Gateway tokens require HTTPS/WSS unless connecting to localhost.",
+      "Matrix OS Cloud requires HTTPS/WSS.",
     );
   });
 
-  it("rejects websocket query tokens over insecure remote gateway URLs", () => {
+  it("rejects websocket query tokens over insecure Matrix OS Cloud URLs", () => {
     const client = new GatewayClient("http://app.matrix-os.com");
     expect(() => client.setWebSocketToken("ws-token")).toThrow(
-      "Gateway tokens require HTTPS/WSS unless connecting to localhost.",
+      "Matrix OS Cloud requires HTTPS/WSS.",
     );
   });
 
   it("validates standalone gateway token transport URLs", () => {
     expect(() => assertSecureTokenTransport("wss://app.matrix-os.com")).not.toThrow();
     expect(() => assertSecureTokenTransport("ws://app.matrix-os.com")).toThrow(
-      "Gateway tokens require HTTPS/WSS unless connecting to localhost.",
+      "Matrix OS Cloud requires HTTPS/WSS.",
     );
+    expect(() => assertSecureTokenTransport("ws://203.0.113.10:4000")).not.toThrow();
   });
 
   it("registers message handlers", () => {

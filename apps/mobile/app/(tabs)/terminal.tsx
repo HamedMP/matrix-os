@@ -2,16 +2,20 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
+  Keyboard,
   Pressable,
   Text,
+  useWindowDimensions,
   View,
+  type KeyboardEvent,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { useGateway } from "@/app/_layout";
 import { TerminalControlBar } from "@/components/TerminalControlBar";
 import { TerminalSurface, type TerminalSurfaceHandle } from "@/components/TerminalSurface";
@@ -32,15 +36,18 @@ export default function TerminalScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const { client } = useGateway();
   const [state, dispatch] = useReducer(terminalReducer, initialTerminalState);
   const [lastTerminalSessionId, setLastTerminalSessionId] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
+  const [chromeExpanded, setChromeExpanded] = useState(false);
   const terminalClient = useMemo(() => (client ? new MobileTerminalClient(client) : null), [client]);
   const connectionRef = useRef<MobileTerminalConnection | null>(null);
   const connectAttemptRef = useRef(0);
   const connectingRef = useRef(false);
   const surfaceRef = useRef<TerminalSurfaceHandle | null>(null);
+  const keyboardLift = useRef(new Animated.Value(0)).current;
 
   // Initial grid; the embedded emulator reports its fitted size via onResize.
   const gridRef = useRef({ cols: 80, rows: 24 });
@@ -192,6 +199,35 @@ export default function TerminalScreen() {
     if (!sent) dispatch({ type: "terminal.error", message: "Terminal unavailable" });
   }, []);
 
+  const animateKeyboardLift = useCallback((event: KeyboardEvent | null, lift: number) => {
+    Animated.timing(keyboardLift, {
+      toValue: lift,
+      duration: event?.duration ?? 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [keyboardLift]);
+
+  useEffect(() => {
+    const liftForEvent = (event: KeyboardEvent) => {
+      const keyboardTop = event.endCoordinates.screenY;
+      const keyboardHeight = Math.max(0, windowHeight - keyboardTop);
+      return Math.max(0, keyboardHeight - insets.bottom);
+    };
+    const show = Keyboard.addListener(
+      process.env.EXPO_OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow",
+      (event) => animateKeyboardLift(event, liftForEvent(event)),
+    );
+    const hide = Keyboard.addListener(
+      process.env.EXPO_OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      (event) => animateKeyboardLift(event, 0),
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [animateKeyboardLift, insets.bottom, windowHeight]);
+
 
   const destroySession = useCallback(async () => {
     const sessionId = state.activeSessionId;
@@ -251,71 +287,70 @@ export default function TerminalScreen() {
   }, [state.status, autoAttachSession, connectSession]);
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      style={styles.screen}
-      keyboardVerticalOffset={0}
-    >
+    <View style={styles.screen}>
+      <StatusBar style="light" backgroundColor={theme.terminal.surface} />
       <WindowHeader
-        paddingTop={insets.top + 8}
-        title="Terminal"
-        subtitle={cwd}
+        tone="terminal"
+        paddingTop={insets.top + (chromeExpanded ? 8 : 3)}
+        title={chromeExpanded ? "Terminal" : cwd}
+        subtitle={chromeExpanded ? cwd : undefined}
         titleAffordance
-        onTitlePress={() => router.push("/sessions")}
+        onTitlePress={() => setChromeExpanded((value) => !value)}
         onBack={() => router.navigate("/(tabs)/apps")}
-        maximized={maximized}
+        maximized={maximized || !chromeExpanded}
         onToggleMaximized={() => setMaximized((prev) => !prev)}
         actions={
           <>
+            <WindowHeaderAction tone="terminal" icon="albums-outline" label="Sessions" onPress={() => router.push("/sessions")} />
             {state.activeSessionId ? (
-              <WindowHeaderAction icon="stop-circle-outline" label="End session" onPress={confirmEnd} tint={theme.colors.destructive} />
+              <WindowHeaderAction tone="terminal" icon="stop-circle-outline" label="End session" onPress={confirmEnd} tint={theme.terminal.brightRed} />
             ) : null}
             {state.status === "connecting" ? (
               <ActivityIndicator color={theme.colors.accentInk} style={styles.headerSpinner} />
             ) : (
-              <WindowHeaderAction icon="add" label="New session" onPress={() => connectSession()} />
+              <WindowHeaderAction tone="terminal" icon="add" label="New session" onPress={() => connectSession()} />
             )}
           </>
         }
       />
 
-      {maximized ? null : (
-        <SessionChipRow
-          sessions={runningSessions}
-          activeSessionId={state.activeSessionId}
-          onSelect={connectSession}
-        />
-      )}
-
-      <View style={styles.terminalSurface}>
-        <TerminalSurface
-          ref={surfaceRef}
-          fontScale={state.fontScale}
-          onInput={sendData}
-          onResize={handleResize}
-        />
-        {state.status === "idle" ? (
-          <View style={styles.emptyOverlay} pointerEvents="none">
-            <Text style={styles.emptyTitle}>No terminal session</Text>
-            <Text style={styles.emptySubtitle}>Start a session to run commands on your Matrix VPS.</Text>
-          </View>
-        ) : null}
-      </View>
-
-      {state.error && (
-        <View style={styles.errorBar}>
-          <Text style={styles.errorText}>{state.error}</Text>
+      <Animated.View style={[styles.terminalStack, { transform: [{ translateY: Animated.multiply(keyboardLift, -1) }] }]}>
+        <View style={styles.terminalSurface}>
+          <TerminalSurface
+            ref={surfaceRef}
+            fontScale={state.fontScale}
+            onInput={sendData}
+            onResize={handleResize}
+          />
+          {state.status === "idle" ? (
+            <View style={styles.emptyOverlay} pointerEvents="none">
+              <Text style={styles.emptyTitle}>No terminal session</Text>
+              <Text style={styles.emptySubtitle}>Start a session to run commands on your Matrix VPS.</Text>
+            </View>
+          ) : null}
         </View>
-      )}
 
-      <View style={[styles.controlFooter, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <TerminalControlBar
-          onSend={sendData}
-          onFontScale={(delta) => dispatch({ type: "font.scale", delta })}
-          onClear={() => dispatch({ type: "reset.output" })}
-        />
-      </View>
-    </KeyboardAvoidingView>
+        {state.error && (
+          <View style={styles.errorBar}>
+            <Text style={styles.errorText}>{state.error}</Text>
+          </View>
+        )}
+
+        <View style={[styles.controlFooter, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+          <TerminalControlBar
+            onSend={sendData}
+            onScroll={(lines) => surfaceRef.current?.scrollLines(lines)}
+            onScrollToBottom={() => surfaceRef.current?.scrollToBottom()}
+            onDismissKeyboard={() => {
+              surfaceRef.current?.blur();
+              Keyboard.dismiss();
+            }}
+            onFontScale={(delta) => dispatch({ type: "font.scale", delta })}
+            onClear={() => dispatch({ type: "reset.output" })}
+          />
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -391,7 +426,7 @@ function SessionChipRow({ sessions, activeSessionId, onSelect }: SessionChipRowP
 const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
-    backgroundColor: theme.colors.paper,
+    backgroundColor: theme.terminal.bg,
   },
   headerSpinner: {
     width: 38,
@@ -444,6 +479,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.ink,
     fontSize: 12,
   },
+  terminalStack: {
+    flex: 1,
+    backgroundColor: theme.terminal.bg,
+  },
   // Full-bleed dark console — no floating frame; the light WindowHeader above
   // and the control footer below are the only chrome.
   terminalSurface: {
@@ -487,6 +526,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 12,
   },
   controlFooter: {
-    backgroundColor: theme.colors.paper,
+    backgroundColor: theme.terminal.surface,
   },
 }));

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useReducer } from "react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -18,7 +18,6 @@ import * as Haptics from "expo-haptics";
 import { useGateway } from "../_layout";
 import {
   appRuntimeHref,
-  getAppIconName,
   getAppSlug,
   getNativeAppRoute,
   mergeNativeAndRemoteApps,
@@ -29,8 +28,11 @@ import { colors } from "@/lib/theme";
 
 const H_PADDING = 16;
 
-// Icon-tile palette pairs a background with a legible glyph colour so fallback
-// (no shipped icon) tiles never wash out. Stable per app via a slug hash.
+// Apps intentionally kept out of the launcher grid (Chat lives elsewhere).
+const HIDDEN_APP_SLUGS = new Set<string>(["apps", "chat", "tasks", "task-manager"]);
+
+// Fallback monogram-tile palette: tinted background + legible glyph colour,
+// stable per app via a slug hash, used only when an icon image is unavailable.
 const L = colors.light;
 const TILE_PALETTE: Array<{ bg: string; fg: string }> = [
   { bg: L.forest, fg: "#DCE6D2" },
@@ -46,66 +48,279 @@ function tileFor(slug: string): { bg: string; fg: string } {
   return TILE_PALETTE[hash];
 }
 
-function resolveIconUrl(app: MatrixAppEntry, gatewayUrl?: string): string | undefined {
-  const icon = app.icon;
-  if (!icon) return undefined;
-  const url = icon.startsWith("/") && gatewayUrl ? `${gatewayUrl.replace(/\/+$/, "")}${icon}` : icon;
-  return /^https?:\/\//.test(url) ? url : undefined;
+const SAFE_ICON_SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+const APP_RASTER_ICON_SLUGS = new Set([
+  "2048",
+  "backgammon",
+  "calculator",
+  "chat",
+  "chess",
+  "clock",
+  "code",
+  "expense-tracker",
+  "files",
+  "game-center",
+  "minesweeper",
+  "notes",
+  "pomodoro-timer",
+  "profile",
+  "snake",
+  "social",
+  "solitaire",
+  "task-manager",
+  "terminal",
+  "tetris",
+  "todo",
+  "weather",
+  "whiteboard",
+  "workspace",
+]);
+
+const SHIPPED_SVG_ICON_SLUGS = new Set([
+  "calendar",
+  "camera",
+  "chart",
+  "chat",
+  "code",
+  "document",
+  "files",
+  "folder",
+  "game",
+  "grid",
+  "globe",
+  "layers",
+  "mail",
+  "messages",
+  "music",
+  "search",
+  "settings",
+  "terminal",
+  "whiteboard",
+  "workspace",
+]);
+
+const ICON_SLUG_ALIASES = new Map<string, string>([
+  ["pomodoro", "pomodoro-timer"],
+]);
+
+const MAX_GRID_LABEL_CHARS = 13;
+
+const NATIVE_SHELL_ICON_GLYPHS = new Map<string, keyof typeof Ionicons.glyphMap>([
+  ["apps", "grid"],
+  ["settings", "settings"],
+]);
+
+type IconCandidate = {
+  uri: string;
+  requiresAuth: boolean;
+  kind: "raster" | "vector";
+};
+
+type AppSectionKey = "main" | "apps" | "games" | "results";
+
+type AppSection = {
+  key: AppSectionKey;
+  title: string;
+  apps: MatrixAppEntry[];
+};
+
+type LauncherListItem =
+  | { type: "section"; key: string; title: string }
+  | { type: "row"; key: string; apps: MatrixAppEntry[] };
+
+// Mirror the web shell: the icon slug is `app.icon ?? app.slug ?? slug(name)`,
+// where `icon` is a manifest KEY (e.g. "snake", "game"), not a path.
+function iconSlugFor(app: MatrixAppEntry): string | undefined {
+  return app.icon || app.slug || nameToSlug(app.name);
 }
 
-// Premium springboard tile: shipped icons fill the squircle edge-to-edge; apps
-// with no icon fall back to a tinted tile + category glyph instead of a generic
-// repeated image.
+function nameToSlug(name: string): string | undefined {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || undefined;
+}
+
+function gridLabelFor(name: string): string {
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= MAX_GRID_LABEL_CHARS) return trimmed;
+  return `${trimmed.slice(0, MAX_GRID_LABEL_CHARS - 3).trimEnd()}...`;
+}
+
+function iconPathForSlug(slug: string | undefined): string | undefined {
+  if (!slug || !SAFE_ICON_SLUG.test(slug)) return undefined;
+  const iconSlug = ICON_SLUG_ALIASES.get(slug) ?? slug;
+  const extension = APP_RASTER_ICON_SLUGS.has(iconSlug) || !SHIPPED_SVG_ICON_SLUGS.has(iconSlug) ? "png" : "svg";
+  return `/icons/${encodeURIComponent(iconSlug)}.${extension}`;
+}
+
+function iconKind(uri: string): IconCandidate["kind"] {
+  return /\.svg(?:$|[?#])/i.test(uri) ? "vector" : "raster";
+}
+
+// Ordered list of icon URLs to try. Normal manifest icons are keys, resolved via
+// the same slug/extension table as the web shell. Gateway icon URLs are auth'd,
+// so they are not requested until a bearer token is available.
+function buildIconCandidates(app: MatrixAppEntry, gatewayUrl?: string): IconCandidate[] {
+  const base = gatewayUrl ? gatewayUrl.replace(/\/+$/, "") : undefined;
+  const list: IconCandidate[] = [];
+  const icon = app.icon;
+  if (icon && /^https?:\/\//.test(icon)) list.push({ uri: icon, requiresAuth: false, kind: iconKind(icon) });
+  else if (icon && icon.startsWith("/") && base) {
+    const uri = `${base}${icon}`;
+    list.push({ uri, requiresAuth: true, kind: iconKind(uri) });
+  }
+  if (base) {
+    const path = iconPathForSlug(iconSlugFor(app));
+    if (path) {
+      const uri = `${base}${path}`;
+      list.push({ uri, requiresAuth: true, kind: iconKind(uri) });
+    }
+  }
+  return list;
+}
+
+// Games live under apps/games/*; Main = built-in system apps.
+function isGameApp(app: MatrixAppEntry): boolean {
+  const file = app.file ?? "";
+  const path = app.path ?? "";
+  return file.startsWith("games/") || file.startsWith("apps/games/") || path.includes("/apps/games/");
+}
+function isMainApp(app: MatrixAppEntry): boolean {
+  return (app.category ?? "").toLowerCase() === "system";
+}
+
+function buildAppSections(apps: MatrixAppEntry[]): AppSection[] {
+  const main: MatrixAppEntry[] = [];
+  const myApps: MatrixAppEntry[] = [];
+  const games: MatrixAppEntry[] = [];
+
+  for (const app of apps) {
+    if (HIDDEN_APP_SLUGS.has(getAppSlug(app))) continue;
+    if (isMainApp(app)) main.push(app);
+    else if (isGameApp(app)) games.push(app);
+    else myApps.push(app);
+  }
+
+  const sections: AppSection[] = [
+    { key: "main", title: "Main", apps: main },
+    { key: "apps", title: "My Apps", apps: myApps },
+    { key: "games", title: "Games", apps: games },
+  ];
+  return sections.filter((section) => section.apps.length > 0);
+}
+
+function filterApps(apps: MatrixAppEntry[], query: string): MatrixAppEntry[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return apps;
+  return apps.filter((app) => {
+    const haystack = `${app.name} ${app.description ?? ""} ${app.category ?? ""}`.toLowerCase();
+    return haystack.includes(normalized);
+  });
+}
+
+function rowsForApps(apps: MatrixAppEntry[], columns: number): MatrixAppEntry[][] {
+  const rows: MatrixAppEntry[][] = [];
+  for (let i = 0; i < apps.length; i += columns) {
+    rows.push(apps.slice(i, i + columns));
+  }
+  return rows;
+}
+
+function buildLauncherListItems(sections: AppSection[], columns: number): LauncherListItem[] {
+  return sections.flatMap((section) => [
+    { type: "section" as const, key: `section-${section.key}`, title: section.title },
+    ...rowsForApps(section.apps, columns).map((apps, idx) => ({
+      type: "row" as const,
+      key: `row-${section.key}-${idx}`,
+      apps,
+    })),
+  ]);
+}
+
+// The shipped icon fills the squircle; on failure we step through the candidate
+// URLs, then draw a tinted monogram — never a generic repeated glyph.
 function AppTileGlyph({
   app,
   gatewayUrl,
+  authHeader,
   tile,
 }: {
   app: MatrixAppEntry;
   gatewayUrl?: string;
+  authHeader?: string;
   tile: { bg: string; fg: string };
 }) {
-  const iconUrl = resolveIconUrl(app, gatewayUrl);
+  const candidates = useMemo(() => buildIconCandidates(app, gatewayUrl), [app, gatewayUrl]);
+  // Reset to the first candidate when the URL set OR auth changes. Auth can
+  // arrive async, so a tile that 401'd before it landed must retry once it does.
+  const resetKey = `${candidates.map((candidate) => candidate.uri).join("|")}|${authHeader ?? ""}`;
+  const [idx, setIdx] = useState(0);
+  const [prevKey, setPrevKey] = useState(resetKey);
+  if (resetKey !== prevKey) {
+    setPrevKey(resetKey);
+    setIdx(0);
+  }
 
-  if (iconUrl) {
+  const shellGlyph = NATIVE_SHELL_ICON_GLYPHS.get(getAppSlug(app));
+  if (shellGlyph) {
+    return (
+      <View style={styles.nativeShellIcon(shellGlyph === "settings" ? "settings" : "apps")}>
+        <Ionicons name={shellGlyph} size={shellGlyph === "settings" ? 32 : 31} color="#F7F9F4" />
+      </View>
+    );
+  }
+
+  const candidate = candidates[idx];
+  const canLoadCandidate = candidate && (!candidate.requiresAuth || authHeader);
+  if (canLoadCandidate) {
     return (
       <Image
-        source={{ uri: iconUrl }}
-        style={styles.tileImage}
-        contentFit="cover"
+        source={{
+          uri: candidate.uri,
+          headers: candidate.requiresAuth && authHeader ? { Authorization: authHeader } : undefined,
+        }}
+        style={candidate.kind === "vector" ? styles.tileVectorImage : styles.tileImage}
+        contentFit={candidate.kind === "vector" ? "contain" : "cover"}
         transition={120}
         cachePolicy="memory-disk"
+        onError={() => setIdx((i) => i + 1)}
       />
     );
   }
 
+  const letter = (app.name?.trim()?.[0] ?? "?").toUpperCase();
   return (
     <View style={styles.tileFallback(tile.bg)}>
-      {/* Soft top highlight gives the tile a glossy, app-icon feel without a gradient dep. */}
       <View style={styles.tileGloss} pointerEvents="none" />
-      <Ionicons name={getAppIconName(app) as keyof typeof Ionicons.glyphMap} size={30} color={tile.fg} />
+      <Text style={styles.monogram(tile.fg)}>{letter}</Text>
     </View>
   );
 }
 
-// One springboard cell: squircle icon tile + label beneath, fixed width so rows
-// stay aligned even on a partial final row.
+// One springboard cell: squircle icon tile + label beneath, fixed width so the
+// columns line up even on a partial final row.
 const AppGridItem = memo(function AppGridItem({
   app,
   gatewayUrl,
-  width,
+  authHeader,
+  labelWidth,
   active,
   onOpen,
 }: {
   app: MatrixAppEntry;
   gatewayUrl?: string;
-  width: number;
+  authHeader?: string;
+  labelWidth: number;
   active: boolean;
   onOpen: (slug: string) => void;
 }) {
   const slug = getAppSlug(app);
   const nativeRoute = getNativeAppRoute(app);
   const tile = tileFor(slug);
+  const label = gridLabelFor(app.name);
 
   return (
     <Link href={(nativeRoute ?? appRuntimeHref(slug)) as any} asChild>
@@ -116,28 +331,70 @@ const AppGridItem = memo(function AppGridItem({
           onOpen(slug);
           if (process.env.EXPO_OS === "ios") Haptics.selectionAsync();
         }}
-        style={({ pressed }) => [styles.cell(width), pressed && styles.cellPressed]}
+        style={({ pressed }) => [styles.cell(labelWidth), pressed && styles.cellPressed]}
       >
-        <View style={styles.tile}>
-          <AppTileGlyph app={app} gatewayUrl={gatewayUrl} tile={tile} />
+        <View style={styles.tileShadow}>
+          <View style={styles.tileClip}>
+            <AppTileGlyph app={app} gatewayUrl={gatewayUrl} authHeader={authHeader} tile={tile} />
+          </View>
           {active ? <View style={styles.activeDot} /> : null}
         </View>
-        <Text numberOfLines={1} style={styles.cellLabel}>
-          {app.name}
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.cellLabel}>
+          {label}
         </Text>
       </Pressable>
     </Link>
   );
 });
 
+function AppGridRow({
+  apps,
+  gatewayUrl,
+  authHeader,
+  cellWidth,
+  columns,
+  lastActiveAppSlug,
+  onOpen,
+}: {
+  apps: MatrixAppEntry[];
+  gatewayUrl?: string;
+  authHeader?: string;
+  cellWidth: number;
+  columns: number;
+  lastActiveAppSlug: string | null;
+  onOpen: (slug: string) => void;
+}) {
+  return (
+    <View style={styles.gridRow}>
+      {apps.map((app) => (
+        <View key={getAppSlug(app)} style={styles.gridSlot(cellWidth)}>
+          <AppGridItem
+            app={app}
+            gatewayUrl={gatewayUrl}
+            authHeader={authHeader}
+            labelWidth={Math.min(cellWidth - 4, 84)}
+            active={lastActiveAppSlug === getAppSlug(app)}
+            onOpen={onOpen}
+          />
+        </View>
+      ))}
+      {Array.from({ length: Math.max(0, columns - apps.length) }, (_, idx) => (
+        <View key={`spacer-${idx}`} style={styles.gridSlot(cellWidth)} />
+      ))}
+    </View>
+  );
+}
+
 // "Jump back in" — the last-opened app as a single tappable card.
 function RecentRow({
   app,
   gatewayUrl,
+  authHeader,
   onOpen,
 }: {
   app: MatrixAppEntry;
   gatewayUrl?: string;
+  authHeader?: string;
   onOpen: (slug: string) => void;
 }) {
   const slug = getAppSlug(app);
@@ -150,21 +407,25 @@ function RecentRow({
         accessibilityRole="button"
         accessibilityLabel={`Continue ${app.name}`}
         onPress={() => onOpen(slug)}
-        style={({ pressed }) => [styles.recentRow, pressed && styles.recentRowPressed]}
+        style={({ pressed }) => [styles.recentPressable, pressed && styles.recentRowPressed]}
       >
-        <View style={styles.recentTile}>
-          <AppTileGlyph app={app} gatewayUrl={gatewayUrl} tile={tile} />
-        </View>
-        <View style={styles.recentText}>
-          <Text numberOfLines={1} style={styles.recentName}>
-            {app.name}
-          </Text>
-          <Text numberOfLines={1} style={styles.recentMeta}>
-            {app.category ?? "Tap to reopen"}
-          </Text>
-        </View>
-        <View style={styles.recentChevron}>
-          <Ionicons name="arrow-forward" size={16} color={L.accentInk} />
+        <View style={styles.recentRow}>
+          <View style={styles.recentTileShadow}>
+            <View style={styles.recentTileClip}>
+              <AppTileGlyph app={app} gatewayUrl={gatewayUrl} authHeader={authHeader} tile={tile} />
+            </View>
+          </View>
+          <View style={styles.recentText}>
+            <Text numberOfLines={1} style={styles.recentName}>
+              {app.name}
+            </Text>
+            <Text numberOfLines={1} style={styles.recentMeta}>
+              {app.category ?? "Tap to reopen"}
+            </Text>
+          </View>
+          <View style={styles.recentChevron}>
+            <Ionicons name="arrow-forward" size={16} color={L.accentInk} />
+          </View>
         </View>
       </Pressable>
     </Link>
@@ -218,9 +479,12 @@ export default function AppsScreen() {
   const [state, dispatch] = useReducer(appsReducer, initialAppsState);
   const { apps, refreshing, loading, query, lastActiveAppSlug } = state;
   const connected = connectionState === "connected";
+  // Authorization header for authenticated icon image loads (the /icons endpoint is auth'd).
+  const [authHeader, setAuthHeader] = useState<string | undefined>(undefined);
 
   const columns = width >= 600 ? 6 : 4;
-  const cellWidth = Math.floor((width - H_PADDING * 2) / columns);
+  const gridWidth = Math.min(width - H_PADDING * 2, columns * 92);
+  const cellWidth = Math.floor(gridWidth / columns);
 
   const fetchApps = useCallback(async () => {
     if (!client) {
@@ -239,6 +503,26 @@ export default function AppsScreen() {
   useEffect(() => {
     fetchApps();
   }, [fetchApps]);
+
+  // Resolve a fresh Authorization header so authenticated icon URLs can load.
+  useEffect(() => {
+    let cancelled = false;
+    if (!client) {
+      setAuthHeader(undefined);
+      return;
+    }
+    client
+      .getAuthorizationHeader()
+      .then((header) => {
+        if (!cancelled) setAuthHeader(header);
+      })
+      .catch((err: unknown) => {
+        console.warn("[mobile] failed to resolve auth token for icons", err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, connectionState]);
 
   useEffect(() => {
     loadMobileShellState()
@@ -264,19 +548,23 @@ export default function AppsScreen() {
       });
   }, []);
 
-  const filteredApps = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return apps;
-    return apps.filter((app) => {
-      const haystack = `${app.name} ${app.description ?? ""} ${app.category ?? ""}`.toLowerCase();
-      return haystack.includes(normalized);
-    });
-  }, [apps, query]);
+  const sections = useMemo(() => buildAppSections(apps), [apps]);
+  const orderedApps = useMemo(() => sections.flatMap((section) => section.apps), [sections]);
+  const displaySections = useMemo(() => {
+    const normalized = query.trim();
+    if (!normalized) return sections;
+    return [{ key: "results" as const, title: "Results", apps: filterApps(orderedApps, normalized) }]
+      .filter((section) => section.apps.length > 0);
+  }, [orderedApps, query, sections]);
+  const listItems = useMemo(
+    () => buildLauncherListItems(displaySections, columns),
+    [displaySections, columns],
+  );
 
   const lastActiveApp = useMemo(() => {
     if (!lastActiveAppSlug) return null;
-    return apps.find((app) => getAppSlug(app) === lastActiveAppSlug) ?? null;
-  }, [apps, lastActiveAppSlug]);
+    return orderedApps.find((app) => getAppSlug(app) === lastActiveAppSlug) ?? null;
+  }, [orderedApps, lastActiveAppSlug]);
 
   const handleRefresh = useCallback(async () => {
     dispatch({ type: "refreshStart" });
@@ -285,16 +573,23 @@ export default function AppsScreen() {
   }, [fetchApps]);
 
   const renderItem = useCallback(
-    ({ item }: ListRenderItemInfo<MatrixAppEntry>) => (
-      <AppGridItem
-        app={item}
-        gatewayUrl={client?.httpUrl}
-        width={cellWidth}
-        active={lastActiveAppSlug === getAppSlug(item)}
-        onOpen={handleOpenApp}
-      />
-    ),
-    [client, cellWidth, handleOpenApp, lastActiveAppSlug],
+    ({ item }: ListRenderItemInfo<LauncherListItem>) => {
+      if (item.type === "section") {
+        return <Text style={styles.sectionLabel}>{item.title}</Text>;
+      }
+      return (
+        <AppGridRow
+          apps={item.apps}
+          gatewayUrl={client?.httpUrl}
+          authHeader={authHeader}
+          cellWidth={cellWidth}
+          columns={columns}
+          lastActiveAppSlug={lastActiveAppSlug}
+          onOpen={handleOpenApp}
+        />
+      );
+    },
+    [client, authHeader, cellWidth, columns, handleOpenApp, lastActiveAppSlug],
   );
 
   const refreshControl = useMemo(
@@ -304,17 +599,16 @@ export default function AppsScreen() {
 
   const listHeader = useMemo(
     () => (
-      <View style={styles.listHeader}>
+      <View>
         {query.trim() === "" && lastActiveApp ? (
           <View>
             <Text style={styles.sectionLabel}>Jump back in</Text>
-            <RecentRow app={lastActiveApp} gatewayUrl={client?.httpUrl} onOpen={handleOpenApp} />
+            <RecentRow app={lastActiveApp} gatewayUrl={client?.httpUrl} authHeader={authHeader} onOpen={handleOpenApp} />
           </View>
         ) : null}
-        <Text style={styles.sectionLabel}>{query.trim() === "" ? "All apps" : "Results"}</Text>
       </View>
     ),
-    [query, lastActiveApp, client, handleOpenApp],
+    [query, lastActiveApp, client, authHeader, handleOpenApp],
   );
 
   return (
@@ -323,7 +617,7 @@ export default function AppsScreen() {
         <View style={styles.headerTitleGroup}>
           <Text style={styles.headerTitle}>Apps</Text>
           <Text style={styles.headerSubtitle}>
-            {apps.length} installed{connected ? "" : " · connecting…"}
+            {orderedApps.length} installed{connected ? "" : " · connecting…"}
           </Text>
         </View>
         <Pressable accessibilityRole="button" accessibilityLabel="Account" style={styles.avatar}>
@@ -358,10 +652,9 @@ export default function AppsScreen() {
       ) : (
         <FlatList
           key={`grid-${columns}`}
-          data={filteredApps}
+          data={listItems}
           renderItem={renderItem}
-          keyExtractor={(item) => getAppSlug(item)}
-          numColumns={columns}
+          keyExtractor={(item) => item.key}
           ListHeaderComponent={listHeader}
           contentContainerStyle={styles.listContent}
           refreshControl={refreshControl}
@@ -431,41 +724,68 @@ const styles = StyleSheet.create((theme, rt) => ({
     color: theme.colors.ink,
     paddingVertical: 8,
   },
-  listHeader: { gap: 2 },
   sectionLabel: {
     fontFamily: theme.fonts.monoBold,
     fontSize: 11,
     letterSpacing: 0.9,
     textTransform: "uppercase",
     color: theme.colors.inkDim,
-    paddingHorizontal: 22,
-    paddingTop: 18,
-    paddingBottom: 10,
+    paddingHorizontal: 4,
+    paddingTop: 22,
+    paddingBottom: 8,
   },
-  listContent: { paddingHorizontal: H_PADDING, paddingBottom: 130 },
+  listContent: { paddingHorizontal: H_PADDING, paddingBottom: 120 },
+  gridRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  gridSlot: (w: number) => ({
+    width: w,
+    minHeight: 92,
+    alignItems: "center" as const,
+  }),
 
   // Grid cell + squircle tile
   cell: (w: number) => ({
     width: w,
     alignItems: "center" as const,
-    gap: 8,
-    paddingVertical: 9,
+    gap: 6,
+    paddingTop: 8,
+    paddingBottom: 12,
   }),
   cellPressed: { opacity: 0.85, transform: [{ scale: 0.93 }] },
-  tile: {
-    width: 64,
-    height: 64,
-    borderRadius: 19,
+  tileShadow: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    borderCurve: "continuous",
+    backgroundColor: theme.colors.panel,
+    boxShadow: theme.shadows.card,
+  },
+  tileClip: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 16,
     borderCurve: "continuous",
     overflow: "hidden",
-    backgroundColor: theme.colors.panel,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.glass.border,
     alignItems: "center",
     justifyContent: "center",
-    boxShadow: theme.shadows.card,
   },
   tileImage: { width: "100%", height: "100%" },
+  tileVectorImage: {
+    width: 34,
+    height: 34,
+    tintColor: theme.colors.forest,
+  },
+  nativeShellIcon: (variant: "apps" | "settings") => ({
+    width: "100%" as const,
+    height: "100%" as const,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+    backgroundColor: variant === "apps" ? theme.colors.forest : theme.colors.moss,
+  }),
   tileFallback: (bg: string) => ({
     width: "100%" as const,
     height: "100%" as const,
@@ -481,6 +801,12 @@ const styles = StyleSheet.create((theme, rt) => ({
     height: "55%",
     backgroundColor: "rgba(255,255,255,0.10)",
   },
+  monogram: (fg: string) => ({
+    fontFamily: theme.fonts.display,
+    fontSize: 26,
+    lineHeight: 30,
+    color: fg,
+  }),
   activeDot: {
     position: "absolute",
     top: 6,
@@ -493,16 +819,22 @@ const styles = StyleSheet.create((theme, rt) => ({
     borderColor: theme.colors.panel,
   },
   cellLabel: {
+    alignSelf: "stretch",
+    paddingHorizontal: 2,
     fontFamily: theme.fonts.sansMedium,
-    fontSize: 12,
-    lineHeight: 15,
+    fontSize: 11,
+    lineHeight: 14,
     textAlign: "center",
     color: theme.colors.ink,
   },
 
   // "Jump back in" card
+  recentPressable: {
+    alignSelf: "stretch",
+    marginHorizontal: 4,
+  },
   recentRow: {
-    marginHorizontal: 20,
+    minHeight: 76,
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
@@ -515,13 +847,19 @@ const styles = StyleSheet.create((theme, rt) => ({
     boxShadow: theme.shadows.card,
   },
   recentRowPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
-  recentTile: {
+  recentTileShadow: {
     width: 52,
     height: 52,
     borderRadius: 15,
     borderCurve: "continuous",
-    overflow: "hidden",
     backgroundColor: theme.colors.panel,
+  },
+  recentTileClip: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 15,
+    borderCurve: "continuous",
+    overflow: "hidden",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.glass.border,
     alignItems: "center",

@@ -1,3 +1,4 @@
+import "@/lib/hermes-polyfills";
 import { View, Text, Pressable, Linking } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
@@ -5,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
-import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { HOSTED_GATEWAY_URL, getSelectedGatewayConnection, isHostedGatewayUrl } from "@/lib/storage";
 import { JourneyGate } from "@/components/JourneyGate";
 import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
 
@@ -28,8 +29,13 @@ function SignedInJourneyGate() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
       try {
+        const gateway = await getSelectedGatewayConnection();
+        if (!isHostedGatewayUrl(gateway.url)) {
+          router.replace("/(tabs)/apps" as any);
+          return;
+        }
         const token = await getToken();
-        const next = await fetchMobileJourney(HOSTED_GATEWAY_URL, token);
+        const next = await fetchMobileJourney(gateway.url, token);
         if (!active) return;
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
           router.replace("/(tabs)/apps" as any);
@@ -106,9 +112,43 @@ export default function Index() {
   const { theme } = useUnistyles();
   const { isSignedIn } = useAuth();
   const router = useRouter();
+  const [checkingSelfHosted, setCheckingSelfHosted] = useState(true);
+
+  useEffect(() => {
+    if (isSignedIn) {
+      setCheckingSelfHosted(false);
+      return;
+    }
+    let cancelled = false;
+    getSelectedGatewayConnection()
+      .then((gateway) => {
+        if (cancelled) return;
+        if (!isHostedGatewayUrl(gateway.url) && gateway.token) {
+          router.replace("/(tabs)/apps" as any);
+          return;
+        }
+        setCheckingSelfHosted(false);
+      })
+      .catch(() => {
+        if (!cancelled) setCheckingSelfHosted(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSignedIn, router]);
 
   if (isSignedIn) {
     return <SignedInJourneyGate />;
+  }
+
+  if (checkingSelfHosted) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.content}>
+          <Text style={styles.wordmark}>MATRIX OS</Text>
+        </View>
+      </View>
+    );
   }
 
   return (

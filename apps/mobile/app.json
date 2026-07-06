@@ -19,11 +19,15 @@
         "NSCameraUsageDescription": "Scan Matrix OS codes",
         "NSMicrophoneUsageDescription": "Voice input for chat messages",
         "NSFaceIDUsageDescription": "Biometric authentication to secure your Matrix OS data",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
         "ITSAppUsesNonExemptEncryption": false
       },
       "appleTeamId": "PX4JL74Y2K"
     },
     "android": {
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FAFAF9"

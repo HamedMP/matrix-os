@@ -131,6 +131,9 @@ export default function RuntimeScreen() {
 
   const appUrl = sessionReady ? launchUrl : null;
   const title = app?.name ?? slug;
+  const goHome = useCallback(() => {
+    router.dismissTo("/(tabs)/apps" as any);
+  }, [router]);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -140,7 +143,7 @@ export default function RuntimeScreen() {
         title={title}
         subtitle={app?.category ?? "Matrix app"}
         subtitleMono={false}
-        onBack={() => router.replace("/(tabs)/apps" as any)}
+        onBack={goHome}
         backIcon="home-outline"
         backLabel="Home"
         maximized={maximized}
@@ -200,7 +203,7 @@ export default function RuntimeScreen() {
               </Text>
             </Pressable>
             <Pressable
-              onPress={() => router.replace("/(tabs)/apps" as any)}
+              onPress={goHome}
               style={({ pressed }) => ({
                 marginTop: theme.spacing.sm,
                 borderRadius: theme.radius.lg,

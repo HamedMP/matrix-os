@@ -86,7 +86,9 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 const SECURE_TOKEN_TRANSPORT_ERROR =
-  "Gateway tokens require HTTPS/WSS unless connecting to localhost.";
+  "Matrix OS Cloud requires HTTPS/WSS.";
+const CLEARTEXT_HOST_ERROR =
+  "HTTP is only allowed for self-hosted IP or localhost gateways.";
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -121,6 +123,20 @@ export class GatewayClient {
 
   get httpUrl(): string {
     return this.baseUrl.replace(/^ws/, "http");
+  }
+
+  /**
+   * Current auth credential for asset GETs the fetch wrapper can't reach,
+   * e.g. <Image> loads of authenticated `/icons/*` URLs. Refreshes via the
+   * token provider so callers get a non-expired token.
+   */
+  async getAuthToken(): Promise<string | undefined> {
+    return this.refreshAuthToken();
+  }
+
+  async getAuthorizationHeader(): Promise<string | undefined> {
+    const token = await this.refreshAuthToken();
+    return formatAuthorizationHeader(token);
   }
 
   get wsUrl(): string {
@@ -178,6 +194,7 @@ export class GatewayClient {
     this.setState("connecting");
 
     const upgradeToken = this.wsToken;
+    const authorization = formatAuthorizationHeader(this.token);
     const wsUrl = upgradeToken
       ? `${this.wsUrl}?token=${encodeURIComponent(upgradeToken)}`
       : this.wsUrl;
@@ -186,8 +203,8 @@ export class GatewayClient {
     this.ws = new WebSocketWithOptions(
       wsUrl,
       [],
-      this.token
-        ? { headers: { Authorization: `Bearer ${this.token}` } }
+      authorization
+        ? { headers: { Authorization: authorization } }
         : undefined,
     );
 
@@ -292,8 +309,9 @@ export class GatewayClient {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+    const authorization = formatAuthorizationHeader(token);
+    if (authorization) {
+      headers["Authorization"] = authorization;
     }
     return headers;
   }
@@ -311,9 +329,10 @@ export class GatewayClient {
 
   async webViewHeaders(): Promise<Record<string, string> | undefined> {
     const token = await this.refreshAuthToken();
-    if (!token) return undefined;
+    const authorization = formatAuthorizationHeader(token);
+    if (!authorization) return undefined;
     return {
-      Authorization: `Bearer ${token}`,
+      Authorization: authorization,
     };
   }
 
@@ -328,11 +347,12 @@ export class GatewayClient {
     const query = params.toString();
     const wsUrl = query ? `${this.terminalWsUrl}?${query}` : this.terminalWsUrl;
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
+    const authorization = formatAuthorizationHeader(this.token);
     return new WebSocketWithOptions(
       wsUrl,
       [],
-      this.token
-        ? { headers: { Authorization: `Bearer ${this.token}` } }
+      authorization
+        ? { headers: { Authorization: authorization } }
         : undefined,
     );
   }
@@ -462,13 +482,14 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/terminal/sessions");
       if (!res.ok) {
-        console.warn("[mobile] /api/terminal/sessions unavailable", res.status);
+        const body = await res.text().catch(() => "");
+        console.warn("[mobile] /api/terminal/sessions unavailable", res.status, body.slice(0, 160));
         return [];
       }
       const body = (await res.json()) as { sessions?: unknown };
       return parseShellSessions(body?.sessions ?? body);
-    } catch {
-      console.warn("[mobile] /api/terminal/sessions unavailable");
+    } catch (err: unknown) {
+      console.warn("[mobile] /api/terminal/sessions unavailable", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
@@ -479,11 +500,12 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/terminal/sessions", {
         method: "POST",
-        body: JSON.stringify({ name, cwd: "projects" }),
+        body: JSON.stringify({ name }),
         headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
-        console.warn("[mobile] terminal session create failed", res.status);
+        const body = await res.text().catch(() => "");
+        console.warn("[mobile] terminal session create failed", res.status, body.slice(0, 160));
         return null;
       }
       const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
@@ -591,6 +613,12 @@ function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
   return controller.signal;
 }
 
+function formatAuthorizationHeader(token: string | undefined): string | undefined {
+  if (!token) return undefined;
+  if (/^(Basic|Bearer)\s+/i.test(token)) return token;
+  return `Bearer ${token}`;
+}
+
 export function assertSecureTokenTransport(baseUrl: string): void {
   let parsed: URL;
   try {
@@ -603,26 +631,37 @@ export function assertSecureTokenTransport(baseUrl: string): void {
     return;
   }
 
-  if ((parsed.protocol === "http:" || parsed.protocol === "ws:") && isLoopbackHost(parsed.hostname)) {
+  if (
+    (parsed.protocol === "http:" || parsed.protocol === "ws:")
+    && isCleartextSelfHostedHost(parsed.hostname)
+  ) {
     return;
+  }
+
+  if (parsed.protocol === "http:" || parsed.protocol === "ws:") {
+    throw new Error(isMatrixCloudHost(parsed.hostname) ? SECURE_TOKEN_TRANSPORT_ERROR : CLEARTEXT_HOST_ERROR);
   }
 
   throw new Error(SECURE_TOKEN_TRANSPORT_ERROR);
 }
 
-function isLoopbackHost(hostname: string): boolean {
+function isMatrixCloudHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  return host === "app.matrix-os.com";
+}
+
+function isCleartextSelfHostedHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
   if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") {
     return true;
   }
 
   const ipv4Match = /^(\d{1,3})(?:\.(\d{1,3})){3}$/.exec(host);
-  if (!ipv4Match) {
-    return false;
+  if (ipv4Match) {
+    const octets = host.split(".").map((part) => Number(part));
+    return octets.length === 4
+      && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255);
   }
 
-  const octets = host.split(".").map((part) => Number(part));
-  return octets.length === 4
-    && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)
-    && octets[0] === 127;
+  return host.includes(":");
 }
