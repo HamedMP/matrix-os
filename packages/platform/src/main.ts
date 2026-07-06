@@ -32,7 +32,6 @@ import {
   updateLastActive,
   updateContainerStatus,
   listContainers,
-  getHostBundleReleaseByChannel,
   sweepStaleCheckoutAttempts,
   type UserMachineRecord,
 } from './db.js';
@@ -92,7 +91,6 @@ import {
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { handleInternalGeminiLiveProxyUpgrade } from './gemini-live-proxy.js';
 import { recordPlatformHttpRequest } from './metrics.js';
-import type { VpsRuntimeMetricInput } from './metrics.js';
 import {
   createLaunchReadinessService,
   createPlatformLaunchEvidenceLoader,
@@ -118,6 +116,7 @@ import {
   probeCustomerVpsRuntime,
   releaseVersionFromProbe,
 } from './runtime-probes.js';
+import { createPlatformMetricsRoutes } from './platform-metrics-routes.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
@@ -172,7 +171,6 @@ const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const PROXY_TIMEOUT_MS = 30_000;
 const AUTH_SHELL_PROXY_TIMEOUT_MS = 5_000;
 const EDGE_SECRET_HEADER = 'x-matrix-edge-secret';
-const VPS_RUNTIME_METRICS_TTL_MS = 45_000;
 const DOCKER_INSPECT_TIMEOUT_MS = 10_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
 const APP_ASSET_ROUTE_TOKEN_PARAM = 'matrix_asset_token';
@@ -1368,111 +1366,6 @@ export function createApp(deps: {
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !deps.customerVpsService;
   const platformSecret = deps.platformSecret ?? appEnv.PLATFORM_SECRET ?? '';
   const allowHostBundleSyncStoreFallback = appEnv.CUSTOMER_VPS_ENABLED !== 'true';
-  type CachedVpsRuntimeMetrics = {
-    machineKey: string;
-    expiresAt: number;
-    values: VpsRuntimeMetricInput[];
-  };
-  let cachedVpsRuntimeMetrics: CachedVpsRuntimeMetrics | null = null;
-  let pendingVpsRuntimeMetrics: {
-    machineKey: string;
-    promise: Promise<CachedVpsRuntimeMetrics>;
-  } | null = null;
-
-  function getVpsRuntimeMetricsCacheKey(
-    machines: Array<{
-      machineId: string;
-      handle: string;
-      status: string;
-      publicIPv4: string | null;
-      imageVersion: string | null;
-    }>,
-  ): string {
-    return machines
-      .map((machine) => [
-        machine.machineId,
-        machine.handle,
-        machine.status,
-        machine.publicIPv4 ?? '',
-        machine.imageVersion ?? '',
-      ].join(':'))
-      .sort()
-      .join('|');
-  }
-
-  function updateCachedVpsRuntimeMetrics(
-    machines: Array<{
-      machineId: string;
-      handle: string;
-      status: string;
-      publicIPv4: string | null;
-      imageVersion: string | null;
-    }>,
-    values: VpsRuntimeMetricInput[],
-  ): void {
-    cachedVpsRuntimeMetrics = {
-      machineKey: getVpsRuntimeMetricsCacheKey(machines),
-      expiresAt: Date.now() + VPS_RUNTIME_METRICS_TTL_MS,
-      values,
-    };
-  }
-
-  async function getCachedVpsRuntimeMetrics(
-    machines: UserMachineRecord[],
-  ): Promise<VpsRuntimeMetricInput[]> {
-    const now = Date.now();
-    const machineKey = getVpsRuntimeMetricsCacheKey(machines);
-    if (
-      cachedVpsRuntimeMetrics
-      && cachedVpsRuntimeMetrics.machineKey === machineKey
-      && cachedVpsRuntimeMetrics.expiresAt > now
-    ) {
-      return cachedVpsRuntimeMetrics.values;
-    }
-    if (pendingVpsRuntimeMetrics?.machineKey === machineKey) {
-      return (await pendingVpsRuntimeMetrics.promise).values;
-    }
-    const probeStartedAt = Date.now();
-    const promise = Promise.allSettled(
-      machines.map(async (machine): Promise<VpsRuntimeMetricInput> => ({
-        handle: machine.handle,
-        ...(machine.status === 'running'
-          ? await probeCustomerVpsRuntime(machine, platformSecret, customerVpsProxyDispatcher)
-          : { healthy: false }),
-      })),
-    ).then((probed) => {
-      const values = probed
-        .filter((result): result is PromiseFulfilledResult<VpsRuntimeMetricInput> => result.status === 'fulfilled')
-        .map((result) => result.value);
-      const updated = {
-        machineKey,
-        expiresAt: probeStartedAt + VPS_RUNTIME_METRICS_TTL_MS,
-        values,
-      };
-      if (
-        !cachedVpsRuntimeMetrics
-        || (
-          cachedVpsRuntimeMetrics.machineKey === machineKey
-          && cachedVpsRuntimeMetrics.expiresAt < updated.expiresAt
-        )
-      ) {
-        cachedVpsRuntimeMetrics = updated;
-      }
-      return cachedVpsRuntimeMetrics.machineKey === machineKey ? cachedVpsRuntimeMetrics : updated;
-    }).catch((err: unknown): CachedVpsRuntimeMetrics => {
-      logPlatformRouteError('/metrics vps runtime cache', err);
-      if (cachedVpsRuntimeMetrics?.machineKey === machineKey) {
-        return cachedVpsRuntimeMetrics;
-      }
-      return { machineKey, expiresAt: 0, values: [] };
-    }).finally(() => {
-      if (pendingVpsRuntimeMetrics?.machineKey === machineKey) {
-        pendingVpsRuntimeMetrics = null;
-      }
-    });
-    pendingVpsRuntimeMetrics = { machineKey, promise };
-    return (await promise).values;
-  }
   const app = new Hono<{
     Variables: {
       platformUserId: string;
@@ -1624,6 +1517,13 @@ export function createApp(deps: {
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
 
+  const platformMetricsRoutes = createPlatformMetricsRoutes({
+    db,
+    customerVpsEnabled: Boolean(deps.customerVpsService),
+    probeRuntime: (machine) => probeCustomerVpsRuntime(machine, platformSecret, customerVpsProxyDispatcher),
+    logRouteError: logPlatformRouteError,
+  });
+
   // Matrix well-known endpoints (unauthenticated, required for federation)
   const CONDUIT_SERVER = process.env.CONDUIT_SERVER ?? 'matrix-os.com:6167';
   const CONDUIT_BASE_URL = process.env.CONDUIT_BASE_URL ?? 'https://matrix-os.com';
@@ -1635,40 +1535,7 @@ export function createApp(deps: {
     c.json({ 'm.homeserver': { base_url: CONDUIT_BASE_URL } }),
   );
 
-  // Prometheus metrics (unauthenticated for scraping)
-  app.get('/metrics', async (c) => {
-    const {
-      metricsRegistry,
-      refreshPlatformUserMetrics,
-      refreshReleaseChannelMetrics,
-      refreshVpsMetrics,
-      refreshVpsRuntimeMetrics,
-    } = await import('./metrics.js');
-    try {
-      const machines = await listAllUserMachines(db, 500);
-      const containers = await listContainers(db);
-      refreshVpsMetrics(machines);
-      refreshPlatformUserMetrics({ machines, containers });
-      const releaseChannels = await Promise.all(
-        ['dev', 'beta', 'canary', 'stable'].map(async (channel) => {
-          const release = await getHostBundleReleaseByChannel(db, channel);
-          return release ? { ...release, channel } : null;
-        }),
-      );
-      refreshReleaseChannelMetrics(
-        releaseChannels.filter((release): release is NonNullable<typeof release> => release !== null),
-      );
-      if (deps.customerVpsService) {
-        refreshVpsRuntimeMetrics(await getCachedVpsRuntimeMetrics(machines));
-      }
-    } catch (err: unknown) {
-      logPlatformRouteError('/metrics vps refresh', err);
-    }
-    const metrics = await metricsRegistry.metrics();
-    return c.text(metrics, 200, {
-      'Content-Type': metricsRegistry.contentType,
-    });
-  });
+  app.route('/', platformMetricsRoutes.routes);
 
   app.route('/system-bundles', createHostBundleRoutes({
     db,
@@ -2598,7 +2465,7 @@ export function createApp(deps: {
       platformSecret,
       probeMachineHealth,
       probeMachineRuntime,
-      recordRuntimeMetrics: (machines) => updateCachedVpsRuntimeMetrics(machines, machines),
+      recordRuntimeMetrics: platformMetricsRoutes.recordRuntimeMetrics,
       captureEvent: captureFunnelEvent,
     }));
   }
