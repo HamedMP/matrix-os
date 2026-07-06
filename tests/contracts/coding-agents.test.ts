@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentProviderSummarySchema,
   AgentThreadEventSchema,
+  AgentThreadSnapshotSchema,
   ApprovalDecisionRequestSchema,
   CreateAgentThreadRequestSchema,
   FileMetadataSchema,
@@ -135,6 +136,26 @@ describe("coding agent contracts", () => {
         clientRequestId: "req_123",
       }),
     ).toThrow();
+    const promptWithWhitespace = "  cat <<'EOF'\n  keep indentation\nEOF\n";
+    expect(CreateAgentThreadRequestSchema.parse({
+      providerId: "codex",
+      prompt: promptWithWhitespace,
+      clientRequestId: "req_preserve",
+    }).prompt).toBe(promptWithWhitespace);
+    expect(CreateAgentThreadRequestSchema.parse({
+      providerId: "codex",
+      prompt: "Use the selected worktree.",
+      worktreeId: "wt_abc123def456",
+      clientRequestId: "req_worktree",
+    }).worktreeId).toBe("wt_abc123def456");
+    expect(() =>
+      CreateAgentThreadRequestSchema.parse({
+        providerId: "codex",
+        prompt: "Use a worktree.",
+        worktreeId: "WT_bad:ref",
+        clientRequestId: "req_worktree",
+      }),
+    ).toThrow();
 
     expect(AgentThreadEventSchema.parse({
       type: "approval.requested",
@@ -152,6 +173,46 @@ describe("coding agent contracts", () => {
         correlationId: "corr_1",
       },
     }).type).toBe("approval.requested");
+    expect(AgentThreadSnapshotSchema.parse({
+      thread: {
+        id: "thread_1",
+        providerId: "codex",
+        title: "Fix tests",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      },
+      events: {
+        items: [
+          {
+            type: "thread.status",
+            eventId: "evt_snapshot",
+            threadId: "thread_1",
+            occurredAt: now,
+            status: "running",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    }).events.items[0]?.type).toBe("thread.status");
+    expect(() =>
+      AgentThreadSnapshotSchema.parse({
+        thread: {
+          id: "thread_1",
+          providerId: "codex",
+          title: "Fix tests",
+          status: "running",
+          createdAt: now,
+          updatedAt: now,
+        },
+        events: {
+          items: [{ rawProviderPayload: "do not accept unknown event shapes" }],
+          hasMore: false,
+          limit: 200,
+        },
+      }),
+    ).toThrow();
 
     expect(TerminalClientFrameSchema.parse({ type: "resize", cols: 120, rows: 40 })).toEqual({
       type: "resize",
@@ -182,6 +243,12 @@ describe("coding agent contracts", () => {
       clientRequestId: "req_answer",
       correlationId: "corr_answer",
     }).answer).toBe("Please continue with the safer implementation.");
+    const answerWithWhitespace = "\n  keep this exact answer  \n";
+    expect(UserInputAnswerRequestSchema.parse({
+      answer: answerWithWhitespace,
+      clientRequestId: "req_answer_preserve",
+      correlationId: "corr_answer",
+    }).answer).toBe(answerWithWhitespace);
 
     expect(FileMetadataSchema.parse({
       path: "src/index.ts",
@@ -213,10 +280,29 @@ describe("coding agent contracts", () => {
       id: "preview_main",
       label: "Development preview",
       status: "running",
-      origin: "https://preview.example.com",
+      origin: `https://preview.example.com/${"a".repeat(700)}?token=${"b".repeat(700)}`,
       updatedAt: now,
     }).status).toBe("running");
 
+    expect(TerminalServerFrameSchema.parse({
+      type: "attached",
+      session: "main",
+      state: "running",
+      fromSeq: 0,
+    }).type).toBe("attached");
+    expect(TerminalServerFrameSchema.parse({
+      type: "attached",
+      sessionId: "550e8400-e29b-41d4-a716-446655440000",
+      state: "running",
+    }).type).toBe("attached");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-start", fromSeq: 0 }).type).toBe("replay-start");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-end", toSeq: null }).type).toBe("replay-end");
+    expect(TerminalServerFrameSchema.parse({ type: "replay-evicted", fromSeq: 0, nextSeq: 10 }).type).toBe("replay-evicted");
+    expect(TerminalServerFrameSchema.parse({
+      type: "error",
+      code: "invalid_message",
+      message: "Invalid message",
+    }).type).toBe("error");
     expect(TerminalServerFrameSchema.parse({
       type: "safe-error",
       error: {

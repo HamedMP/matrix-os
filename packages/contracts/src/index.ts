@@ -16,9 +16,9 @@ function byteLength(value: string): number {
 
 function boundedText(maxChars: number, maxBytes = maxChars * 4) {
   return z.string()
-    .trim()
     .min(1)
     .max(maxChars)
+    .refine((value) => value.trim().length > 0, { message: "Text cannot be blank" })
     .refine((value) => byteLength(value) <= maxBytes, { message: "Text exceeds byte limit" });
 }
 
@@ -68,6 +68,7 @@ export const ApprovalIdSchema = prefixedId("appr_");
 export const RequestIdSchema = prefixedId("req_");
 export const CorrelationIdSchema = prefixedId("corr_");
 export const TerminalSessionIdSchema = referenceId(128);
+export const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/, "Invalid worktree id");
 export const CursorSchema = referenceId(160);
 export const IsoTimestampSchema = z.string().regex(ISO_DATETIME, "Invalid ISO timestamp");
 export const SafeDisplayStringSchema = boundedDisplayText(120, 512);
@@ -212,7 +213,7 @@ export const CreateAgentThreadRequestSchema = z.object({
   projectId: ProjectIdSchema.optional(),
   taskId: TaskIdSchema.optional(),
   terminalSessionId: TerminalSessionIdSchema.optional(),
-  worktreeId: referenceId(160).optional(),
+  worktreeId: WorktreeIdSchema.optional(),
   mode: AgentModeSchema.optional(),
   approvalPolicy: ApprovalPolicySchema.optional(),
   sandboxMode: SandboxModeSchema.optional(),
@@ -237,11 +238,6 @@ export const AgentThreadSummarySchema = z.object({
 }).strict();
 
 export type AgentThreadSummary = z.infer<typeof AgentThreadSummarySchema>;
-
-export const AgentThreadSnapshotSchema = z.object({
-  thread: AgentThreadSummarySchema,
-  events: boundedListSchema(z.unknown(), 200),
-}).strict();
 
 export const ApprovalDecisionSchema = z.enum(["approve", "approve_for_session", "decline", "cancel"]);
 export const ApprovalRiskSchema = z.enum(["low", "medium", "high"]);
@@ -374,6 +370,11 @@ export const AgentThreadEventSchema = z.discriminatedUnion("type", [
 
 export type AgentThreadEvent = z.infer<typeof AgentThreadEventSchema>;
 
+export const AgentThreadSnapshotSchema = z.object({
+  thread: AgentThreadSummarySchema,
+  events: boundedListSchema(AgentThreadEventSchema, 200),
+}).strict();
+
 export const TerminalStatusSchema = z.enum(["starting", "running", "idle", "exited", "stale", "unavailable"]);
 
 export const TerminalSessionSummarySchema = z.object({
@@ -413,13 +414,30 @@ export const TerminalClientFrameSchema = z.discriminatedUnion("type", [
 export const TerminalServerFrameSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("attached"),
-    sessionId: TerminalSessionIdSchema,
+    sessionId: TerminalSessionIdSchema.optional(),
+    session: TerminalSessionIdSchema.optional(),
+    state: z.enum(["running", "exited"]).optional(),
+    exitCode: z.number().int().nullable().optional(),
+    fromSeq: z.number().int().min(0).optional(),
     nextSeq: z.number().int().min(0).optional(),
-  }).strict(),
+  }).strict().superRefine((value, ctx) => {
+    if (!value.sessionId && !value.session) {
+      ctx.addIssue({ code: "custom", message: "Attached frame requires a session identifier", path: ["sessionId"] });
+    }
+  }),
   z.object({
     type: z.literal("output"),
     seq: z.number().int().min(0).optional(),
     data: z.string().min(1).max(64 * 1024),
+  }).strict(),
+  z.object({
+    type: z.literal("replay-start"),
+    fromSeq: z.number().int().min(0).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("replay-evicted"),
+    fromSeq: z.number().int().min(0).optional(),
+    nextSeq: z.number().int().min(0),
   }).strict(),
   z.object({
     type: z.literal("replay-gap"),
@@ -429,10 +447,17 @@ export const TerminalServerFrameSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("replay-end"),
     nextSeq: z.number().int().min(0).optional(),
+    toSeq: z.number().int().min(0).nullable().optional(),
   }).strict(),
   z.object({
     type: z.literal("exit"),
     exitCode: z.number().int().nullable().optional(),
+    code: z.number().int().nullable().optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("error"),
+    code: z.string().min(1).max(80).regex(SAFE_SLUG),
+    message: boundedSafeErrorText(180, 720),
   }).strict(),
   z.object({
     type: z.literal("safe-error"),
@@ -489,6 +514,6 @@ export const PreviewSessionSummarySchema = z.object({
   id: referenceId(128),
   label: SafeDisplayStringSchema,
   status: z.enum(["starting", "running", "failed", "stopped", "unknown"]),
-  origin: z.string().url().max(512).optional(),
+  origin: z.string().url().max(2048).optional(),
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
