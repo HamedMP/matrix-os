@@ -44,6 +44,10 @@ export interface CodingAgentRuntimeSummaryOptions {
   terminalRegistry?: CodingAgentTerminalSessionRegistry;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
   threads?: CodingAgentThreadSummaryStore;
+  capabilities?: {
+    workspace?: boolean;
+    approvals?: boolean;
+  };
   terminalOwnerId?: string;
   now?: () => Date;
   runtime?: {
@@ -223,6 +227,8 @@ export function createCodingAgentRuntimeSummaryService(
       const providers = await readProviders(options.agentCredentials, principal);
       const activeThreads = await readActiveThreads(options.threads, principal);
       const threadsEnabled = Boolean(options.threads);
+      const workspaceEnabled = threadsEnabled && options.capabilities?.workspace === true;
+      const approvalsEnabled = threadsEnabled && options.capabilities?.approvals === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
         canReadTerminalSessions(principal, options.terminalOwnerId);
 
@@ -236,10 +242,10 @@ export function createCodingAgentRuntimeSummaryService(
         },
         capabilities: [
           capability({ id: "codingAgentsRuntimeSummary", enabled: true }),
-          capability({ id: "codingAgentsDesktopWorkspace", enabled: true }),
-          capability({ id: "codingAgentsMobileWorkspace", enabled: true }),
+          capability({ id: "codingAgentsDesktopWorkspace", enabled: workspaceEnabled }),
+          capability({ id: "codingAgentsMobileWorkspace", enabled: workspaceEnabled }),
           capability({ id: "codingAgentsThreadCreate", enabled: threadsEnabled }),
-          capability({ id: "codingAgentsApprovals", enabled: threadsEnabled }),
+          capability({ id: "codingAgentsApprovals", enabled: approvalsEnabled }),
           capability({ id: "codingAgentsReview", enabled: false }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
         ],

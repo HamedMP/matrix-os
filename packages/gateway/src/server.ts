@@ -499,6 +499,7 @@ export async function createGateway(config: GatewayConfig) {
       providers: codingAgentProviders,
     })
     : undefined;
+  const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
   const codingAgentThreadStream = codingAgentThreadStore
     ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
     : undefined;
@@ -507,6 +508,10 @@ export async function createGateway(config: GatewayConfig) {
     terminalRegistry: zellijShellRegistry,
     agentCredentials: agentCredentialService,
     threads: codingAgentThreadStore,
+    capabilities: {
+      workspace: codingAgentWorkspaceEnabled,
+      approvals: false,
+    },
     terminalOwnerId: process.env.MATRIX_USER_ID,
   });
   const integrationCapabilityService = createIntegrationCapabilityService({

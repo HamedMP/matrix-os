@@ -24,6 +24,12 @@ function registryWith(count: number): CodingAgentTerminalSessionRegistry {
   };
 }
 
+function capability(summary: ReturnType<typeof RuntimeSummarySchema.parse>, id: string) {
+  const match = summary.capabilities.find((candidate) => candidate.id === id);
+  expect(match).toBeDefined();
+  return match!;
+}
+
 describe("coding agent runtime summary", () => {
   it("returns a capped safe runtime summary from provider and terminal state", async () => {
     const service = createCodingAgentRuntimeSummaryService({
@@ -195,6 +201,10 @@ describe("coding agent runtime summary", () => {
       threads: {
         listThreads: async () => ({ items: [], hasMore: false, limit: 50 }),
       },
+      capabilities: {
+        workspace: true,
+        approvals: true,
+      },
       now: () => now,
       runtime: { id: "rt_primary", label: "Primary Matrix computer" },
     });
@@ -209,6 +219,46 @@ describe("coding agent runtime summary", () => {
       expect.objectContaining({ id: "codingAgentsApprovals", enabled: true }),
       expect.objectContaining({ id: "codingAgentsNativeMobileTerminal", enabled: true }),
     ]));
+  });
+
+  it("does not expose workspace or approval capabilities from thread storage alone", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      threads: {
+        listThreads: async () => ({ items: [], hasMore: false, limit: 50 }),
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(capability(summary, "codingAgentsThreadCreate")).toMatchObject({ enabled: true });
+    expect(capability(summary, "codingAgentsDesktopWorkspace")).toMatchObject({ enabled: false });
+    expect(capability(summary, "codingAgentsMobileWorkspace")).toMatchObject({ enabled: false });
+    expect(capability(summary, "codingAgentsApprovals")).toMatchObject({ enabled: false });
+  });
+
+  it("keeps approvals disabled for workspace providers without approval decision bridging", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      threads: {
+        listThreads: async () => ({ items: [], hasMore: false, limit: 50 }),
+      },
+      capabilities: {
+        workspace: true,
+        approvals: false,
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(capability(summary, "codingAgentsDesktopWorkspace")).toMatchObject({ enabled: true });
+    expect(capability(summary, "codingAgentsMobileWorkspace")).toMatchObject({ enabled: true });
+    expect(capability(summary, "codingAgentsThreadCreate")).toMatchObject({ enabled: true });
+    expect(capability(summary, "codingAgentsApprovals")).toMatchObject({ enabled: false });
   });
 
   it("serves authenticated summaries through a safe route", async () => {
