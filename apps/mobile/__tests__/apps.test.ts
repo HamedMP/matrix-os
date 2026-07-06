@@ -154,12 +154,12 @@ describe("mobile app helpers", () => {
 
   it("keeps native Matrix apps visible when the VPS app list is empty", () => {
     const apps = mergeNativeAndRemoteApps([]);
-    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Canvas", "Tasks", "Settings"]);
+    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Agents", "Canvas", "Tasks", "Settings"]);
   });
 
   it("appends remote apps after native Matrix apps", () => {
     const apps = mergeNativeAndRemoteApps([app({ name: "Workout Tracker", file: "workout/index.html" })]);
-    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Canvas", "Tasks", "Settings", "Workout Tracker"]);
+    expect(apps.map((entry) => entry.name)).toEqual(["Chat", "Apps", "Terminal", "Agents", "Canvas", "Tasks", "Settings", "Workout Tracker"]);
   });
 
   it("routes Canvas to the native explicit Canvas entry screen", () => {
