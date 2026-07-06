@@ -4,6 +4,7 @@ import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   ApprovalDecisionRequestSchema,
+  AgentThreadComposerDraftSchema,
   CreateAgentThreadRequestSchema,
   FileMetadataSchema,
   PreviewSessionSummarySchema,
@@ -15,6 +16,8 @@ import {
   TerminalSessionSummarySchema,
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
+  buildCreateAgentThreadRequestFromComposer,
+  defaultAgentThreadComposerDraft,
 } from "../../packages/contracts/src/index.js";
 
 const now = "2026-07-06T12:00:00.000Z";
@@ -320,5 +323,149 @@ describe("coding agent contracts", () => {
         recoveryActions: ["start_new_session"],
       },
     }).type).toBe("safe-error");
+  });
+
+  it("builds a create-thread request from a safe composer draft", () => {
+    const summary = RuntimeSummarySchema.parse({
+      runtime: {
+        id: "rt_primary",
+        label: "Primary Matrix computer",
+        status: "available",
+      },
+      capabilities: [
+        { id: "codingAgentsRuntimeSummary", enabled: true },
+        { id: "codingAgentsThreadCreate", enabled: true },
+      ],
+      providers: [
+        {
+          id: "codex",
+          displayName: "Codex",
+          kind: "codex",
+          availability: "available",
+          installStatus: "installed",
+          authStatus: "authenticated",
+          supportedModes: ["default", "review"],
+          defaultMode: "review",
+          setupActions: [],
+          lastCheckedAt: now,
+        },
+      ],
+      projects: { items: [], hasMore: false, limit: 20 },
+      activeThreads: { items: [], hasMore: false, limit: 20 },
+      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      recentActivity: { items: [], hasMore: false, limit: 30 },
+      limits: {
+        maxPromptBytes: 24000,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 65536,
+        maxListItems: 50,
+      },
+      serverTime: now,
+    });
+    const draft = AgentThreadComposerDraftSchema.parse({
+      prompt: "  keep exact prompt whitespace\n",
+      projectId: "repo-main",
+      terminalSessionId: "main",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+    });
+
+    expect(defaultAgentThreadComposerDraft(summary)).toMatchObject({
+      providerId: "codex",
+      mode: "review",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+    });
+    const result = buildCreateAgentThreadRequestFromComposer({
+      draft,
+      summary,
+      clientRequestId: "req_create_from_composer",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      request: {
+        providerId: "codex",
+        prompt: "  keep exact prompt whitespace\n",
+        projectId: "repo-main",
+        terminalSessionId: "main",
+        mode: "review",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+        clientRequestId: "req_create_from_composer",
+      },
+    });
+  });
+
+  it("returns safe composer issues for unavailable or invalid create inputs", () => {
+    const summary = RuntimeSummarySchema.parse({
+      runtime: {
+        id: "rt_primary",
+        label: "Primary Matrix computer",
+        status: "available",
+      },
+      capabilities: [
+        { id: "codingAgentsRuntimeSummary", enabled: true },
+        { id: "codingAgentsThreadCreate", enabled: false, reason: "Not enabled yet" },
+      ],
+      providers: [
+        {
+          id: "codex",
+          displayName: "Codex",
+          kind: "codex",
+          availability: "auth_required",
+          installStatus: "installed",
+          authStatus: "expired",
+          supportedModes: ["default"],
+          defaultMode: "default",
+          setupActions: [],
+          lastCheckedAt: now,
+        },
+      ],
+      projects: { items: [], hasMore: false, limit: 20 },
+      activeThreads: { items: [], hasMore: false, limit: 20 },
+      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      recentActivity: { items: [], hasMore: false, limit: 30 },
+      limits: {
+        maxPromptBytes: 24000,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 65536,
+        maxListItems: 50,
+      },
+      serverTime: now,
+    });
+
+    const result = buildCreateAgentThreadRequestFromComposer({
+      draft: {
+        providerId: "codex",
+        prompt: "   ",
+        mode: "review",
+      },
+      summary,
+      clientRequestId: "req_bad_composer",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "thread_create_unavailable",
+          safeMessage: "Agent runs are not available on this runtime yet.",
+        },
+        {
+          code: "prompt_required",
+          safeMessage: "Enter a prompt before starting an agent run.",
+        },
+        {
+          code: "provider_unavailable",
+          safeMessage: "Selected provider is not ready. Choose another provider or finish setup.",
+        },
+        {
+          code: "mode_unsupported",
+          safeMessage: "Selected mode is not supported by this provider.",
+        },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toMatch(/zod|stack trace|\/home\/|token|secret/i);
   });
 });
