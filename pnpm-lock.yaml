@@ -468,6 +468,9 @@ importers:
       '@hono/node-ws':
         specifier: ^1.3.1
         version: 1.3.1(@hono/node-server@1.19.11(hono@4.12.8))(bufferutil@4.1.0)(hono@4.12.8)(utf-8-validate@6.0.6)
+      '@matrix-os/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@matrix-os/kernel':
         specifier: workspace:*
         version: link:../kernel
