@@ -234,6 +234,9 @@ function applyEvent(thread: StoredThread, event: AgentThreadEvent): StoredThread
   if (event.type === "user_input.requested") {
     return { ...thread, status: "waiting_for_input", attention: "input_required", updatedAt };
   }
+  if (event.type === "terminal.bound") {
+    return { ...thread, terminalSessionId: event.terminalSessionId, updatedAt };
+  }
   if (event.type === "thread.error") {
     return { ...thread, status: "failed", attention: "failed", updatedAt };
   }
