@@ -29,7 +29,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "hono": "^4.11.9",
+    "hono": "^4.12.27",
     "posthog-node": "^5.24.15"
   },
   "peerDependencies": {
