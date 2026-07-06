@@ -3,10 +3,10 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
   setItem: jest.fn(),
 }));
 
-const mockReplace = jest.fn();
+const mockDismissTo = jest.fn();
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ replace: mockReplace }),
+  useRouter: () => ({ dismissTo: mockDismissTo }),
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -38,6 +38,6 @@ describe("CanvasEntryScreen", () => {
     ));
 
     fireEvent.press(screen.getByLabelText("Apps"));
-    expect(mockReplace).toHaveBeenCalledWith("/(tabs)/apps");
+    expect(mockDismissTo).toHaveBeenCalledWith("/(tabs)/apps");
   });
 });
