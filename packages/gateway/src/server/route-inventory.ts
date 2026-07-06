@@ -35,7 +35,7 @@ export const GATEWAY_ROUTE_GROUPS: GatewayRouteGroup[] = [
     id: "app-runtime",
     label: "Installed app runtime sessions and dispatch",
     paths: ["/api/apps/:slug/manifest", "/api/apps/:slug/ack", "/api/apps/:slug/session", "/api/apps/:slug/session-token", "/apps/:slug/*"],
-    plannedModule: "server/routes/app-runtime.ts",
+    plannedModule: "server/app-runtime-routes.ts",
   },
   {
     id: "websockets",
@@ -47,7 +47,7 @@ export const GATEWAY_ROUTE_GROUPS: GatewayRouteGroup[] = [
     id: "files-workspace",
     label: "Files, projects, static file serving, and workspace routes",
     paths: ["/api/files", "/api/projects", "/files/*", "/"],
-    plannedModule: "server/routes/files-workspace.ts",
+    plannedModule: "server/file-routes.ts",
   },
   {
     id: "bridge",

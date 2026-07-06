@@ -2,16 +2,13 @@ import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
   mkdir as mkdirAsync,
-  readFile as readFileAsync,
-  stat as statAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
-import { dirname, extname, join, normalize, resolve, relative } from "node:path";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { dirname, join, normalize, resolve } from "node:path";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
@@ -36,20 +33,6 @@ import {
 } from "./conversation-reconnect-aborts.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
-import {
-  isDeniedFileApiPath,
-  resolveExistingFileApiPath,
-  resolveWithinHome,
-  resolveWritableFileApiPath,
-} from "./path-security.js";
-import { listDirectory } from "./files-tree.js";
-import { getMissingFileFallback } from "./file-fallbacks.js";
-import { getMimeType } from "./file-utils.js";
-import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
-import { createFileBlobRoutes } from "./file-blob-routes.js";
-import { fileSearch } from "./file-search.js";
-import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
-import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
@@ -141,23 +124,6 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
-import {
-  createAppDispatcher,
-  appSessionMiddleware,
-  resolveAppBySlug,
-  loadManifest,
-  computeDistributionStatus,
-  sandboxCapabilities,
-  computeRuntimeState,
-  deriveAppSessionKey,
-  signAppSession,
-  buildSetCookie,
-  AckStore,
-  MobileAppSessionTokenStore,
-  SAFE_SLUG,
-  ProcessManager,
-  PortPool,
-} from "./app-runtime/index.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
@@ -227,6 +193,8 @@ import {
   resolveInitialSymphonyPort,
   symphonyUpstreamOriginForPort,
 } from "./server/symphony-origin.js";
+import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
+import { registerFileRoutes } from "./server/file-routes.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -301,8 +269,6 @@ export async function resetVolatilePtySessionList(persistPath: string): Promise<
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
-const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
-
 const CONVERSATION_REPLAY_BATCH_SIZE = 100;
 const CONVERSATION_RECONNECT_GRACE_MS = 30_000;
 const MAX_RECONNECTABLE_ABORT_CONTROLLERS = 100;
@@ -906,10 +872,6 @@ export async function createGateway(config: GatewayConfig) {
     if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
       logBestEffortFailure(context, err);
     }
-  }
-
-  function toStatusCode(status: number): ContentfulStatusCode {
-    return status as ContentfulStatusCode;
   }
 
   async function proxyIntegrationRequest(
@@ -1594,256 +1556,11 @@ export async function createGateway(config: GatewayConfig) {
     console.log("[platform-db] Integration routes proxied via platform internal API");
   }
 
-  // --- App Runtime (spec 063) ---
-  // Ack-token store: bounded LRU (cap 32, 5min TTL)
-  const ackStore = new AckStore();
-  const mobileSessionTokens = new MobileAppSessionTokenStore({
-    ttlMs: 60_000,
-    maxEntries: 256,
-  });
-
-  // GET /api/apps/:slug/manifest — bearer-authed manifest + runtime state + distribution status
-  app.get("/api/apps/:slug/manifest", async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const resolved = await resolveAppBySlug(appsDir, slug);
-    if (!resolved.ok) return c.json({ error: "internal" }, 500);
-    const appDir = resolved.entry.appDir;
-    const runtimeState = await computeRuntimeState(result.manifest, appDir);
-    const distributionStatus = computeDistributionStatus(
-      result.manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    return c.json({ manifest: result.manifest, runtimeState, distributionStatus });
-  });
-
-  const appSessionBodyLimit = bodyLimit({ maxSize: 4096 });
-
-  // POST /api/apps/:slug/ack — bearer-authed, issues ack token for gated installs
-  app.post("/api/apps/:slug/ack", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "installable") {
-      return c.json({ error: "ack_not_applicable" }, 400);
-    }
-    // gated: mint ack token
-    const { ack, expiresAt } = ackStore.mint(slug, "gateway-owner");
-    return c.json({ ack, expiresAt });
-  });
-
-  // POST /api/apps/:slug/session — bearer-authed, issues signed session cookie
-  app.post("/api/apps/:slug/session", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    // Re-compute distributionStatus server-side (ignore any client hint)
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "gated") {
-      // Require valid ack token
-      let body: { ack?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err) {
-        // Hono throws SyntaxError / BodyLimitError when the body is missing
-        // or malformed. Either case reduces to "no ack supplied" below; we
-        // only swallow parse-shape errors and re-throw anything else.
-        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
-          throw err;
-        }
-      }
-      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
-        return c.json({ error: "install_gated" }, 409);
-      }
-    }
-    // Sign session cookie (uses process-scoped master secret computed above;
-    // never reads MATRIX_AUTH_TOKEN directly so empty/short env values can't
-    // produce a predictable HKDF key).
-    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
-    const nowSec = Math.floor(Date.now() / 1000);
-    const maxAge = 600; // 10 minutes
-    const payload = {
-      v: 1 as const,
-      slug,
-      principal: "gateway-owner" as const,
-      scope: "personal" as const,
-      iat: nowSec,
-      exp: nowSec + maxAge,
-    };
-    const token = signAppSession(key, payload);
-    const cookie = buildSetCookie(slug, token, {
-      maxAge,
-      secure: c.req.url.startsWith("https"),
-    });
-    return c.json({ expiresAt: payload.exp * 1000 }, 200, {
-      "Set-Cookie": cookie,
-    });
-  });
-
-  // POST /api/apps/:slug/session-token — mobile-safe one-shot session bootstrap.
-  app.post("/api/apps/:slug/session-token", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "gated") {
-      let body: { ack?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err) {
-        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
-          throw err;
-        }
-      }
-      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
-        return c.json({ error: "install_gated" }, 409);
-      }
-    }
-    const routingHandle = process.env.MATRIX_HANDLE;
-    const { token, expiresAt } = mobileSessionTokens.mint(slug, Date.now(), {
-      routingKey: routingHandle && HANDLE_PATTERN.test(routingHandle) ? routingHandle : undefined,
-    });
-    return c.json({
-      token,
-      expiresAt,
-      launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
-    });
-  });
-
-  app.use("/apps/:slug/*", async (c, next) => {
-    const slug = c.req.param("slug");
-    if (!slug || !SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const url = new URL(c.req.url);
-    const token = url.searchParams.get("session");
-    if (!token) {
-      await next();
-      return;
-    }
-    if (!mobileSessionTokens.consume(slug, token)) {
-      return c.html("<!doctype html><title>Session expired</title><p>Session expired.</p>", 401, {
-        "Cache-Control": "no-store",
-        "Content-Type": "text/html; charset=utf-8",
-      });
-    }
-
-    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
-    const nowSec = Math.floor(Date.now() / 1000);
-    const maxAge = 600;
-    const payload = {
-      v: 1 as const,
-      slug,
-      principal: "gateway-owner" as const,
-      scope: "personal" as const,
-      iat: nowSec,
-      exp: nowSec + maxAge,
-    };
-    const cookie = buildSetCookie(slug, signAppSession(key, payload), {
-      maxAge,
-      secure: c.req.url.startsWith("https"),
-    });
-    url.searchParams.delete("session");
-    const nextSearch = url.searchParams.toString();
-    const location = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;
-    return new Response(null, {
-      status: 302,
-      headers: {
-        "Cache-Control": "no-store",
-        "Location": location,
-        "Set-Cookie": cookie,
-      },
-    });
-  });
-
-  // Mount app-session middleware on /apps/:slug/* (verifies signed cookie).
-  // Dev bypass (MATRIX_DEV_APP_AUTH_BYPASS, see above): a null-origin srcdoc app
-  // iframe can't carry the SameSite=Strict cookie over http localhost, so skip
-  // the gate in local dev. Prod always mounts it.
-  if (!APP_AUTH_DEV_BYPASS) {
-    app.use(
-      "/apps/:slug/*",
-      appSessionMiddleware((slug) =>
-        deriveAppSessionKey(appSessionMasterSecret, slug),
-      ),
-    );
-  }
-
-  // Create process manager for node-runtime apps
-  const portPool = new PortPool({ min: 40000, max: 49999, cap: 100 });
-  const processManager = new ProcessManager({
-    homeDir: homePath,
-    portPool,
-    maxProcesses: 10,
-    reaperIntervalMs: 30_000,
-  });
-
-  // Mount app dispatcher on /apps/:slug (static + vite + node branches)
-  const appDispatcher = createAppDispatcher(homePath, {
-    processManager,
+  const processManager = registerAppRuntimeRoutes(app, {
+    homePath,
+    appSessionMasterSecret,
+    devAppAuthBypass: APP_AUTH_DEV_BYPASS,
     publicHost: process.env.PUBLIC_HOST ?? "localhost",
-    // App-runtime failure telemetry: stable error class names only, never
-    // raw error messages or filesystem paths.
     onAppError: ({ errorKind, appSlug }) => {
       void posthogErrorTracker.captureEvent("gateway_app_runtime", {
         distinctId: ownerTelemetryDistinctId,
@@ -1856,7 +1573,6 @@ export async function createGateway(config: GatewayConfig) {
       });
     },
   });
-  app.route("/apps/:slug", appDispatcher);
 
   app.use("*", async (c, next) => {
     const start = performance.now();
@@ -2765,53 +2481,8 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  app.get("/api/files/tree", async (c) => {
-    const pathParam = c.req.query("path") ?? "";
-    const result = await listDirectory(homePath, pathParam);
-    if (!result) {
-      return c.json({ error: "Invalid path" }, 400);
-    }
-    return c.json(result);
-  });
+  registerFileRoutes(app, { homePath });
 
-  app.get("/api/files/list", async (c) => {
-    const pathParam = c.req.query("path") ?? "";
-    const result = await listDirectory(homePath, pathParam);
-    if (!result) {
-      return c.json({ error: "Invalid path" }, 400);
-    }
-    return c.json({ path: pathParam, entries: result });
-  });
-
-  app.get("/api/files/stat", async (c) => {
-    const pathParam = c.req.query("path");
-    if (!pathParam) return c.json({ error: "path required" }, 400);
-    const result = await fileStat(homePath, pathParam);
-    if (!result) return c.json({ error: "Not found" }, 404);
-    return c.json(result);
-  });
-
-  app.get("/api/files/search", async (c) => {
-    const q = c.req.query("q");
-    if (!q) return c.json({ error: "q required" }, 400);
-    if (q.length > 500) return c.json({ error: "q too long" }, 400);
-    const rawLimit = c.req.query("limit");
-    let limit: number | undefined;
-    if (rawLimit) {
-      limit = parseInt(rawLimit, 10);
-      if (isNaN(limit) || limit < 1 || limit > 500) return c.json({ error: "limit must be 1-500" }, 400);
-    }
-    const result = await fileSearch(homePath, {
-      q,
-      path: c.req.query("path"),
-      content: c.req.query("content") === "true",
-      limit,
-    });
-    return c.json(result);
-  });
-  app.route("/api/files", createFileBlobRoutes({ homePath }));
-
-  const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -2839,84 +2510,6 @@ export async function createGateway(config: GatewayConfig) {
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
   }
-
-  async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
-    try {
-      return await c.req.json<T>();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return null;
-      }
-      console.error("[gateway] Unexpected request JSON parse failure:", err);
-      throw err;
-    }
-  }
-
-  app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileMkdir(homePath, body.path);
-    return c.json(result, result.ok ? 200 : 400);
-  });
-
-  app.post("/api/files/touch", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string; content?: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileTouch(homePath, body.path, body.content);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDuplicate(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/rename", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ from: string; to: string }>(c);
-    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/copy", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ from: string; to: string }>(c);
-    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileCopy(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/delete", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDelete(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.get("/api/files/trash", async (c) => {
-    const result = await trashList(homePath);
-    return c.json(result);
-  });
-
-  app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ trashPath: string }>(c);
-    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
-    const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
-    const result = await trashEmpty(homePath);
-    return c.json(result);
-  });
-
-  app.get("/api/projects", async (c) => {
-    const rootParam = (c.req.query("root") ?? "projects").trim();
-    const result = await listProjects(homePath, rootParam);
-    if (!result.ok) return c.json({ error: result.error }, result.status as ContentfulStatusCode);
-    return c.json({ root: result.root, projects: result.projects });
-  });
 
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
@@ -2986,115 +2579,6 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     return c.json({ events });
-  });
-
-  function resolveServedFilePath(filePath: string): string | null {
-    const lexicalPath = resolveWithinHome(homePath, filePath);
-    if (!lexicalPath || isDeniedFileApiPath(homePath, filePath)) {
-      return null;
-    }
-
-    if (existsSync(lexicalPath)) {
-      return resolveExistingFileApiPath(homePath, filePath);
-    }
-
-    if (!filePath.endsWith("/manifest.json")) {
-      return lexicalPath;
-    }
-
-    const dirPath = dirname(lexicalPath);
-    const fallbackCandidates = [join(dirPath, "module.json"), join(dirPath, "matrix.json")];
-    for (const candidate of fallbackCandidates) {
-      if (existsSync(candidate)) {
-        const relativeCandidate = relative(homePath, candidate);
-        return resolveExistingFileApiPath(homePath, relativeCandidate);
-      }
-    }
-
-    return lexicalPath;
-  }
-
-  app.on("HEAD", "/files/*", (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveServedFilePath(filePath);
-    if (!fullPath) return c.text("Forbidden", 403);
-    if (!existsSync(fullPath)) {
-      const fallback = getMissingFileFallback(filePath);
-      if (fallback) return c.body(null, 200, { "content-type": fallback.contentType });
-      return c.text("Not found", 404);
-    }
-    if (statSync(fullPath).isDirectory()) return c.text("Is a directory", 400);
-    return c.body(null, 200);
-  });
-
-  app.get("/files/*", (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveServedFilePath(filePath);
-
-    if (!fullPath) {
-      return c.text("Forbidden", 403);
-    }
-
-    if (!existsSync(fullPath)) {
-      const fallback = getMissingFileFallback(filePath);
-      if (fallback) return c.body(fallback.body, 200, { "content-type": fallback.contentType });
-      return c.text("Not found", 404);
-    }
-
-    if (statSync(fullPath).isDirectory()) {
-      return c.text("Is a directory", 400);
-    }
-
-    const ext = filePath.split(".").pop() ?? "";
-
-    const textMimeTypes: Record<string, string> = {
-      html: "text/html",
-      json: "application/json",
-      js: "application/javascript",
-      css: "text/css",
-      md: "text/markdown",
-      txt: "text/plain",
-    };
-
-    const imageMimeTypes: Record<string, string> = {
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      gif: "image/gif",
-      webp: "image/webp",
-      svg: "image/svg+xml",
-    };
-
-    if (imageMimeTypes[ext]) {
-      const stat = statSync(fullPath);
-      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
-      if (c.req.header("if-none-match") === etag) {
-        return c.body(null, 304);
-      }
-      const buffer = readFileSync(fullPath);
-      return c.body(buffer, 200, {
-        "Content-Type": imageMimeTypes[ext],
-        "Cache-Control": "public, max-age=86400, immutable",
-        "CDN-Cache-Control": "public, max-age=86400",
-        "ETag": etag,
-      });
-    }
-
-    const content = readFileSync(fullPath, "utf-8");
-    return c.body(content, 200, {
-      "Content-Type": textMimeTypes[ext] ?? "text/plain",
-    });
-  });
-
-  app.put("/files/*", fileBodyLimit, async (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWritableFileApiPath(homePath, filePath);
-    if (!fullPath) return c.text("Invalid path", 403);
-    const content = await c.req.text();
-    const dir = dirname(fullPath);
-    await mkdirAsync(dir, { recursive: true });
-    await writeFileAsync(fullPath, content, "utf-8");
-    return c.json({ ok: true });
   });
 
   // Structured query API (Postgres-backed)
