@@ -59,6 +59,12 @@ describe("desktop release workflows", () => {
     expect(config).not.toContain("MATRIX_DESKTOP_UPDATE_CHANNEL ?? process.env.OPERATOR_UPDATE_CHANNEL");
   });
 
+  it("bundles preload runtime schema dependencies for sandboxed IPC validation", () => {
+    const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
+
+    expect(config).toContain('externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })');
+  });
+
   it("records the full canary app version in the release manifest", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-release-canary.yml"), "utf8");
 

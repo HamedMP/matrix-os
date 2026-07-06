@@ -37,6 +37,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     onRuntimeChanged: vi.fn(),
     getUpdateStatus: vi.fn(() => "disabled"),
     fetchRuntimeSummary: vi.fn(),
+    createAgentThread: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
 
@@ -165,5 +166,59 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-summary")).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-summary")).rejects.not.toThrow("10.0.0.5");
+  });
+
+  it("creates agent threads through trusted-core IPC without exposing credentials", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Summarize the failing checks",
+        status: "queued",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      events: {
+        items: [],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const createAgentThread = vi.fn().mockResolvedValue(snapshot);
+    const harness = makeHarness({ createAgentThread } as Partial<HandlerContext>);
+    const request = {
+      providerId: "codex",
+      prompt: "Summarize the failing checks",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+      clientRequestId: "req_desktop_1",
+    };
+
+    await expect(harness.invoke("runtime:create-thread", request)).resolves.toEqual(snapshot);
+    expect(createAgentThread).toHaveBeenCalledWith(request);
+  });
+
+  it("maps agent thread create failures to a generic IPC error", async () => {
+    const createAgentThread = vi
+      .fn()
+      .mockRejectedValue(new Error("provider failed on /home/matrix/workspace with token secret"));
+    const harness = makeHarness({ createAgentThread } as Partial<HandlerContext>);
+
+    await expect(
+      harness.invoke("runtime:create-thread", {
+        providerId: "codex",
+        prompt: "Summarize the failing checks",
+        clientRequestId: "req_desktop_1",
+      }),
+    ).rejects.toThrow("internal error");
+    await expect(
+      harness.invoke("runtime:create-thread", {
+        providerId: "codex",
+        prompt: "Summarize the failing checks",
+        clientRequestId: "req_desktop_1",
+      }),
+    ).rejects.not.toThrow("/home/matrix");
   });
 });
