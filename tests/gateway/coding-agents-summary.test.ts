@@ -132,6 +132,33 @@ describe("coding agent runtime summary", () => {
     expect(JSON.stringify(summary)).not.toMatch(/\.ssh|id_rsa|\/home\/matrix/i);
   });
 
+  it("keeps display-safe terminal names with schema-unsafe ids from failing the summary", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      terminalRegistry: {
+        list: () => [{
+          name: "my terminal",
+          status: "active",
+          visualStatus: "running",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          attachedClients: 1,
+        }],
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(summary.terminalSessions.items[0]).toMatchObject({
+      id: "terminal_private_0",
+      name: "my terminal",
+      status: "running",
+      attachable: false,
+    });
+  });
+
   it("keeps the summary safe when optional dependencies fail", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",

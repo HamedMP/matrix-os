@@ -1,6 +1,7 @@
 import {
   RuntimeSummarySchema,
   SafeDisplayStringSchema,
+  TerminalSessionIdSchema,
   type AgentProviderSummary,
   type RuntimeSummary,
   type TerminalSessionSummary,
@@ -83,11 +84,13 @@ function terminalSummaryFromSession(
 ): TerminalSessionSummary {
   const status = terminalStatus(session);
   const safeName = safeDisplayLabel(session.name, "Private session");
+  const safeId = TerminalSessionIdSchema.safeParse(session.name);
+  const canAttach = safeId.success && !safeName.sanitized && session.status !== "exited" && !session.recoverable;
   return {
-    id: safeName.sanitized ? `terminal_private_${index}` : session.name,
+    id: safeId.success && !safeName.sanitized ? safeId.data : `terminal_private_${index}`,
     name: safeName.label,
     status,
-    attachable: !safeName.sanitized && session.status !== "exited" && !session.recoverable,
+    attachable: canAttach,
     createdAt: safeIsoFromMillis(Date.parse(session.createdAt), now),
     updatedAt: safeIsoFromMillis(Date.parse(session.updatedAt), now),
   };
