@@ -261,6 +261,198 @@ describe("coding agent thread lifecycle", () => {
     );
   });
 
+  it("submits approval decisions idempotently through the provider adapter", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    let approvalCalls = 0;
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "approval.requested",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            approval: {
+              approvalId: "appr_test",
+              threadId: thread.id,
+              title: "Confirm action",
+              safeDescription: "Approve the next step.",
+              risk: "low",
+              actionKind: "other",
+              allowedDecisions: ["approve", "decline"],
+              correlationId: "corr_test",
+            },
+          }),
+        ];
+      },
+      submitApproval({ thread, approvalId, request, now: providerNow, nextEventId }) {
+        approvalCalls += 1;
+        expect(approvalId).toBe("appr_test");
+        expect(request).toEqual({
+          decision: "approve",
+          clientRequestId: "req_approval_1",
+          correlationId: "corr_test",
+        });
+        return [
+          AgentThreadEventSchema.parse({
+            type: "approval.resolved",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            approvalId,
+            decision: request.decision,
+          }),
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const app = new Hono();
+    app.route("/api/coding-agents", createCodingAgentRoutes({
+      service: createCodingAgentRuntimeSummaryService({ homePath, now: () => baseNow }),
+      threads,
+      getPrincipal: () => ownerPrincipal,
+    }));
+    const created = AgentThreadSnapshotSchema.parse(
+      await (await app.request(jsonRequest("/api/coding-agents/threads", createBody))).json(),
+    );
+    const body = {
+      decision: "approve",
+      clientRequestId: "req_approval_1",
+      correlationId: "corr_test",
+    };
+
+    const first = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, body));
+    const duplicate = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, body));
+    const oversized = await app.request(new Request(`http://localhost/api/coding-agents/threads/${created.thread.id}/approvals/appr_test/decision`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(9_000) },
+      body: JSON.stringify(body),
+    }));
+
+    expect(first.status).toBe(200);
+    expect(duplicate.status).toBe(200);
+    expect(oversized.status).toBe(413);
+    expect(approvalCalls).toBe(1);
+    const decided = AgentThreadSnapshotSchema.parse(await first.json());
+    const duplicateSnapshot = AgentThreadSnapshotSchema.parse(await duplicate.json());
+    expect(decided.thread).toMatchObject({ status: "running", attention: "none" });
+    expect(decided.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "approval.requested",
+      "approval.resolved",
+      "thread.status",
+    ]);
+    expect(duplicateSnapshot.events.items.map((event) => event.eventId)).toEqual(
+      decided.events.items.map((event) => event.eventId),
+    );
+  });
+
+  it("submits user input answers idempotently and safely validates route input", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    let inputCalls = 0;
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "user_input.requested",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            request: {
+              requestId: "req_input_prompt",
+              threadId: thread.id,
+              title: "Need input",
+              safeDescription: "Provide the missing detail.",
+              required: true,
+              correlationId: "corr_input",
+            },
+          }),
+        ];
+      },
+      submitInput({ thread, inputRequestId, request, now: providerNow, nextEventId }) {
+        inputCalls += 1;
+        expect(inputRequestId).toBe("req_input_prompt");
+        expect(request.answer).toBe("Use the safe implementation path.");
+        return [
+          AgentThreadEventSchema.parse({
+            type: "user_input.answered",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            requestId: inputRequestId,
+            correlationId: request.correlationId,
+          }),
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "running",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+    const app = new Hono();
+    app.route("/api/coding-agents", createCodingAgentRoutes({
+      service: createCodingAgentRuntimeSummaryService({ homePath, now: () => baseNow }),
+      threads,
+      getPrincipal: () => ownerPrincipal,
+    }));
+    const created = AgentThreadSnapshotSchema.parse(
+      await (await app.request(jsonRequest("/api/coding-agents/threads", createBody))).json(),
+    );
+    const body = {
+      answer: "Use the safe implementation path.",
+      clientRequestId: "req_input_1",
+      correlationId: "corr_input",
+    };
+
+    const first = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`, body));
+    const duplicate = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`, body));
+    const malformed = await app.request(jsonRequest(`/api/coding-agents/threads/${created.thread.id}/inputs/../answer`, body));
+    const oversized = await app.request(new Request(`http://localhost/api/coding-agents/threads/${created.thread.id}/inputs/req_input_prompt/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(45_000) },
+      body: JSON.stringify(body),
+    }));
+
+    expect(first.status).toBe(200);
+    expect(duplicate.status).toBe(200);
+    expect(malformed.status).toBe(404);
+    expect(oversized.status).toBe(413);
+    expect(inputCalls).toBe(1);
+    const answered = AgentThreadSnapshotSchema.parse(await first.json());
+    const duplicateSnapshot = AgentThreadSnapshotSchema.parse(await duplicate.json());
+    expect(answered.thread).toMatchObject({ status: "running", attention: "none" });
+    expect(answered.events.items.map((event) => event.type)).toEqual([
+      "thread.created",
+      "user_input.requested",
+      "user_input.answered",
+      "thread.status",
+    ]);
+    expect(duplicateSnapshot.events.items.map((event) => event.eventId)).toEqual(
+      answered.events.items.map((event) => event.eventId),
+    );
+  });
+
   it("records a safe failed thread when a provider start fails", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
     const threads = createCodingAgentThreadStore({

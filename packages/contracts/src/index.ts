@@ -346,6 +346,11 @@ export const AgentThreadEventSchema = z.discriminatedUnion("type", [
     request: UserInputRequestSchema,
   }).strict(),
   BaseThreadEventSchema.extend({
+    type: z.literal("user_input.answered"),
+    requestId: RequestIdSchema,
+    correlationId: CorrelationIdSchema,
+  }).strict(),
+  BaseThreadEventSchema.extend({
     type: z.literal("file.changed"),
     path: safeRelativePath(),
     changeKind: z.enum(["created", "updated", "deleted", "renamed"]),

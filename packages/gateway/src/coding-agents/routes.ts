@@ -3,11 +3,14 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod/v4";
 import {
+  ApprovalDecisionRequestSchema,
+  ApprovalIdSchema,
   CreateAgentThreadRequestSchema,
   CursorSchema,
   RequestIdSchema,
   ThreadIdSchema,
   SafeClientErrorSchema,
+  UserInputAnswerRequestSchema,
   boundedListSchema,
   AgentThreadSummarySchema,
 } from "@matrix-os/contracts";
@@ -32,6 +35,8 @@ export interface CodingAgentRouteDeps {
 
 const THREAD_MUTATION_BODY_LIMIT = 128 * 1024;
 const THREAD_ABORT_BODY_LIMIT = 1024;
+const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
+const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
 
 const AbortThreadBodySchema = z.object({
   clientRequestId: RequestIdSchema,
@@ -86,6 +91,8 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   const principalFor = (c: Context) => deps.getPrincipal?.(c) ?? requireRequestPrincipal(c);
   const threadMutationBodyLimit = bodyLimit({ maxSize: THREAD_MUTATION_BODY_LIMIT });
   const threadAbortBodyLimit = bodyLimit({ maxSize: THREAD_ABORT_BODY_LIMIT });
+  const threadApprovalBodyLimit = bodyLimit({ maxSize: THREAD_APPROVAL_BODY_LIMIT });
+  const threadInputBodyLimit = bodyLimit({ maxSize: THREAD_INPUT_BODY_LIMIT });
 
   app.get("/summary", async (c) => {
     try {
@@ -150,6 +157,30 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
         const body = AbortThreadBodySchema.parse(await c.req.json());
         return c.json(await deps.threads!.abortThread(principal, threadId, body.clientRequestId));
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.post("/threads/:threadId/approvals/:approvalId/decision", threadApprovalBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const approvalId = ApprovalIdSchema.parse(c.req.param("approvalId"));
+        const body = ApprovalDecisionRequestSchema.parse(await c.req.json());
+        return c.json(await deps.threads!.submitApproval(principal, threadId, approvalId, body));
+      } catch (err: unknown) {
+        return mapThreadRouteError(c, err);
+      }
+    });
+
+    app.post("/threads/:threadId/inputs/:inputRequestId/answer", threadInputBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const threadId = ThreadIdSchema.parse(c.req.param("threadId"));
+        const inputRequestId = RequestIdSchema.parse(c.req.param("inputRequestId"));
+        const body = UserInputAnswerRequestSchema.parse(await c.req.json());
+        return c.json(await deps.threads!.submitInput(principal, threadId, inputRequestId, body));
       } catch (err: unknown) {
         return mapThreadRouteError(c, err);
       }

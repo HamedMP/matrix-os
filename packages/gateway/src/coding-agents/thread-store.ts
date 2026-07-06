@@ -6,6 +6,7 @@ import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   AgentThreadSummarySchema,
+  ApprovalIdSchema,
   ProviderIdSchema,
   RequestIdSchema,
   SafeClientErrorSchema,
@@ -26,6 +27,8 @@ const EVENT_REPLAY_LIMIT = 200;
 const MAX_STORED_THREADS = 200;
 const MAX_EVENTS_PER_THREAD = 500;
 const MAX_ABORT_REQUEST_IDS = 50;
+const MAX_APPROVAL_DECISION_REQUEST_IDS = 50;
+const MAX_INPUT_ANSWER_REQUEST_IDS = 50;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 
@@ -33,6 +36,8 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
   ownerId: OwnerIdSchema,
   clientRequestId: RequestIdSchema,
   abortClientRequestIds: z.array(RequestIdSchema).max(MAX_ABORT_REQUEST_IDS).default([]),
+  approvalDecisionClientRequestIds: z.array(RequestIdSchema).max(MAX_APPROVAL_DECISION_REQUEST_IDS).default([]),
+  inputAnswerClientRequestIds: z.array(RequestIdSchema).max(MAX_INPUT_ANSWER_REQUEST_IDS).default([]),
 }).strict();
 
 const StoredThreadStateSchema = z.object({
@@ -109,6 +114,18 @@ export interface CodingAgentThreadStore {
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string): Promise<AgentThreadSnapshot>;
+  submitApproval(
+    principal: RequestPrincipal,
+    threadId: string,
+    approvalId: string,
+    request: ApprovalDecisionRequest,
+  ): Promise<AgentThreadSnapshot>;
+  submitInput(
+    principal: RequestPrincipal,
+    threadId: string,
+    inputRequestId: string,
+    request: UserInputAnswerRequest,
+  ): Promise<AgentThreadSnapshot>;
   registerEventSink(sink: ThreadEventSink): { dispose(): void };
 }
 
@@ -234,6 +251,9 @@ function applyEvent(thread: StoredThread, event: AgentThreadEvent): StoredThread
   if (event.type === "user_input.requested") {
     return { ...thread, status: "waiting_for_input", attention: "input_required", updatedAt };
   }
+  if (event.type === "approval.resolved" || event.type === "user_input.answered") {
+    return { ...thread, status: "running", attention: "none", updatedAt };
+  }
   if (event.type === "terminal.bound") {
     return { ...thread, terminalSessionId: event.terminalSessionId, updatedAt };
   }
@@ -263,7 +283,14 @@ function snapshotFor(thread: StoredThread, allEvents: AgentThreadEvent[], cursor
 }
 
 function stripOwner(thread: StoredThread): AgentThreadSummary {
-  const { ownerId: _ownerId, clientRequestId: _clientRequestId, abortClientRequestIds: _abortClientRequestIds, ...summary } = thread;
+  const {
+    ownerId: _ownerId,
+    clientRequestId: _clientRequestId,
+    abortClientRequestIds: _abortClientRequestIds,
+    approvalDecisionClientRequestIds: _approvalDecisionClientRequestIds,
+    inputAnswerClientRequestIds: _inputAnswerClientRequestIds,
+    ...summary
+  } = thread;
   return AgentThreadSummarySchema.parse(summary);
 }
 
@@ -333,6 +360,58 @@ function defaultAbortEvents(threadId: string, now: () => Date, eventId: () => st
       threadId,
       occurredAt: now().toISOString(),
       outcome: "aborted",
+    }),
+  ];
+}
+
+function defaultApprovalDecisionEvents(
+  threadId: string,
+  approvalId: string,
+  request: ApprovalDecisionRequest,
+  now: () => Date,
+  eventId: () => string,
+): AgentThreadEvent[] {
+  return [
+    AgentThreadEventSchema.parse({
+      type: "approval.resolved",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      approvalId,
+      decision: request.decision,
+    }),
+    AgentThreadEventSchema.parse({
+      type: "thread.status",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      status: "running",
+    }),
+  ];
+}
+
+function defaultInputAnswerEvents(
+  threadId: string,
+  inputRequestId: string,
+  request: UserInputAnswerRequest,
+  now: () => Date,
+  eventId: () => string,
+): AgentThreadEvent[] {
+  return [
+    AgentThreadEventSchema.parse({
+      type: "user_input.answered",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      requestId: inputRequestId,
+      correlationId: request.correlationId,
+    }),
+    AgentThreadEventSchema.parse({
+      type: "thread.status",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      status: "running",
     }),
   ];
 }
@@ -439,6 +518,8 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           ownerId: principal.userId,
           clientRequestId: request.clientRequestId,
           abortClientRequestIds: [],
+          approvalDecisionClientRequestIds: [],
+          inputAnswerClientRequestIds: [],
           providerId: request.providerId,
           title: genericTitle(),
           status: "queued",
@@ -558,6 +639,114 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         return {
           state: nextState,
           result: { snapshot: snapshotFor(nextThread, nextState.events), eventsToPublish: abortEvents },
+        };
+      });
+      publish(principal.userId, threadId, result.eventsToPublish);
+      return result.snapshot;
+    },
+    async submitApproval(principal, threadId, approvalId, request) {
+      const parsedApprovalId = ApprovalIdSchema.parse(approvalId);
+      const result = await mutate(async (state) => {
+        const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
+        if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
+        if (thread.approvalDecisionClientRequestIds.includes(request.clientRequestId) || terminalThread(thread)) {
+          return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] } };
+        }
+        const provider = providers.find((candidate) => candidate.providerId === thread.providerId);
+        let approvalEvents: AgentThreadEvent[];
+        if (provider?.submitApproval) {
+          try {
+            approvalEvents = parseProviderEvents(await provider.submitApproval({
+              principal,
+              thread: stripOwner(thread),
+              approvalId: parsedApprovalId,
+              request,
+              now,
+              nextEventId,
+            }), threadId);
+          } catch (err: unknown) {
+            console.warn("[coding-agents] provider approval submit failed:", err instanceof Error ? err.message : String(err));
+            throw new CodingAgentThreadError("thread_store_unavailable", "Provider approval submit failed");
+          }
+        } else {
+          approvalEvents = defaultApprovalDecisionEvents(threadId, parsedApprovalId, request, now, nextEventId);
+        }
+        if (approvalEvents.length === 0) {
+          approvalEvents = defaultApprovalDecisionEvents(threadId, parsedApprovalId, request, now, nextEventId);
+        }
+        let nextThread = thread;
+        for (const event of approvalEvents) {
+          nextThread = applyEvent(nextThread, event);
+        }
+        nextThread = {
+          ...nextThread,
+          approvalDecisionClientRequestIds: [
+            ...nextThread.approvalDecisionClientRequestIds,
+            request.clientRequestId,
+          ].slice(-MAX_APPROVAL_DECISION_REQUEST_IDS),
+        };
+        const nextState = {
+          version: 1 as const,
+          threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
+          events: [...state.events, ...approvalEvents],
+        };
+        return {
+          state: nextState,
+          result: { snapshot: snapshotFor(nextThread, nextState.events), eventsToPublish: approvalEvents },
+        };
+      });
+      publish(principal.userId, threadId, result.eventsToPublish);
+      return result.snapshot;
+    },
+    async submitInput(principal, threadId, inputRequestId, request) {
+      const parsedInputRequestId = RequestIdSchema.parse(inputRequestId);
+      const result = await mutate(async (state) => {
+        const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
+        if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
+        if (thread.inputAnswerClientRequestIds.includes(request.clientRequestId) || terminalThread(thread)) {
+          return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] } };
+        }
+        const provider = providers.find((candidate) => candidate.providerId === thread.providerId);
+        let inputEvents: AgentThreadEvent[];
+        if (provider?.submitInput) {
+          try {
+            inputEvents = parseProviderEvents(await provider.submitInput({
+              principal,
+              thread: stripOwner(thread),
+              inputRequestId: parsedInputRequestId,
+              request,
+              now,
+              nextEventId,
+            }), threadId);
+          } catch (err: unknown) {
+            console.warn("[coding-agents] provider input submit failed:", err instanceof Error ? err.message : String(err));
+            throw new CodingAgentThreadError("thread_store_unavailable", "Provider input submit failed");
+          }
+        } else {
+          inputEvents = defaultInputAnswerEvents(threadId, parsedInputRequestId, request, now, nextEventId);
+        }
+        if (inputEvents.length === 0) {
+          inputEvents = defaultInputAnswerEvents(threadId, parsedInputRequestId, request, now, nextEventId);
+        }
+        let nextThread = thread;
+        for (const event of inputEvents) {
+          nextThread = applyEvent(nextThread, event);
+        }
+        nextThread = {
+          ...nextThread,
+          inputAnswerClientRequestIds: [
+            ...nextThread.inputAnswerClientRequestIds,
+            request.clientRequestId,
+          ].slice(-MAX_INPUT_ANSWER_REQUEST_IDS),
+        };
+        const nextState = {
+          version: 1 as const,
+          threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
+          events: [...state.events, ...inputEvents],
+        };
+        return {
+          state: nextState,
+          result: { snapshot: snapshotFor(nextThread, nextState.events), eventsToPublish: inputEvents },
         };
       });
       publish(principal.userId, threadId, result.eventsToPublish);
