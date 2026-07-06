@@ -23,7 +23,7 @@ const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
   "task-manager": "/(tabs)/mission-control",
   "mission-control": "/(tabs)/mission-control",
   apps: "/(tabs)/apps",
-  agents: "/agents",
+  ...(CODING_AGENTS_MOBILE_WORKSPACE ? { agents: "/agents" as const } : {}),
   settings: "/(tabs)/settings",
   canvas: "/canvas",
   whiteboard: "/canvas",
