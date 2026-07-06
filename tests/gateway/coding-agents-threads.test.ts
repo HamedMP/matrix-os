@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import {
+  AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   RuntimeSummarySchema,
 } from "../../packages/contracts/src/index.js";
@@ -125,6 +126,49 @@ describe("coding agent thread lifecycle", () => {
     ]);
   });
 
+  it("rejects stale cursors instead of replaying from the beginning", async () => {
+    const { app } = await createHarness();
+    const created = await app.request(jsonRequest("/api/coding-agents/threads", createBody));
+    const snapshot = AgentThreadSnapshotSchema.parse(await created.json());
+
+    const replay = await app.request(`/api/coding-agents/threads/${snapshot.thread.id}/events?cursor=evt_missing`);
+
+    expect(replay.status).toBe(404);
+    expect(await replay.json()).toEqual({
+      error: {
+        code: "thread_not_found",
+        safeMessage: "Thread is unavailable. Refresh and try again.",
+        retryable: true,
+        recoveryActions: ["retry"],
+      },
+    });
+  });
+
+  it("returns the first replay window after the cursor", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex", deltaCount: 250 })],
+    });
+    const app = new Hono();
+    app.route("/api/coding-agents", createCodingAgentRoutes({
+      service: createCodingAgentRuntimeSummaryService({ homePath, now: () => baseNow }),
+      threads,
+      getPrincipal: () => ownerPrincipal,
+    }));
+    const created = await app.request(jsonRequest("/api/coding-agents/threads", createBody));
+    const snapshot = AgentThreadSnapshotSchema.parse(await created.json());
+    const createdCursor = snapshot.events.items[0]!.eventId;
+
+    const replay = await app.request(`/api/coding-agents/threads/${snapshot.thread.id}/events?cursor=${createdCursor}`);
+    const replayBody = AgentThreadSnapshotSchema.parse(await replay.json());
+
+    expect(replayBody.events.items).toHaveLength(200);
+    expect(replayBody.events.items[0]).toMatchObject({ type: "thread.status" });
+    expect(replayBody.events.hasMore).toBe(true);
+  });
+
   it("keeps thread ownership isolated and maps missing threads to safe errors", async () => {
     const { app, setPrincipal } = await createHarness();
     const created = await app.request(jsonRequest("/api/coding-agents/threads", createBody));
@@ -158,6 +202,7 @@ describe("coding agent thread lifecycle", () => {
     const aborted = AgentThreadSnapshotSchema.parse(await firstAbort.json());
     const duplicate = AgentThreadSnapshotSchema.parse(await duplicateAbort.json());
     expect(aborted.thread.status).toBe("aborted");
+    expect(aborted.thread.attention).toBe("none");
     expect(duplicate.events.items.map((event) => event.eventId)).toEqual(
       aborted.events.items.map((event) => event.eventId),
     );
@@ -165,6 +210,54 @@ describe("coding agent thread lifecycle", () => {
       type: "thread.completed",
       outcome: "aborted",
     });
+  });
+
+  it("clears pending attention on abort and preserves already-final threads", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    let tick = 0;
+    const now = () => new Date(baseNow.getTime() + tick++ * 1000);
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now,
+      providers: [
+        {
+          providerId: "codex",
+          startThread({ thread, now: providerNow, nextEventId }) {
+            return [
+              AgentThreadEventSchema.parse({
+                type: "approval.requested",
+                eventId: nextEventId(),
+                threadId: thread.id,
+                occurredAt: providerNow().toISOString(),
+                approval: {
+                  approvalId: "appr_test",
+                  threadId: thread.id,
+                  title: "Confirm action",
+                  safeDescription: "Approve the next step.",
+                  risk: "low",
+                  actionKind: "other",
+                  allowedDecisions: ["approve", "decline"],
+                  correlationId: "corr_test",
+                },
+              }),
+            ];
+          },
+        },
+      ],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+
+    const aborted = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_attention");
+    const duplicate = await threads.abortThread(ownerPrincipal, created.snapshot.thread.id, "req_abort_after_final");
+
+    expect(created.snapshot.thread).toMatchObject({
+      status: "waiting_for_approval",
+      attention: "approval_required",
+    });
+    expect(aborted.thread).toMatchObject({ status: "aborted", attention: "none" });
+    expect(duplicate.events.items.map((event) => event.eventId)).toEqual(
+      aborted.events.items.map((event) => event.eventId),
+    );
   });
 
   it("rejects unauthenticated, oversized, invalid provider, and unsafe route input", async () => {

@@ -75,8 +75,9 @@ export class CodingAgentThreadError extends Error {
   }
 }
 
-export function createFakeCodingAgentProvider(options: { providerId: string }): CodingAgentProviderAdapter {
+export function createFakeCodingAgentProvider(options: { providerId: string; deltaCount?: number }): CodingAgentProviderAdapter {
   const providerId = ProviderIdSchema.parse(options.providerId);
+  const deltaCount = Math.max(1, Math.min(options.deltaCount ?? 1, 300));
   return {
     providerId,
     startThread({ thread, now, nextEventId }) {
@@ -88,14 +89,14 @@ export function createFakeCodingAgentProvider(options: { providerId: string }): 
           occurredAt: now().toISOString(),
           status: "running",
         },
-        {
+        ...Array.from({ length: deltaCount }, (_, index) => ({
           type: "assistant.text.delta",
           eventId: nextEventId(),
           threadId: thread.id,
           occurredAt: now().toISOString(),
           messageId: "msg_fake_provider_started",
-          delta: "Agent run started.",
-        },
+          delta: index === 0 ? "Agent run started." : `Agent event ${index + 1}.`,
+        } satisfies AgentThreadEvent)),
       ];
     },
   };
@@ -146,7 +147,7 @@ function applyEvent(thread: StoredThread, event: AgentThreadEvent): StoredThread
     return {
       ...thread,
       status: event.outcome === "completed" ? "completed" : event.outcome === "aborted" ? "aborted" : "failed",
-      attention: event.outcome === "failed" ? "failed" : thread.attention,
+      attention: event.outcome === "failed" ? "failed" : "none",
       updatedAt,
     };
   }
@@ -164,8 +165,12 @@ function applyEvent(thread: StoredThread, event: AgentThreadEvent): StoredThread
 
 function snapshotFor(thread: StoredThread, allEvents: AgentThreadEvent[], cursor?: string): AgentThreadSnapshot {
   const eventsForThread = allEvents.filter((event) => event.threadId === thread.id);
-  const startIndex = cursor ? eventsForThread.findIndex((event) => event.eventId === cursor) + 1 : 0;
-  const window = eventsForThread.slice(Math.max(0, startIndex)).slice(-EVENT_REPLAY_LIMIT);
+  const cursorIndex = cursor ? eventsForThread.findIndex((event) => event.eventId === cursor) : -1;
+  if (cursor && cursorIndex < 0) {
+    throw new CodingAgentThreadError("thread_not_found", "Thread cursor not found");
+  }
+  const startIndex = cursor ? cursorIndex + 1 : 0;
+  const window = eventsForThread.slice(startIndex, startIndex + EVENT_REPLAY_LIMIT);
   return AgentThreadSnapshotSchema.parse({
     thread: stripOwner(thread),
     events: {
@@ -203,6 +208,10 @@ function trimState(state: StoredThreadState): StoredThreadState {
 
 function activeThread(thread: StoredThread): boolean {
   return !["completed", "failed", "aborted", "archived"].includes(thread.status);
+}
+
+function terminalThread(thread: StoredThread): boolean {
+  return !activeThread(thread);
 }
 
 export function safeThreadError(code: CodingAgentThreadError["code"]) {
@@ -332,17 +341,8 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
       return mutate(async (state) => {
         const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
         if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
-        if (thread.abortClientRequestIds.includes(clientRequestId) || thread.status === "aborted") {
-          const abortClientRequestIds = thread.abortClientRequestIds.includes(clientRequestId)
-            ? thread.abortClientRequestIds
-            : [...thread.abortClientRequestIds, clientRequestId].slice(-MAX_ABORT_REQUEST_IDS);
-          const nextThread = {
-            ...thread,
-            abortClientRequestIds,
-          };
-          const nextThreads = state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate);
-          const nextState = { ...state, threads: nextThreads };
-          return { state: nextState, result: snapshotFor(nextThread, state.events) };
+        if (thread.abortClientRequestIds.includes(clientRequestId) || terminalThread(thread)) {
+          return { state, result: snapshotFor(thread, state.events) };
         }
         const occurredAt = now().toISOString();
         const statusEvent = AgentThreadEventSchema.parse({
