@@ -188,6 +188,29 @@ describe("coding agent runtime summary", () => {
     expect(JSON.stringify(summary)).not.toMatch(/Postgres|\/home\/matrix|provider token/i);
   });
 
+  it("advertises enabled shell capabilities when runtime dependencies are wired", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      terminalRegistry: registryWith(1),
+      threads: {
+        listThreads: async () => ({ items: [], hasMore: false, limit: 50 }),
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(summary.capabilities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "codingAgentsRuntimeSummary", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsDesktopWorkspace", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsMobileWorkspace", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsThreadCreate", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsApprovals", enabled: true }),
+      expect.objectContaining({ id: "codingAgentsNativeMobileTerminal", enabled: true }),
+    ]));
+  });
+
   it("serves authenticated summaries through a safe route", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",

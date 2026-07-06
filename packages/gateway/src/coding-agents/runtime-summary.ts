@@ -102,6 +102,12 @@ function terminalSummaryFromSession(
   };
 }
 
+function capability(input: { id: RuntimeSummary["capabilities"][number]["id"]; enabled: boolean }) {
+  return input.enabled
+    ? { id: input.id, enabled: true }
+    : { id: input.id, enabled: false, reason: "Not enabled yet" };
+}
+
 function statusToProviderSummary(agent: AgentCredentialSummary): AgentProviderSummary {
   const isAvailable = agent.status === "available";
   const isMissing = agent.status === "missing";
@@ -216,6 +222,9 @@ export function createCodingAgentRuntimeSummaryService(
       );
       const providers = await readProviders(options.agentCredentials, principal);
       const activeThreads = await readActiveThreads(options.threads, principal);
+      const threadsEnabled = Boolean(options.threads);
+      const terminalEnabled = Boolean(options.terminalRegistry) &&
+        canReadTerminalSessions(principal, options.terminalOwnerId);
 
       return RuntimeSummarySchema.parse({
         runtime: {
@@ -226,17 +235,13 @@ export function createCodingAgentRuntimeSummaryService(
           ownerHandle: options.runtime?.ownerHandle,
         },
         capabilities: [
-          { id: "codingAgentsRuntimeSummary", enabled: true },
-          { id: "codingAgentsDesktopWorkspace", enabled: false, reason: "Not enabled yet" },
-          { id: "codingAgentsMobileWorkspace", enabled: false, reason: "Not enabled yet" },
-          {
-            id: "codingAgentsThreadCreate",
-            enabled: Boolean(options.threads),
-            reason: options.threads ? undefined : "Not enabled yet",
-          },
-          { id: "codingAgentsApprovals", enabled: false, reason: "Not enabled yet" },
-          { id: "codingAgentsReview", enabled: false, reason: "Not enabled yet" },
-          { id: "codingAgentsNativeMobileTerminal", enabled: false, reason: "Not enabled yet" },
+          capability({ id: "codingAgentsRuntimeSummary", enabled: true }),
+          capability({ id: "codingAgentsDesktopWorkspace", enabled: true }),
+          capability({ id: "codingAgentsMobileWorkspace", enabled: true }),
+          capability({ id: "codingAgentsThreadCreate", enabled: threadsEnabled }),
+          capability({ id: "codingAgentsApprovals", enabled: threadsEnabled }),
+          capability({ id: "codingAgentsReview", enabled: false }),
+          capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
         ],
         providers,
         projects: { items: [], hasMore: false, limit: 20 },

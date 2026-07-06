@@ -255,10 +255,12 @@ Server flags:
 - Fake provider: `MATRIX_CODING_AGENTS_FAKE_PROVIDER=1`.
 - Workspace provider: `MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1`.
 
-Current mismatch to resolve:
+Current behavior:
 
-- Runtime summary currently reports desktop/mobile workspace capabilities as not enabled even when client build flags display the read-only dashboards. A later slice should make server capabilities and client flags agree before default rollout.
-- Runtime summary currently reports `codingAgentsApprovals` as not enabled even though approval/input routes exist in the top stack. A later slice should wire this capability to thread-store/provider availability.
+- Runtime summary advertises desktop/mobile read-only workspace capabilities as enabled when the summary service is available.
+- Runtime summary advertises `codingAgentsThreadCreate` and `codingAgentsApprovals` when a coding-agent thread store is wired.
+- Runtime summary advertises `codingAgentsNativeMobileTerminal` when a terminal registry is wired and the caller can read terminal sessions.
+- Runtime summary keeps `codingAgentsReview` disabled until coding-agent-specific review shell integration is implemented.
 
 ## Baseline Commands
 
@@ -301,7 +303,6 @@ git diff --check
 
 ## Open Questions And Deferred Work
 
-- Server/client flag alignment: decide whether runtime summary capabilities should derive from server dependencies only, client build flags only, or both.
 - Session completion reconciliation: workspace-backed sessions need a runtime event path that marks coding-agent threads completed/failed when the underlying workspace session exits without a user abort.
 - File/review/preview shell surfaces: contracts exist and workspace routes exist, but coding-agent-specific UI integration is not implemented yet.
 - Browser shell entry point: Canvas-first placement is still undecided.
