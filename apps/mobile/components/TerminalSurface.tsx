@@ -1,4 +1,11 @@
-import React, { forwardRef, useCallback, useImperativeHandle, useMemo, useRef } from "react";
+import React, {
+  forwardRef,
+  useCallback,
+  useEffectEvent,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from "react";
 import { PanResponder, View, type LayoutChangeEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -164,34 +171,39 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       inject(`window.__matrixTerminal && window.__matrixTerminal.scrollLines(${Math.trunc(lines)})`);
     }, [inject]);
 
-    const panResponder = useMemo(
-      () => PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: () => {
-          dragDyRef.current = 0;
-        },
-        onPanResponderMove: (_event, gesture) => {
-          if (Math.abs(gesture.dy) < 6 || Math.abs(gesture.dy) < Math.abs(gesture.dx) * 1.15) return;
-          const delta = gesture.dy - dragDyRef.current;
-          const lineHeight = Math.max(8, heightRef.current / Math.max(1, rowsRef.current));
-          const lines = Math.trunc(delta / (lineHeight * 0.52));
-          if (lines === 0) return;
-          // Finger down reveals older output. Finger up returns toward the live bottom.
-          scrollLines(-lines);
-          dragDyRef.current += lines * lineHeight * 0.52;
-        },
-        onPanResponderRelease: (_event, gesture) => {
-          const moved = Math.abs(gesture.dy) > 6 || Math.abs(gesture.dx) > 6;
-          dragDyRef.current = 0;
-          if (!moved) inject("window.__matrixTerminal && window.__matrixTerminal.focus()");
-        },
-        onPanResponderTerminate: () => {
-          dragDyRef.current = 0;
-        },
-      }),
-      [inject, scrollLines],
-    );
+    const handlePanGrant = useEffectEvent(() => {
+      dragDyRef.current = 0;
+    });
+
+    const handlePanMove = useEffectEvent((gesture: { dx: number; dy: number }) => {
+      if (Math.abs(gesture.dy) < 6 || Math.abs(gesture.dy) < Math.abs(gesture.dx) * 1.15) return;
+      const delta = gesture.dy - dragDyRef.current;
+      const lineHeight = Math.max(8, heightRef.current / Math.max(1, rowsRef.current));
+      const lines = Math.trunc(delta / (lineHeight * 0.52));
+      if (lines === 0) return;
+      // Finger down reveals older output. Finger up returns toward the live bottom.
+      scrollLines(-lines);
+      dragDyRef.current += lines * lineHeight * 0.52;
+    });
+
+    const handlePanRelease = useEffectEvent((gesture: { dx: number; dy: number }) => {
+      const moved = Math.abs(gesture.dy) > 6 || Math.abs(gesture.dx) > 6;
+      dragDyRef.current = 0;
+      if (!moved) inject("window.__matrixTerminal && window.__matrixTerminal.focus()");
+    });
+
+    const handlePanTerminate = useEffectEvent(() => {
+      dragDyRef.current = 0;
+    });
+
+    const panResponder = PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: handlePanGrant,
+      onPanResponderMove: (_event, gesture) => handlePanMove(gesture),
+      onPanResponderRelease: (_event, gesture) => handlePanRelease(gesture),
+      onPanResponderTerminate: handlePanTerminate,
+    });
 
     const handleLayout = useCallback((event: LayoutChangeEvent) => {
       heightRef.current = Math.max(1, event.nativeEvent.layout.height);

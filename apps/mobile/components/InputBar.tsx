@@ -3,7 +3,6 @@ import {
   View,
   TextInput,
   Pressable,
-  Text,
   ActivityIndicator,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";

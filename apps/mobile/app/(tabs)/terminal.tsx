@@ -4,9 +4,7 @@ import {
   Alert,
   Animated,
   Easing,
-  FlatList,
   Keyboard,
-  Pressable,
   Text,
   useWindowDimensions,
   View,
@@ -29,7 +27,6 @@ import {
 import {
   formatTerminalCwd,
   initialTerminalState,
-  type MobileTerminalSession,
   terminalReducer,
 } from "@/lib/terminal-state";
 export default function TerminalScreen() {
@@ -351,75 +348,6 @@ export default function TerminalScreen() {
         </View>
       </Animated.View>
     </View>
-  );
-}
-
-interface SessionChipProps {
-  session: MobileTerminalSession;
-  active: boolean;
-  onSelect: (sessionId: string) => void;
-}
-
-const SessionChip = React.memo(function SessionChip({ session, active, onSelect }: SessionChipProps) {
-  const { theme } = useUnistyles();
-  const handlePress = useCallback(() => onSelect(session.sessionId), [onSelect, session.sessionId]);
-  const status = session.visualStatus;
-  const hollow = status === "idle" || status === "finished";
-  const dotColor = status === "waiting"
-    ? theme.colors.statusWaiting
-    : hollow
-      ? theme.colors.statusIdle
-      : theme.colors.statusRunning;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Resume ${formatTerminalCwd(session.cwd)}`}
-      onPress={handlePress}
-      style={active ? styles.sessionChipActiveCombined : styles.sessionChip}
-    >
-      <View
-        style={[
-          styles.chipDot,
-          { backgroundColor: hollow ? "transparent" : dotColor, borderColor: dotColor, borderWidth: hollow ? 1.5 : 0 },
-        ]}
-      />
-      <Text style={styles.sessionChipText} numberOfLines={1}>
-        {session.sessionId}
-      </Text>
-    </Pressable>
-  );
-});
-
-interface SessionChipRowProps {
-  sessions: MobileTerminalSession[];
-  activeSessionId: string | null;
-  onSelect: (sessionId: string) => void;
-}
-
-function SessionChipRow({ sessions, activeSessionId, onSelect }: SessionChipRowProps) {
-  const keyExtractor = useCallback((session: MobileTerminalSession) => session.sessionId, []);
-  const renderItem = useCallback(
-    ({ item: session }: { item: MobileTerminalSession }) => (
-      <SessionChip
-        session={session}
-        active={session.sessionId === activeSessionId}
-        onSelect={onSelect}
-      />
-    ),
-    [activeSessionId, onSelect],
-  );
-  if (sessions.length === 0) return null;
-  return (
-    <FlatList
-      horizontal
-      data={sessions}
-      keyExtractor={keyExtractor}
-      showsHorizontalScrollIndicator={false}
-      style={styles.sessionStrip}
-      contentContainerStyle={styles.sessionRow}
-      keyboardShouldPersistTaps="handled"
-      renderItem={renderItem}
-    />
   );
 }
 

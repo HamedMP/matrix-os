@@ -296,10 +296,9 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
 function CodeContent({ content, role }: { content: string; role: Message["role"] }) {
   // Pair each split segment with its source character offset so keys are stable
   // across renders (the segments concatenate back to the immutable content).
-  let cursor = 0;
-  const segments = content.split(/(```[\s\S]*?```)/g).map((part) => {
-    const start = cursor;
-    cursor += part.length;
+  const parts = content.split(/(```[\s\S]*?```)/g);
+  const segments = parts.map((part, index) => {
+    const start = parts.slice(0, index).reduce((offset, previous) => offset + previous.length, 0);
     return { part, start };
   });
 

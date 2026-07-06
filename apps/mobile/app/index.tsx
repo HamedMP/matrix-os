@@ -116,7 +116,6 @@ export default function Index() {
 
   useEffect(() => {
     if (isSignedIn) {
-      setCheckingSelfHosted(false);
       return;
     }
     let cancelled = false;

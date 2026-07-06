@@ -29,12 +29,12 @@ import { colors } from "@/lib/theme";
 const H_PADDING = 16;
 
 // Apps intentionally kept out of the launcher grid (Chat lives elsewhere).
-const HIDDEN_APP_SLUGS = new Set<string>(["apps", "chat", "tasks", "task-manager"]);
+const HIDDEN_APP_SLUGS = new Set<string>(["chat"]);
 
 // Fallback monogram-tile palette: tinted background + legible glyph colour,
 // stable per app via a slug hash, used only when an icon image is unavailable.
 const L = colors.light;
-const TILE_PALETTE: Array<{ bg: string; fg: string }> = [
+const TILE_PALETTE: { bg: string; fg: string }[] = [
   { bg: L.forest, fg: "#DCE6D2" },
   { bg: L.moss, fg: "#EFF3EC" },
   { bg: "#5F7A6B", fg: "#EAF0EC" },
@@ -508,7 +508,9 @@ export default function AppsScreen() {
   useEffect(() => {
     let cancelled = false;
     if (!client) {
-      setAuthHeader(undefined);
+      queueMicrotask(() => {
+        if (!cancelled) setAuthHeader(undefined);
+      });
       return;
     }
     client

@@ -30,7 +30,6 @@ import {
   getOutboundQueue,
   addToOutboundQueue,
   clearOutboundQueue,
-  getRetryDelay,
   canRetry,
   type QueuedMessage,
 } from "@/lib/offline";
@@ -375,19 +374,19 @@ export default function ChatScreen() {
                   onPress={() => handleSend("What can you help me with?")}
                   style={({ pressed }) => [styles.suggestion, pressed && { opacity: 0.7 }]}
                 >
-                  <Text style={styles.suggestionText}>"What can you help me with?"</Text>
+                  <Text style={styles.suggestionText}>{"\"What can you help me with?\""}</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => handleSend("Create a new task")}
                   style={({ pressed }) => [styles.suggestion, pressed && { opacity: 0.7 }]}
                 >
-                  <Text style={styles.suggestionText}>"Create a new task"</Text>
+                  <Text style={styles.suggestionText}>{"\"Create a new task\""}</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => handleSend("Show me my schedule")}
                   style={({ pressed }) => [styles.suggestion, pressed && { opacity: 0.7 }]}
                 >
-                  <Text style={styles.suggestionText}>"Show me my schedule"</Text>
+                  <Text style={styles.suggestionText}>{"\"Show me my schedule\""}</Text>
                 </Pressable>
               </View>
             )}

@@ -21,7 +21,7 @@ export default function CanvasEntryScreen() {
       .catch((err: unknown) => {
         console.warn("[mobile] failed to save canvas return state", err instanceof Error ? err.message : String(err));
       });
-    router.dismissTo("/(tabs)/apps" as any);
+    router.replace("/(tabs)/apps" as any);
   }, [router]);
 
   const markCanvas = useCallback(() => {

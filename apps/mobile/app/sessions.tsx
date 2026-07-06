@@ -142,7 +142,7 @@ export default function SessionsScreen() {
         ))}
       </View>
     ),
-    [openSession, endSession],
+    [activeSessionId, openSession, endSession],
   );
 
   return (

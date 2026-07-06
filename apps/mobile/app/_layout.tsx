@@ -345,7 +345,10 @@ function GatewayShell() {
 function NotificationRouter() {
   const router = useRouter();
   const routerRef = useRef(router);
-  routerRef.current = router;
+
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
 
   useEffect(() => {
     const sub = addNotificationResponseListener((response) => {
