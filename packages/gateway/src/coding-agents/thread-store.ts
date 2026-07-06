@@ -7,9 +7,11 @@ import {
   AgentThreadSnapshotSchema,
   AgentThreadSummarySchema,
   ApprovalIdSchema,
+  IsoTimestampSchema,
   ProviderIdSchema,
   RequestIdSchema,
   SafeClientErrorSchema,
+  TerminalSessionIdSchema,
   type AgentProviderSummary,
   type AgentThreadEvent,
   type AgentThreadSummary,
@@ -29,6 +31,7 @@ const MAX_EVENTS_PER_THREAD = 500;
 const MAX_ABORT_REQUEST_IDS = 50;
 const MAX_APPROVAL_DECISION_REQUEST_IDS = 50;
 const MAX_INPUT_ANSWER_REQUEST_IDS = 50;
+const MAX_PENDING_TERMINAL_STOPS = 100;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
 
@@ -40,17 +43,31 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
   inputAnswerClientRequestIds: z.array(RequestIdSchema).max(MAX_INPUT_ANSWER_REQUEST_IDS).default([]),
 }).strict();
 
+const TerminalSessionStoppedReconciliationSchema = z.object({
+  terminalSessionId: TerminalSessionIdSchema,
+  runtimeStatus: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
+}).strict();
+const TerminalStoppedStatusSchema = z.enum(["exited", "failed", "degraded"]);
+const PendingTerminalStopSchema = z.object({
+  terminalSessionId: TerminalSessionIdSchema,
+  runtimeStatus: TerminalStoppedStatusSchema,
+  occurredAt: IsoTimestampSchema,
+}).strict();
+
 const StoredThreadStateSchema = z.object({
   version: z.literal(1),
   threads: z.array(StoredThreadSchema).max(MAX_STORED_THREADS),
   events: z.array(AgentThreadEventSchema).max(MAX_STORED_THREADS * MAX_EVENTS_PER_THREAD),
+  pendingTerminalStops: z.array(PendingTerminalStopSchema).max(MAX_PENDING_TERMINAL_STOPS).default([]),
 }).strict();
 
 type StoredThread = z.infer<typeof StoredThreadSchema>;
 type StoredThreadState = z.infer<typeof StoredThreadStateSchema>;
+type PendingTerminalStop = z.infer<typeof PendingTerminalStopSchema>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 type ThreadCreateResult = { snapshot: AgentThreadSnapshot; existing: boolean };
 type ThreadCreateMutationResult = ThreadCreateResult & { eventsToPublish: AgentThreadEvent[] };
+type TerminalSessionStoppedReconciliation = z.infer<typeof TerminalSessionStoppedReconciliationSchema>;
 type ThreadEventSink = (input: {
   ownerId: string;
   threadId: string;
@@ -126,6 +143,7 @@ export interface CodingAgentThreadStore {
     inputRequestId: string,
     request: UserInputAnswerRequest,
   ): Promise<AgentThreadSnapshot>;
+  reconcileTerminalSessionStopped(input: TerminalSessionStoppedReconciliation): Promise<AgentThreadSnapshot[]>;
   registerEventSink(sink: ThreadEventSink): { dispose(): void };
 }
 
@@ -197,7 +215,7 @@ export function createFakeCodingAgentProvider(options: { providerId: string; del
 }
 
 function emptyState(): StoredThreadState {
-  return { version: 1, threads: [], events: [] };
+  return { version: 1, threads: [], events: [], pendingTerminalStops: [] };
 }
 
 function statePath(homePath: string): string {
@@ -310,7 +328,12 @@ function trimState(state: StoredThreadState): StoredThreadState {
       return kept;
     }, []);
   const events = latestEvents.reverse();
-  return { version: 1, threads, events };
+  return {
+    version: 1,
+    threads,
+    events,
+    pendingTerminalStops: state.pendingTerminalStops.slice(-MAX_PENDING_TERMINAL_STOPS),
+  };
 }
 
 function activeThread(thread: StoredThread): boolean {
@@ -319,6 +342,39 @@ function activeThread(thread: StoredThread): boolean {
 
 function terminalThread(thread: StoredThread): boolean {
   return !activeThread(thread);
+}
+
+function stoppedRuntimeStatus(
+  runtimeStatus: TerminalSessionStoppedReconciliation["runtimeStatus"],
+): runtimeStatus is PendingTerminalStop["runtimeStatus"] {
+  return TerminalStoppedStatusSchema.safeParse(runtimeStatus).success;
+}
+
+function appendPendingTerminalStop(
+  pendingTerminalStops: PendingTerminalStop[],
+  stop: PendingTerminalStop,
+): PendingTerminalStop[] {
+  return [
+    ...pendingTerminalStops.filter((candidate) => candidate.terminalSessionId !== stop.terminalSessionId),
+    stop,
+  ].slice(-MAX_PENDING_TERMINAL_STOPS);
+}
+
+function consumePendingTerminalStop(
+  pendingTerminalStops: PendingTerminalStop[],
+  terminalSessionId: string | undefined,
+): { pendingStop?: PendingTerminalStop; pendingTerminalStops: PendingTerminalStop[] } {
+  if (!terminalSessionId) {
+    return { pendingTerminalStops };
+  }
+  const pendingStop = pendingTerminalStops.find((candidate) => candidate.terminalSessionId === terminalSessionId);
+  if (!pendingStop) {
+    return { pendingTerminalStops };
+  }
+  return {
+    pendingStop,
+    pendingTerminalStops: pendingTerminalStops.filter((candidate) => candidate.terminalSessionId !== terminalSessionId),
+  };
 }
 
 function safeProviderRunFailureEvents(threadId: string, now: () => Date, eventId: () => string): AgentThreadEvent[] {
@@ -360,6 +416,31 @@ function defaultAbortEvents(threadId: string, now: () => Date, eventId: () => st
       threadId,
       occurredAt: now().toISOString(),
       outcome: "aborted",
+    }),
+  ];
+}
+
+function terminalStoppedEvents(
+  threadId: string,
+  runtimeStatus: TerminalSessionStoppedReconciliation["runtimeStatus"],
+  now: () => Date,
+  eventId: () => string,
+): AgentThreadEvent[] {
+  const failed = runtimeStatus !== "exited";
+  return [
+    AgentThreadEventSchema.parse({
+      type: "thread.status",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      status: failed ? "failed" : "completed",
+    }),
+    AgentThreadEventSchema.parse({
+      type: "thread.completed",
+      eventId: eventId(),
+      threadId,
+      occurredAt: now().toISOString(),
+      outcome: failed ? "failed" : "completed",
     }),
   ];
 }
@@ -554,10 +635,19 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         for (const event of events.slice(1)) {
           thread = applyEvent(thread, event);
         }
+        const pending = consumePendingTerminalStop(state.pendingTerminalStops, thread.terminalSessionId);
+        if (pending.pendingStop && activeThread(thread)) {
+          const stopEvents = terminalStoppedEvents(thread.id, pending.pendingStop.runtimeStatus, now, nextEventId);
+          events.push(...stopEvents);
+          for (const event of stopEvents) {
+            thread = applyEvent(thread, event);
+          }
+        }
         const nextState = {
           version: 1 as const,
           threads: [thread, ...state.threads],
           events: [...state.events, ...events],
+          pendingTerminalStops: pending.pendingTerminalStops,
         };
         const result: ThreadCreateMutationResult = {
           snapshot: snapshotFor(thread, nextState.events),
@@ -635,6 +725,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           version: 1 as const,
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
           events: [...state.events, ...abortEvents],
+          pendingTerminalStops: state.pendingTerminalStops,
         };
         return {
           state: nextState,
@@ -689,6 +780,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           version: 1 as const,
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
           events: [...state.events, ...approvalEvents],
+          pendingTerminalStops: state.pendingTerminalStops,
         };
         return {
           state: nextState,
@@ -743,6 +835,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           version: 1 as const,
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
           events: [...state.events, ...inputEvents],
+          pendingTerminalStops: state.pendingTerminalStops,
         };
         return {
           state: nextState,
@@ -751,6 +844,90 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
       });
       publish(principal.userId, threadId, result.eventsToPublish);
       return result.snapshot;
+    },
+    async reconcileTerminalSessionStopped(input) {
+      const parsed = TerminalSessionStoppedReconciliationSchema.parse(input);
+      if (!stoppedRuntimeStatus(parsed.runtimeStatus)) {
+        return [];
+      }
+      const runtimeStatus = parsed.runtimeStatus;
+
+      const result = await mutate(async (state) => {
+        const threadsForTerminal = state.threads.filter((thread) => thread.terminalSessionId === parsed.terminalSessionId);
+        const matchingThreads = threadsForTerminal.filter(activeThread);
+        if (matchingThreads.length === 0) {
+          if (threadsForTerminal.length > 0) {
+            return {
+              state: {
+                ...state,
+                pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
+                  stop.terminalSessionId !== parsed.terminalSessionId
+                ),
+              },
+              result: {
+                snapshots: [] as AgentThreadSnapshot[],
+                eventsToPublish: [] as Array<{ ownerId: string; threadId: string; events: AgentThreadEvent[] }>,
+              },
+            };
+          }
+          const nextState = {
+            ...state,
+            pendingTerminalStops: appendPendingTerminalStop(state.pendingTerminalStops, {
+              terminalSessionId: parsed.terminalSessionId,
+              runtimeStatus,
+              occurredAt: now().toISOString(),
+            }),
+          };
+          return {
+            state: nextState,
+            result: {
+              snapshots: [] as AgentThreadSnapshot[],
+              eventsToPublish: [] as Array<{ ownerId: string; threadId: string; events: AgentThreadEvent[] }>,
+            },
+          };
+        }
+
+        const reconciledThreads = matchingThreads.map((thread) => {
+          const events = terminalStoppedEvents(thread.id, runtimeStatus, now, nextEventId);
+          let nextThread = thread;
+          for (const event of events) {
+            nextThread = applyEvent(nextThread, event);
+          }
+          return { thread, nextThread, events };
+        });
+
+        const nextEvents = [
+          ...state.events,
+          ...reconciledThreads.flatMap((entry) => entry.events),
+        ];
+        const nextState = {
+          version: 1 as const,
+          threads: state.threads.map((thread) =>
+            reconciledThreads.find((entry) => entry.thread.id === thread.id)?.nextThread ?? thread
+          ),
+          events: nextEvents,
+          pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
+            stop.terminalSessionId !== parsed.terminalSessionId
+          ),
+        };
+        const snapshots = reconciledThreads.map((entry) => snapshotFor(entry.nextThread, nextState.events));
+        return {
+          state: nextState,
+          result: {
+            snapshots,
+            eventsToPublish: reconciledThreads.map((entry) => ({
+              ownerId: entry.thread.ownerId,
+              threadId: entry.thread.id,
+              events: entry.events,
+            })),
+          },
+        };
+      });
+
+      for (const item of result.eventsToPublish) {
+        publish(item.ownerId, item.threadId, item.events);
+      }
+      return result.snapshots;
     },
     registerEventSink(sink) {
       if (eventSinks.length >= 8) {
