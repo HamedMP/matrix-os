@@ -219,9 +219,13 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         return;
       }
       closed = true;
-      abortController.abort();
       cleanupProcessListeners();
-      child.kill();
+      if (typeof child.detach === "function") {
+        child.detach();
+      } else {
+        abortController.abort();
+        child.kill();
+      }
     };
 
     return {
