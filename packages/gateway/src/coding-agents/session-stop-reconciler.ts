@@ -5,9 +5,13 @@ import type { CodingAgentThreadStore } from "./thread-store.js";
 const DEFAULT_MAX_PENDING_STOPS = 100;
 const DEFAULT_RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 60_000;
+const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
+const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
 
 const SessionStopInputSchema = z.object({
+  id: WorkspaceSessionIdSchema,
   kind: z.enum(["shell", "agent"]),
+  ownerId: OwnerIdSchema,
   runtime: z.object({
     status: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
   }).passthrough(),
@@ -16,6 +20,8 @@ const SessionStopInputSchema = z.object({
 
 type SessionStopInput = z.infer<typeof SessionStopInputSchema>;
 type PendingStop = {
+  ownerId: string;
+  workspaceSessionId: string;
   terminalSessionId: string;
   runtimeStatus: "exited" | "failed" | "degraded";
 };
@@ -37,7 +43,11 @@ export function createCodingAgentSessionStopReconciler(options: {
 
   function enqueue(stop: PendingStop): void {
     pendingStops = [
-      ...pendingStops.filter((candidate) => candidate.terminalSessionId !== stop.terminalSessionId),
+      ...pendingStops.filter((candidate) =>
+        candidate.ownerId !== stop.ownerId ||
+        candidate.workspaceSessionId !== stop.workspaceSessionId ||
+        candidate.terminalSessionId !== stop.terminalSessionId
+      ),
       stop,
     ].slice(-maxPending);
   }
@@ -71,6 +81,8 @@ export function createCodingAgentSessionStopReconciler(options: {
     }
     try {
       await store.reconcileTerminalSessionStopped({
+        ownerId: stop.ownerId,
+        workspaceSessionId: stop.workspaceSessionId,
         terminalSessionId: stop.terminalSessionId,
         runtimeStatus: stop.runtimeStatus,
       });
@@ -114,6 +126,8 @@ export function createCodingAgentSessionStopReconciler(options: {
       }
       try {
         await reconcileOrRetain({
+          ownerId: parsed.ownerId,
+          workspaceSessionId: parsed.id,
           terminalSessionId: parsed.terminalSessionId,
           runtimeStatus: parsed.runtime.status,
         });

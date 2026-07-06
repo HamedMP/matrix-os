@@ -34,6 +34,7 @@ const MAX_INPUT_ANSWER_REQUEST_IDS = 50;
 const MAX_PENDING_TERMINAL_STOPS = 100;
 
 const OwnerIdSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
+const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z0-9_-]+$/);
 
 const StoredThreadSchema = AgentThreadSummarySchema.extend({
   ownerId: OwnerIdSchema,
@@ -44,11 +45,15 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
 }).strict();
 
 const TerminalSessionStoppedReconciliationSchema = z.object({
+  ownerId: OwnerIdSchema,
+  workspaceSessionId: WorkspaceSessionIdSchema.optional(),
   terminalSessionId: TerminalSessionIdSchema,
   runtimeStatus: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
 }).strict();
 const TerminalStoppedStatusSchema = z.enum(["exited", "failed", "degraded"]);
 const PendingTerminalStopSchema = z.object({
+  ownerId: OwnerIdSchema,
+  workspaceSessionId: WorkspaceSessionIdSchema.optional(),
   terminalSessionId: TerminalSessionIdSchema,
   runtimeStatus: TerminalStoppedStatusSchema,
   occurredAt: IsoTimestampSchema,
@@ -355,25 +360,39 @@ function appendPendingTerminalStop(
   stop: PendingTerminalStop,
 ): PendingTerminalStop[] {
   return [
-    ...pendingTerminalStops.filter((candidate) => candidate.terminalSessionId !== stop.terminalSessionId),
+    ...pendingTerminalStops.filter((candidate) =>
+      candidate.ownerId !== stop.ownerId ||
+      candidate.workspaceSessionId !== stop.workspaceSessionId ||
+      candidate.terminalSessionId !== stop.terminalSessionId
+    ),
     stop,
   ].slice(-MAX_PENDING_TERMINAL_STOPS);
 }
 
+function workspaceSessionIdForThread(threadId: string): string {
+  return `sess_${threadId.slice("thread_".length)}`;
+}
+
+function terminalStopMatchesThread(stop: Pick<PendingTerminalStop, "ownerId" | "workspaceSessionId" | "terminalSessionId">, thread: StoredThread): boolean {
+  return thread.ownerId === stop.ownerId &&
+    thread.terminalSessionId === stop.terminalSessionId &&
+    (stop.workspaceSessionId === undefined || stop.workspaceSessionId === workspaceSessionIdForThread(thread.id));
+}
+
 function consumePendingTerminalStop(
   pendingTerminalStops: PendingTerminalStop[],
-  terminalSessionId: string | undefined,
+  thread: StoredThread,
 ): { pendingStop?: PendingTerminalStop; pendingTerminalStops: PendingTerminalStop[] } {
-  if (!terminalSessionId) {
+  if (!thread.terminalSessionId) {
     return { pendingTerminalStops };
   }
-  const pendingStop = pendingTerminalStops.find((candidate) => candidate.terminalSessionId === terminalSessionId);
+  const pendingStop = pendingTerminalStops.find((candidate) => terminalStopMatchesThread(candidate, thread));
   if (!pendingStop) {
     return { pendingTerminalStops };
   }
   return {
     pendingStop,
-    pendingTerminalStops: pendingTerminalStops.filter((candidate) => candidate.terminalSessionId !== terminalSessionId),
+    pendingTerminalStops: pendingTerminalStops.filter((candidate) => candidate !== pendingStop),
   };
 }
 
@@ -635,7 +654,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
         for (const event of events.slice(1)) {
           thread = applyEvent(thread, event);
         }
-        const pending = consumePendingTerminalStop(state.pendingTerminalStops, thread.terminalSessionId);
+        const pending = consumePendingTerminalStop(state.pendingTerminalStops, thread);
         if (pending.pendingStop && activeThread(thread)) {
           const stopEvents = terminalStoppedEvents(thread.id, pending.pendingStop.runtimeStatus, now, nextEventId);
           events.push(...stopEvents);
@@ -853,15 +872,24 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
       const runtimeStatus = parsed.runtimeStatus;
 
       const result = await mutate(async (state) => {
-        const threadsForTerminal = state.threads.filter((thread) => thread.terminalSessionId === parsed.terminalSessionId);
+        const stopKey = {
+          ownerId: parsed.ownerId,
+          workspaceSessionId: parsed.workspaceSessionId,
+          terminalSessionId: parsed.terminalSessionId,
+        };
+        const threadsForTerminal = state.threads.filter((thread) => terminalStopMatchesThread(stopKey, thread));
         const matchingThreads = threadsForTerminal.filter(activeThread);
         if (matchingThreads.length === 0) {
-          if (threadsForTerminal.length > 0) {
+          if (threadsForTerminal.some(terminalThread)) {
             return {
               state: {
                 ...state,
                 pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
-                  stop.terminalSessionId !== parsed.terminalSessionId
+                  !(
+                    stop.ownerId === parsed.ownerId &&
+                    stop.workspaceSessionId === parsed.workspaceSessionId &&
+                    stop.terminalSessionId === parsed.terminalSessionId
+                  )
                 ),
               },
               result: {
@@ -873,6 +901,8 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           const nextState = {
             ...state,
             pendingTerminalStops: appendPendingTerminalStop(state.pendingTerminalStops, {
+              ownerId: parsed.ownerId,
+              workspaceSessionId: parsed.workspaceSessionId,
               terminalSessionId: parsed.terminalSessionId,
               runtimeStatus,
               occurredAt: now().toISOString(),
@@ -907,7 +937,11 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           ),
           events: nextEvents,
           pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
-            stop.terminalSessionId !== parsed.terminalSessionId
+            !(
+              stop.ownerId === parsed.ownerId &&
+              stop.workspaceSessionId === parsed.workspaceSessionId &&
+              stop.terminalSessionId === parsed.terminalSessionId
+            )
           ),
         };
         const snapshots = reconciledThreads.map((entry) => snapshotFor(entry.nextThread, nextState.events));

@@ -74,6 +74,10 @@ const createBody = {
   clientRequestId: "req_create_1",
 };
 
+function workspaceSessionIdForThread(threadId: string): string {
+  return `sess_${threadId.slice("thread_".length)}`;
+}
+
 describe("coding agent thread lifecycle", () => {
   it("creates a thread idempotently and replays fake-provider events", async () => {
     const { app } = await createHarness();
@@ -275,10 +279,12 @@ describe("coding agent thread lifecycle", () => {
     const created = await threads.createThread(ownerPrincipal, createBody);
 
     const reconciled = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
       terminalSessionId: "main",
       runtimeStatus: "exited",
     });
     const duplicate = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
       terminalSessionId: "main",
       runtimeStatus: "exited",
     });
@@ -308,6 +314,73 @@ describe("coding agent thread lifecycle", () => {
     });
   });
 
+  it("reconciles stopped terminal sessions only for the matching owner and workspace session", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+    });
+    const ownerThread = await threads.createThread(ownerPrincipal, createBody);
+    const otherThread = await threads.createThread(otherPrincipal, {
+      ...createBody,
+      clientRequestId: "req_create_other_owner",
+    });
+
+    const reconciled = await threads.reconcileTerminalSessionStopped({
+      ownerId: otherPrincipal.userId,
+      workspaceSessionId: workspaceSessionIdForThread(otherThread.snapshot.thread.id),
+      terminalSessionId: "main",
+      runtimeStatus: "exited",
+    });
+
+    expect(reconciled).toHaveLength(1);
+    expect(reconciled[0]?.thread).toMatchObject({
+      id: otherThread.snapshot.thread.id,
+      status: "completed",
+    });
+    expect(await threads.getThread(ownerPrincipal, ownerThread.snapshot.thread.id)).toMatchObject({
+      thread: {
+        id: ownerThread.snapshot.thread.id,
+        status: "running",
+      },
+    });
+  });
+
+  it("retains pending stops for reused terminal ids when the workspace session id is different", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+    await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
+      workspaceSessionId: workspaceSessionIdForThread(created.snapshot.thread.id),
+      terminalSessionId: "main",
+      runtimeStatus: "exited",
+    });
+
+    const reused = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
+      workspaceSessionId: "sess_reused_terminal",
+      terminalSessionId: "main",
+      runtimeStatus: "failed",
+    });
+    const raw = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf-8"));
+
+    expect(reused).toEqual([]);
+    expect(raw.pendingTerminalStops).toEqual([
+      expect.objectContaining({
+        ownerId: ownerPrincipal.userId,
+        workspaceSessionId: "sess_reused_terminal",
+        terminalSessionId: "main",
+        runtimeStatus: "failed",
+      }),
+    ]);
+  });
+
   it("applies a pending terminal stop when a later thread binds the same terminal", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
     const threads = createCodingAgentThreadStore({
@@ -317,11 +390,13 @@ describe("coding agent thread lifecycle", () => {
     });
 
     const early = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
       terminalSessionId: "main",
       runtimeStatus: "failed",
     });
     const created = await threads.createThread(ownerPrincipal, createBody);
     const duplicate = await threads.reconcileTerminalSessionStopped({
+      ownerId: ownerPrincipal.userId,
       terminalSessionId: "main",
       runtimeStatus: "failed",
     });

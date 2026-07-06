@@ -5,6 +5,7 @@ function stoppedSession(terminalSessionId: string, runtimeStatus: "exited" | "fa
   return {
     id: `sess_${terminalSessionId.replace(/[^A-Za-z0-9_-]/g, "_")}`,
     kind: "agent",
+    ownerId: "owner_user",
     runtime: { status: runtimeStatus },
     terminalSessionId,
   };
@@ -27,6 +28,8 @@ describe("coding agent session stop reconciler", () => {
     await reconciler.attachThreadStore(store);
 
     expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledWith({
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_early",
       terminalSessionId: "term_sess_early",
       runtimeStatus: "failed",
     });
@@ -45,10 +48,14 @@ describe("coding agent session stop reconciler", () => {
 
     expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(2);
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(1, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_two",
       terminalSessionId: "term_sess_two",
       runtimeStatus: "exited",
     });
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(2, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_three",
       terminalSessionId: "term_sess_three",
       runtimeStatus: "exited",
     });
@@ -74,14 +81,20 @@ describe("coding agent session stop reconciler", () => {
 
     expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(3);
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(1, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_one",
       terminalSessionId: "term_sess_one",
       runtimeStatus: "exited",
     });
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(2, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_two",
       terminalSessionId: "term_sess_two",
       runtimeStatus: "exited",
     });
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(3, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_one",
       terminalSessionId: "term_sess_one",
       runtimeStatus: "exited",
     });
@@ -106,14 +119,20 @@ describe("coding agent session stop reconciler", () => {
 
     expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(3);
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(1, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_one",
       terminalSessionId: "term_sess_one",
       runtimeStatus: "exited",
     });
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(2, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_one",
       terminalSessionId: "term_sess_one",
       runtimeStatus: "exited",
     });
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(3, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_two",
       terminalSessionId: "term_sess_two",
       runtimeStatus: "exited",
     });
@@ -139,6 +158,8 @@ describe("coding agent session stop reconciler", () => {
 
     expect(store.reconcileTerminalSessionStopped).toHaveBeenCalledTimes(2);
     expect(store.reconcileTerminalSessionStopped).toHaveBeenNthCalledWith(2, {
+      ownerId: "owner_user",
+      workspaceSessionId: "sess_term_sess_one",
       terminalSessionId: "term_sess_one",
       runtimeStatus: "exited",
     });

@@ -14,7 +14,7 @@ type PublishFailure = {
 };
 type SessionLifecyclePick = Pick<
   WorkspaceSessionView,
-  "id" | "kind" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "agent" | "runtime" | "terminalSessionId"
+  "id" | "kind" | "projectSlug" | "taskId" | "worktreeId" | "pr" | "agent" | "runtime" | "terminalSessionId" | "ownerId"
 >;
 
 function isPublishFailure(result: unknown): result is PublishFailure {

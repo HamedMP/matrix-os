@@ -24,6 +24,7 @@ describe("workspace event publisher", () => {
     });
     await publisher.publishSessionStarted({
       id: "sess_abc123",
+      ownerId: "owner_user",
       kind: "agent",
       projectSlug: "repo",
       taskId: "task_abc123",
@@ -35,6 +36,7 @@ describe("workspace event publisher", () => {
     });
     await publisher.publishSessionStopped({
       id: "sess_abc123",
+      ownerId: "owner_user",
       kind: "agent",
       projectSlug: "repo",
       taskId: "task_abc123",
@@ -132,6 +134,7 @@ describe("workspace event publisher", () => {
     const publisher = createWorkspaceEventPublisher({ eventStore, onSessionStopped });
     const session = {
       id: "sess_abc123",
+      ownerId: "owner_user",
       kind: "agent" as const,
       projectSlug: "repo",
       taskId: "task_abc123",
@@ -173,6 +176,7 @@ describe("workspace event publisher", () => {
     });
     const publish = publisher.publishSessionStopped({
       id: "sess_abc123",
+      ownerId: "owner_user",
       kind: "agent",
       projectSlug: "repo",
       taskId: "task_abc123",
@@ -203,6 +207,7 @@ describe("workspace event publisher", () => {
 
     await expect(publisher.publishSessionStopped({
       id: "sess_abc123",
+      ownerId: "owner_user",
       kind: "agent",
       projectSlug: "repo",
       taskId: "task_abc123",
