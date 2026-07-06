@@ -28,8 +28,8 @@ import { colors } from "@/lib/theme";
 
 const H_PADDING = 16;
 
-// Apps intentionally kept out of the launcher grid (Chat lives elsewhere).
-const HIDDEN_APP_SLUGS = new Set<string>(["chat"]);
+// Chat lives elsewhere, and the launcher should not show a self-entry.
+const HIDDEN_APP_SLUGS = new Set<string>(["apps", "chat"]);
 
 // Fallback monogram-tile palette: tinted background + legible glyph colour,
 // stable per app via a slug hash, used only when an icon image is unavailable.
@@ -108,6 +108,7 @@ const MAX_GRID_LABEL_CHARS = 13;
 
 const NATIVE_SHELL_ICON_GLYPHS = new Map<string, keyof typeof Ionicons.glyphMap>([
   ["apps", "grid"],
+  ["agents", "sparkles"],
   ["settings", "settings"],
 ]);
 

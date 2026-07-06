@@ -177,6 +177,80 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("fetches the coding agent runtime summary with the existing auth header", async () => {
+    const summary = {
+      runtime: {
+        id: "rt_primary",
+        label: "Primary",
+        status: "available",
+      },
+      capabilities: [
+        {
+          id: "codingAgentsRuntimeSummary",
+          enabled: true,
+        },
+      ],
+      providers: [],
+      projects: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      activeThreads: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+      terminalSessions: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      recentActivity: {
+        items: [],
+        limit: 20,
+        hasMore: false,
+      },
+      limits: {
+        maxPromptBytes: 16384,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 8192,
+        maxListItems: 20,
+      },
+      serverTime: "2026-07-06T00:00:00.000Z",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(summary));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentRuntimeSummary()).resolves.toEqual({
+      ok: true,
+      summary,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/coding-agents/summary", expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "Content-Type": "application/json",
+      }),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile summary error for invalid gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      runtime: { id: "../bad", label: "/home/matrix/secret", status: "broken" },
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentRuntimeSummary()).resolves.toEqual({
+      ok: false,
+      error: "Runtime summary unavailable",
+    });
+
+    fetchMock.mockRestore();
+  });
+
   it("refreshes Clerk bearer tokens for each gateway HTTP request", async () => {
     const getToken = jest
       .fn<Promise<string | null>, []>()

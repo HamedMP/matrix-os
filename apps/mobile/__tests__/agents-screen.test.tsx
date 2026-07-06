@@ -1,0 +1,135 @@
+jest.mock("@/app/_layout", () => ({
+  useGateway: jest.fn(),
+}));
+
+import React from "react";
+import { render, screen, waitFor } from "@testing-library/react-native";
+import AgentsScreen from "../app/agents";
+import { useGateway } from "@/app/_layout";
+import type { GatewayClient } from "../lib/gateway-client";
+
+const useGatewayMock = useGateway as jest.MockedFunction<typeof useGateway>;
+type GatewayContextValue = ReturnType<typeof useGateway>;
+
+function gatewayContext(overrides: Partial<GatewayContextValue>): GatewayContextValue {
+  return {
+    client: null,
+    connectionState: "disconnected",
+    gateway: null,
+    setGateway: jest.fn(),
+    unreadCount: 0,
+    incrementUnread: jest.fn(),
+    clearUnread: jest.fn(),
+    ...overrides,
+  };
+}
+
+function summaryFixture() {
+  return {
+    runtime: {
+      id: "rt_primary",
+      label: "Primary",
+      status: "available",
+    },
+    capabilities: [
+      {
+        id: "codingAgentsRuntimeSummary",
+        enabled: true,
+      },
+    ],
+    providers: [
+      {
+        id: "codex",
+        kind: "codex",
+        displayName: "Codex",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default"],
+        defaultMode: "default",
+        setupActions: [],
+      },
+    ],
+    projects: { items: [], hasMore: false, limit: 20 },
+    activeThreads: {
+      items: [
+        {
+          id: "thread_mobile",
+          providerId: "codex",
+          title: "Repair mobile route",
+          status: "running",
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:01:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+    terminalSessions: {
+      items: [
+        {
+          id: "matrix-abc1234",
+          name: "matrix-abc1234",
+          status: "running",
+          attachable: true,
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:01:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+    recentActivity: { items: [], hasMore: false, limit: 20 },
+    limits: {
+      maxPromptBytes: 16384,
+      maxAttachmentCount: 8,
+      maxTerminalInputBytes: 8192,
+      maxListItems: 20,
+    },
+    serverTime: "2026-07-06T00:03:00.000Z",
+  };
+}
+
+describe("AgentsScreen", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("renders provider, thread, and terminal summaries", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(screen.getByText("Loading workspace...")).toBeTruthy();
+    await screen.findByText("Codex");
+    expect(screen.getByText("Repair mobile route")).toBeTruthy();
+    expect(screen.getByText("matrix-abc1234")).toBeTruthy();
+  });
+
+  it("renders a safe error when the runtime summary is unavailable", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: false,
+        error: "Runtime summary unavailable",
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Runtime summary unavailable")).toBeTruthy());
+    expect(screen.queryByText(/home\/matrix/)).toBeNull();
+  });
+});

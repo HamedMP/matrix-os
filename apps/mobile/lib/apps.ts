@@ -1,6 +1,7 @@
 import type { Href } from "expo-router";
 import type { MatrixAppEntry, MatrixAppManifestResponse } from "@/lib/gateway-client";
 import { encodeAppSlugPath } from "@/lib/app-slugs";
+import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
 export type { MatrixAppEntry, MatrixAppManifestResponse };
 export { encodeAppSlugPath };
@@ -11,6 +12,7 @@ export type NativeAppRoute =
   | "/(tabs)/apps"
   | "/(tabs)/settings"
   | "/canvas"
+  | "/agents"
   | "/terminal";
 
 const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
@@ -21,6 +23,7 @@ const NATIVE_ROUTE_BY_SLUG: Record<string, NativeAppRoute> = {
   "task-manager": "/(tabs)/mission-control",
   "mission-control": "/(tabs)/mission-control",
   apps: "/(tabs)/apps",
+  agents: "/agents",
   settings: "/(tabs)/settings",
   canvas: "/canvas",
   whiteboard: "/canvas",
@@ -55,6 +58,19 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
     file: "terminal/index.html",
     path: "/files/apps/terminal/index.html",
   },
+  ...(CODING_AGENTS_MOBILE_WORKSPACE
+    ? [
+        {
+          name: "Agents",
+          description: "Review coding-agent work on this Matrix computer.",
+          icon: "agents",
+          category: "System",
+          slug: "agents",
+          file: "agents/index.html",
+          path: "/files/apps/agents/index.html",
+        },
+      ]
+    : []),
   {
     name: "Canvas",
     description: "Open your workspace canvas when spatial context helps.",
