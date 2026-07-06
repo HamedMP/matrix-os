@@ -33,11 +33,11 @@ describe('start-platform-cloud-run.sh', () => {
   it('packages compiled gateway integration modules used by platform startup', () => {
     const root = process.cwd();
     const dockerfile = readFileSync(join(root, 'Dockerfile.platform'), 'utf8');
-    const main = readFileSync(join(root, 'packages/platform/src/main.ts'), 'utf8');
+    const platformStartup = readFileSync(join(root, 'packages/platform/src/platform-startup.ts'), 'utf8');
 
-    expect(main).toContain("../../gateway/dist/integrations/routes.js");
-    expect(main).toContain("../../gateway/dist/integrations/pipedream.js");
-    expect(main).toContain("../../gateway/dist/platform-db.js");
+    expect(platformStartup).toContain("../../gateway/dist/integrations/routes.js");
+    expect(platformStartup).toContain("../../gateway/dist/integrations/pipedream.js");
+    expect(platformStartup).toContain("../../gateway/dist/platform-db.js");
     expect(dockerfile).toContain("COPY packages/gateway/package.json packages/gateway/package.json");
     expect(dockerfile).toContain("COPY packages/kernel/package.json packages/kernel/package.json");
     expect(dockerfile).toContain("COPY packages/mcp-browser/package.json packages/mcp-browser/package.json");
