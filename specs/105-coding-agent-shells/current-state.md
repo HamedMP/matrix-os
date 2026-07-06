@@ -1,6 +1,6 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-approvals`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-session-reconcile`
 **Updated**: 2026-07-06
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
@@ -257,8 +257,9 @@ Server flags:
 
 Current behavior:
 
-- Runtime summary advertises desktop/mobile read-only workspace capabilities as enabled when the summary service is available.
-- Runtime summary advertises `codingAgentsThreadCreate` and `codingAgentsApprovals` when a coding-agent thread store is wired.
+- Runtime summary advertises desktop/mobile read-only workspace capabilities only when the coding-agent thread store and workspace provider wiring are present.
+- Runtime summary advertises `codingAgentsThreadCreate` when a coding-agent thread store is wired.
+- Runtime summary advertises `codingAgentsApprovals` only when a thread store is wired and gateway summary wiring explicitly sets `capabilities.approvals`; current production wiring keeps it disabled until a provider/handler can bridge approval decisions to the running agent, not merely record local resolution events.
 - Runtime summary advertises `codingAgentsNativeMobileTerminal` when a terminal registry is wired and the caller can read terminal sessions.
 - Runtime summary keeps `codingAgentsReview` disabled until coding-agent-specific review shell integration is implemented.
 
@@ -303,7 +304,7 @@ git diff --check
 
 ## Open Questions And Deferred Work
 
-- Session completion reconciliation: implemented for workspace `session.stopped` events that carry a bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
+- Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
 - File/review/preview shell surfaces: contracts exist and workspace routes exist, but coding-agent-specific UI integration is not implemented yet.
 - Browser shell entry point: Canvas-first placement is still undecided.
 - Notifications/attention routing: desktop notification IPC exists, but thread attention notifications are not yet wired end-to-end from gateway events.
