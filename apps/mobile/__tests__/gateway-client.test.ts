@@ -31,12 +31,15 @@ describe("GatewayClient", () => {
     expect(client.httpUrl).toBe("http://localhost:4000");
   });
 
-  it("allows self-hosted token transport over HTTP but keeps Matrix OS Cloud HTTPS-only", () => {
+  it("allows only local self-hosted token transport over HTTP and keeps Matrix OS Cloud HTTPS-only", () => {
     expect(() => new GatewayClient("https://app.matrix-os.com", "token")).not.toThrow();
     expect(() => new GatewayClient("http://localhost:4000", "token")).not.toThrow();
     expect(() => new GatewayClient("http://127.0.0.1:4000", "token")).not.toThrow();
     expect(() => new GatewayClient("http://[::1]:4000", "token")).not.toThrow();
-    expect(() => new GatewayClient("http://203.0.113.10:4000", "token")).not.toThrow();
+    expect(() => new GatewayClient("http://192.168.1.10:4000", "token")).not.toThrow();
+    expect(() => new GatewayClient("http://203.0.113.10:4000", "token")).toThrow(
+      "Self-hosted gateways with saved credentials require HTTPS/WSS unless they are local.",
+    );
     expect(() => new GatewayClient("http://app.matrix-os.com", "token")).toThrow(
       "Matrix OS Cloud requires HTTPS/WSS.",
     );
@@ -61,7 +64,10 @@ describe("GatewayClient", () => {
     expect(() => assertSecureTokenTransport("ws://app.matrix-os.com")).toThrow(
       "Matrix OS Cloud requires HTTPS/WSS.",
     );
-    expect(() => assertSecureTokenTransport("ws://203.0.113.10:4000")).not.toThrow();
+    expect(() => assertSecureTokenTransport("ws://192.168.1.10:4000")).not.toThrow();
+    expect(() => assertSecureTokenTransport("ws://203.0.113.10:4000")).toThrow(
+      "Self-hosted gateways with saved credentials require HTTPS/WSS unless they are local.",
+    );
   });
 
   it("registers message handlers", () => {

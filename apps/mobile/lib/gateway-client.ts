@@ -88,7 +88,7 @@ export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 const SECURE_TOKEN_TRANSPORT_ERROR =
   "Matrix OS Cloud requires HTTPS/WSS.";
 const CLEARTEXT_HOST_ERROR =
-  "HTTP is only allowed for self-hosted IP or localhost gateways.";
+  "Self-hosted gateways with saved credentials require HTTPS/WSS unless they are local.";
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -656,12 +656,15 @@ function isCleartextSelfHostedHost(hostname: string): boolean {
     return true;
   }
 
-  const ipv4Match = /^(\d{1,3})(?:\.(\d{1,3})){3}$/.exec(host);
-  if (ipv4Match) {
-    const octets = host.split(".").map((part) => Number(part));
-    return octets.length === 4
-      && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255);
+  const octets = host.split(".").map((part) => Number(part));
+  if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+    const [first = -1, second = -1] = octets;
+    return first === 10 ||
+      first === 127 ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 169 && second === 254) ||
+      (first === 192 && second === 168);
   }
 
-  return host.includes(":");
+  return host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
 }

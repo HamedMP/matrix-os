@@ -1,12 +1,11 @@
 import React, {
   forwardRef,
   useCallback,
-  useEffectEvent,
   useImperativeHandle,
   useMemo,
   useRef,
 } from "react";
-import { PanResponder, View, type LayoutChangeEvent } from "react-native";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { colors } from "@/lib/theme";
@@ -155,9 +154,6 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
     const webRef = useRef<WebView | null>(null);
     const readyRef = useRef(false);
     const pendingRef = useRef<string[]>([]);
-    const rowsRef = useRef(24);
-    const heightRef = useRef(1);
-    const dragDyRef = useRef(0);
     // Rebuild the document only when the font size bucket changes (keeps the
     // emulator stable while typing).
     const html = useMemo(() => buildHtml(fontScale), [fontScale]);
@@ -170,44 +166,6 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       if (!Number.isFinite(lines) || lines === 0) return;
       inject(`window.__matrixTerminal && window.__matrixTerminal.scrollLines(${Math.trunc(lines)})`);
     }, [inject]);
-
-    const handlePanGrant = useEffectEvent(() => {
-      dragDyRef.current = 0;
-    });
-
-    const handlePanMove = useEffectEvent((gesture: { dx: number; dy: number }) => {
-      if (Math.abs(gesture.dy) < 6 || Math.abs(gesture.dy) < Math.abs(gesture.dx) * 1.15) return;
-      const delta = gesture.dy - dragDyRef.current;
-      const lineHeight = Math.max(8, heightRef.current / Math.max(1, rowsRef.current));
-      const lines = Math.trunc(delta / (lineHeight * 0.52));
-      if (lines === 0) return;
-      // Finger down reveals older output. Finger up returns toward the live bottom.
-      scrollLines(-lines);
-      dragDyRef.current += lines * lineHeight * 0.52;
-    });
-
-    const handlePanRelease = useEffectEvent((gesture: { dx: number; dy: number }) => {
-      const moved = Math.abs(gesture.dy) > 6 || Math.abs(gesture.dx) > 6;
-      dragDyRef.current = 0;
-      if (!moved) inject("window.__matrixTerminal && window.__matrixTerminal.focus()");
-    });
-
-    const handlePanTerminate = useEffectEvent(() => {
-      dragDyRef.current = 0;
-    });
-
-    const panResponder = PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: handlePanGrant,
-      onPanResponderMove: (_event, gesture) => handlePanMove(gesture),
-      onPanResponderRelease: (_event, gesture) => handlePanRelease(gesture),
-      onPanResponderTerminate: handlePanTerminate,
-    });
-
-    const handleLayout = useCallback((event: LayoutChangeEvent) => {
-      heightRef.current = Math.max(1, event.nativeEvent.layout.height);
-    }, []);
 
     const flush = useCallback(() => {
       if (!readyRef.current || pendingRef.current.length === 0) return;
@@ -246,7 +204,6 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         if (msg.type === "ready") {
           readyRef.current = true;
           if (typeof msg.cols === "number" && typeof msg.rows === "number") {
-            rowsRef.current = msg.rows;
             onResize(msg.cols, msg.rows);
           }
           flush();
@@ -257,7 +214,6 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           return;
         }
         if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
-          rowsRef.current = msg.rows;
           onResize(msg.cols, msg.rows);
         }
       },
@@ -265,7 +221,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
     );
 
     return (
-      <View style={styles.container} onLayout={handleLayout}>
+      <View style={styles.container}>
         <WebView
           key="terminal-webview-accessory-enabled"
           ref={webRef}
@@ -283,7 +239,6 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           style={styles.web}
           containerStyle={styles.web}
         />
-        <View style={styles.gestureLayer} {...panResponder.panHandlers} />
       </View>
     );
   },
@@ -292,8 +247,4 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.terminal.bg, overflow: "hidden" },
   web: { flex: 1, backgroundColor: theme.terminal.bg },
-  gestureLayer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "transparent",
-  },
 }));

@@ -179,7 +179,7 @@ describe("AppsScreen", () => {
         name: "Game Center",
         description: "Browse games.",
         category: "Games",
-        icon: "game",
+        icon: "Game",
         file: "games/index.html",
         path: "/files/apps/games/index.html",
       },

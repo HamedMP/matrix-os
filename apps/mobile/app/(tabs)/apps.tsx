@@ -150,8 +150,9 @@ function gridLabelFor(name: string): string {
 }
 
 function iconPathForSlug(slug: string | undefined): string | undefined {
-  if (!slug || !SAFE_ICON_SLUG.test(slug)) return undefined;
-  const iconSlug = ICON_SLUG_ALIASES.get(slug) ?? slug;
+  const normalizedSlug = slug?.toLowerCase();
+  if (!normalizedSlug || !SAFE_ICON_SLUG.test(normalizedSlug)) return undefined;
+  const iconSlug = ICON_SLUG_ALIASES.get(normalizedSlug) ?? normalizedSlug;
   const extension = APP_RASTER_ICON_SLUGS.has(iconSlug) || !SHIPPED_SVG_ICON_SLUGS.has(iconSlug) ? "png" : "svg";
   return `/icons/${encodeURIComponent(iconSlug)}.${extension}`;
 }

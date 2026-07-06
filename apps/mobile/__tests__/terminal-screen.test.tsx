@@ -1,7 +1,7 @@
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { Alert } from "react-native";
+import { Alert, StyleSheet, View } from "react-native";
 import TerminalScreen from "../app/(tabs)/terminal";
 import { useGateway } from "@/app/_layout";
 import type { GatewayClient } from "../lib/gateway-client";
@@ -142,6 +142,57 @@ describe("TerminalScreen", () => {
     // No attach frame anymore — the session name is supplied in the WS query.
     expect(sent.some((frame) => frame.type === "attach")).toBe(false);
     expect(sent).toContainEqual({ type: "input", data: "pwd\r" });
+  });
+
+  it("leaves terminal touch handling with the WebView instead of a full-surface responder overlay", async () => {
+    global.WebSocket = {
+      OPEN: 1,
+      CLOSED: 3,
+    } as typeof WebSocket;
+    const socket = new MockTerminalSocket();
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
+    const gatewayClient = {
+      getTerminalSessions: jest.fn().mockResolvedValue([
+        {
+          sessionId: SESSION_ID,
+          cwd: "/home/matrix/home/projects",
+          state: "running",
+        },
+      ]),
+      createTerminalSession: jest.fn().mockResolvedValue(SESSION_ID),
+      getWsToken: jest.fn().mockResolvedValue("ws-token"),
+      setWebSocketToken: jest.fn(),
+      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
+      deleteTerminalSession: jest.fn().mockResolvedValue(true),
+    };
+    jest.mocked(useGateway).mockReturnValue({
+      client: gatewayClient as unknown as GatewayClient,
+      connectionState: "connected",
+      gateway: null,
+      setGateway: jest.fn(),
+      unreadCount: 0,
+      incrementUnread: jest.fn(),
+      clearUnread: jest.fn(),
+    });
+
+    const rendered = render(<TerminalScreen />);
+
+    await waitFor(() => expect(screen.getByTestId("terminal-webview")).toBeTruthy());
+    const responderOverlays = rendered.UNSAFE_queryAllByType(View).filter((node) => {
+      const style = StyleSheet.flatten(node.props.style);
+      return (
+        (typeof node.props.onStartShouldSetResponder === "function" ||
+          typeof node.props.onMoveShouldSetResponder === "function") &&
+        style?.position === "absolute" &&
+        style?.top === 0 &&
+        style?.right === 0 &&
+        style?.bottom === 0 &&
+        style?.left === 0 &&
+        style?.backgroundColor === "transparent"
+      );
+    });
+    expect(responderOverlays).toHaveLength(0);
   });
 
   it("offers a real continue action for the persisted terminal session", async () => {
