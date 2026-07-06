@@ -5,7 +5,12 @@ import { Alert, StyleSheet, View } from "react-native";
 import TerminalScreen from "../app/(tabs)/terminal";
 import { useGateway } from "@/app/_layout";
 import type { GatewayClient } from "../lib/gateway-client";
-import { emitWebViewMessage, resetWebViewMock, webViewInjections } from "../__mocks__/react-native-webview";
+import {
+  emitWebViewMessage,
+  latestWebViewSource,
+  resetWebViewMock,
+  webViewInjections,
+} from "../__mocks__/react-native-webview";
 
 const SESSION_ID = "c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9";
 
@@ -193,6 +198,8 @@ describe("TerminalScreen", () => {
       );
     });
     expect(responderOverlays).toHaveLength(0);
+    expect((latestWebViewSource as { html?: string } | null)?.html).toContain("touch-action: pan-y");
+    expect((latestWebViewSource as { html?: string } | null)?.html).not.toContain("touch-action: none");
   });
 
   it("offers a real continue action for the persisted terminal session", async () => {

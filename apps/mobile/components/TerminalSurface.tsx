@@ -81,10 +81,15 @@ function buildHtml(fontScale: number): string {
     overscroll-behavior: none;
     -webkit-user-select: none;
     user-select: none;
-    touch-action: none;
   }
   #term { height: 100%; width: 100%; padding: 8px 10px; box-sizing: border-box; position: relative; }
-  .xterm .xterm-viewport { background: ${theme.background} !important; overflow-y: scroll !important; -webkit-overflow-scrolling: touch; }
+  .xterm .xterm-viewport {
+    background: ${theme.background} !important;
+    overflow-y: scroll !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
   .xterm-viewport::-webkit-scrollbar { width: 0; height: 0; }
 </style>
 </head>
