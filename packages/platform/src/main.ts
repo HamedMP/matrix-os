@@ -29,7 +29,6 @@ import {
   getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
   getBillingEntitlementState,
-  getSettlingCheckoutAttempt,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
   listActiveUserMachinesByClerkId,
@@ -109,6 +108,7 @@ import {
 import { createLaunchReadinessRoutes } from './launch-readiness-routes.js';
 import { createHostBundleRoutes } from './host-bundle-routes.js';
 import { createLegacyContainerRoutes } from './legacy-container-routes.js';
+import { createAppSessionRoutes } from './app-session-routes.js';
 import {
   HANDLE_PATTERN,
   ensureProvisionedPlatformUser,
@@ -117,7 +117,6 @@ import {
   requireValidHandle,
 } from './platform-route-utils.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
-import { DeveloperToolsSchema } from './developer-tools.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
   PlatformStartupConfigError,
@@ -141,12 +140,8 @@ import {
   NATIVE_APP_SESSION_PROXY_HEADER,
   PLATFORM_SESSION_PROXY_HEADER,
   SHELL_ROUTE_COOKIE,
-  appendSignOutClearCookies,
-  buildAppSessionCookie,
-  buildClearAppSessionCookie,
   buildClearNativeAppSessionCookie,
   buildCodeSessionCookie,
-  buildNativeAppSessionCookie,
   isValidNativeAppSessionProof,
   readCookie,
 } from './session-cookies.js';
@@ -157,7 +152,6 @@ import {
   getAuthShellOrigin,
   isAppDomainGatewayPath,
   isBillingSetupPath,
-  normalizePostAuthRedirectPath,
   readRuntimeSlot,
   readRuntimeSlotSelection,
   shouldProxyAuthShellForUnroutedUser,
@@ -223,15 +217,6 @@ const SENSITIVE_PROXY_HEADERS = new Set([
   PLATFORM_SESSION_PROXY_HEADER,
   'x-matrix-code-proxy-token',
 ]);
-const AppSessionExchangeBodySchema = z.object({
-  redirectTo: z.string().min(1).max(2048).optional(),
-  runtime: RuntimeSlotSchema.optional(),
-}).strict();
-
-const AppSessionProvisionBodySchema = z.object({
-  runtime: RuntimeSlotSchema.optional().default('primary'),
-  developerTools: DeveloperToolsSchema.optional(),
-}).strict();
 
 const ClerkImageUrlSchema = z.preprocess((value) => {
   if (value === undefined || value === null) return value;
@@ -2061,235 +2046,24 @@ export function createApp(deps: {
     );
   }
 
-  app.delete('/api/auth/app-session', bodyLimit({ maxSize: 1024 }), async (c) => {
-    let clerkSessionRevoked = false;
-    const clerkToken = clerkAuth?.extractToken(undefined, c.req.header('cookie'));
-    if (clerkAuth && clerkToken) {
-      const result = await clerkAuth.verify(clerkToken);
-      if (result.authenticated && result.sessionId) {
-        try {
-          clerkSessionRevoked = await clerkAuth.revokeSession(result.sessionId);
-        } catch (err: unknown) {
-          if (err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
-            console.warn('[auth/app-session] Clerk session revoke timed out', err.name);
-          } else {
-            console.warn('[auth/app-session] Clerk session revoke failed', err instanceof Error ? err.name : typeof err);
-          }
-        }
-      }
-    }
-    applyNoStoreHeaders(c);
-    appendSignOutClearCookies(c);
-    return c.json({ cleared: true, clerkSessionRevoked });
-  });
-
-  app.post('/api/auth/provision-runtime', bodyLimit({ maxSize: 1024 }), async (c) => {
-    if (!clerkAuth) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    if (!deps.customerVpsService) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Provisioning unavailable', code: 'provisioning_unavailable' }, 503);
-    }
-
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        logPlatformRouteError('/api/auth/provision-runtime parse', err);
-      }
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Invalid request' }, 400);
-    }
-    const parsed = AppSessionProvisionBodySchema.safeParse(body);
-    if (!parsed.success) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Invalid request' }, 400);
-    }
-
-    const token = clerkAuth.extractToken(c.req.header('authorization'), c.req.header('cookie'));
-    if (!token) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    const result = await clerkAuth.verify(token);
-    if (!result.authenticated || !result.userId) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    try {
-      if (stripeBillingEntitlementsEnabled(appEnv)) {
-        const now = new Date();
-        const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
-        const access = getRuntimeAccessDecision(entitlement, now);
-        if (!access.runtimeProxyAllowed) {
-          applyNoStoreHeaders(c);
-          return jsonCustomerVpsError(
-            c,
-            new CustomerVpsError(402, 'billing_required', 'Billing upgrade required'),
-            '/api/auth/provision-runtime',
-          );
-        }
-      }
-
-      const identity = await selectProvisionIdentityForClerkUser(db, result.userId, appEnv);
-      if (!identity) {
-        applyNoStoreHeaders(c);
-        return c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
-      }
-      const checkoutAttempt = parsed.data.developerTools
-        ? null
-        : await getSettlingCheckoutAttempt(db, result.userId);
-      const developerTools = parsed.data.developerTools ?? (
-        checkoutAttempt &&
-        (checkoutAttempt.status === 'paid' || checkoutAttempt.status === 'open')
-          ? checkoutAttempt.developerTools
-          : undefined
-      );
-      const provisioned = await deps.customerVpsService.provision({
-        handle: identity.handle,
-        clerkUserId: result.userId,
-        runtimeSlot: parsed.data.runtime,
-        ...(developerTools ? { developerTools } : {}),
-      });
-      await ensureProvisionedPlatformUser(db, {
-        clerkUserId: result.userId,
-        handle: identity.handle,
-        displayName: identity.displayName,
-        email: identity.email,
-        runtimeId: `vps:${provisioned.machineId}`,
-      });
-      if (matrixProvisioner) {
-        try {
-          await matrixProvisioner.provisionUser(identity.handle);
-        } catch (matrixErr: unknown) {
-          console.error(
-            `[matrix] Failed to provision Matrix accounts for ${identity.handle}:`,
-            matrixErr instanceof Error ? matrixErr.message : String(matrixErr),
-          );
-        }
-      }
-      applyNoStoreHeaders(c);
-      return c.json({
-        runtime: 'customer_vps',
-        handle: identity.handle,
-        clerkUserId: result.userId,
-        ...provisioned,
-        runtimeSlot: parsed.data.runtime,
-      }, 202);
-    } catch (err: unknown) {
-      applyNoStoreHeaders(c);
-      return jsonCustomerVpsError(c, err, '/api/auth/provision-runtime');
-    }
-  });
-
-  app.post('/api/auth/app-session', bodyLimit({ maxSize: 1024 }), async (c) => {
-    if (!platformJwtSecret) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Session unavailable' }, 503);
-    }
-
-    let body: unknown = {};
-    if ((c.req.header('content-type') ?? '').toLowerCase().includes('application/json')) {
-      try {
-        body = await c.req.json();
-      } catch (err: unknown) {
-        console.warn('[auth/app-session] JSON parse failed:', err instanceof Error ? err.name : typeof err);
-        applyNoStoreHeaders(c);
-        return c.json({ error: 'Validation error' }, 400);
-      }
-    }
-    const parsed = AppSessionExchangeBodySchema.safeParse(body);
-    if (!parsed.success) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Validation error' }, 400);
-    }
-    const redirectTo = normalizePostAuthRedirectPath(parsed.data.redirectTo);
-    const requestedRuntimeSlot =
-      parsed.data.runtime ?? readRuntimeSlotSelection(new URL(redirectTo, 'https://app.matrix-os.com').toString()).slot;
-    const authHeader = c.req.header('authorization');
-
-    if (authHeader?.startsWith('Bearer ')) {
-      try {
-        const nativeIdentity = await resolveAppDomainIdentity({
-          authHeader,
-          cookieHeader: undefined,
-          db,
-          platformJwtSecret,
-          legacyContainerRoutingEnabled,
-          runtimeSlot: requestedRuntimeSlot,
-        });
-        if (nativeIdentity) {
-          const nativeToken = authHeader.slice(7);
-          applyNoStoreHeaders(c);
-          c.header('Set-Cookie', buildAppSessionCookie(nativeToken), { append: true });
-          c.header('Set-Cookie', buildNativeAppSessionCookie(nativeToken, platformJwtSecret), { append: true });
-          return c.json({ redirectTo });
-        }
-      } catch (err: unknown) {
-        logPlatformRouteError('/api/auth/app-session native exchange', err);
-        applyNoStoreHeaders(c);
-        return c.json({ error: 'Session unavailable' }, 503);
-      }
-    }
-
-    if (!clerkAuth) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Session unavailable' }, 503);
-    }
-
-    const token = clerkAuth.extractToken(authHeader, c.req.header('cookie'));
-    if (!token) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const result = await clerkAuth.verify(token);
-    if (!result.authenticated || !result.userId) {
-      applyNoStoreHeaders(c);
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const record = legacyContainerRoutingEnabled
-      ? await getContainerByClerkId(db, result.userId)
-      : undefined;
-    const machine = record ? undefined : await getActiveUserMachineByClerkId(db, result.userId, requestedRuntimeSlot);
-    const handle = record?.handle ?? machine?.handle;
-    if (!handle) {
-      applyNoStoreHeaders(c);
-      c.header('Set-Cookie', buildClearAppSessionCookie(), { append: true });
-      c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
-      if (stripeBillingEntitlementsEnabled(appEnv)) {
-        const now = new Date();
-        const entitlement = await resolveEffectiveBillingEntitlement(db, result.userId, now);
-        const access = getRuntimeAccessDecision(entitlement, now);
-        if (!access.runtimeProxyAllowed) {
-          return jsonCustomerVpsError(
-            c,
-            new CustomerVpsError(402, 'billing_required', 'Billing upgrade required'),
-            '/api/auth/app-session',
-          );
-        }
-      }
-      return c.json({ error: 'Matrix computer unavailable', code: 'no_runtime' }, 404);
-    }
-
-    const issued = await issueSyncJwt({
-      secret: platformJwtSecret,
-      clerkUserId: result.userId,
-      handle,
-      gatewayUrl: getGatewayUrlForHandle(handle),
-      runtimeSlot: machine?.runtimeSlot,
-      expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
-    });
-    applyNoStoreHeaders(c);
-    c.header('Set-Cookie', buildAppSessionCookie(issued.token), { append: true });
-    c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
-    return c.json({ redirectTo });
-  });
+  app.route('/', createAppSessionRoutes({
+    db,
+    clerkAuth,
+    customerVpsService: deps.customerVpsService,
+    matrixProvisioner,
+    appEnv,
+    platformJwtSecret,
+    legacyContainerRoutingEnabled,
+    logRouteError: logPlatformRouteError,
+    applyNoStoreHeaders,
+    jsonCustomerVpsError,
+    stripeBillingEntitlementsEnabled,
+    resolveEffectiveBillingEntitlement,
+    selectProvisionIdentityForClerkUser,
+    ensureProvisionedPlatformUser,
+    resolveAppDomainIdentity,
+    getGatewayUrlForHandle,
+  }));
 
   app.route('/billing', createBillingRoutes({
     db,
