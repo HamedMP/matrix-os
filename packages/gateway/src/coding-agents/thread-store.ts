@@ -41,6 +41,12 @@ type StoredThread = z.infer<typeof StoredThreadSchema>;
 type StoredThreadState = z.infer<typeof StoredThreadStateSchema>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 type ThreadCreateResult = { snapshot: AgentThreadSnapshot; existing: boolean };
+type ThreadCreateMutationResult = ThreadCreateResult & { eventsToPublish: AgentThreadEvent[] };
+type ThreadEventSink = (input: {
+  ownerId: string;
+  threadId: string;
+  events: AgentThreadEvent[];
+}) => void;
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
@@ -63,6 +69,7 @@ export interface CodingAgentThreadStore {
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string): Promise<AgentThreadSnapshot>;
+  registerEventSink(sink: ThreadEventSink): { dispose(): void };
 }
 
 export class CodingAgentThreadError extends Error {
@@ -245,6 +252,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
     ...provider,
     providerId: ProviderIdSchema.parse(provider.providerId),
   }));
+  const eventSinks: ThreadEventSink[] = [];
   let queue = Promise.resolve();
 
   async function mutate<T>(fn: (state: StoredThreadState) => Promise<{ state: StoredThreadState; result: T }>): Promise<T> {
@@ -266,15 +274,30 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
     return provider;
   }
 
+  function publish(ownerId: string, threadId: string, events: AgentThreadEvent[]): void {
+    if (events.length === 0) return;
+    for (const sink of eventSinks) {
+      try {
+        sink({ ownerId, threadId, events });
+      } catch (err: unknown) {
+        console.warn("[coding-agents] thread event sink failed:", err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+
   return {
     async createThread(principal, request) {
       const provider = providerFor(request.providerId);
-      return mutate(async (state) => {
+      const result = await mutate(async (state) => {
         const existing = state.threads.find((thread) =>
           thread.ownerId === principal.userId && thread.clientRequestId === request.clientRequestId
         );
         if (existing) {
-          const result: ThreadCreateResult = { snapshot: snapshotFor(existing, state.events), existing: true };
+          const result: ThreadCreateMutationResult = {
+            snapshot: snapshotFor(existing, state.events),
+            existing: true,
+            eventsToPublish: [],
+          };
           return { state, result };
         }
 
@@ -316,9 +339,17 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           threads: [thread, ...state.threads],
           events: [...state.events, ...events],
         };
-        const result: ThreadCreateResult = { snapshot: snapshotFor(thread, nextState.events), existing: false };
+        const result: ThreadCreateMutationResult = {
+          snapshot: snapshotFor(thread, nextState.events),
+          existing: false,
+          eventsToPublish: events,
+        };
         return { state: nextState, result };
       });
+      if (!result.existing) {
+        publish(principal.userId, result.snapshot.thread.id, result.eventsToPublish);
+      }
+      return { snapshot: result.snapshot, existing: result.existing };
     },
     async listThreads(principal) {
       const state = await readState(options.homePath);
@@ -338,11 +369,11 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
       return snapshotFor(thread, state.events, cursor);
     },
     async abortThread(principal, threadId, clientRequestId) {
-      return mutate(async (state) => {
+      const result = await mutate(async (state) => {
         const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
         if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
         if (thread.abortClientRequestIds.includes(clientRequestId) || terminalThread(thread)) {
-          return { state, result: snapshotFor(thread, state.events) };
+          return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] } };
         }
         const occurredAt = now().toISOString();
         const statusEvent = AgentThreadEventSchema.parse({
@@ -369,8 +400,27 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
           threads: state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate),
           events: [...state.events, statusEvent, completedEvent],
         };
-        return { state: nextState, result: snapshotFor(nextThread, nextState.events) };
+        return {
+          state: nextState,
+          result: { snapshot: snapshotFor(nextThread, nextState.events), eventsToPublish: [statusEvent, completedEvent] },
+        };
       });
+      publish(principal.userId, threadId, result.eventsToPublish);
+      return result.snapshot;
+    },
+    registerEventSink(sink) {
+      if (eventSinks.length >= 8) {
+        eventSinks.shift();
+      }
+      eventSinks.push(sink);
+      return {
+        dispose() {
+          const index = eventSinks.indexOf(sink);
+          if (index >= 0) {
+            eventSinks.splice(index, 1);
+          }
+        },
+      };
     },
   };
 }

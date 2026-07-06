@@ -62,9 +62,14 @@ This slice may contain a thread marked `running` whose fake provider has no live
 
 If a write fails after validation, the previous file remains intact. If provider startup fails before the file write, no thread is committed for this slice.
 
+## Event Streaming
+
+Thread event streaming is gateway-owned and reuses the persisted event window. A stream attach validates the owner principal, replays events after the supplied cursor, then subscribes the socket to live events emitted after successful thread-store writes.
+
+The stream registry is process-local and capped. It evicts the oldest subscriber when the cap is reached, evicts stale subscribers by TTL, removes failed senders after broadcast, and drains subscribers during gateway shutdown.
+
 ## Deferred Work
 
-- WebSocket thread streaming with subscriber caps, stale cleanup, and shutdown drain
 - real provider adapter start and abort behavior
 - approval and input request state
 - durable compaction beyond the bounded owner-file projection
