@@ -88,6 +88,9 @@ async function resolveCodexSandbox(options: {
   if (options.request.sandboxMode === "read_only" && preflight.sandbox?.enabled) {
     return { ok: true, sandbox: { ...preflight.sandbox, mode: "read-only", writableRoots: [] } };
   }
+  if (options.request.sandboxMode === "full_access" && preflight.sandbox?.enabled) {
+    return { ok: true, sandbox: { ...preflight.sandbox, mode: "danger-full-access", writableRoots: [] } };
+  }
   return {
     ok: true,
     sandbox: preflight.sandbox?.enabled

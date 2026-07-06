@@ -28,6 +28,7 @@ export interface AgentLaunchInput {
   agent: SupportedAgent;
   cwd: string;
   prompt?: string;
+  mode?: "default" | "plan" | "review" | "full_access";
   sandbox?: AgentLaunchSandbox;
   approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
   runtimeHome?: string;
@@ -109,6 +110,16 @@ function authStatusArgs(agent: SupportedAgent): string[] {
   return agent === "codex" ? ["login", "status"] : ["auth", "status"];
 }
 
+function codexModeArgs(mode?: AgentLaunchInput["mode"]): string[] {
+  return mode === "review" ? ["review"] : [];
+}
+
+function codexPrompt(prompt: string | undefined, mode?: AgentLaunchInput["mode"]): string | undefined {
+  if (mode !== "plan") return prompt;
+  const planPrefix = "Plan the work first. Do not modify files until the plan is clear.";
+  return prompt ? `${planPrefix}\n\n${prompt}` : planPrefix;
+}
+
 export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
   const parsed = SupportedAgentSchema.parse(input.agent);
   const command = AGENTS[parsed].command;
@@ -125,7 +136,8 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
           "exec",
           "--skip-git-repo-check",
           ...codexSandboxArgs(input.sandbox),
-          ...promptArgs(input.prompt),
+          ...codexModeArgs(input.mode),
+          ...promptArgs(codexPrompt(input.prompt, input.mode)),
         ],
         cwd: input.cwd,
         env,

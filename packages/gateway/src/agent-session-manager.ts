@@ -296,6 +296,7 @@ export function createAgentSessionManager(options: {
             agent: request.agent!,
             cwd,
             prompt: request.prompt,
+            mode: request.mode,
             sandbox: request.sandbox,
             approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
           })
