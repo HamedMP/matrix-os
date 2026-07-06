@@ -76,15 +76,15 @@
     "@excalidraw/excalidraw": "^0.18.0",
     "@matrix-os/gateway": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/react": "^19.2.7",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.4.1",
     "@vitest/coverage-v8": "^4.0.18",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^0.563.0",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "tsx": "^4.21.0",
     "vite": "^6.3.2",
     "vitest": "^4.0.18"
@@ -92,6 +92,6 @@
   "dependencies": {
     "@types/pg": "^8.18.0",
     "ink": "^6.2.3",
-    "pg": "^8.21.0"
+    "pg": "^8.22.0"
   }
 }

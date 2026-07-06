@@ -47,7 +47,7 @@
     "@matrix-os/gateway": "workspace:*",
     "@matrix-os/mcp-browser": "workspace:*",
     "@mozilla/readability": "^0.6.0",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^12.11.1",
     "chokidar": "^5.0.0",
     "drizzle-orm": "^0.45.2",
     "linkedom": "^0.18.12",
