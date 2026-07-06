@@ -1,6 +1,6 @@
-import { relative } from "node:path";
 import {
   RuntimeSummarySchema,
+  SafeDisplayStringSchema,
   type AgentProviderSummary,
   type RuntimeSummary,
   type TerminalSessionSummary,
@@ -12,12 +12,21 @@ import type {
   AgentId,
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
-import type { SessionInfo } from "../session-registry.js";
 
 const TERMINAL_SUMMARY_LIMIT = 20;
 
+export interface CodingAgentTerminalSession {
+  name: string;
+  status?: "active" | "exited";
+  visualStatus?: "running" | "finished" | "idle" | "waiting";
+  createdAt: string;
+  updatedAt: string;
+  attachedClients?: number;
+  recoverable?: boolean;
+}
+
 export interface CodingAgentTerminalSessionRegistry {
-  list(): SessionInfo[];
+  list(): Promise<CodingAgentTerminalSession[]> | CodingAgentTerminalSession[];
 }
 
 export interface CodingAgentRuntimeSummaryService {
@@ -28,6 +37,7 @@ export interface CodingAgentRuntimeSummaryOptions {
   homePath: string;
   terminalRegistry?: CodingAgentTerminalSessionRegistry;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
+  terminalOwnerId?: string;
   now?: () => Date;
   runtime?: {
     id?: string;
@@ -43,30 +53,43 @@ function safeIsoFromMillis(value: number, fallback: Date): string {
   return date.toISOString();
 }
 
-function safeCwdLabel(homePath: string, cwd: string): string {
-  const rel = relative(homePath, cwd);
-  if (!rel || rel === "") return "~";
-  if (rel.startsWith("..") || rel.includes("\0")) return "External session";
-  if (rel.length <= 120) return rel;
-  return `${rel.slice(0, 117)}...`;
+function safeDisplayLabel(value: string, fallback: string): { label: string; sanitized: boolean } {
+  const label = value.length <= 120 ? value : `${value.slice(0, 117)}...`;
+  return SafeDisplayStringSchema.safeParse(label).success
+    ? { label, sanitized: false }
+    : { label: fallback, sanitized: true };
 }
 
-function terminalStatus(session: SessionInfo): TerminalSessionSummary["status"] {
-  if (session.state === "exited") return "exited";
-  if (session.attachedClients > 0) return "running";
+function canReadTerminalSessions(principal: RequestPrincipal, terminalOwnerId: string | undefined): boolean {
+  if (terminalOwnerId) return principal.userId === terminalOwnerId;
+  return principal.source === "configured-container" || principal.source === "dev-default";
+}
+
+function terminalStatus(session: CodingAgentTerminalSession): TerminalSessionSummary["status"] {
+  if (session.status === "exited") return "exited";
+  if (session.recoverable) return "stale";
+  if (session.visualStatus === "waiting") return "idle";
+  if (session.visualStatus === "finished") return "idle";
+  if (session.visualStatus === "running") return "running";
+  if ((session.attachedClients ?? 0) > 0) return "running";
   return "idle";
 }
 
-function terminalSummaryFromSession(homePath: string, now: Date, session: SessionInfo): TerminalSessionSummary {
+function terminalSummaryFromSession(
+  _homePath: string,
+  now: Date,
+  session: CodingAgentTerminalSession,
+  index: number,
+): TerminalSessionSummary {
   const status = terminalStatus(session);
+  const safeName = safeDisplayLabel(session.name, "Private session");
   return {
-    id: session.sessionId,
-    name: safeCwdLabel(homePath, session.cwd),
+    id: safeName.sanitized ? `terminal_private_${index}` : session.name,
+    name: safeName.label,
     status,
-    attachable: session.state === "running",
-    cwdLabel: safeCwdLabel(homePath, session.cwd),
-    createdAt: safeIsoFromMillis(session.createdAt, now),
-    updatedAt: safeIsoFromMillis(session.lastAttachedAt, now),
+    attachable: !safeName.sanitized && session.status !== "exited" && !session.recoverable,
+    createdAt: safeIsoFromMillis(Date.parse(session.createdAt), now),
+    updatedAt: safeIsoFromMillis(Date.parse(session.updatedAt), now),
   };
 }
 
@@ -126,18 +149,25 @@ async function readProviders(
   }
 }
 
-function readTerminalSessions(
+async function readTerminalSessions(
   registry: CodingAgentTerminalSessionRegistry | undefined,
   homePath: string,
   now: Date,
-): { items: TerminalSessionSummary[]; hasMore: boolean; limit: number } {
+  principal: RequestPrincipal,
+  terminalOwnerId: string | undefined,
+): Promise<{ items: TerminalSessionSummary[]; hasMore: boolean; limit: number }> {
   if (!registry) return { items: [], hasMore: false, limit: TERMINAL_SUMMARY_LIMIT };
+  if (!canReadTerminalSessions(principal, terminalOwnerId)) {
+    return { items: [], hasMore: false, limit: TERMINAL_SUMMARY_LIMIT };
+  }
   try {
-    const sessions = registry.list()
+    const sessions = (await registry.list())
       .slice()
-      .sort((a, b) => b.lastAttachedAt - a.lastAttachedAt);
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     return {
-      items: sessions.slice(0, TERMINAL_SUMMARY_LIMIT).map((session) => terminalSummaryFromSession(homePath, now, session)),
+      items: sessions.slice(0, TERMINAL_SUMMARY_LIMIT).map((session, index) =>
+        terminalSummaryFromSession(homePath, now, session, index)
+      ),
       hasMore: sessions.length > TERMINAL_SUMMARY_LIMIT,
       limit: TERMINAL_SUMMARY_LIMIT,
     };
@@ -155,7 +185,13 @@ export function createCodingAgentRuntimeSummaryService(
   return {
     async getSummary(principal: RequestPrincipal): Promise<RuntimeSummary> {
       const now = nowFn();
-      const terminalSessions = readTerminalSessions(options.terminalRegistry, options.homePath, now);
+      const terminalSessions = readTerminalSessions(
+        options.terminalRegistry,
+        options.homePath,
+        now,
+        principal,
+        options.terminalOwnerId,
+      );
       const providers = await readProviders(options.agentCredentials, principal);
 
       return RuntimeSummarySchema.parse({
@@ -178,7 +214,7 @@ export function createCodingAgentRuntimeSummaryService(
         providers,
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads: { items: [], hasMore: false, limit: 20 },
-        terminalSessions,
+        terminalSessions: await terminalSessions,
         recentActivity: { items: [], hasMore: false, limit: 30 },
         limits: {
           maxPromptBytes: 24_000,

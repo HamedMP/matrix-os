@@ -6,6 +6,7 @@ import {
   type CodingAgentTerminalSessionRegistry,
 } from "../../packages/gateway/src/coding-agents/runtime-summary.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
@@ -14,12 +15,10 @@ const now = new Date("2026-07-06T12:00:00.000Z");
 function registryWith(count: number): CodingAgentTerminalSessionRegistry {
   return {
     list: () => Array.from({ length: count }, (_, index) => ({
-      sessionId: `550e8400-e29b-41d4-a716-44665544${String(index).padStart(4, "0")}`,
-      cwd: `/home/matrix/home/projects/project-${index}`,
-      shell: "/bin/bash",
-      state: index % 3 === 0 ? "exited" as const : "running" as const,
-      createdAt: now.getTime() - index * 1000,
-      lastAttachedAt: now.getTime() - index * 1000,
+      name: `main-${index}`,
+      status: index % 3 === 0 ? "exited" as const : "active" as const,
+      createdAt: new Date(now.getTime() - index * 1000).toISOString(),
+      updatedAt: new Date(now.getTime() - index * 1000).toISOString(),
       attachedClients: index % 2,
     })),
   };
@@ -66,11 +65,71 @@ describe("coding agent runtime summary", () => {
     expect(summary.terminalSessions.items).toHaveLength(20);
     expect(summary.terminalSessions.hasMore).toBe(true);
     expect(summary.terminalSessions.items[0]).toMatchObject({
-      cwdLabel: "projects/project-0",
+      id: "main-0",
+      name: "main-0",
       attachable: false,
       status: "exited",
     });
     expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|\/bin\/bash|token|secret|Postgres/i);
+  });
+
+  it("withholds owner-local terminal sessions from other principals", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      terminalRegistry: registryWith(1),
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+      terminalOwnerId: "owner_user",
+    });
+    const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(otherPrincipal));
+
+    expect(summary.terminalSessions.items).toEqual([]);
+    expect(summary.terminalSessions.hasMore).toBe(false);
+  });
+
+  it("withholds terminal sessions for jwt principals when no owner id is configured", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      terminalRegistry: registryWith(1),
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+    const jwtPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(jwtPrincipal));
+
+    expect(summary.terminalSessions.items).toEqual([]);
+    expect(summary.terminalSessions.hasMore).toBe(false);
+  });
+
+  it("replaces unsafe terminal cwd labels instead of failing the whole summary", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      terminalRegistry: {
+        list: () => [{
+          name: "id_rsa",
+          status: "active",
+          visualStatus: "running",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          attachedClients: 1,
+        }],
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(summary.terminalSessions.items[0]).toMatchObject({
+      id: "terminal_private_0",
+      name: "Private session",
+      status: "running",
+      attachable: false,
+    });
+    expect(JSON.stringify(summary)).not.toMatch(/\.ssh|id_rsa|\/home\/matrix/i);
   });
 
   it("keeps the summary safe when optional dependencies fail", async () => {

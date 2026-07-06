@@ -464,8 +464,9 @@ export async function createGateway(config: GatewayConfig) {
   });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
-    terminalRegistry: sessionRegistry,
+    terminalRegistry: zellijShellRegistry,
     agentCredentials: agentCredentialService,
+    terminalOwnerId: process.env.MATRIX_USER_ID,
   });
   const integrationCapabilityService = createIntegrationCapabilityService({
     getConnectedCapabilityIds,
