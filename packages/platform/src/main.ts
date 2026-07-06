@@ -1,20 +1,16 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { serve } from '@hono/node-server';
 import {
   createPostHogErrorTracker,
   installPostHogHonoErrorTracking,
-  installPostHogProcessErrorTracking,
   isMatrixTelemetryEvent,
   MATRIX_TELEMETRY_EVENTS,
   type MatrixTelemetryEvent,
 } from '@matrix-os/observability';
-import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import { Agent } from 'undici';
 import { z } from 'zod/v4';
 import {
-  createPlatformDb,
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
@@ -27,16 +23,13 @@ import {
   listUserMachines,
   listAllUserMachines,
   updateLastActive,
-  updateContainerStatus,
-  listContainers,
-  sweepStaleCheckoutAttempts,
   type UserMachineRecord,
 } from './db.js';
 import type { Orchestrator } from './orchestrator.js';
 import { createSocialApi } from './social.js';
 import { createStoreApi } from './store-api.js';
 import { createSocialFeedApi } from './social-api.js';
-import { createClerkAuth, createClerkSessionRevoker, type ClerkAuth } from './clerk-auth.js';
+import type { ClerkAuth } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import { createAuthRoutes } from './auth-routes.js';
 import { issueSyncJwt, verifySyncJwt } from './sync-jwt.js';
@@ -67,7 +60,6 @@ import {
 } from './billing.js';
 import { createBillingRoutes } from './billing-routes.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
-import { backfillFirstRunRecords } from './journey.js';
 import {
   sanitizeProxyResponseHeaders,
 } from './proxy-headers.js';
@@ -106,11 +98,6 @@ import {
 import { createPlatformMetricsRoutes } from './platform-metrics-routes.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
-  PlatformStartupConfigError,
-  loadPlatformRuntimeConfig,
-} from './runtime-mode.js';
-import { resolvePlatformIntegrationConfig } from './integration-config.js';
-import {
   APP_SESSION_COOKIE,
   readCookie,
 } from './session-cookies.js';
@@ -128,9 +115,22 @@ import { createSessionRoutingMiddleware } from './session-routing-middleware.js'
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
-import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
+import { startPlatformServer } from './platform-startup.js';
+import {
+  checkHomeMirrorS3Env,
+  checkHostBundleStorageEnv,
+  checkUnsafeDefaultSecrets,
+  collectTenantPublicTelemetryEnv,
+} from './platform-startup-env.js';
+import type { PlatformApp } from './platform-app-types.js';
 export { escapeInlineScriptJson } from './auth-pages.js';
 export { buildPostAuthRedirectPath } from './request-routing.js';
+export type { PlatformApp } from './platform-app-types.js';
+export {
+  checkHomeMirrorS3Env,
+  checkHostBundleStorageEnv,
+  checkUnsafeDefaultSecrets,
+} from './platform-startup-env.js';
 export {
   buildPlatformWebSocketUpgradeHeaders,
   classifySessionRoutedHost,
@@ -142,23 +142,11 @@ export {
 const PORT = Number(process.env.PLATFORM_PORT ?? 9000);
 const PLATFORM_SECRET = process.env.PLATFORM_SECRET ?? '';
 const PLATFORM_JWT_SECRET = process.env.PLATFORM_JWT_SECRET ?? '';
-const DEV_PLATFORM_SECRET = 'dev-secret';
-const DEV_PLATFORM_JWT_SECRET = 'dev-platform-jwt-secret-please-change-32';
-const DEFAULT_SYNC_BUCKET = 'matrixos-sync';
 const ADMIN_BODY_LIMIT = 64 * 1024;
 const PROXY_BODY_LIMIT = 10 * 1024 * 1024;
 const PROXY_TIMEOUT_MS = 30_000;
 const AUTH_SHELL_PROXY_TIMEOUT_MS = 5_000;
 const CODE_SERVER_PORT = Number(process.env.MATRIX_CODE_SERVER_PORT ?? 8787);
-const TENANT_PUBLIC_TELEMETRY_ENV_KEYS = [
-  'POSTHOG_TOKEN',
-  'POSTHOG_PROJECT_TOKEN',
-  'POSTHOG_HOST',
-  'NEXT_PUBLIC_POSTHOG_KEY',
-  'NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN',
-  'NEXT_PUBLIC_POSTHOG_HOST',
-  'NEXT_PUBLIC_POSTHOG_API_HOST',
-] as const;
 
 // User containers churn frequently, so keep proxy connections short-lived
 // instead of letting long-lived pooled upstream state go stale.
@@ -179,20 +167,6 @@ const customerVpsProxyDispatcher = new Agent({
   },
 });
 const WS_TOKEN_EXPIRES_IN_SEC = 5 * 60;
-function collectTenantPublicTelemetryEnv(
-  env: Record<string, string | undefined> = process.env,
-): string[] {
-  return TENANT_PUBLIC_TELEMETRY_ENV_KEYS
-    .map((key) => {
-      const value = env[key];
-      if (!value) return null;
-      if (/[\r\n\0]/.test(value)) {
-        throw new Error(`Invalid public telemetry env value for ${key}`);
-      }
-      return `${key}=${value}`;
-    })
-    .filter((value): value is string => value !== null);
-}
 
 const SocialSendBodySchema = z.object({
   text: z.string().min(1).max(10_000),
@@ -201,94 +175,6 @@ const SocialSendBodySchema = z.object({
     displayName: z.string().min(1).max(100).optional(),
   }),
 });
-
-interface GatewayPlatformUser {
-  id: string;
-}
-
-interface GatewayPlatformDb {
-  migrate(): Promise<void>;
-  getUserByClerkId(clerkId: string): Promise<GatewayPlatformUser | null>;
-  ensureUser(input: {
-    clerkId: string;
-    handle: string;
-    displayName: string;
-    email: string;
-    containerId: string;
-    containerVersion?: string;
-    plan?: string;
-    pipedreamExternalId?: string;
-  }): Promise<GatewayPlatformUser>;
-}
-
-interface GatewayPlatformDbModule {
-  createPlatformDb(databaseUrl: string): GatewayPlatformDb;
-}
-
-interface GatewayPipedreamConfig {
-  clientId: string;
-  clientSecret: string;
-  projectId: string;
-  environment?: string;
-}
-
-interface GatewayPipedreamModule {
-  createPipedreamClient(config: GatewayPipedreamConfig): unknown;
-}
-
-interface GatewayIntegrationRoutesModule {
-  createIntegrationRoutes(opts: {
-    db: GatewayPlatformDb;
-    pipedream: unknown;
-    webhookSecret: string;
-    resolveUserId: (c: Context) => Promise<string | null>;
-  }): Hono;
-}
-
-interface GatewayR2Client {
-  getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
-  getPresignedPutUrl(key: string, size: number, expiresIn?: number): Promise<string>;
-  createMultipartUpload(key: string): Promise<string>;
-  getPresignedPartUrl(
-    key: string,
-    uploadId: string,
-    partNumber: number,
-    expiresIn?: number,
-  ): Promise<string>;
-  completeMultipartUpload(
-    key: string,
-    uploadId: string,
-    parts: Array<{ partNumber: number; etag: string }>,
-  ): Promise<{ etag?: string }>;
-  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
-  getObject(
-    key: string,
-    options?: { signal?: AbortSignal },
-  ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
-  putObject(
-    key: string,
-    body: string | Uint8Array | ReadableStream<Uint8Array>,
-    options?: { signal?: AbortSignal },
-  ): Promise<{ etag?: string }>;
-  deleteObject(key: string): Promise<void>;
-  destroy(): void;
-}
-
-interface GatewayR2ClientModule {
-  createR2Client(config: {
-    accountId?: string;
-    accessKeyId: string;
-    secretAccessKey: string;
-    bucket: string;
-    endpoint?: string;
-    publicEndpoint?: string;
-    forcePathStyle?: boolean;
-  }): Promise<GatewayR2Client>;
-}
-
-async function importRuntimeModule<T>(specifier: string): Promise<T> {
-  return import(specifier) as Promise<T>;
-}
 
 function logCodeDomainUpstreamFailure(opts: {
   handle: string;
@@ -401,65 +287,6 @@ function jsonCustomerVpsError(c: import('hono').Context, err: unknown, context: 
   return c.json({ error: 'Provisioning failed', code: 'provisioning_failed' }, 503);
 }
 
-export function checkUnsafeDefaultSecrets(
-  env: NodeJS.ProcessEnv = process.env,
-  log: (msg: string) => void = console.error,
-): string[] {
-  if (env.NODE_ENV !== 'production') return [];
-  const problems: string[] = [];
-
-  if (!env.PLATFORM_SECRET || env.PLATFORM_SECRET === DEV_PLATFORM_SECRET) {
-    problems.push('PLATFORM_SECRET');
-  }
-
-  if (
-    !env.PLATFORM_JWT_SECRET ||
-    env.PLATFORM_JWT_SECRET === DEV_PLATFORM_JWT_SECRET
-  ) {
-    problems.push('PLATFORM_JWT_SECRET');
-  }
-
-  if (problems.length > 0) {
-    log(
-      `[platform] Refusing to start in production with missing or unsafe default secrets: ${problems.join(', ')}.`,
-    );
-  }
-
-  return problems;
-}
-
-export function checkHostBundleStorageEnv(
-  env: NodeJS.ProcessEnv = process.env,
-  log: (msg: string) => void = console.warn,
-): string[] {
-  if (env.CUSTOMER_VPS_ENABLED !== 'true') return [];
-  const problems: string[] = [];
-  if (!(env.S3_BUNDLES_ENDPOINT || env.R2_BUNDLES_ENDPOINT || env.S3_BUNDLES_ACCOUNT_ID || env.R2_BUNDLES_ACCOUNT_ID)) {
-    problems.push('S3_BUNDLES_ENDPOINT/R2_BUNDLES_ENDPOINT or S3_BUNDLES_ACCOUNT_ID/R2_BUNDLES_ACCOUNT_ID');
-  }
-  if (!(env.S3_BUNDLES_ACCESS_KEY_ID || env.R2_BUNDLES_ACCESS_KEY_ID)) {
-    problems.push('S3_BUNDLES_ACCESS_KEY_ID/R2_BUNDLES_ACCESS_KEY_ID');
-  }
-  if (!(env.S3_BUNDLES_SECRET_ACCESS_KEY || env.R2_BUNDLES_SECRET_ACCESS_KEY)) {
-    problems.push('S3_BUNDLES_SECRET_ACCESS_KEY/R2_BUNDLES_SECRET_ACCESS_KEY');
-  }
-  const bundleBucket = env.S3_BUNDLES_BUCKET ?? env.R2_BUNDLES_BUCKET;
-  if (!bundleBucket) {
-    problems.push('S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET');
-  } else {
-    const syncBucket = env.S3_BUCKET ?? env.R2_BUCKET ?? DEFAULT_SYNC_BUCKET;
-    if (bundleBucket === syncBucket) {
-      problems.push('S3_BUNDLES_BUCKET/R2_BUNDLES_BUCKET must not equal S3_BUCKET/R2_BUCKET');
-    }
-  }
-  if (problems.length > 0) {
-    log(
-      `[platform] CUSTOMER_VPS_ENABLED=true but dedicated host bundle storage is incomplete; refusing to fall back to the sync bucket for signed host bundle URLs. Problems: ${problems.join(', ')}.`,
-    );
-  }
-  return problems;
-}
-
 function getGatewayUrlForHandle(handle: string): string {
   const safeHandle = requireValidHandle(handle);
   const tmpl = process.env.GATEWAY_URL_TEMPLATE;
@@ -468,63 +295,6 @@ function getGatewayUrlForHandle(handle: string): string {
   }
   return 'https://app.matrix-os.com';
 }
-
-/**
- * Startup assertion for the trusted-sync architecture: user containers no
- * longer receive raw S3 credentials. When MATRIX_HOME_MIRROR=true, the
- * container gateway reaches storage through the platform's internal sync API,
- * so the platform itself must hold the trusted storage config plus the
- * PLATFORM_SECRET used for per-container HMAC auth. Warn loudly at startup
- * instead of discovering silent sync failure after deploy.
- *
- * Returns the list of missing logical requirements (empty if all is well or
- * home-mirror is disabled). Exposed for tests; callers typically just discard
- * the return value after logging.
- */
-export function checkHomeMirrorS3Env(
-  env: NodeJS.ProcessEnv = process.env,
-  log: (msg: string) => void = console.warn,
-): string[] {
-  if (env.MATRIX_HOME_MIRROR !== 'true') return [];
-  const missing: string[] = [];
-  if (!(env.S3_ENDPOINT || env.R2_ENDPOINT || env.R2_ACCOUNT_ID)) {
-    missing.push('S3_ENDPOINT/R2_ENDPOINT or R2_ACCOUNT_ID');
-  }
-  if (!(env.S3_ACCESS_KEY_ID || env.R2_ACCESS_KEY_ID)) {
-    missing.push('S3_ACCESS_KEY_ID/R2_ACCESS_KEY_ID');
-  }
-  if (!(env.S3_SECRET_ACCESS_KEY || env.R2_SECRET_ACCESS_KEY)) {
-    missing.push('S3_SECRET_ACCESS_KEY/R2_SECRET_ACCESS_KEY');
-  }
-  if (!(env.S3_BUCKET || env.R2_BUCKET)) {
-    missing.push('S3_BUCKET/R2_BUCKET');
-  }
-  if (!env.PLATFORM_SECRET) {
-    missing.push('PLATFORM_SECRET');
-  }
-  if (missing.length > 0) {
-    log(
-      `[platform] MATRIX_HOME_MIRROR=true but trusted sync storage is incomplete; user containers no longer receive raw S3 credentials and must proxy sync storage through the platform. Missing: ${missing.join(', ')}.`,
-    );
-  }
-  return missing;
-}
-
-export type PlatformApp = Hono<{
-  Variables: {
-    platformUserId: string;
-    platformHandle: string;
-    internalContainerHandle: string;
-    internalContainerClerkUserId: string;
-  };
-}> & {
-  capturePlatformEvent(
-    event: MatrixTelemetryEvent,
-    properties: Record<string, string | number | boolean | null | undefined>,
-    options?: { distinctId?: string },
-  ): void;
-  shutdownPostHog(): Promise<void>;
-};
 
 export function createApp(deps: {
   db: PlatformDB;
@@ -1107,423 +877,20 @@ export function createApp(deps: {
 
 // Start server when run directly
 if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')) {
-  if (checkUnsafeDefaultSecrets().length > 0) {
-    process.exit(1);
-  }
-  let runtimeConfig;
-  try {
-    runtimeConfig = loadPlatformRuntimeConfig();
-  } catch (err: unknown) {
-    if (err instanceof PlatformStartupConfigError) {
-      console.error(`[platform] ${err.message}`);
-      process.exit(1);
-    }
-    throw err;
-  }
-  checkHomeMirrorS3Env();
-  const hostBundleStorageProblems = checkHostBundleStorageEnv();
-  if (hostBundleStorageProblems.length > 0) {
-    process.exit(1);
-  }
-
-  const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
-  await db.ready;
-
-  let docker: Dockerode | undefined;
-  let orchestrator: Orchestrator;
-  if (runtimeConfig.legacyContainerOrchestrationEnabled) {
-    const [
-      { default: DockerodeCtor },
-      { createOrchestrator },
-      { createLifecycleManager },
-      { createStatsCollector },
-    ] = await Promise.all([
-      import('dockerode'),
-      import('./orchestrator.js'),
-      import('./lifecycle.js'),
-      import('./stats-collector.js'),
-    ]);
-    docker = new DockerodeCtor();
-    orchestrator = createOrchestrator({
-      db,
-      docker,
-      image: process.env.PLATFORM_IMAGE,
-      dataDir: process.env.PLATFORM_DATA_DIR,
-      platformSecret: PLATFORM_SECRET,
-      publicTelemetryEnv: collectTenantPublicTelemetryEnv(),
-      postgresUrl: process.env.POSTGRES_URL,
-    });
-
-    const maxRunning = Number(process.env.MAX_RUNNING_CONTAINERS) || 20;
-    const lifecycle = createLifecycleManager({ db, orchestrator, maxRunning });
-    lifecycle.start();
-
-    const statsCollector = createStatsCollector({
-      docker,
-      listRunning: () => listContainers(db, 'running'),
-      onResolvedContainerId: async (handle, containerId) => {
-        await updateContainerStatus(db, handle, 'running', containerId);
-      },
-    });
-    statsCollector.start();
-  } else {
-    const { createDisabledOrchestrator } = await import('./orchestrator.js');
-    orchestrator = createDisabledOrchestrator({
-      db,
-      image: process.env.PLATFORM_IMAGE ?? 'customer-vps',
-    });
-    console.log('[platform] Cloud Run mode enabled; legacy Docker container orchestration is disabled');
-  }
-
-  // Clerk JWT verification (optional -- only active when CLERK_SECRET_KEY is set)
-  let clerkAuth: ClerkAuth | undefined;
-  const clerkSecretKey = process.env.CLERK_SECRET_KEY;
-  if (clerkSecretKey) {
-    const { verifyToken } = await import('@clerk/backend');
-    clerkAuth = createClerkAuth({
-      verifyToken: async (token: string) => {
-        const payload = await verifyToken(token, { secretKey: clerkSecretKey });
-        return payload as { sub: string; [key: string]: unknown };
-      },
-      revokeSession: createClerkSessionRevoker({ secretKey: clerkSecretKey }),
-    });
-  }
-
-  // Matrix provisioner (optional: only if Conduit URL is configured)
-  let matrixProvisioner: MatrixProvisioner | undefined;
-  const conduitUrl = process.env.MATRIX_CONDUIT_URL;
-  const conduitToken = process.env.CONDUIT_REGISTRATION_TOKEN;
-  if (conduitUrl && !conduitToken) {
-    console.error('[platform] CONDUIT_REGISTRATION_TOKEN is required when MATRIX_CONDUIT_URL is set');
-    process.exit(1);
-  }
-  if (conduitUrl) {
-    const { createMatrixProvisioner } = await import('./matrix-provisioning.js');
-    matrixProvisioner = createMatrixProvisioner({
-      db,
-      homeserverUrl: conduitUrl,
-      registrationToken: conduitToken!,
-    });
-    console.log(`[matrix] Provisioner enabled (${conduitUrl})`);
-  }
-
-  let integrationRoutes: Hono | undefined;
-  let internalIntegrationRoutes: Hono | undefined;
-  const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
-  if (integrationConfig) {
-    const [
-      { createIntegrationRoutes },
-      { createPipedreamClient },
-      { createPlatformDb: createGatewayPlatformDb },
-    ] = await Promise.all([
-      importRuntimeModule<GatewayIntegrationRoutesModule>('../../gateway/dist/integrations/routes.js'),
-      importRuntimeModule<GatewayPipedreamModule>('../../gateway/dist/integrations/pipedream.js'),
-      importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
-    ]);
-
-    const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
-    await trustedPlatformDb.migrate();
-    const pipedream = await createPipedreamClient({
-      clientId: integrationConfig.pipedreamClientId,
-      clientSecret: integrationConfig.pipedreamClientSecret,
-      projectId: integrationConfig.pipedreamProjectId,
-      environment: integrationConfig.pipedreamEnvironment,
-    });
-    const webhookSecret = integrationConfig.pipedreamWebhookSecret;
-    const resolveIntegrationUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
-      if (!clerkUserId) return null;
-      const existing = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
-      if (existing) return existing.id;
-      if (!handle) return null;
-
-      const owner =
-        (await getRunningUserMachineByHandle(db, handle)) ??
-        (await getContainer(db, handle));
-      if (!owner || owner.clerkUserId !== clerkUserId) {
-        return null;
-      }
-
-      const user = await trustedPlatformDb!.ensureUser({
-        clerkId: clerkUserId,
-        handle,
-        displayName: handle,
-        email: `${handle}@matrix-os.local`,
-        containerId: `platform:${clerkUserId}`,
-      });
-      return user.id;
-    };
-
-    integrationRoutes = createIntegrationRoutes({
-      db: trustedPlatformDb,
-      pipedream,
-      webhookSecret,
-      resolveUserId: async (c) => {
-        const clerkUserId = c.get('platformUserId') as string | undefined;
-        const handle = c.get('platformHandle') as string | undefined;
-        return await resolveIntegrationUserId(clerkUserId, handle);
-      },
-    });
-    internalIntegrationRoutes = createIntegrationRoutes({
-      db: trustedPlatformDb,
-      pipedream,
-      webhookSecret,
-      resolveUserId: async (c) => {
-        const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
-        const handle = c.get('internalContainerHandle') as string | undefined;
-        return await resolveIntegrationUserId(clerkUserId, handle);
-      },
-    });
-  }
-
-  let internalSyncRoutes: Hono | undefined;
-  let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
-  let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
-  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
-  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
-  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
-  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? 'matrixos-sync';
-  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
-  let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
-  if (s3AccessKey && s3SecretKey && PLATFORM_SECRET) {
-    const [r2ClientModule, { createInternalSyncRoutes }] = await Promise.all([
-      importRuntimeModule<GatewayR2ClientModule>('./r2-client.js'),
-      import('./internal-sync-routes.js'),
-    ]);
-    createR2Client = r2ClientModule.createR2Client;
-    const r2 = await createR2Client({
-      accessKeyId: s3AccessKey,
-      secretAccessKey: s3SecretKey,
-      bucket: s3Bucket,
-      endpoint: s3Endpoint,
-      publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
-      accountId: process.env.R2_ACCOUNT_ID,
-      forcePathStyle: s3ForcePathStyle,
-    });
-    internalSyncRoutes = createInternalSyncRoutes({
-      db,
-      r2,
-      platformSecret: PLATFORM_SECRET,
-    });
-    customerVpsObjectStore = r2;
-    hostBundleObjectStore = r2;
-  }
-
-  const bundleS3Bucket = process.env.S3_BUNDLES_BUCKET ?? process.env.R2_BUNDLES_BUCKET;
-  const bundleS3AccessKey = process.env.S3_BUNDLES_ACCESS_KEY_ID ?? process.env.R2_BUNDLES_ACCESS_KEY_ID;
-  const bundleS3SecretKey = process.env.S3_BUNDLES_SECRET_ACCESS_KEY ?? process.env.R2_BUNDLES_SECRET_ACCESS_KEY;
-  if (bundleS3Bucket && bundleS3AccessKey && bundleS3SecretKey) {
-    createR2Client ??= (
-      await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')
-    ).createR2Client;
-    hostBundleObjectStore = await createR2Client({
-      accessKeyId: bundleS3AccessKey,
-      secretAccessKey: bundleS3SecretKey,
-      bucket: bundleS3Bucket,
-      endpoint: process.env.S3_BUNDLES_ENDPOINT ?? process.env.R2_BUNDLES_ENDPOINT,
-      publicEndpoint: process.env.S3_BUNDLES_PUBLIC_ENDPOINT ?? process.env.R2_BUNDLES_PUBLIC_ENDPOINT,
-      accountId: process.env.S3_BUNDLES_ACCOUNT_ID ?? process.env.R2_BUNDLES_ACCOUNT_ID ?? process.env.R2_ACCOUNT_ID,
-      forcePathStyle: process.env.S3_BUNDLES_FORCE_PATH_STYLE === 'true',
-    });
-  }
-
-  let customerVpsService: CustomerVpsService | undefined;
-  let customerVpsReconciliationInterval: ReturnType<typeof setInterval> | undefined;
-  let customerVpsReconciliationPromise: Promise<void> | undefined;
-  if (runtimeConfig.customerVpsEnabled) {
-    const [
-      { createCustomerVpsService },
-      { loadCustomerVpsConfig },
-      { createHetznerClient },
-      { createCustomerVpsSystemStore, createNoopCustomerVpsSystemStore },
-      { loadCustomerVpsCloudInitTemplate },
-    ] = await Promise.all([
-      import('./customer-vps.js'),
-      import('./customer-vps-config.js'),
-      import('./customer-vps-hetzner.js'),
-      import('./customer-vps-r2.js'),
-      import('./customer-vps-cloud-init.js'),
-    ]);
-    const customerVpsConfig = loadCustomerVpsConfig();
-    const cloudInitTemplate = await loadCustomerVpsCloudInitTemplate();
-    customerVpsService = createCustomerVpsService({
-      db,
-      config: customerVpsConfig,
-      hetzner: createHetznerClient(customerVpsConfig),
-      systemStore: customerVpsObjectStore
-        ? createCustomerVpsSystemStore({
-            r2: customerVpsObjectStore,
-            r2PrefixRoot: customerVpsConfig.r2PrefixRoot,
-          })
-        : createNoopCustomerVpsSystemStore(),
-      cloudInitTemplate,
-      fetchDispatcher: customerVpsProxyDispatcher,
-      resolveBillingEntitlement: stripeBillingEntitlementsEnabled(process.env)
-        ? (clerkUserId) => resolveEffectiveBillingEntitlement(db, clerkUserId)
-        : undefined,
-    });
-    const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
-    if (reconciliationIntervalMs > 0) {
-      // Customer VPS reconciliation currently assumes one active platform
-      // process. If the platform is horizontally scaled, replace this
-      // in-process guard with a DB advisory lock before enabling the interval
-      // on multiple instances.
-      let reconciliationRunning = false;
-      const runCustomerVpsReconciliation = async () => {
-        if (reconciliationRunning || !customerVpsService) return;
-        reconciliationRunning = true;
-        customerVpsReconciliationPromise = (async () => {
-          try {
-            try {
-              const result = await customerVpsService!.reconcileProvisioning();
-              if (result.checked > 0) {
-                console.log(
-                  `[platform] customer VPS reconciliation checked=${result.checked} running=${result.running} failed=${result.failed}`,
-                );
-              }
-            } catch (err: unknown) {
-              logPlatformRouteError('customer VPS reconciliation', err);
-            }
-            // Onboarding journey maintenance, off the read path (spec 092):
-            // sweep stale open checkout attempts and backfill legacy first-run records.
-            try {
-              const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-              await sweepStaleCheckoutAttempts(db, thirtyDaysAgoIso, new Date().toISOString(), 200);
-            } catch (err: unknown) {
-              logPlatformRouteError('checkout attempt sweep', err);
-            }
-            try {
-              await backfillFirstRunRecords(db, {
-                limit: 25,
-                probe: async (machine) => {
-                  if (!machine.publicIPv4 || !customerVpsConfig.platformSecret) return null;
-                  const token = buildPlatformVerificationToken(machine.handle, customerVpsConfig.platformSecret);
-                  const res = await fetch(`https://${machine.publicIPv4}:443/api/settings/onboarding-status`, {
-                    headers: { authorization: `Bearer ${token}` },
-                    signal: AbortSignal.timeout(3000),
-                    // Never follow a redirect: a compromised VPS must not be able
-                    // to capture the platform bearer token by redirecting elsewhere.
-                    redirect: 'error',
-                    ...(customerVpsProxyDispatcher ? { dispatcher: customerVpsProxyDispatcher } : {}),
-                  } as RequestInit & { dispatcher?: import('undici').Dispatcher });
-                  if (!res.ok) return null;
-                  let body: { complete?: unknown } | null = null;
-                  try {
-                    body = (await res.json()) as { complete?: unknown };
-                  } catch (parseErr: unknown) {
-                    // Malformed status body → log and treat as not-yet-complete.
-                    console.warn(
-                      `[platform] backfill onboarding-status parse failed machine=${machine.machineId}`,
-                      parseErr instanceof Error ? parseErr.name : typeof parseErr,
-                    );
-                    return null;
-                  }
-                  return body?.complete === true ? { completedAt: new Date().toISOString() } : null;
-                },
-              });
-            } catch (err: unknown) {
-              logPlatformRouteError('first-run backfill', err);
-            }
-          } finally {
-            reconciliationRunning = false;
-            customerVpsReconciliationPromise = undefined;
-          }
-        })();
-        await customerVpsReconciliationPromise;
-      };
-      void runCustomerVpsReconciliation();
-      customerVpsReconciliationInterval = setInterval(runCustomerVpsReconciliation, reconciliationIntervalMs);
-      customerVpsReconciliationInterval.unref();
-    }
-  }
-
-  const appEnv = process.env;
-  const legacyContainerRoutingEnabled =
-    appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
-  const app = createApp({
-    db,
-    docker,
-    orchestrator,
-    clerkAuth,
-    matrixProvisioner,
-    integrationRoutes,
-    internalIntegrationRoutes,
-    internalSyncRoutes,
-    customerVpsService,
-    customerVpsObjectStore,
-    hostBundleObjectStore,
-  });
-  const processPosthogErrorTracker = createPostHogErrorTracker({
-    service: 'matrix-platform',
-  });
-  const posthogProcessErrors = installPostHogProcessErrorTracking({
-    tracker: processPosthogErrorTracker,
-    service: 'matrix-platform',
-  });
-
-  const server = serve({ fetch: app.fetch, port: PORT }, () => {
-    console.log(`Platform listening on :${PORT}`);
-  });
-
-  let shuttingDown = false;
-  const shutdown = (signal: NodeJS.Signals): void => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    console.log(`[platform] Received ${signal}, shutting down`);
-    if (customerVpsReconciliationInterval) {
-      clearInterval(customerVpsReconciliationInterval);
-    }
-    const shutdownTimer = setTimeout(() => {
-      console.error('[platform] Graceful shutdown timed out');
-      process.exit(1);
-    }, 10_000);
-    shutdownTimer.unref();
-
-    (server as Server).close((err?: Error) => {
-      let exitCode = 0;
-      if (err) {
-        exitCode = 1;
-        console.error('[platform] HTTP server close failed:', err.message);
-      }
-      (async () => {
-        if (customerVpsReconciliationPromise) {
-          await customerVpsReconciliationPromise;
-        }
-        await Promise.allSettled([
-          containerProxyDispatcher.close(),
-          customerVpsProxyDispatcher.close(),
-        ]);
-        posthogProcessErrors.dispose();
-        await app.shutdownPostHog();
-        await processPosthogErrorTracker.shutdown();
-        await db.destroy();
-      })()
-        .catch((destroyErr: unknown) => {
-          exitCode = 1;
-          console.error(
-            '[platform] Shutdown cleanup failed:',
-            destroyErr instanceof Error ? destroyErr.message : String(destroyErr),
-          );
-        })
-        .finally(() => {
-          clearTimeout(shutdownTimer);
-          process.exit(exitCode);
-        });
-    });
-  };
-  process.once('SIGTERM', shutdown);
-  process.once('SIGINT', shutdown);
-
-  registerPlatformWebSocketUpgradeHandler({
-    server: server as Server,
-    app,
-    db,
-    docker,
-    clerkAuth,
-    env: appEnv,
+  await startPlatformServer({
+    port: PORT,
     platformSecret: PLATFORM_SECRET,
     platformJwtSecret: PLATFORM_JWT_SECRET,
-    legacyContainerRoutingEnabled,
     codeServerPort: CODE_SERVER_PORT,
+    containerProxyDispatcher,
+    customerVpsProxyDispatcher,
+    createApp,
+    checkUnsafeDefaultSecrets,
+    checkHomeMirrorS3Env,
+    checkHostBundleStorageEnv,
+    collectTenantPublicTelemetryEnv,
+    stripeBillingEntitlementsEnabled,
+    resolveEffectiveBillingEntitlement,
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
   });
