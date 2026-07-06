@@ -288,7 +288,7 @@ export default function TerminalScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" backgroundColor={theme.terminal.surface} />
+      <StatusBar style="light" />
       <WindowHeader
         tone="terminal"
         paddingTop={insets.top + (chromeExpanded ? 8 : 3)}

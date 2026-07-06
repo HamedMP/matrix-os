@@ -266,7 +266,6 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           bounces={false}
           hideKeyboardAccessoryView={false}
           keyboardDisplayRequiresUserAction={false}
-          removeIosKeyboardObserver={false}
           androidLayerType="hardware"
           setBuiltInZoomControls={false}
           style={styles.web}

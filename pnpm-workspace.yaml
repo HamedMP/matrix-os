@@ -11,6 +11,18 @@ packages:
 # exposure to short-lived compromised npm releases.
 minimumReleaseAge: 10080
 
+# Expo SDK 57 (expo 57.0.x) and its SDK-matched reanimated/worklets patches were
+# published within the 7-day window. Excluded so `expo install --fix` can align
+# apps/mobile to the SDK-57 versions. Scoped to the Expo/SDK-managed native set.
+minimumReleaseAgeExclude:
+  - "expo"
+  - "expo-*"
+  - "@expo/*"
+  - "jest-expo"
+  - "babel-preset-expo"
+  - "react-native-reanimated"
+  - "react-native-worklets"
+
 shamefullyHoist: true
 
 # Tests at the workspace root (tests/integrations/*) import packages that

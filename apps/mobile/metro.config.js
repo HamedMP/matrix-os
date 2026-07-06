@@ -22,7 +22,6 @@ config.serializer = {
 };
 config.resolver = {
   ...config.resolver,
-  disableHierarchicalLookup: true,
   nodeModulesPaths: [
     path.resolve(projectRoot, "node_modules"),
     path.resolve(workspaceRoot, "node_modules"),

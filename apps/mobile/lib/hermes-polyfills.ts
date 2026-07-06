@@ -1,8 +1,8 @@
-type SharedArrayBufferGlobal = typeof globalThis & {
+type SharedArrayBufferGlobal = {
   SharedArrayBuffer?: ArrayBufferConstructor;
 };
 
-const scope = globalThis as SharedArrayBufferGlobal;
+const scope = globalThis as unknown as SharedArrayBufferGlobal;
 
 if (typeof scope.SharedArrayBuffer === "undefined") {
   scope.SharedArrayBuffer = ArrayBuffer;

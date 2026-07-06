@@ -7,11 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "matrixos",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FAFAF9"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.matrixos.mobile",
@@ -27,7 +22,6 @@
       "appleTeamId": "PX4JL74Y2K"
     },
     "android": {
-      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FAFAF9"
@@ -66,7 +60,25 @@
         }
       ],
       "expo-web-browser",
-      "react-native-edge-to-edge"
+      "react-native-edge-to-edge",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#FAFAF9"
+        }
+      ],
+      "expo-status-bar",
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

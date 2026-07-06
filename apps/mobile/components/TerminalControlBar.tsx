@@ -127,7 +127,7 @@ export function TerminalControlBar({
         <Pressable
           key={item.id}
           accessibilityRole="button"
-          accessibilityLabel={item.caption ? `${item.label} ${item.caption}` : item.label}
+          accessibilityLabel={"caption" in item && item.caption ? `${item.label} ${item.caption}` : item.label}
           onPress={onPress}
           style={({ pressed }) => [styles.key(variant, item.size), pressed && styles.keyPressed]}
         >
