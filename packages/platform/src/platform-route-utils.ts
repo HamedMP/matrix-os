@@ -12,6 +12,14 @@ export function logPlatformRouteError(route: string, err: unknown): void {
   );
 }
 
+export function describeError(err: unknown): string {
+  if (err instanceof Error) {
+    const code = (err as Error & { code?: string }).code;
+    return code ? `${code}: ${err.message}` : err.message;
+  }
+  return String(err);
+}
+
 export function isPostgresUniqueViolation(err: unknown): boolean {
   return err instanceof Error && (err as Error & { code?: unknown }).code === '23505';
 }
