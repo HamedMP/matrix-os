@@ -1,133 +1,46 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
-import { createHmac } from "node:crypto";
 import {
   type PlatformDB,
   deleteContainer,
   ensurePlatformUser,
   getContainer,
   getPlatformUserByClerkId,
-  insertContainer,
   insertCheckoutAttempt,
   insertUserMachine,
   updateContainerStatus,
   upsertBillingEntitlement,
 } from "../../packages/platform/src/db.js";
 import {
-  buildPlatformWebSocketUpgradeHeaders,
   buildPostAuthRedirectPath,
-  classifySessionRoutedHost,
-  classifyWebSocketPath,
   createApp,
   escapeInlineScriptJson,
-  getTrustedSessionRoutedWebSocketHost,
 } from "../../packages/platform/src/main.js";
-import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
+import { buildBillingSetupTarget } from "../../packages/platform/src/auth-pages.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
-import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import type { CustomerVpsService } from "../../packages/platform/src/customer-vps.js";
-import type Dockerode from "dockerode";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
-
-const JWT_SECRET = "test-secret-at-least-32-characters-long";
-
-function expectedFallbackProvisionHandle(clerkUserId: string, secretKey = "sk_test_matrix"): string {
-  return `u${createHmac("sha256", secretKey)
-    .update(clerkUserId)
-    .digest("hex")
-    .slice(0, 12)}`;
-}
-
-function stubOrchestrator(): Orchestrator {
-  return {
-    provision: vi.fn(),
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn(),
-    destroy: vi.fn(),
-    upgrade: vi.fn(),
-    rollingRestart: vi.fn(),
-    getInfo: vi.fn(async (handle: string) => ({
-      handle,
-      clerkUserId: "user_alice",
-      containerId: "ctr-1",
-      port: 5001,
-      shellPort: 6001,
-      status: "running",
-    })),
-    getImage: vi.fn(),
-    listAll: vi.fn().mockResolvedValue([]),
-    syncStates: vi.fn(),
-  };
-}
-
-function stubDocker(inspectInfo: { id?: string; ipAddress?: string; running?: boolean } = {}): Dockerode {
-  const {
-    id = "docker-ctr-1",
-    ipAddress = "172.18.0.14",
-    running = true,
-  } = inspectInfo;
-  return {
-    getContainer: vi.fn(() => ({
-      inspect: vi.fn().mockResolvedValue({
-        Id: id,
-        State: { Running: running },
-        NetworkSettings: {
-          Networks: {
-            "matrixos-net": {
-              IPAddress: ipAddress,
-            },
-          },
-        },
-      }),
-    })),
-  } as unknown as Dockerode;
-}
-
-function combinedSetCookie(headers: Headers): string {
-  const getSetCookie = (headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
-  if (typeof getSetCookie === "function") {
-    return getSetCookie.call(headers).join("\n");
-  }
-  return headers.get("set-cookie") ?? "";
-}
-
-function cookieHeaderFromSetCookie(headers: Headers, names: string[]): string {
-  const raw = combinedSetCookie(headers);
-  return names
-    .map((name) => new RegExp(`(?:^|[\\n,]\\s*)(${name}=[^;,\\n]*)`).exec(raw)?.[1])
-    .filter((value): value is string => Boolean(value))
-    .join("; ");
-}
+import {
+  JWT_SECRET,
+  cleanupProxyRoutingTest,
+  combinedSetCookie,
+  cookieHeaderFromSetCookie,
+  expectedFallbackProvisionHandle,
+  setupProxyRoutingTest,
+  stubDocker,
+  stubOrchestrator,
+} from "./proxy-routing-test-utils.js";
 
 describe("platform proxy routing", () => {
   let db: PlatformDB;
 
   beforeEach(async () => {
-    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "true";
-    ({ db } = await createTestPlatformDb());
-    await insertContainer(db, {
-      handle: "alice",
-      clerkUserId: "user_alice",
-      port: 5001,
-      shellPort: 6001,
-      status: "running",
-    });
+    db = await setupProxyRoutingTest();
   });
 
   afterEach(async () => {
-    await destroyTestPlatformDb(db);
-    vi.restoreAllMocks();
-    delete process.env.PLATFORM_JWT_SECRET;
-    delete process.env.MATRIX_PAID_BETA_ENTITLEMENT_STATUS;
-    delete process.env.MATRIX_BILLING_PROVIDER;
-    delete process.env.MATRIX_STRIPE_BILLING_ENABLED;
-    delete process.env.STRIPE_SECRET_KEY;
-    delete process.env.HETZNER_SERVER_TYPE;
-    delete process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED;
-    delete process.env.AUTH_SHELL_HOST;
-    delete process.env.AUTH_SHELL_PORT;
+    await cleanupProxyRoutingTest(db);
   });
 
   it("escapes JSON embedded in auth page inline scripts", () => {
@@ -315,609 +228,6 @@ describe("platform proxy routing", () => {
       aud: "matrix-os-sync",
       iss: "matrix-os-platform",
     });
-  });
-
-  it("serves platform billing routes before app-domain VPS proxying", async () => {
-    await upsertBillingEntitlement(db, {
-      clerkUserId: "user_alice",
-      source: "stripe",
-      planSlug: "matrix_builder",
-      status: "active",
-      maxRuntimeSlots: 1,
-      includedRuntimeSlots: 1,
-      addonRuntimeSlots: 0,
-      defaultServerType: "cpx32",
-      allowedServerTypes: ["cpx22", "cpx32"],
-      stripeSubscriptionId: "sub_123",
-      stripePriceId: "price_builder_monthly",
-      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
-      effectiveFrom: "2026-05-30T00:00:00.000Z",
-      effectiveUntil: null,
-      updatedAt: "2026-05-30T00:00:00.000Z",
-    });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
-    );
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
-      }),
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/billing/status", {
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: "Bearer clerk-session",
-      },
-    });
-
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({
-      entitlement: { planSlug: "matrix_builder" },
-      access: { runtimeProxyAllowed: true },
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("serves platform billing status for native desktop sync-JWT callers", async () => {
-    await upsertBillingEntitlement(db, {
-      clerkUserId: "user_alice",
-      source: "stripe",
-      planSlug: "matrix_builder",
-      status: "active",
-      maxRuntimeSlots: 1,
-      includedRuntimeSlots: 1,
-      addonRuntimeSlots: 0,
-      defaultServerType: "cpx32",
-      allowedServerTypes: ["cpx22", "cpx32"],
-      stripeSubscriptionId: "sub_123",
-      stripePriceId: "price_builder_monthly",
-      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
-      effectiveFrom: "2026-05-30T00:00:00.000Z",
-      effectiveUntil: null,
-      updatedAt: "2026-05-30T00:00:00.000Z",
-    });
-    const issued = await issueSyncJwt({
-      secret: JWT_SECRET,
-      clerkUserId: "user_alice",
-      handle: "alice",
-      gatewayUrl: "https://app.matrix-os.com",
-      runtimeSlot: "primary",
-    });
-    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
-    );
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockRejectedValue(new Error("not a Clerk token")),
-      }),
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/billing/status", {
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: `Bearer ${issued.token}`,
-      },
-    });
-
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({
-      entitlement: { planSlug: "matrix_builder" },
-      access: { runtimeProxyAllowed: true },
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("serves platform billing status for app-shell session cookie callers", async () => {
-    await upsertBillingEntitlement(db, {
-      clerkUserId: "user_alice",
-      source: "stripe",
-      planSlug: "matrix_builder",
-      status: "active",
-      maxRuntimeSlots: 1,
-      includedRuntimeSlots: 1,
-      addonRuntimeSlots: 0,
-      defaultServerType: "cpx32",
-      allowedServerTypes: ["cpx22", "cpx32"],
-      stripeSubscriptionId: "sub_123",
-      stripePriceId: "price_builder_monthly",
-      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
-      effectiveFrom: "2026-05-30T00:00:00.000Z",
-      effectiveUntil: null,
-      updatedAt: "2026-05-30T00:00:00.000Z",
-    });
-    const issued = await issueSyncJwt({
-      secret: JWT_SECRET,
-      clerkUserId: "user_alice",
-      handle: "alice",
-      gatewayUrl: "https://app.matrix-os.com",
-      runtimeSlot: "primary",
-    });
-    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
-    );
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
-      }),
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/billing/status", {
-      headers: {
-        host: "app.matrix-os.com",
-        cookie: `matrix_app_session=${encodeURIComponent(issued.token)}`,
-      },
-    });
-
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({
-      entitlement: { planSlug: "matrix_builder" },
-      access: { runtimeProxyAllowed: true },
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("does not authorize billing routes with per-app session cookies", async () => {
-    const issued = await issueSyncJwt({
-      secret: JWT_SECRET,
-      clerkUserId: "user_alice",
-      handle: "alice",
-      gatewayUrl: "https://app.matrix-os.com",
-      runtimeSlot: "primary",
-    });
-    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
-      }),
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/billing/status", {
-      headers: {
-        host: "app.matrix-os.com",
-        cookie: `matrix_app_session__calculator=${encodeURIComponent(issued.token)}`,
-      },
-    });
-
-    expect(res.status).toBe(401);
-    expect(res.headers.get("x-auth-failure")).toBeNull();
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
-  });
-
-  it("returns unauthorized for invalid app-shell session cookies on billing routes", async () => {
-    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
-      }),
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/billing/status", {
-      headers: {
-        host: "app.matrix-os.com",
-        cookie: "matrix_app_session=not-a-sync-jwt",
-      },
-    });
-
-    expect(res.status).toBe(401);
-    expect(res.headers.get("x-auth-failure")).toBe("app-session-stale");
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
-  });
-
-  it("returns generic unauthorized for expired app-shell session cookies on billing routes", async () => {
-    const issued = await issueSyncJwt({
-      secret: JWT_SECRET,
-      clerkUserId: "user_alice",
-      handle: "alice",
-      gatewayUrl: "https://app.matrix-os.com",
-      runtimeSlot: "primary",
-      expiresInSec: -120,
-    });
-    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockRejectedValue(new Error("missing Clerk token")),
-      }),
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/billing/status", {
-      headers: {
-        host: "app.matrix-os.com",
-        cookie: `matrix_app_session=${encodeURIComponent(issued.token)}`,
-      },
-    });
-
-    expect(res.status).toBe(401);
-    expect(res.headers.get("x-auth-failure")).toBe("app-session-stale");
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
-  });
-
-  it("uses the raw bearer sync JWT for native billing fallback when a stale Clerk cookie is present", async () => {
-    await upsertBillingEntitlement(db, {
-      clerkUserId: "user_alice",
-      source: "stripe",
-      planSlug: "matrix_builder",
-      status: "active",
-      maxRuntimeSlots: 1,
-      includedRuntimeSlots: 1,
-      addonRuntimeSlots: 0,
-      defaultServerType: "cpx32",
-      allowedServerTypes: ["cpx22", "cpx32"],
-      stripeSubscriptionId: "sub_123",
-      stripePriceId: "price_builder_monthly",
-      gracePeriodEndsAt: "2026-06-02T00:00:00.000Z",
-      effectiveFrom: "2026-05-30T00:00:00.000Z",
-      effectiveUntil: null,
-      updatedAt: "2026-05-30T00:00:00.000Z",
-    });
-    const issued = await issueSyncJwt({
-      secret: JWT_SECRET,
-      clerkUserId: "user_alice",
-      handle: "alice",
-      gatewayUrl: "https://app.matrix-os.com",
-      runtimeSlot: "primary",
-    });
-    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
-    );
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: {
-        extractToken: vi.fn((_authorization, cookie) => (cookie ? "stale-clerk-cookie" : null)),
-        verify: vi.fn().mockResolvedValue({ authenticated: false }),
-        verifyAndMatchOwner: vi.fn(),
-        revokeSession: vi.fn(),
-        isPublicPath: vi.fn(() => false),
-      },
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/billing/status", {
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: `Bearer ${issued.token}`,
-        cookie: "__session=stale-clerk-cookie",
-      },
-    });
-
-    expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({
-      entitlement: { planSlug: "matrix_builder" },
-      access: { runtimeProxyAllowed: true },
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("returns unauthorized instead of leaking Clerk verification failures on billing routes", async () => {
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockRejectedValue(new Error("jwks timeout")),
-      }),
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/billing/status", {
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: "Bearer clerk-session",
-      },
-    });
-
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
-  });
-
-  it("returns a generic billing-unavailable error when Stripe checkout is not configured", async () => {
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
-      }),
-      platformSecret: "platform-secret-123",
-      env: {
-        STRIPE_PRICE_MATRIX_BUILDER_MONTHLY: "price_builder_monthly",
-      } as NodeJS.ProcessEnv,
-    });
-
-    const res = await app.request("/billing/checkout", {
-      method: "POST",
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: "Bearer clerk-session",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ planSlug: "matrix_builder", interval: "monthly" }),
-    });
-
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({
-      error: "Billing unavailable",
-      code: "billing_unavailable",
-    });
-  });
-
-  it("builds customer VPS websocket upgrade headers without leaking browser credentials or query JWTs", async () => {
-    const issued = await issueSyncJwt({
-      secret: JWT_SECRET,
-      clerkUserId: "user_alice",
-      handle: "alice",
-      gatewayUrl: "https://app.matrix-os.com",
-      runtimeSlot: "primary",
-    });
-    const headers = buildPlatformWebSocketUpgradeHeaders({
-      incomingHeaders: {
-        host: "app.matrix-os.com",
-        authorization: `Bearer ${issued.token}`,
-        cookie: "__session=secret; matrix_shell_route=alice",
-        "x-forwarded-host": "app.matrix-os.com",
-        "x-forwarded-proto": "https",
-        upgrade: "websocket",
-        connection: "Upgrade",
-        "sec-websocket-key": "client-key",
-      },
-      externalHost: "app.matrix-os.com",
-      handle: "alice",
-      userId: "user_alice",
-      platformSecret: "platform-secret-123",
-      includePlatformProof: true,
-      isCodeDomain: false,
-    });
-
-    const platformToken = buildPlatformVerificationToken("alice", "platform-secret-123");
-    expect(headers).toContain(`authorization: Bearer ${platformToken}`);
-    expect(headers).toContain("x-platform-user-id: user_alice");
-    expect(headers).toContain("x-platform-verified:");
-    expect(headers).toContain("x-forwarded-host: app.matrix-os.com");
-    expect(headers).toContain("sec-websocket-key: client-key");
-    expect(headers).not.toContain(issued.token);
-    expect(headers).not.toContain("__session");
-    expect(headers).not.toContain("matrix_shell_route");
-  });
-
-  it("classifies websocket paths without preserving secrets", () => {
-    expect(classifyWebSocketPath("/ws?token=secret")).toBe("/ws");
-    expect(classifyWebSocketPath("/ws/terminal/session?token=secret&session=main")).toBe("/ws/terminal");
-    expect(classifyWebSocketPath("/ws/other?token=secret")).toBe("/ws/*");
-    expect(classifyWebSocketPath("/api/ping")).toBe("other");
-  });
-
-  it("classifies websocket hosts without preserving user-specific hostnames", () => {
-    expect(classifySessionRoutedHost("app.matrix-os.com")).toBe("app");
-    expect(classifySessionRoutedHost("code.matrix-os.com")).toBe("code");
-    expect(classifySessionRoutedHost("alice.matrix-os.com")).toBe("other");
-  });
-
-  it("requires the edge secret before websocket routing trusts x-forwarded-host", () => {
-    const cloudRunHost = "matrix-platform-jqxkjdhtkq-ey.a.run.app";
-
-    expect(
-      getTrustedSessionRoutedWebSocketHost(
-        cloudRunHost,
-        "code.matrix-os.com",
-        undefined,
-        "edge-secret",
-        "/ws?token=secret",
-      ),
-    ).toBe(cloudRunHost);
-    expect(
-      getTrustedSessionRoutedWebSocketHost(
-        cloudRunHost,
-        "code.matrix-os.com",
-        "wrong-secret",
-        "edge-secret",
-        "/ws?token=secret",
-      ),
-    ).toBe(cloudRunHost);
-    expect(
-      getTrustedSessionRoutedWebSocketHost(
-        cloudRunHost,
-        "code.matrix-os.com",
-        "edge-secret",
-        "edge-secret",
-        "/ws?token=secret",
-      ),
-    ).toBe("code.matrix-os.com");
-  });
-
-  it("keeps token-authenticated websocket fallback for internal platform hosts", () => {
-    expect(
-      getTrustedSessionRoutedWebSocketHost(
-        "platform:9000",
-        undefined,
-        undefined,
-        "edge-secret",
-        "/ws?token=secret",
-      ),
-    ).toBe("app.matrix-os.com");
-  });
-
-  it("shows a boot page for Clerk-authenticated users while their first VPS is provisioning", async () => {
-    await deleteContainer(db, "alice");
-    await insertUserMachine(db, {
-      machineId: "machine-alice-provisioning",
-      clerkUserId: "user_alice",
-      handle: "alice",
-      hetznerServerId: 123,
-      publicIPv4: "203.0.113.11",
-      status: "provisioning",
-      imageVersion: "matrix-os-host-dev",
-      provisionedAt: "2026-05-06T00:00:00.000Z",
-    });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
-    );
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
-      }),
-      platformSecret: "platform-secret-123",
-    });
-
-    const res = await app.request("/", {
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: "Bearer clerk-session",
-      },
-    });
-
-    expect(res.status).toBe(503);
-    expect(res.headers.get("cache-control")).toBe("no-store, private");
-    expect(res.headers.get("cdn-cache-control")).toBe("no-store");
-    const html = await res.text();
-    expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
-    expect(html).not.toContain("alice.matrix-os.com");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("shows the provisioning page instead of raw billing JSON when paid-beta entitlement denies shell access", async () => {
-    await deleteContainer(db, "alice");
-    await insertUserMachine(db, {
-      machineId: "machine-alice-provisioning-expired",
-      clerkUserId: "user_alice",
-      handle: "alice",
-      hetznerServerId: 123,
-      publicIPv4: "203.0.113.11",
-      status: "provisioning",
-      imageVersion: "matrix-os-host-dev",
-      provisionedAt: "2026-05-06T00:00:00.000Z",
-    });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
-    );
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
-      }),
-      platformSecret: "platform-secret-123",
-      env: {
-        MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
-        MATRIX_PAID_BETA_ENTITLEMENT_STATUS: "expired",
-      } as NodeJS.ProcessEnv,
-    });
-
-    const res = await app.request("/", {
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: "Bearer clerk-session",
-      },
-    });
-
-    expect(res.status).toBe(503);
-    expect(res.headers.get("cache-control")).toBe("no-store, private");
-    expect(res.headers.get("set-cookie")).toBeNull();
-    const html = await res.text();
-    expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("shows the provisioning page instead of raw billing JSON when Stripe billing is inactive", async () => {
-    await deleteContainer(db, "alice");
-    await insertUserMachine(db, {
-      machineId: "machine-alice-provisioning-stripe-expired",
-      clerkUserId: "user_alice",
-      handle: "alice",
-      hetznerServerId: 123,
-      publicIPv4: "203.0.113.11",
-      status: "provisioning",
-      imageVersion: "matrix-os-host-dev",
-      provisionedAt: "2026-05-06T00:00:00.000Z",
-    });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
-    );
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
-      }),
-      platformSecret: "platform-secret-123",
-      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
-    });
-
-    const res = await app.request("/", {
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: "Bearer clerk-session",
-      },
-    });
-
-    expect(res.status).toBe(503);
-    const html = await res.text();
-    expect(html).toContain("Booting Matrix OS");
-    expect(html).toContain("Instance status:");
-    expect(html).toContain("<strong>provisioning</strong>");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("keeps provisioning runtime API paths blocked when Stripe billing is inactive", async () => {
-    await deleteContainer(db, "alice");
-    await insertUserMachine(db, {
-      machineId: "machine-alice-provisioning-stripe-api-expired",
-      clerkUserId: "user_alice",
-      handle: "alice",
-      hetznerServerId: 123,
-      publicIPv4: "203.0.113.11",
-      status: "provisioning",
-      imageVersion: "matrix-os-host-dev",
-      provisionedAt: "2026-05-06T00:00:00.000Z",
-    });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
-    );
-    const app = createApp({
-      db,
-      orchestrator: stubOrchestrator(),
-      clerkAuth: createClerkAuth({
-        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
-      }),
-      platformSecret: "platform-secret-123",
-      env: { MATRIX_STRIPE_BILLING_ENABLED: "true" } as NodeJS.ProcessEnv,
-    });
-
-    const res = await app.request("/api/theme", {
-      headers: {
-        host: "app.matrix-os.com",
-        authorization: "Bearer clerk-session",
-      },
-    });
-
-    expect(res.status).toBe(402);
-    expect(await res.json()).toEqual({ error: "Paid beta access required" });
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("routes sync JWT bearer requests through app.matrix-os.com to the matching container", async () => {
@@ -1375,10 +685,13 @@ describe("platform proxy routing", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("ignores stale legacy containers on app.matrix-os.com when VPS-native routing is configured", async () => {
+  it("routes stale legacy-container users to billing setup in VPS-native mode", async () => {
     await updateContainerStatus(db, "alice", "stopped", "stale-container-id");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("wrong target", { status: 200 }),
+      new Response("auth shell billing", {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
     );
     const orchestrator = stubOrchestrator();
     const app = createApp({
@@ -1390,23 +703,27 @@ describe("platform proxy routing", () => {
       platformSecret: "platform-secret-123",
       customerVpsService: {} as CustomerVpsService,
       env: {
+        AUTH_SHELL_HOST: "auth-shell.test",
+        AUTH_SHELL_PORT: "3200",
+        // VPS-native routing wins over the legacy env flag when customerVpsService is configured.
         MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
       } as NodeJS.ProcessEnv,
     });
 
-    const res = await app.request("/", {
+    const res = await app.request("/?billing=setup", {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",
       },
     });
 
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Preparing Matrix OS");
+    expect(html).toBe("auth shell billing");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://auth-shell.test:3200/?billing=setup");
+    expect(html).not.toContain("Preparing Matrix OS");
     expect(html).not.toContain('http-equiv="refresh"');
     expect(html).not.toContain("Failed to wake container");
-    expect(fetchMock).not.toHaveBeenCalled();
     expect(orchestrator.start).not.toHaveBeenCalled();
   });
 
@@ -2996,15 +2313,16 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var maxBillingSetupReloads = 3;");
     expect(html).toContain("Billing settings are still loading");
     expect(html).toContain("2000 + retryCount * 1000");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toContain("Stripe opens only after you continue from Billing.");
-    expect(html).toContain("fetch('/billing/checkout'");
-    expect(html).toContain("planSlug: 'matrix_builder'");
-    expect(html).toContain("Checkout unavailable");
-    expect(html).toContain("showCheckoutUnavailableState();");
-    expect(html).toContain("Opening secure checkout");
+    expect(html).not.toContain("fetch('/billing/checkout'");
+    expect(html).not.toContain("planSlug: 'matrix_builder'");
+    expect(html).not.toContain("Checkout unavailable");
+    expect(html).not.toContain("showCheckoutUnavailableState();");
+    expect(html).not.toContain("Opening secure checkout");
     expect(html).toContain("retryProvisioningAfterBillingDelay(developerTools)");
     expect(html).toContain("Confirming billing");
     expect(html).toContain("provisioning_conflict");
@@ -3040,10 +2358,55 @@ describe("platform proxy routing", () => {
     expect(html).toContain("matrix.billing.setupRetryCount");
     expect(html).toContain("var maxBillingSetupReloads = 3;");
     expect(html).toContain("Billing settings are still loading");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toContain("'Start checkout',\n        startBillingCheckoutFromClerkSession");
+    expect(html).not.toContain("fetch('/billing/checkout'");
+  });
+
+  it("builds billing setup targets on the app origin while preserving device return", () => {
+    expect(buildBillingSetupTarget(
+      "https://app.matrix-os.com",
+      "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    )).toBe(
+      "https://app.matrix-os.com/?billing=setup&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    );
+    expect(buildBillingSetupTarget(
+      "https://app.matrix-os.com",
+      "/?device_return=https%3A%2F%2Fevil.example%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
+    )).toBe("https://app.matrix-os.com/?billing=setup");
+  });
+
+  it("sends code-domain billing setup handoffs back to the app shell origin", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_matrix";
+    delete process.env.MATRIX_APP_ORIGIN;
+    const app = createApp({
+      db,
+      env: {
+        ...process.env,
+        MATRIX_APP_ORIGIN: "https://staging-app.matrix-os.com",
+      },
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue(null),
+      }),
+      platformSecret: "platform-secret-123",
+    });
+
+    const res = await app.request("/sign-up?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK", {
+      headers: { host: "code.matrix-os.com" },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      'var billingSetupTarget = "https://staging-app.matrix-os.com/?billing=setup\\u0026device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";',
+    );
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
+    expect(html).toContain("return url.toString();");
+    expect(html).not.toContain("var url = new URL('/', window.location.origin);");
   });
 
   it("returns billing_required for signed-in app-session exchange before a Stripe entitlement exists", async () => {
@@ -3058,6 +2421,45 @@ describe("platform proxy routing", () => {
         verifyToken: vi.fn().mockResolvedValue({ sub: "user_new" }),
       }),
       platformSecret: "platform-secret-123",
+    });
+
+    const exchange = await app.request("/api/auth/app-session", {
+      method: "POST",
+      headers: {
+        host: "app.matrix-os.com",
+        authorization: "Bearer clerk-session",
+      },
+    });
+
+    expect(exchange.status).toBe(402);
+    await expect(exchange.json()).resolves.toEqual({
+      error: "Billing upgrade required",
+      code: "billing_required",
+    });
+    const setCookie = combinedSetCookie(exchange.headers);
+    expect(setCookie).toContain("matrix_app_session=;");
+    expect(setCookie).toContain("matrix_native_app_session=;");
+    expect(setCookie).toContain("Max-Age=0");
+  });
+
+  it("returns billing_required for stale legacy-container users in VPS-native app-session exchange", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    process.env.MATRIX_BILLING_PROVIDER = "stripe";
+    process.env.STRIPE_SECRET_KEY = "sk_test_matrix";
+    await updateContainerStatus(db, "alice", "stopped", "stale-container-id");
+    const app = createApp({
+      db,
+      orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({
+        verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }),
+      }),
+      platformSecret: "platform-secret-123",
+      customerVpsService: {} as CustomerVpsService,
+      env: {
+        MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED: "true",
+        MATRIX_BILLING_PROVIDER: "stripe",
+        STRIPE_SECRET_KEY: "sk_test_matrix",
+      } as NodeJS.ProcessEnv,
     });
 
     const exchange = await app.request("/api/auth/app-session", {
@@ -3298,7 +2700,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain("var maxBillingSetupReloads = 3;");
     expect(html).toContain("Billing settings are still loading");
     expect(html).toContain("2000 + retryCount * 1000");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Matrix OS shell unavailable");
     expect(html).not.toContain("Open Billing settings");
@@ -3337,7 +2740,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain('var redirectTarget = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";');
     expect(html).toContain('var deviceReturnTarget = "/auth/device?user_code=BCDF-GHJK";');
     expect(html).toContain("Opening Billing settings");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).toContain("window.location.replace(deviceReturnTarget || payload.redirectTo || redirectTarget);");
     expect(html).toContain("fetch('/api/auth/provision-runtime'");
@@ -3379,7 +2783,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain('var redirectTarget = "/";');
     expect(html).toContain('var deviceReturnTarget = "";');
     expect(html).toContain("Opening Billing settings");
-    expect(html).toContain("url.searchParams.set('billing', 'setup');");
+    expect(html).toContain("var billingSetupTarget = ");
+    expect(html).toContain("var url = new URL(billingSetupTarget);");
     expect(html).toContain("window.location.replace(target);");
     expect(html).not.toContain("Open Billing settings");
     expect(html).not.toContain("Stripe opens only after you continue from Billing.");

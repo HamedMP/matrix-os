@@ -11,11 +11,27 @@ import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
 vi.mock("../../shell/src/components/terminal/TerminalApp.js", () => ({
-  TerminalApp: () => <div data-testid="terminal-app" />,
+  TerminalApp: ({ launchTargetId }: { launchTargetId?: string }) => (
+    <div data-testid="terminal-app">
+      <input
+        aria-label="Command composer"
+        onFocus={() => window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", {
+          detail: { active: true, terminalId: launchTargetId ?? "mock-terminal" },
+        }))}
+        onBlur={() => window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", {
+          detail: { active: false, terminalId: launchTargetId ?? "mock-terminal" },
+        }))}
+      />
+    </div>
+  ),
 }));
 
 vi.mock("../../shell/src/components/Settings.js", () => ({
   Settings: () => null,
+}));
+
+vi.mock("sonner", () => ({
+  toast: vi.fn(),
 }));
 
 vi.mock("@clerk/nextjs", () => ({
@@ -228,6 +244,37 @@ describe("mobile shell", () => {
     render(<MobileShell launchAppPath="__terminal__" />);
 
     await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
+  });
+
+  it("hides the bottom dock while the terminal command composer is focused", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+
+    render(<MobileShell launchAppPath="__terminal__" />);
+
+    await waitFor(() => expect(screen.getByTestId("terminal-app")).toBeTruthy());
+
+    const dock = screen.getByTestId("mobile-bottom-dock");
+    expect(dock.style.display).toBe("flex");
+
+    fireEvent.focus(screen.getByRole("textbox", { name: "Command composer" }));
+
+    expect(dock.style.display).toBe("none");
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent("matrixos:terminal-input-active", {
+        detail: { active: false, terminalId: "background-terminal" },
+      }));
+    });
+
+    expect(dock.style.display).toBe("none");
+
+    fireEvent.blur(screen.getByRole("textbox", { name: "Command composer" }));
+
+    expect(dock.style.display).toBe("flex");
   });
 
   it("loads installed mobile apps from the shared shell bootstrap endpoint", async () => {

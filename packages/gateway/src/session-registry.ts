@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { RingBuffer } from "./ring-buffer.js";
 import { resolveWithinHome } from "./path-security.js";
+import { applyTerminalTruecolorEnv } from "./terminal-env.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG === "1";
@@ -593,14 +594,9 @@ export class SessionRegistry {
       cols: 80,
       rows: 24,
       cwd: targetCwd,
-      env: {
+      env: applyTerminalTruecolorEnv({
         PATH: `${userLocalBin}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`,
         HOME: this.homePath,
-        TERM: "xterm-256color",
-        COLORTERM: "truecolor",
-        CLICOLOR: "1",
-        FORCE_COLOR: "3",
-        COLORFGBG: "15;0",
         LANG: process.env.LANG ?? "en_US.UTF-8",
         SHELL: resolvedShell,
         ZDOTDIR: this.homePath,
@@ -615,7 +611,7 @@ export class SessionRegistry {
         ...(process.env.MATRIX_RUNTIME_DIR ? { MATRIX_RUNTIME_DIR: process.env.MATRIX_RUNTIME_DIR } : {}),
         ...(process.env.MATRIX_RUNTIME_HOME ? { MATRIX_RUNTIME_HOME: process.env.MATRIX_RUNTIME_HOME } : {}),
         ...(process.env.MATRIX_RUNTIME_USER ? { MATRIX_RUNTIME_USER: process.env.MATRIX_RUNTIME_USER } : {}),
-      },
+      }),
     };
   }
 

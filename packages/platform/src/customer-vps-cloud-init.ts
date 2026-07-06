@@ -24,6 +24,7 @@ export interface CustomerHostConfig {
   posthogToken: string;
   posthogProjectToken: string;
   posthogHost: string;
+  posthogPublicHost: string;
   posthogApiHost: string;
 }
 

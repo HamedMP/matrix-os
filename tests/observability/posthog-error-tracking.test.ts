@@ -706,9 +706,11 @@ describe("PostHog error tracking", () => {
     expect(landingPage).toContain("<SiteHeader />");
     expect(siteHeader).toContain('data-ph-event="marketing_cta_clicked"');
     expect(ctaPrimitives).toContain('"data-ph-event": "marketing_cta_clicked"');
-    expect(landingTelemetry).toContain('"marketing_landing_viewed"');
+    expect(landingTelemetry).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_LANDING_VIEWED");
+    expect(landingTelemetry).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_SIGNUP_CLICKED");
     expect(landingTelemetry).toContain("[data-ph-event]");
-    expect(landingBilling).toContain('"marketing_billing_viewed"');
+    expect(landingBilling).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_VIEWED");
+    expect(landingBilling).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_PLAN_CLICKED");
     expect(landingBilling).toContain('"marketing_billing_cta_clicked"');
     expect(landingBilling).toContain('"stripe_static_plans"');
   });

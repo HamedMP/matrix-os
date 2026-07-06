@@ -400,7 +400,7 @@ write_files:
       POSTHOG_HOST={{posthogHost}}
       NEXT_PUBLIC_POSTHOG_KEY={{posthogToken}}
       NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}
-      NEXT_PUBLIC_POSTHOG_HOST={{posthogHost}}
+      NEXT_PUBLIC_POSTHOG_HOST={{posthogPublicHost}}
       NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}
       DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
   - path: /opt/matrix/env/symphony.env

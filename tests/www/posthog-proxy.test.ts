@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 describe("www PostHog proxy path", () => {
   const nextConfigSource = readFileSync(join(process.cwd(), "www/next.config.ts"), "utf8");
   const clientSource = readFileSync(join(process.cwd(), "www/src/lib/posthog-client.ts"), "utf8");
+  const cookieBannerSource = readFileSync(join(process.cwd(), "www/src/components/PostHogCookieBanner.tsx"), "utf8");
 
   it("rewrites /relay asset and ingest paths to PostHog EU", () => {
     expect(nextConfigSource).toContain("'/relay/static/:path*'");
@@ -25,6 +26,8 @@ describe("www PostHog proxy path", () => {
   it("defaults the client api host to /relay instead of the blocklisted /ingest", () => {
     expect(clientSource).toMatch(/NEXT_PUBLIC_POSTHOG_API_HOST\s*\?\?\s*"\/relay"/);
     expect(clientSource).not.toMatch(/\?\?\s*"\/ingest"/);
+    expect(cookieBannerSource).toMatch(/NEXT_PUBLIC_POSTHOG_API_HOST\s*\?\?\s*"\/relay"/);
+    expect(cookieBannerSource).not.toMatch(/\?\?\s*"\/ingest"/);
   });
 });
 

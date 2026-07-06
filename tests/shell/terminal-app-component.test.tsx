@@ -197,6 +197,74 @@ describe("TerminalApp", () => {
       type: "pane",
       sessionId: "canvas-session-123",
     });
+    expect((props.paneTree as { compatMode?: string }).compatMode).toBeUndefined();
+  });
+
+  it("marks canvas-provided Codex shell sessions for Codex TUI compatibility", async () => {
+    render(<TerminalApp initialSessionId="codex-backend" />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string; compatMode?: string };
+    };
+
+    expect(props.paneTree).toMatchObject({
+      type: "pane",
+      sessionId: "codex-backend",
+      compatMode: "codex-tui",
+    });
+  });
+
+  it("marks restored codex-* shell sessions for Codex TUI compatibility", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/files/tree")) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (url.includes("/api/terminal/layout") && init?.method === "PUT") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      if (url.includes("/api/terminal/layout")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            activeTabId: "tab-codex",
+            tabs: [
+              {
+                id: "tab-codex",
+                label: "codex-backend",
+                paneTree: { type: "pane", id: "pane-codex", cwd: "projects", sessionId: "codex-backend" },
+              },
+            ],
+          }),
+        });
+      }
+      if (url.includes("/api/terminal/sessions")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [{ name: "codex-backend", status: "active" }] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    }));
+
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const props = paneGridSpy.mock.lastCall?.[0] as {
+      paneTree: { type: "pane"; sessionId?: string; compatMode?: string };
+    };
+
+    expect(props.paneTree).toMatchObject({
+      sessionId: "codex-backend",
+      compatMode: "codex-tui",
+    });
   });
 
   it("renders the desktop terminal pane grid flush without an inset content frame", async () => {
@@ -329,12 +397,37 @@ describe("TerminalApp", () => {
 
     const keyBar = screen.getByTestId("terminal-key-bar");
     expect(keyBar.style.position).toBe("sticky");
-    expect(keyBar.style.bottom).toBe("var(--terminal-keyboard-height, 0px)");
-    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("0px");
+    expect(keyBar.style.bottom).toBe("0px");
+    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("");
     expect(keyBar.style.background).toBe("var(--mtk-bg)");
     expect(keyBar.style.getPropertyValue("--mtk-bg")).toBe("#15180F");
     expect(keyBar.style.getPropertyValue("--mtk-fg")).toBe("#C9C7B7");
     expect(screen.getByRole("button", { name: "Enter" })).toBeTruthy();
+  });
+
+  it("marks mobile terminal input active while the command composer is focused", async () => {
+    render(<TerminalApp mobile />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const root = screen.getByRole("application", { name: "Terminal" });
+    const composer = screen.getByRole("textbox", { name: "Command composer" });
+
+    expect(root.getAttribute("data-terminal-input-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "Show more keys" })).toBeTruthy();
+
+    fireEvent.focus(composer);
+
+    expect(root.getAttribute("data-terminal-input-active")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Show more keys" })).toBeNull();
+
+    fireEvent.blur(composer);
+
+    expect(root.getAttribute("data-terminal-input-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "Show more keys" })).toBeTruthy();
   });
 
   it("does not let mobile terminal clients take ownership of the remote zellij size", async () => {
@@ -517,6 +610,34 @@ describe("TerminalApp", () => {
 
     expect(screen.queryByRole("menu", { name: "Theme" })).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("terminal-scopes the sessions drawer scrollbar and resize boundary", async () => {
+    render(<TerminalApp />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const scrollSurface = screen.getByTestId("terminal-sessions-scroll");
+    expect(scrollSurface.classList.contains("terminal-sessions-scroll")).toBe(true);
+    expect(scrollSurface.getAttribute("data-terminal-scrollbar")).toBe("drawer");
+
+    const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
+    expect(resizeHandle.classList.contains("terminal-drawer-resize-handle")).toBe(true);
+    expect(resizeHandle.style.background).toBe("var(--terminal-drawer-resize-handle-bg)");
+    expect(resizeHandle.style.outline).toBe("none");
+    expect(resizeHandle.getAttribute("style")).toContain("--terminal-drawer-resize-handle-bg");
+    expect(resizeHandle.getAttribute("style")).not.toContain("--muted-foreground");
+
+    const terminalApp = screen.getByRole("application", { name: "Terminal" });
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-resize-handle-bg")).toContain("--terminal-drawer-border");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-resize-handle-hover")).toBe("var(--terminal-drawer-border)");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-scrollbar-thumb")).toContain("--terminal-drawer-border");
+    expect(terminalApp.style.getPropertyValue("--terminal-drawer-scrollbar-thumb-hover")).toBe("var(--terminal-drawer-border)");
+
   });
 
   it("updates terminal app theme without saving the global Matrix OS theme", async () => {
@@ -2027,14 +2148,16 @@ describe("TerminalApp", () => {
     const sidebarShell = screen.getByTestId("terminal-sidebar-shell");
     const resizeHandle = screen.getByRole("button", { name: "Resize sessions drawer" });
 
-    expect(sidebarShell.style.borderRight).toBe("1px solid rgb(36, 39, 31)");
-    expect(resizeHandle.style.background).toBe("rgb(36, 39, 31)");
+    expect(sidebarShell.style.borderRight).toBe("1px solid var(--terminal-drawer-border)");
+    expect(resizeHandle.style.background).toBe("var(--terminal-drawer-resize-handle-bg)");
+    expect(resizeHandle.getAttribute("style")).toContain("--terminal-drawer-resize-handle-bg");
+    expect(resizeHandle.getAttribute("style")).not.toContain("--muted-foreground");
     expect(resizeHandle.style.background).not.toContain("transparent");
     expect(resizeHandle.style.background).not.toContain("197, 196, 180");
 
     fireEvent.click(screen.getByRole("button", { name: "Hide sessions drawer" }));
 
-    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid rgb(36, 39, 31)");
+    expect(screen.getByTestId("terminal-collapsed-rail").style.borderRight).toBe("1px solid var(--terminal-drawer-border)");
   });
 
   it("stops terminal drawer resizing when the drag is canceled", async () => {
@@ -3411,6 +3534,7 @@ describe("TerminalApp", () => {
     expect(paneGridSpy.mock.lastCall?.[0]).toMatchObject({
       paneTree: {
         sessionId: expect.stringMatching(/^codex-[a-z0-9-]+$/),
+        compatMode: "codex-tui",
       },
     });
 

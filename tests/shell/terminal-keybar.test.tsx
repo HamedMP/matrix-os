@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalKeyBar } from "../../shell/src/components/terminal/TerminalKeyBar.js";
 
@@ -45,27 +45,27 @@ describe("TerminalKeyBar", () => {
     restoreWindowProperty("visualViewport", originalVisualViewport);
   });
 
-  it("resets the shared terminal keyboard height when visualViewport has no keyboard overlap", () => {
+  it("does not publish or apply a terminal keyboard height offset", () => {
+    document.documentElement.style.setProperty("--terminal-keyboard-height", "123px");
     render(<TerminalKeyBar onSend={vi.fn()} />);
 
     const keyBar = screen.getByTestId("terminal-key-bar");
-    expect(keyBar.style.bottom).toBe("var(--terminal-keyboard-height, 0px)");
-    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("0px");
+    expect(keyBar.style.bottom).toBe("0px");
+    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("123px");
   });
 
-  it("tracks visualViewport keyboard overlap in the shared terminal keyboard height", () => {
+  it("ignores visualViewport keyboard overlap because interactiveWidget resizes content", () => {
     const viewport = installVisualViewportMock({ height: 560, offsetTop: 0 });
+    document.documentElement.style.setProperty("--terminal-keyboard-height", "123px");
 
     render(<TerminalKeyBar onSend={vi.fn()} />);
 
-    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("240px");
+    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("123px");
 
-    act(() => {
-      viewport.height = 800;
-      viewport.dispatch("resize");
-    });
+    viewport.height = 800;
+    viewport.dispatch("resize");
 
-    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("0px");
+    expect(document.documentElement.style.getPropertyValue("--terminal-keyboard-height")).toBe("123px");
   });
 
   it("sends enter from the primary mobile key row", () => {
@@ -89,6 +89,15 @@ describe("TerminalKeyBar", () => {
     expect(screen.getByRole("button", { name: "Space" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Backspace" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Enter" })).toHaveLength(1);
+  });
+
+  it("keeps only the compact accessory row when native composer input is active", () => {
+    render(<TerminalKeyBar onSend={vi.fn()} compactOnly />);
+
+    expect(screen.getByRole("button", { name: "Escape" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tab" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Control C" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Show more keys" })).toBeNull();
   });
 
   it("keeps the More button outside the scrollable key row so it stays tappable on narrow viewports", () => {

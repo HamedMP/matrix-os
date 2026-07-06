@@ -54,7 +54,8 @@ describe('platform/customer-vps', () => {
         POSTHOG_TOKEN: 'phc_public',
         POSTHOG_PROJECT_TOKEN: 'phc_project',
         POSTHOG_HOST: 'https://eu.i.posthog.com',
-        NEXT_PUBLIC_POSTHOG_API_HOST: '/ingest',
+        NEXT_PUBLIC_POSTHOG_HOST: 'https://eu.posthog.com',
+        NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
       }),
       ...overrides,
     };
@@ -109,6 +110,16 @@ describe('platform/customer-vps', () => {
 
     expect(config.imageVersion).toBe('stable');
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
+  });
+
+  it('does not use the private PostHog ingest host as the public browser host', () => {
+    const config = loadCustomerVpsConfig({
+      POSTHOG_HOST: 'https://eu.i.posthog.com',
+      NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
+    });
+
+    expect(config.posthogHost).toBe('https://eu.i.posthog.com');
+    expect(config.posthogPublicHost).toBe('https://eu.posthog.com');
   });
 
   it('provisions a user machine idempotently by clerkUserId', async () => {
@@ -777,8 +788,8 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
     expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
     expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
-    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
-    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.posthog.com');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/relay');
   });
 
   it('records a failed status with a generic failure code when Hetzner create fails', async () => {

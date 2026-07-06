@@ -171,7 +171,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      POSTHOG_HOST={{posthogHost}}',
   '      NEXT_PUBLIC_POSTHOG_KEY={{posthogToken}}',
   '      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
-  '      NEXT_PUBLIC_POSTHOG_HOST={{posthogHost}}',
+  '      NEXT_PUBLIC_POSTHOG_HOST={{posthogPublicHost}}',
   '      NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}',
   '      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix',
   '  - path: /opt/matrix/env/r2.env',
@@ -262,6 +262,7 @@ function buildHostConfig(
     posthogToken: config.posthogToken,
     posthogProjectToken: config.posthogProjectToken,
     posthogHost: config.posthogHost,
+    posthogPublicHost: config.posthogPublicHost,
     posthogApiHost: config.posthogApiHost,
   };
 }

@@ -48,6 +48,8 @@ describe("www session replay init", () => {
     const [, options] = posthogMock.init.mock.calls[0] as [string, Record<string, unknown>];
     expect(options.disable_session_recording).toBe(false);
     expect(options.enable_recording_console_log).toBe(true);
+    expect(options.capture_pageview).toBe("history_change");
+    expect(options.autocapture).toBe(true);
     expect(options.session_recording).toEqual({ maskAllInputs: true });
   });
 

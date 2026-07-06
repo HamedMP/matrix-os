@@ -1,28 +1,17 @@
 "use client";
 
-import { createContext, use, useEffect, useEffectEvent, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
-import Image from "next/image";
+import { createContext, use, useCallback, useEffect, useEffectEvent, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEventHandler, type PointerEvent as ReactPointerEvent, type PointerEventHandler } from "react";
 import {
-  BotIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CheckIcon,
   ChevronsLeftIcon,
-  ChevronsRightIcon,
   ClipboardPasteIcon,
-  FilesIcon,
-  FolderIcon,
-  GripVerticalIcon,
-  LinkIcon,
-  MoreHorizontalIcon,
   PanelLeftOpenIcon,
-  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
-  Rows2Icon,
   SearchIcon,
   SquareTerminalIcon,
-  TerminalIcon,
   Trash2Icon,
 } from "lucide-react";
 import { type PaneNode, countPanes as countPanesFromStore, getAllPaneIds } from "@/stores/terminal-store";
@@ -36,8 +25,16 @@ import { DEFAULT_TERMINAL_APP_THEME_ID, useTerminalSettings, type ShellThemeId, 
 import { getTerminalThemePreset } from "./terminal-themes";
 import { TerminalKeyBar } from "./TerminalKeyBar";
 import { isCanonicalShellSessionId, isLegacyPtySessionId } from "./terminal-session-id";
-import { sessionAccent, twoWordSessionName } from "./terminal-session-names";
+import { twoWordSessionName } from "./terminal-session-names";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
+import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetail } from "./mobile-terminal-events";
+import { NewSessionMenu } from "./NewSessionMenu";
+import {
+  parseTerminalAgentStatuses,
+  terminalAgentVisibleInstallCommand,
+  type TerminalAgentId,
+  type TerminalAgentOption,
+} from "./terminal-agent-options";
 import {
   applyShellRefreshFailure,
   applyShellRefreshSilentFailure,
@@ -50,6 +47,19 @@ import {
   type ShellSessionSummary,
   type ShellUiStatePatch,
 } from "./terminal-session-state";
+import {
+  CollapsedSessionsRail,
+  DEFAULT_SHELL_SESSION_NAME,
+  ShellSessionGroup,
+  filterTreeNodes,
+  formatShellDisplayName,
+  getShellStatusDotClassName,
+  getShellStatusDotStyle,
+  updateNode,
+  type ProjectInfo,
+  type TreeNode,
+  type WorkspaceSessionSummary,
+} from "./TerminalSidebarItems";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
@@ -319,29 +329,6 @@ function getChangeShellThemeIconStyle(mobile: boolean): CSSProperties {
     width: mobile ? 38 : 40,
   };
 }
-
-const SHELL_ROW_BUTTON_STYLE: CSSProperties = {
-  background: "transparent",
-  border: 0,
-  borderRadius: 10,
-  cursor: "pointer",
-  inset: 0,
-  padding: 0,
-  position: "absolute",
-  zIndex: 0,
-};
-
-const SHELL_ROW_DRAG_HANDLE_STYLE: CSSProperties = {
-  background: "transparent",
-  border: 0,
-  color: "var(--terminal-drawer-subtle)",
-  flexShrink: 0,
-  height: 18,
-  padding: 0,
-  pointerEvents: "auto",
-  transition: "opacity 120ms ease",
-  width: 12,
-};
 
 const SHELL_THEME_OPTIONS: Array<{
   id: ShellThemeId;
@@ -698,6 +685,12 @@ function getTerminalAppChromeCssVars(theme: TerminalAppChromeTheme): TerminalApp
     "--terminal-drawer-toggle-off-fg": theme.drawerToggleOffForeground,
     "--terminal-drawer-toggle-off-knob": theme.drawerToggleOffKnob,
     "--terminal-drawer-drop-line": theme.drawerDropLine,
+    "--terminal-drawer-scrollbar-thumb": "color-mix(in srgb, var(--terminal-drawer-border) 72%, transparent)",
+    "--terminal-drawer-scrollbar-thumb-hover": "var(--terminal-drawer-border)",
+    "--terminal-drawer-scrollbar-track": "var(--terminal-drawer-bg)",
+    "--terminal-drawer-resize-handle-bg": "color-mix(in srgb, var(--terminal-drawer-border) 58%, transparent)",
+    "--terminal-drawer-resize-handle-hover": "var(--terminal-drawer-border)",
+    "--terminal-drawer-resize-handle-focus": "var(--terminal-drawer-selected-border)",
     "--terminal-mobile-primary-bg": theme.drawerPrimaryButtonBackground,
     "--terminal-mobile-primary-fg": theme.drawerPrimaryButtonForeground,
   };
@@ -750,135 +743,12 @@ const SHELL_NEW_BUTTON_BASE_STYLE: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-const SIDEBAR_RAIL_BUTTON_BASE_STYLE: CSSProperties = {
-  width: 34,
-  height: 34,
-  borderRadius: 8,
-  fontSize: 12,
-  fontWeight: 700,
-};
-
 const SHELLS_REFRESH_INTERVAL_MS = 5_000;
 const SHELL_SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const DEFAULT_TERMINAL_SIDEBAR_WIDTH = 392;
 const MIN_TERMINAL_SIDEBAR_WIDTH = 280;
 const MAX_TERMINAL_SIDEBAR_WIDTH = 560;
 const TERMINAL_SIDEBAR_TRANSITION = "opacity 140ms ease, transform 180ms ease";
-const SESSION_ACTIONS_STYLE: CSSProperties = {
-  gap: 6,
-  position: "absolute",
-  // Anchored to the grid row, whose right edge is inset by the card's 12px
-  // padding; a small negative right pulls the actions flush to the card edge.
-  right: -8,
-  top: "50%",
-  transform: "translateY(-50%)",
-  transition: "opacity 120ms ease",
-  justifyContent: "flex-end",
-};
-const SESSION_RENAME_BUTTON_STYLE: CSSProperties = {
-  background: "var(--terminal-drawer-action-bg)",
-  border: "1px solid var(--terminal-drawer-action-border)",
-  borderRadius: 6,
-  color: "var(--terminal-drawer-action-fg)",
-  flexShrink: 0,
-  height: 22,
-  pointerEvents: "auto",
-  transition: "opacity 120ms ease",
-  width: 22,
-};
-const SESSION_MORE_BUTTON_STYLE: CSSProperties = {
-  background: "var(--terminal-drawer-action-bg)",
-  border: "1px solid var(--terminal-drawer-action-border)",
-  borderRadius: 6,
-  color: "var(--terminal-drawer-action-fg)",
-  cursor: "pointer",
-  flexShrink: 0,
-  height: 24,
-  pointerEvents: "auto",
-  position: "relative",
-  transition: "opacity 120ms ease",
-  width: 24,
-};
-const SESSION_CONTEXT_MENU_STYLE: CSSProperties = {
-  background: "var(--terminal-drawer-card-bg)",
-  border: "1px solid var(--terminal-drawer-card-border)",
-  borderRadius: 9,
-  boxShadow: "0 14px 34px var(--terminal-drawer-card-shadow)",
-  display: "flex",
-  flexDirection: "column",
-  gap: 2,
-  minWidth: 152,
-  padding: 5,
-  position: "absolute",
-  right: 0,
-  top: "calc(100% + 6px)",
-  zIndex: 20,
-};
-const SESSION_CONTEXT_MENU_ITEM_STYLE: CSSProperties = {
-  alignItems: "center",
-  background: "transparent",
-  border: 0,
-  borderRadius: 7,
-  color: "var(--terminal-drawer-fg)",
-  cursor: "pointer",
-  display: "flex",
-  fontFamily: "Inter, system-ui, sans-serif",
-  fontSize: 12,
-  fontWeight: 650,
-  gap: 7,
-  height: 28,
-  padding: "0 8px",
-  textAlign: "left",
-  whiteSpace: "nowrap",
-  width: "100%",
-};
-const SESSION_COPY_FEEDBACK_STYLE: CSSProperties = {
-  alignItems: "center",
-  background: "var(--terminal-drawer-action-bg)",
-  border: "1px solid var(--terminal-drawer-action-border)",
-  borderRadius: 999,
-  color: "var(--terminal-drawer-action-fg)",
-  display: "inline-flex",
-  flexShrink: 0,
-  fontFamily: "Inter, system-ui, sans-serif",
-  fontSize: 12,
-  fontWeight: 750,
-  gap: 5,
-  height: 24,
-  lineHeight: "14px",
-  padding: "0 8px",
-  pointerEvents: "none",
-  whiteSpace: "nowrap",
-};
-const SESSION_NAME_BUTTON_BASE_STYLE: CSSProperties = {
-  background: "transparent",
-  border: 0,
-  cursor: "pointer",
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
-  fontSize: 14,
-  fontWeight: 700,
-  lineHeight: "18px",
-  minWidth: 0,
-  padding: 0,
-  pointerEvents: "auto",
-  textAlign: "left",
-};
-const SESSION_RENAME_INPUT_STYLE: CSSProperties = {
-  background: "var(--terminal-drawer-card-bg)",
-  border: "1px solid var(--terminal-drawer-card-border)",
-  borderRadius: 6,
-  color: "var(--terminal-drawer-fg)",
-  flex: "1 1 auto",
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
-  fontSize: 14,
-  fontWeight: 700,
-  height: 24,
-  lineHeight: "18px",
-  minWidth: 0,
-  outline: "none",
-  padding: "0 6px",
-  pointerEvents: "auto",
-};
 const SHELL_STATUS_DOT_CSS = `
 @keyframes terminal-session-status-pulse {
   0%, 100% { box-shadow: 0 0 0 4px rgba(95, 184, 95, 0.24); }
@@ -901,18 +771,6 @@ const SHELL_STATUS_DOT_CSS = `
 }
 `;
 
-const PROJECT_BRANCH_BADGE_STYLE: CSSProperties = {
-  padding: "1px 5px",
-  borderRadius: 3,
-  background: "var(--background)",
-  border: "1px solid var(--border)",
-  fontFamily: "var(--font-mono, ui-monospace, monospace)",
-  maxWidth: 100,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-};
-
 function dispatchPaneInput(paneId: string | null, data: string): void {
   if (!paneId) return;
   if (typeof window === "undefined") return;
@@ -933,50 +791,7 @@ function dispatchPaneAction(paneId: string | null, action: NonNullable<TerminalI
   );
 }
 
-async function copyTextToClipboard(text: string): Promise<void> {
-  let legacyCopyError: unknown = null;
-  if (typeof document !== "undefined" && typeof document.execCommand === "function") {
-    const previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousSelection = document.getSelection()?.rangeCount ? document.getSelection()?.getRangeAt(0).cloneRange() : null;
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.left = "-9999px";
-    textarea.style.opacity = "0";
-    textarea.style.top = "0";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    textarea.setSelectionRange(0, textarea.value.length);
-    try {
-      if (document.execCommand("copy")) {
-        return;
-      }
-      legacyCopyError = new Error("execCommand copy returned false");
-    } catch (err: unknown) {
-      legacyCopyError = err;
-    } finally {
-      textarea.remove();
-      const selection = document.getSelection();
-      if (selection) {
-        selection.removeAllRanges();
-        if (previousSelection) {
-          selection.addRange(previousSelection);
-        }
-      }
-      previousActiveElement?.focus({ preventScroll: true });
-    }
-  }
-  if (typeof navigator !== "undefined" && navigator.clipboard) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  throw new Error(legacyCopyError instanceof Error ? legacyCopyError.message : "Clipboard copy unavailable");
-}
-
 const DEFAULT_CWD = "projects";
-const DEFAULT_SHELL_SESSION_NAME = "main";
 
 interface Tab {
   id: string;
@@ -1006,10 +821,6 @@ function terminalSessionName(prefix = "matrix") {
     return `${safePrefix}-${genId()}`.slice(0, 31);
   }
   return twoWordSessionName();
-}
-
-function shellQuote(value: string) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 async function readShellErrorCode(res: Response): Promise<string | null> {
@@ -1054,7 +865,7 @@ function setPaneSessionId(node: PaneNode, paneId: string, sessionId: string): Pa
     if (node.id !== paneId || node.sessionId === sessionId) {
       return node;
     }
-    return { ...node, sessionId };
+    return { ...node, sessionId, compatMode: compatModeForShellSession(sessionId) };
   }
 
   const left = setPaneSessionId(node.children[0], paneId, sessionId);
@@ -1067,7 +878,9 @@ function setPaneSessionId(node: PaneNode, paneId: string, sessionId: string): Pa
 
 function renameSessionInTree(node: PaneNode, fromSessionId: string, toSessionId: string): PaneNode {
   if (node.type === "pane") {
-    return node.sessionId === fromSessionId ? { ...node, sessionId: toSessionId } : node;
+    return node.sessionId === fromSessionId
+      ? { ...node, sessionId: toSessionId, compatMode: compatModeForShellSession(toSessionId) }
+      : node;
   }
   const left = renameSessionInTree(node.children[0], fromSessionId, toSessionId);
   const right = renameSessionInTree(node.children[1], fromSessionId, toSessionId);
@@ -1156,6 +969,30 @@ function getCanonicalShellSessionIds(layout: TerminalLayout): string[] {
     }
   }
   return Array.from(seen);
+}
+
+function compatModeForShellSession(sessionId: string | undefined) {
+  return sessionId?.startsWith("codex-") ? "codex-tui" as const : undefined;
+}
+
+function applyCompatModeToPaneTree(node: PaneNode): PaneNode {
+  if (node.type === "pane") {
+    return {
+      ...node,
+      compatMode: node.compatMode ?? compatModeForShellSession(node.sessionId),
+    };
+  }
+  return {
+    ...node,
+    children: [
+      applyCompatModeToPaneTree(node.children[0]),
+      applyCompatModeToPaneTree(node.children[1]),
+    ],
+  };
+}
+
+function applyCompatModeToTabs(tabs: Tab[]): Tab[] {
+  return tabs.map((tab) => ({ ...tab, paneTree: applyCompatModeToPaneTree(tab.paneTree) }));
 }
 
 function destroyTerminalSessions(sessionIds: string[]) {
@@ -1389,6 +1226,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_TERMINAL_SIDEBAR_WIDTH);
   const [sidebarSelectedPath, setSidebarSelectedPath] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
+  const [mobileInputActive, setMobileInputActive] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<Tab[]>(tabs);
@@ -1421,6 +1259,26 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       ...details,
     });
   }, [focusedPaneId]);
+
+  const mobileTerminalInputId = launchTargetId ?? "mobile-terminal";
+
+  useEffect(() => {
+    if (!mobile) return;
+    const detail: MobileTerminalInputActiveDetail = {
+      active: mobileInputActive,
+      terminalId: mobileTerminalInputId,
+    };
+    window.dispatchEvent(new CustomEvent(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, { detail }));
+  }, [mobile, mobileInputActive, mobileTerminalInputId]);
+
+  useEffect(() => {
+    if (!mobile) return;
+    return () => {
+      window.dispatchEvent(new CustomEvent(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, {
+        detail: { active: false, terminalId: mobileTerminalInputId } satisfies MobileTerminalInputActiveDetail,
+      }));
+    };
+  }, [mobile, mobileTerminalInputId]);
 
   const persistLayoutNow = () => {
     const layout: TerminalLayout = {
@@ -1487,6 +1345,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         claudeMode: claude,
         startupCommand,
         sessionId,
+        compatMode: compatModeForShellSession(sessionId) ?? (startupCommand === "codex" ? "codex-tui" : undefined),
       },
     };
     setTabs((prev) => [...prev, tab]);
@@ -1506,6 +1365,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
         id: paneId,
         cwd,
         sessionId,
+        compatMode: compatModeForShellSession(sessionId),
       },
     };
     setTabs((prev) => [...prev, tab]);
@@ -1636,7 +1496,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
               if (!cancelled && sessionReady) {
                 const nextActiveTabId = data.activeTabId ?? data.tabs[0].id;
                 const nextActiveTab = data.tabs.find((tab) => tab.id === nextActiveTabId) ?? data.tabs[0];
-                setTabs(data.tabs);
+                setTabs(applyCompatModeToTabs(data.tabs));
                 setActiveTabId(nextActiveTabId);
                 setSidebarOpen(initialMobileRef.current ? false : data.sidebarOpen ?? true);
                 setFocusedPaneId(nextActiveTab ? getFirstPaneId(nextActiveTab.paneTree) : null);
@@ -2011,6 +1871,7 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
       }}
       role="application"
       aria-label="Terminal"
+      data-terminal-input-active={mobileInputActive ? "true" : "false"}
       onKeyDown={handleKeyDown}
     >
       <style>{SHELL_STATUS_DOT_CSS}</style>
@@ -2057,12 +1918,14 @@ export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = 
                       background={terminalChromeBackground}
                       foreground={terminalChromeForeground}
                       accent={terminalChromeAccent}
+                      onFocusChange={setMobileInputActive}
                     />
                     <TerminalKeyBar
                       onSend={(data) => dispatchPaneInput(focusedPaneId, data)}
                       background={terminalChromeBackground}
                       foreground={terminalChromeForeground}
                       accent={terminalChromeAccent}
+                      compactOnly={mobileInputActive}
                     />
                   </>
                 )}
@@ -3250,9 +3113,9 @@ function MobileTerminalActions({
     if (shouldOpen) void fetchAgentStatuses();
   };
 
-  const closeNewSessionMenu = useCallback(() => {
+  const closeNewSessionMenu = () => {
     setNewSessionMenuOpen(false);
-  }, []);
+  };
 
   const createShellSession = () => {
     setNewSessionMenuOpen(false);
@@ -3402,11 +3265,13 @@ function MobileCommandComposer({
   background,
   foreground,
   accent,
+  onFocusChange,
 }: {
   onSend: (data: string) => void;
   background: string;
   foreground: string;
   accent: string;
+  onFocusChange?: (active: boolean) => void;
 }) {
   const [value, setValue] = useState("");
   const submit = () => {
@@ -3443,6 +3308,8 @@ function MobileCommandComposer({
         autoComplete="off"
         enterKeyHint="send"
         spellCheck={false}
+        onFocus={() => onFocusChange?.(true)}
+        onBlur={() => onFocusChange?.(false)}
         style={{
           background: `color-mix(in srgb, ${foreground} 8%, transparent)`,
           border: `1px solid ${border}`,
@@ -3478,204 +3345,8 @@ function MobileCommandComposer({
   );
 }
 
-interface ProjectInfo {
-  name: string;
-  path: string;
-  isGit: boolean;
-  branch: string | null;
-  dirtyCount: number;
-  modified: string | null;
-}
-
 type SidebarTab = "projects" | "shells" | "sessions" | "files";
 type NewSessionMenuAnchor = "drawer" | "rail";
-
-interface WorkspaceSessionSummary {
-  id: string;
-  kind?: "shell" | "agent";
-  projectSlug?: string;
-  taskId?: string;
-  worktreeId?: string;
-  pr?: number;
-  agent?: "claude" | "codex" | "opencode" | "pi";
-  runtime?: {
-    status?: string;
-  };
-  status?: string;
-  nativeAttachCommand?: string[];
-  transcriptPath?: string;
-}
-
-type TerminalAgentId = "claude" | "codex" | "opencode" | "pi";
-
-interface TerminalAgentOption {
-  id: TerminalAgentId;
-  label: string;
-  color: string;
-  logoSrc: string;
-  shortcut?: string;
-  launchCommand?: string;
-  installPackage: string;
-  installFlags?: string[];
-  claudeMode?: boolean;
-  fallbackInstalled: boolean;
-}
-
-interface TerminalAgentStatus {
-  id: TerminalAgentId;
-  installed: boolean;
-}
-
-const TERMINAL_AGENT_OPTIONS: TerminalAgentOption[] = [
-  {
-    id: "claude",
-    label: "Claude Code",
-    color: "#D8792C",
-    logoSrc: "/agent-logos/claude-code.png",
-    shortcut: "⌘⇧C",
-    installPackage: "@anthropic-ai/claude-code@latest",
-    claudeMode: true,
-    fallbackInstalled: true,
-  },
-  {
-    id: "codex",
-    label: "Codex",
-    color: "#465243",
-    logoSrc: "/agent-logos/codex.png",
-    shortcut: "⌘⇧X",
-    launchCommand: "codex",
-    installPackage: "@openai/codex@latest",
-    fallbackInstalled: true,
-  },
-  {
-    id: "opencode",
-    label: "OpenCode",
-    color: "#111111",
-    logoSrc: "/agent-logos/opencode-white.png",
-    launchCommand: "opencode",
-    installPackage: "opencode-ai@latest",
-    fallbackInstalled: false,
-  },
-  {
-    id: "pi",
-    label: "Pi",
-    color: "#1E2F5C",
-    logoSrc: "/agent-logos/pi-coding-agent.png",
-    launchCommand: "pi",
-    installPackage: "@earendil-works/pi-coding-agent@latest",
-    installFlags: ["--ignore-scripts"],
-    fallbackInstalled: false,
-  },
-];
-
-const TERMINAL_AGENT_LOGO_STYLE: CSSProperties = {
-  alignItems: "center",
-  border: "1px solid rgba(255, 255, 255, 0.56)",
-  borderRadius: 7,
-  boxShadow: "0 1px 0 rgba(255, 255, 255, 0.36) inset, 0 4px 9px rgba(49, 54, 45, 0.14)",
-  boxSizing: "border-box",
-  color: "#FFFDF7",
-  display: "flex",
-  flex: "0 0 22px",
-  fontFamily: "Inter, system-ui, sans-serif",
-  fontSize: 11,
-  fontWeight: 900,
-  height: 22,
-  justifyContent: "center",
-  letterSpacing: 0,
-  lineHeight: "22px",
-  overflow: "hidden",
-  width: 22,
-};
-
-const TERMINAL_AGENT_LOGO_IMAGE_STYLE: CSSProperties = {
-  display: "block",
-  height: 15,
-  objectFit: "contain",
-  width: 15,
-};
-
-function isTerminalAgentId(value: unknown): value is TerminalAgentId {
-  return value === "claude" || value === "codex" || value === "opencode" || value === "pi";
-}
-
-function parseTerminalAgentStatuses(value: unknown): TerminalAgentStatus[] {
-  if (!value || typeof value !== "object" || !("agents" in value) || !Array.isArray(value.agents)) {
-    return [];
-  }
-  return value.agents
-    .filter((agent): agent is { id: TerminalAgentId; installed: boolean } => (
-      Boolean(agent) &&
-      typeof agent === "object" &&
-      isTerminalAgentId((agent as { id?: unknown }).id) &&
-      typeof (agent as { installed?: unknown }).installed === "boolean"
-    ))
-    .map((agent) => ({ id: agent.id, installed: agent.installed }));
-}
-
-function terminalAgentInstallCommand(option: TerminalAgentOption): string {
-  const flags = option.installFlags?.join(" ") ?? "";
-  const extraFlags = flags ? `${flags} ` : "";
-  return [
-    'export MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"',
-    `npm install -g ${extraFlags}--prefix "$MATRIX_NODE_PREFIX" ${option.installPackage}`,
-  ].join("; ");
-}
-
-function terminalAgentVisibleInstallCommand(option: TerminalAgentOption): string {
-  const command = terminalAgentInstallCommand(option);
-  return `sh -lc ${shellQuote(`printf '%s\\n' ${shellQuote(command)}; ${command}; exec "\${SHELL:-sh}" -l`)}`;
-}
-
-function getShellTabCount(shell: ShellSessionSummary): number | null {
-  if (!Array.isArray(shell.tabs)) return null;
-  return shell.tabs.reduce((count, tab) => {
-    const indexedCount = Number.isInteger(tab.idx) && tab.idx >= 0 ? tab.idx + 1 : 0;
-    return Math.max(count, indexedCount);
-  }, shell.tabs.length);
-}
-
-function formatShellTabCount(shell: ShellSessionSummary): string {
-  const count = getShellTabCount(shell);
-  if (count === null) return "tabs unknown";
-  return `${count} tab${count === 1 ? "" : "s"}`;
-}
-
-function formatShellDisplayName(name: string): string {
-  return name === DEFAULT_SHELL_SESSION_NAME ? "matrix-main" : name;
-}
-
-const COLLAPSED_RAIL_ITEM_SIZE = 40;
-
-function formatCollapsedShellLabel(name: string): string {
-  const normalized = formatShellDisplayName(name)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const parts = normalized.split("-").filter(Boolean);
-  const compact = parts.join("");
-  let label = "";
-  if (parts.length >= 2) {
-    label = `${parts[0]?.charAt(0) ?? ""}${parts[1]?.slice(0, 2) ?? ""}`;
-  } else {
-    label = compact.slice(0, 3);
-  }
-  if (label.length >= 3) {
-    return label.slice(0, 3);
-  }
-  const fallback = (compact || "shl").slice(label.length);
-  const padded = `${label}${fallback}`;
-  return padded.padEnd(3, padded.at(-1) ?? "l").slice(0, 3);
-}
-
-function shellConnectCommand(name: string): string {
-  return `matrix shell connect ${name}`;
-}
-
-function shellAttachCommand(shell: ShellSessionSummary): string {
-  return shellConnectCommand(shell.name);
-}
 
 function workspaceSessionsEqual(left: WorkspaceSessionSummary[], right: WorkspaceSessionSummary[]): boolean {
   if (left.length !== right.length) return false;
@@ -4218,7 +3889,6 @@ function LocalTerminalSidebar() {
   const activeShellName = activePaneSessionId && isCanonicalShellSessionId(activePaneSessionId)
     ? activePaneSessionId
     : null;
-  const terminalDividerColor = ctx.terminalBackground || "#080A08";
   const drawerWidth = ctx.mobile ? "100%" : clampTerminalSidebarWidth(ctx.sidebarWidth);
   const startSidebarResize = (event: ReactPointerEvent<HTMLElement>) => {
     if (ctx.mobile) return;
@@ -4436,7 +4106,7 @@ function LocalTerminalSidebar() {
           <CollapsedSessionsRail
             shells={unfilteredRenderedShells}
             selectedShellName={activeShellName}
-            terminalDividerColor={terminalDividerColor}
+            terminalDividerColor="var(--terminal-drawer-border)"
             onExpand={() => ctx.setSidebarOpen(true)}
             creatingShell={creatingShell}
             newSessionMenuOpen={newSessionMenuAnchor === "rail"}
@@ -4464,7 +4134,7 @@ function LocalTerminalSidebar() {
         className="shrink-0 overflow-hidden"
         style={{
           background: "var(--terminal-drawer-bg)",
-          borderRight: ctx.mobile ? "none" : `1px solid ${terminalDividerColor}`,
+          borderRight: ctx.mobile ? "none" : "1px solid var(--terminal-drawer-border)",
           borderBottom: ctx.mobile ? "1px solid var(--terminal-drawer-border)" : "none",
           color: "var(--terminal-drawer-fg)",
           display: "flex",
@@ -4646,7 +4316,12 @@ function LocalTerminalSidebar() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto" style={{ display: "flex", flexDirection: "column", gap: 18, padding: ctx.mobile ? 20 : 18 }}>
+      <div
+        data-testid="terminal-sessions-scroll"
+        data-terminal-scrollbar="drawer"
+        className="terminal-sessions-scroll min-h-0 flex-1 overflow-y-auto"
+        style={{ display: "flex", flexDirection: "column", gap: 18, padding: ctx.mobile ? 20 : 18 }}
+      >
         {shellsLoading && (
           <div style={{ color: "var(--terminal-drawer-muted)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>Loading sessions...</div>
         )}
@@ -4735,14 +4410,16 @@ function LocalTerminalSidebar() {
         <button
           type="button"
           aria-label="Resize sessions drawer"
+          className="terminal-drawer-resize-handle"
           onPointerDown={startSidebarResize}
           onKeyDown={resizeSidebarWithKeyboard}
           style={{
-            background: terminalDividerColor,
+            background: "var(--terminal-drawer-resize-handle-bg)",
             border: 0,
             bottom: 0,
             cursor: "col-resize",
             margin: 0,
+            outline: "none",
             position: "absolute",
             right: 0,
             top: 0,
@@ -4763,227 +4440,6 @@ function formatCloseConfirmationMeta(shell: ShellSessionSummary): string {
     ? Math.max(0, shell.latestSeq - shell.lastSeenSeq)
     : shell.unread ? 1 : 0;
   return unreadCount > 0 ? `${placement} · ${unreadCount} unread` : placement;
-}
-
-function NewSessionMenu({
-  align,
-  onClose,
-  onCreateShell,
-  onCreateAgent,
-  agentStatuses,
-  ignoreLightDismissRef,
-}: {
-  align: "left" | "right" | "mobile";
-  onClose: () => void;
-  onCreateShell: () => void;
-  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
-  agentStatuses: Record<TerminalAgentId, boolean> | null;
-  ignoreLightDismissRef?: React.RefObject<HTMLElement | null>;
-}) {
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    const onPointerDown = (event: globalThis.PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && menuRef.current?.contains(target)) return;
-      if (target instanceof Node && ignoreLightDismissRef?.current?.contains(target)) return;
-      onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("pointerdown", onPointerDown, true);
-    };
-  }, [ignoreLightDismissRef, onClose]);
-
-  return (
-    <div
-      ref={menuRef}
-      role="menu"
-      aria-label="New session menu"
-      onPointerDown={(event) => event.stopPropagation()}
-      onMouseDown={(event) => event.stopPropagation()}
-      style={{
-        background: "var(--terminal-drawer-card-bg)",
-        border: "1px solid var(--terminal-drawer-card-border)",
-        borderRadius: 9,
-        boxShadow: "0 16px 36px var(--terminal-drawer-card-shadow)",
-        boxSizing: "border-box",
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        padding: 8,
-        position: "absolute",
-        ...(align === "mobile"
-          ? { bottom: "calc(100% + 8px)", left: 0 }
-          : align === "right"
-          ? { right: 0, top: "calc(100% + 8px)" }
-          : { left: "calc(100% + 8px)", top: 0 }),
-        width: 244,
-        // Sits above the collapsed rail's right divider and the terminal
-        // content so the NEW TAB menu never paints behind that edge.
-        zIndex: 120,
-      }}
-    >
-      <div style={{ padding: "0 4px 1px" }}>
-        <div
-          style={{
-            color: "var(--terminal-drawer-subtle)",
-            fontFamily: "Inter, system-ui, sans-serif",
-            fontSize: 12,
-            fontWeight: 800,
-            letterSpacing: "0.08em",
-            lineHeight: "15px",
-            textTransform: "uppercase",
-          }}
-        >
-          NEW TAB
-        </div>
-      </div>
-      <NewSessionMenuItem
-        label="Shell"
-        active
-        icon={(
-          <TerminalIcon
-            aria-hidden="true"
-            size={16}
-            strokeWidth={2.1}
-            style={{ color: "var(--terminal-drawer-selected-stripe)", flexShrink: 0 }}
-          />
-        )}
-        onClick={onCreateShell}
-      />
-      {TERMINAL_AGENT_OPTIONS.map((option) => {
-        const installed = agentStatuses?.[option.id] ?? option.fallbackInstalled;
-        return (
-          <NewSessionMenuItem
-            key={option.id}
-            label={option.label}
-            install={!installed}
-            icon={<TerminalAgentLogo muted={!installed} option={option} />}
-            onClick={() => onCreateAgent(option, installed)}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function TerminalAgentLogo({ option, muted }: { option: TerminalAgentOption; muted: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      data-testid={`terminal-agent-logo-${option.id}`}
-      style={{
-        ...TERMINAL_AGENT_LOGO_STYLE,
-        background: option.color,
-        opacity: muted ? 0.86 : 1,
-      }}
-    >
-      <Image
-        alt=""
-        data-testid={`terminal-agent-logo-image-${option.id}`}
-        draggable={false}
-        height={17}
-        src={option.logoSrc}
-        style={TERMINAL_AGENT_LOGO_IMAGE_STYLE}
-        width={17}
-      />
-    </span>
-  );
-}
-
-function NewSessionMenuItem({
-  label,
-  icon,
-  active = false,
-  install = false,
-  onClick,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  active?: boolean;
-  install?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      style={{
-        alignItems: "center",
-        background: active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent",
-        border: 0,
-        borderRadius: 7,
-        boxSizing: "border-box",
-        color: "var(--terminal-drawer-fg)",
-        cursor: "pointer",
-        display: "flex",
-        flexShrink: 0,
-        gap: 9,
-        height: 32,
-        padding: "0 9px",
-        textAlign: "left",
-      }}
-      onMouseEnter={(event) => {
-        event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.background = active ? "var(--terminal-drawer-action-bg)" : install ? "var(--terminal-drawer-card-muted-bg)" : "transparent";
-      }}
-    >
-      {icon}
-      <span
-        style={{
-          flex: "1 1 auto",
-          fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 13,
-          fontWeight: active ? 700 : 600,
-          lineHeight: "17px",
-          minWidth: 0,
-          color: install ? "var(--terminal-drawer-muted)" : "var(--terminal-drawer-fg)",
-        }}
-      >
-        {label}
-      </span>
-      {install ? (
-        <span
-          style={{
-            alignItems: "center",
-            display: "flex",
-            flexShrink: 0,
-            justifyContent: "flex-end",
-          }}
-        >
-          <span
-            data-testid="terminal-agent-install-pill"
-            style={{
-              alignItems: "center",
-              background: "var(--terminal-drawer-action-bg)",
-              border: "1px solid var(--terminal-drawer-action-border)",
-              borderRadius: 999,
-              boxSizing: "border-box",
-              color: "var(--terminal-drawer-action-fg)",
-              display: "flex",
-              fontFamily: "Inter, system-ui, sans-serif",
-              fontSize: 12,
-              fontWeight: 700,
-              height: 18,
-              lineHeight: "14px",
-              padding: "0 6px",
-            }}
-          >
-            Install
-          </span>
-        </span>
-      ) : null}
-    </button>
-  );
 }
 
 function ShellCloseConfirmation({
@@ -5275,1338 +4731,4 @@ function ShellCloseConfirmation({
       </div>
     </dialog>
   );
-}
-
-function SidebarRailButton({
-  label,
-  icon,
-  active,
-  onClick,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      className="flex items-center justify-center cursor-pointer transition-colors"
-      style={{
-        ...SIDEBAR_RAIL_BUTTON_BASE_STYLE,
-        border: `1px solid ${active ? "var(--border)" : "transparent"}`,
-        background: active ? "var(--card)" : "transparent",
-        color: active ? "var(--foreground)" : "var(--muted-foreground)",
-        boxShadow: active ? "0 1px 0 rgba(0,0,0,0.08)" : "none",
-      }}
-      title={label}
-    >
-      {icon}
-    </button>
-  );
-}
-
-function getShellVisualStatus(shell: ShellSessionSummary): NonNullable<ShellSessionSummary["visualStatus"]> {
-  if (shell.visualStatus) return shell.visualStatus;
-  if (shell.status === "degraded") return "waiting";
-  if (shell.status === "exited") return shell.unread ? "finished" : "idle";
-  return shell.unread ? "finished" : "idle";
-}
-
-function getShellStatusDotStyle(shell: ShellSessionSummary): CSSProperties {
-  const status = getShellVisualStatus(shell);
-  if (status === "running") {
-    return { background: "#5FB85F", boxShadow: "0 0 0 4px rgba(95,184,95,0.24)" };
-  }
-  if (status === "waiting") {
-    return { background: "#E0A12E", boxShadow: "0 0 0 4px rgba(224,161,46,0.25)" };
-  }
-  if (status === "finished") {
-    return { background: "#2E6B3A", boxShadow: "none" };
-  }
-  return { background: "#A9AA9A", boxShadow: "none" };
-}
-
-function getShellStatusDotClassName(shell: ShellSessionSummary): string {
-  return getShellVisualStatus(shell) === "running"
-    ? "terminal-session-status-dot terminal-session-status-dot--running"
-    : "terminal-session-status-dot";
-}
-
-function CollapsedSessionsRail({
-  shells,
-  selectedShellName,
-  terminalDividerColor,
-  onExpand,
-  creatingShell,
-  newSessionMenuOpen,
-  onNew,
-  onNewMenuClose,
-  onCreateShell,
-  onCreateAgent,
-  agentStatuses,
-  onOpen,
-}: {
-  shells: ShellSessionSummary[];
-  selectedShellName: string | null;
-  terminalDividerColor: string;
-  onExpand: () => void;
-  creatingShell: boolean;
-  newSessionMenuOpen: boolean;
-  onNew: () => void;
-  onNewMenuClose: () => void;
-  onCreateShell: () => void;
-  onCreateAgent: (option: TerminalAgentOption, installed: boolean) => void;
-  agentStatuses: Record<TerminalAgentId, boolean> | null;
-  onOpen: (shell: ShellSessionSummary) => void;
-}) {
-  const activeShells = shells.filter((shell) => shell.placement !== "background");
-  const backgroundShells = shells.filter((shell) => shell.placement === "background");
-  return (
-    <aside
-      data-testid="terminal-collapsed-rail"
-      className="shrink-0"
-      style={{
-        alignItems: "center",
-        background: "var(--terminal-drawer-bg)",
-        borderRight: `1px solid ${terminalDividerColor}`,
-        color: "var(--terminal-drawer-fg)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        padding: "16px 0",
-        width: 76,
-      }}
-    >
-      <div
-        data-testid="terminal-collapsed-brand"
-        className="flex items-center justify-center"
-        style={{
-          background: "var(--terminal-drawer-brand-bg)",
-          borderRadius: 11,
-          flexShrink: 0,
-          height: COLLAPSED_RAIL_ITEM_SIZE,
-          width: COLLAPSED_RAIL_ITEM_SIZE,
-        }}
-        title="matrix os"
-      >
-        <span
-          aria-hidden="true"
-          data-testid="terminal-collapsed-brand-mask"
-          style={{
-            background: "var(--terminal-drawer-brand-fg)",
-            WebkitMaskImage: "url('/matrix-logo.svg')",
-            maskImage: "url('/matrix-logo.svg')",
-            WebkitMaskRepeat: "no-repeat",
-            maskRepeat: "no-repeat",
-            WebkitMaskPosition: "center",
-            maskPosition: "center",
-            WebkitMaskSize: "contain",
-            maskSize: "contain",
-            display: "block",
-            height: 22,
-            width: 22,
-          }}
-        />
-      </div>
-      <CollapsedRailButton label="Expand sessions drawer" onClick={onExpand}>
-        <ChevronsRightIcon data-testid="terminal-drawer-expand-icon" size={17} strokeWidth={2} />
-      </CollapsedRailButton>
-      <div style={{ position: "relative" }}>
-        <CollapsedRailButton label="New session" onClick={onNew} strong disabled={creatingShell} expanded={newSessionMenuOpen}>
-          <PlusIcon aria-hidden="true" data-testid="terminal-collapsed-new-session-icon" size={18} strokeWidth={2.5} />
-        </CollapsedRailButton>
-        {newSessionMenuOpen ? (
-          <NewSessionMenu
-            align="left"
-            onClose={onNewMenuClose}
-            onCreateShell={onCreateShell}
-            onCreateAgent={onCreateAgent}
-            agentStatuses={agentStatuses}
-          />
-        ) : null}
-      </div>
-      <div style={{ background: "var(--terminal-drawer-border)", height: 1, width: 34 }} />
-      <CollapsedRailGroup shells={activeShells} selectedShellName={selectedShellName} onOpen={onOpen} />
-      {backgroundShells.length > 0 && (
-        <>
-          <div
-            data-testid="terminal-collapsed-background-divider"
-            style={{
-              background: "var(--terminal-drawer-border)",
-              height: 1,
-              marginTop: 2,
-              width: 36,
-            }}
-          />
-          <CollapsedRailGroup shells={backgroundShells} selectedShellName={selectedShellName} onOpen={onOpen} muted />
-        </>
-      )}
-    </aside>
-  );
-}
-
-function CollapsedRailGroup({
-  shells,
-  selectedShellName,
-  onOpen,
-  muted = false,
-}: {
-  shells: ShellSessionSummary[];
-  selectedShellName: string | null;
-  onOpen: (shell: ShellSessionSummary) => void;
-  muted?: boolean;
-}) {
-  return (
-    <div className="flex flex-col items-center" style={{ gap: 9 }}>
-      {shells.map((shell) => {
-        const displayName = formatShellDisplayName(shell.name);
-        const label = formatCollapsedShellLabel(shell.name);
-        const selected = shell.name === selectedShellName;
-        const accent = sessionAccent(shell.name);
-        return (
-          <button
-            key={shell.name}
-            type="button"
-            aria-label={`Open ${displayName}`}
-            aria-current={selected ? "true" : undefined}
-            data-selected={selected ? "true" : "false"}
-            title={displayName}
-            onClick={() => onOpen(shell)}
-            className="relative flex items-center justify-center"
-            style={{
-              background: accent.bg,
-              border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : accent.border}`,
-              borderRadius: 11,
-              boxShadow: selected ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 8px 18px var(--terminal-drawer-card-shadow)" : "none",
-              color: accent.fg,
-              cursor: "pointer",
-              flexShrink: 0,
-              fontFamily: "var(--font-mono, ui-monospace, monospace)",
-              fontSize: 12,
-              fontWeight: 700,
-              height: COLLAPSED_RAIL_ITEM_SIZE,
-              lineHeight: "14px",
-              opacity: muted ? 0.72 : 1,
-              overflow: "visible",
-              width: COLLAPSED_RAIL_ITEM_SIZE,
-            }}
-          >
-            {label}
-            <span
-              aria-hidden="true"
-              className={getShellStatusDotClassName(shell)}
-              data-testid={`terminal-session-status-${shell.name}`}
-              style={{
-                ...getShellStatusDotStyle(shell),
-                borderColor: "var(--terminal-drawer-bg)",
-                borderStyle: "solid",
-                borderWidth: 2,
-                borderRadius: 999,
-                boxSizing: "border-box",
-                height: 12,
-                position: "absolute",
-                right: -3,
-                top: -3,
-                width: 12,
-                zIndex: 1,
-              }}
-            />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function CollapsedRailButton({
-  label,
-  onClick,
-  children,
-  strong = false,
-  disabled = false,
-  expanded = false,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-  strong?: boolean;
-  disabled?: boolean;
-  expanded?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-haspopup={label === "New session" ? "menu" : undefined}
-      aria-expanded={label === "New session" ? expanded : undefined}
-      title={label}
-      onClick={onClick}
-      disabled={disabled}
-      className="flex items-center justify-center"
-      style={{
-        background: strong ? "var(--terminal-drawer-primary-button-bg)" : "var(--terminal-drawer-button-bg)",
-        border: strong ? "1px solid var(--terminal-drawer-primary-button-bg)" : "1px solid var(--terminal-drawer-button-border)",
-        borderRadius: strong ? 11 : 10,
-        color: strong ? "var(--terminal-drawer-primary-button-fg)" : "var(--terminal-drawer-button-fg)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        flexShrink: 0,
-        fontSize: strong ? 24 : 14,
-        fontWeight: 700,
-        height: COLLAPSED_RAIL_ITEM_SIZE,
-        lineHeight: 1,
-        opacity: disabled ? 0.72 : 1,
-        width: COLLAPSED_RAIL_ITEM_SIZE,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ShellSessionGroup({
-  label,
-  shells,
-  pending = false,
-  expanded = true,
-  onToggleExpanded,
-  deletingShellNames,
-  foreground,
-  selectedShellName,
-  onOpen,
-  onToggle,
-  onRename,
-  onDelete,
-  draggingShellName,
-  dragOverShellName,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
-}: {
-  label: "Active" | "Background";
-  shells: ShellSessionSummary[];
-  pending?: boolean;
-  expanded?: boolean;
-  onToggleExpanded?: () => void;
-  deletingShellNames: string[];
-  foreground: boolean;
-  selectedShellName: string | null;
-  onOpen: (shell: ShellSessionSummary) => void;
-  onToggle: (shell: ShellSessionSummary) => void;
-  onRename: (shell: ShellSessionSummary, nextName: string) => Promise<boolean>;
-  onDelete: (shell: ShellSessionSummary) => void;
-  draggingShellName: string | null;
-  dragOverShellName: string | null;
-  onDragStart: (shell: ShellSessionSummary) => void;
-  onDragOver: (shell: ShellSessionSummary) => void;
-  onDrop: (shell: ShellSessionSummary) => void;
-  onDragEnd: () => void;
-}) {
-  const collapsible = label === "Background";
-  const contentId = `terminal-session-group-${label.toLowerCase()}-content`;
-  return (
-    <section data-testid={`terminal-session-group-${label.toLowerCase()}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div className="flex items-center justify-between" style={{ color: "var(--terminal-drawer-muted)", minHeight: 22 }}>
-        <button
-          type="button"
-          aria-label={collapsible ? "Toggle Background sessions" : undefined}
-          aria-expanded={collapsible ? expanded : undefined}
-          aria-controls={collapsible ? contentId : undefined}
-          disabled={!collapsible}
-          onClick={collapsible ? onToggleExpanded : undefined}
-          className="flex items-center"
-          style={{
-            background: "transparent",
-            border: 0,
-            color: "var(--terminal-drawer-muted)",
-            cursor: collapsible ? "pointer" : "default",
-            gap: 7,
-            padding: 0,
-            textAlign: "left",
-          }}
-        >
-          {collapsible && (
-            <ChevronRightIcon
-              aria-hidden="true"
-              data-testid="terminal-session-background-chevron"
-              size={12}
-              strokeWidth={2.5}
-              style={{
-                transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
-                transition: "transform 140ms ease",
-              }}
-            />
-          )}
-          <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", lineHeight: "14px", textTransform: "uppercase" }}>
-            {label}{" "}
-            <span style={{ fontWeight: 600, opacity: 0.55 }}>({shells.length})</span>
-          </span>
-        </button>
-      </div>
-      <div
-        id={contentId}
-        hidden={!expanded}
-        style={{ display: expanded ? "flex" : undefined, flexDirection: "column", gap: 10 }}
-      >
-        {expanded ? (
-          <>
-          {pending ? <ShellPendingCard /> : null}
-          {shells.length === 0 && !pending ? (
-            <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 12, padding: "8px 0 6px" }}>
-              {foreground ? "No active sessions" : "Nothing running in background"}
-            </div>
-          ) : shells.map((shell) => (
-            <ShellCard
-              key={`${label}-${shell.name}`}
-              shell={shell}
-              foreground={foreground}
-              deleting={deletingShellNames.includes(shell.name)}
-              selected={shell.name === selectedShellName}
-              onOpen={() => onOpen(shell)}
-              onToggle={() => onToggle(shell)}
-              onRename={(nextName) => onRename(shell, nextName)}
-              onDelete={() => onDelete(shell)}
-              dragging={shell.name === draggingShellName}
-              dropTarget={shell.name === dragOverShellName}
-              onDragStart={() => onDragStart(shell)}
-              onDragOver={() => onDragOver(shell)}
-              onDrop={() => onDrop(shell)}
-              onDragEnd={onDragEnd}
-            />
-          ))}
-          </>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function ShellPendingCard() {
-  return (
-    <output
-      aria-label="Creating shell session"
-      data-testid="terminal-session-pending-row"
-      style={{
-        alignItems: "center",
-        background: "var(--terminal-drawer-card-bg)",
-        border: "1px solid var(--terminal-drawer-card-border)",
-        borderRadius: 10,
-        boxShadow: "0 9px 22px var(--terminal-drawer-card-shadow)",
-        color: "var(--terminal-drawer-muted)",
-        display: "grid",
-        gap: 10,
-        gridTemplateColumns: "12px 8px minmax(0, 1fr) 58px 46px",
-        height: 52,
-        opacity: 0.82,
-        padding: "0 12px",
-      }}
-    >
-      <span style={{ width: 12 }} />
-      <span
-        aria-hidden="true"
-        className="terminal-refresh-icon--loading"
-        style={{
-          border: "2px solid var(--terminal-drawer-card-border)",
-          borderTopColor: "var(--terminal-drawer-selected-stripe)",
-          borderRadius: "50%",
-          height: 8,
-          width: 8,
-        }}
-      />
-      <span
-        style={{
-          fontFamily: "var(--font-mono, ui-monospace, monospace)",
-          fontSize: 14,
-          fontWeight: 700,
-          lineHeight: "18px",
-          minWidth: 0,
-        }}
-      >
-        Creating session
-      </span>
-      <span />
-      <span
-        style={{
-          background: "var(--terminal-drawer-action-bg)",
-          border: "1px solid var(--terminal-drawer-action-border)",
-          borderRadius: 999,
-          color: "var(--terminal-drawer-action-fg)",
-          fontSize: 12,
-          fontWeight: 800,
-          lineHeight: "18px",
-          textAlign: "center",
-        }}
-      >
-        NEW
-      </span>
-    </output>
-  );
-}
-
-function ShellCard({
-  shell,
-  foreground,
-  deleting,
-  selected,
-  onOpen,
-  onToggle,
-  onRename,
-  onDelete,
-  dragging,
-  dropTarget,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
-}: {
-  shell: ShellSessionSummary;
-  foreground: boolean;
-  deleting?: boolean;
-  selected: boolean;
-  onOpen: () => void;
-  onToggle: () => void;
-  onRename: (nextName: string) => Promise<boolean>;
-  onDelete: () => void;
-  dragging: boolean;
-  dropTarget: boolean;
-  onDragStart: () => void;
-  onDragOver: () => void;
-  onDrop: () => void;
-  onDragEnd: () => void;
-}) {
-  const statusDotStyle = getShellStatusDotStyle(shell);
-  const [copyFeedback, setCopyFeedback] = useState<"copied" | "failed" | null>(null);
-  const displayName = formatShellDisplayName(shell.name);
-  const [actionsVisible, setActionsVisible] = useState(false);
-  const [contextMenuOpen, setContextMenuOpen] = useState(false);
-  const [renaming, setRenaming] = useState(false);
-  const [renameDraft, setRenameDraft] = useState(shell.name);
-  const [renameSaving, setRenameSaving] = useState(false);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-  const moreButtonRef = useRef<HTMLButtonElement>(null);
-  const renameInputRef = useRef<HTMLInputElement>(null);
-  const renameCommittingRef = useRef(false);
-  const copiedTimerRef = useRef<number | null>(null);
-  const restoreFocusAfterMenuCloseRef = useRef(false);
-  const showActions = actionsVisible || copyFeedback !== null || contextMenuOpen;
-  const showRenameControl = actionsVisible && !renaming;
-  const showDragHandle = (actionsVisible || dragging) && !renaming && !deleting;
-  const renameControlLabel = `Rename ${displayName}`;
-  const toggleMenuLabel = foreground ? "Move to Background" : "Make Active";
-  const getContextMenuItems = () => Array.from(
-    contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
-  );
-  const focusContextMenuItem = (nextIndex: number) => {
-    const items = getContextMenuItems();
-    if (items.length === 0) return;
-    const normalizedIndex = (nextIndex + items.length) % items.length;
-    items[normalizedIndex]?.focus();
-  };
-  const handleContextMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape" || event.key === "Tab") {
-      event.preventDefault();
-      restoreFocusAfterMenuCloseRef.current = true;
-      setContextMenuOpen(false);
-      return;
-    }
-    const items = getContextMenuItems();
-    if (items.length === 0) return;
-    const currentIndex = items.findIndex((item) => item === document.activeElement);
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      focusContextMenuItem(currentIndex < 0 ? 0 : currentIndex + 1);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      focusContextMenuItem(currentIndex < 0 ? items.length - 1 : currentIndex - 1);
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      focusContextMenuItem(0);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      focusContextMenuItem(items.length - 1);
-    }
-  };
-
-  useEffect(() => () => {
-    if (copiedTimerRef.current !== null) {
-      window.clearTimeout(copiedTimerRef.current);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!renaming) return;
-    renameInputRef.current?.focus();
-    renameInputRef.current?.select();
-  }, [renaming]);
-
-  useEffect(() => {
-    if (!contextMenuOpen) return;
-    const firstMenuItem = contextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
-    firstMenuItem?.focus();
-    const onPointerDown = (event: globalThis.PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && cardRef.current?.contains(target)) return;
-      restoreFocusAfterMenuCloseRef.current = false;
-      setContextMenuOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-    };
-  }, [contextMenuOpen]);
-
-  useEffect(() => {
-    if (contextMenuOpen || !restoreFocusAfterMenuCloseRef.current) return;
-    restoreFocusAfterMenuCloseRef.current = false;
-    moreButtonRef.current?.focus();
-  }, [contextMenuOpen]);
-
-  const closeContextMenuWithFocusReturn = () => {
-    restoreFocusAfterMenuCloseRef.current = true;
-    setContextMenuOpen(false);
-  };
-
-  const copyAttachCommand = async () => {
-    try {
-      await copyTextToClipboard(shellAttachCommand(shell));
-      setCopyFeedback("copied");
-      if (copiedTimerRef.current !== null) {
-        window.clearTimeout(copiedTimerRef.current);
-      }
-      copiedTimerRef.current = window.setTimeout(() => {
-        copiedTimerRef.current = null;
-        setCopyFeedback(null);
-      }, 1200);
-    } catch (err: unknown) {
-      console.warn("Failed to copy shell connect command:", err instanceof Error ? err.message : err);
-      setCopyFeedback("failed");
-      if (copiedTimerRef.current !== null) {
-        window.clearTimeout(copiedTimerRef.current);
-      }
-      copiedTimerRef.current = window.setTimeout(() => {
-        copiedTimerRef.current = null;
-        setCopyFeedback(null);
-      }, 1600);
-    }
-  };
-  const cancelRename = useCallback(() => {
-    setRenameDraft(shell.name);
-    setRenaming(false);
-  }, [shell.name]);
-
-  const commitRename = useCallback(async (draft = renameDraft) => {
-    const nextName = draft.trim();
-    if (!nextName) {
-      cancelRename();
-      return;
-    }
-    if (renameSaving || renameCommittingRef.current) return;
-    if (nextName === shell.name) {
-      setRenaming(false);
-      return;
-    }
-    renameCommittingRef.current = true;
-    setRenameSaving(true);
-    let renamed = false;
-    try {
-      renamed = await onRename(nextName);
-    } catch (err: unknown) {
-      console.warn("Failed to commit shell session rename:", err instanceof Error ? err.message : err);
-    }
-    if (renamed) {
-      setRenaming(false);
-    }
-    renameCommittingRef.current = false;
-    setRenameSaving(false);
-  }, [cancelRename, onRename, renameDraft, renameSaving, shell.name]);
-
-  const finishRename = useCallback(() => {
-    if (renameCommittingRef.current) return;
-    const nextDraft = renameInputRef.current?.value ?? renameDraft;
-    if (nextDraft.trim() === shell.name || nextDraft.trim().length === 0) {
-      cancelRename();
-      return;
-    }
-    void commitRename(nextDraft);
-  }, [cancelRename, commitRename, renameDraft, shell.name]);
-
-  useEffect(() => {
-    if (!renaming) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && cardRef.current?.contains(target)) {
-        return;
-      }
-      finishRename();
-    };
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [finishRename, renaming]);
-
-  const handleCardClick = () => {
-    if (renaming || renameSaving || deleting) return;
-    onOpen();
-  };
-
-  return (
-    <div
-      ref={cardRef}
-      className="group terminal-session-card"
-      data-testid={`terminal-session-card-${shell.name}`}
-      onDragOver={(event) => {
-        if (!dragging) {
-          event.preventDefault();
-        }
-        event.dataTransfer.dropEffect = "move";
-        onDragOver();
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        onDrop();
-      }}
-      onMouseEnter={() => setActionsVisible(true)}
-      onMouseMove={() => setActionsVisible(true)}
-      onMouseOver={() => setActionsVisible(true)}
-      onMouseLeave={() => setActionsVisible(false)}
-      onPointerEnter={() => setActionsVisible(true)}
-      onPointerMove={() => setActionsVisible(true)}
-      onPointerOver={() => setActionsVisible(true)}
-      onPointerLeave={() => setActionsVisible(false)}
-      onFocus={() => setActionsVisible(true)}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setActionsVisible(false);
-        }
-      }}
-      style={{
-        background: selected ? "var(--terminal-drawer-card-bg)" : foreground ? "var(--terminal-drawer-card-bg)" : "var(--terminal-drawer-card-muted-bg)",
-        border: `1px solid ${selected ? "var(--terminal-drawer-selected-border)" : foreground ? "var(--terminal-drawer-card-border)" : "var(--terminal-drawer-card-muted-border)"}`,
-        borderRadius: 10,
-        boxShadow: dragging
-          ? "0 18px 34px var(--terminal-drawer-card-shadow)"
-          : selected
-            ? "0 0 0 5px var(--terminal-drawer-selected-ring), 0 14px 30px var(--terminal-drawer-card-shadow)"
-            : foreground ? "0 9px 22px var(--terminal-drawer-card-shadow)" : "none",
-        cursor: renaming || deleting ? "default" : "pointer",
-        alignItems: "center",
-        display: "grid",
-        gap: 10,
-        // Single full-width column: the hover action icons overlay the right
-        // edge (absolute, anchored to the inner grid row) and the inner row's
-        // paddingRight reserves their space, so no dead reserved column is
-        // needed here — that column only pushed the actions ~46px off the edge.
-        gridTemplateColumns: "minmax(0, 1fr)",
-        height: 52,
-        opacity: dragging ? 0.94 : foreground ? 1 : 0.86,
-        padding: "0 12px",
-        position: "relative",
-        transform: dragging ? "translateY(-2px)" : undefined,
-        transition: "border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 150ms ease",
-        zIndex: contextMenuOpen ? 30 : dragging ? 1 : undefined,
-      }}
-    >
-      {dropTarget && (
-        <span
-          aria-hidden="true"
-          data-testid={`terminal-session-drop-line-${shell.name}`}
-          style={{
-            background: "var(--terminal-drawer-drop-line)",
-            borderRadius: 999,
-            height: 3,
-            left: 12,
-            position: "absolute",
-            right: 12,
-            top: -7,
-            zIndex: 3,
-          }}
-        />
-      )}
-      {selected && (
-        <span
-          aria-hidden="true"
-          style={{
-            background: "var(--terminal-drawer-selected-stripe)",
-            borderRadius: 999,
-            bottom: 12,
-            left: -1,
-            position: "absolute",
-            top: 12,
-            width: 3,
-            zIndex: 2,
-          }}
-        />
-      )}
-      {!renaming && !deleting && (
-        <button
-          type="button"
-          data-testid={`terminal-session-row-${shell.name}`}
-          aria-current={selected ? "true" : undefined}
-          aria-label={`Show ${displayName} session`}
-          data-selected={selected ? "true" : "false"}
-          onClick={handleCardClick}
-          style={SHELL_ROW_BUTTON_STYLE}
-        />
-      )}
-      <div
-        className="min-w-0"
-        style={{
-          alignItems: "center",
-          display: "grid",
-          gap: 10,
-          gridTemplateColumns: "12px 8px minmax(0, 1fr)",
-          pointerEvents: "none",
-          position: "relative",
-          zIndex: 1,
-        }}
-      >
-        <button
-          type="button"
-          aria-label={`Drag ${displayName} session`}
-          draggable={!renaming && !deleting}
-          onClick={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          onMouseDown={(event) => event.stopPropagation()}
-          onDragStart={(event) => {
-            event.stopPropagation();
-            event.dataTransfer.effectAllowed = "move";
-            event.dataTransfer.setData("text/plain", shell.name);
-            onDragStart();
-          }}
-          onDragEnd={(event) => {
-            event.stopPropagation();
-            onDragEnd();
-          }}
-          className="flex items-center justify-center"
-          style={{
-            ...SHELL_ROW_DRAG_HANDLE_STYLE,
-            cursor: showDragHandle ? "grab" : "default",
-            opacity: showDragHandle ? 1 : 0,
-          }}
-        >
-          <GripVerticalIcon size={12} strokeWidth={2.1} />
-        </button>
-        <span
-          className={getShellStatusDotClassName(shell)}
-          data-testid={`terminal-session-status-${shell.name}`}
-          style={{
-            width: foreground ? 7 : 8,
-            height: foreground ? 7 : 8,
-            borderRadius: "50%",
-            flexShrink: 0,
-            ...statusDotStyle,
-          }}
-          />
-        <div
-          className="min-w-0"
-        style={{
-          alignItems: "center",
-          display: "grid",
-          gap: 6,
-          gridTemplateColumns: "minmax(0, 1fr)",
-          paddingRight: renaming ? 0 : 58,
-        }}
-      >
-          {renaming ? (
-            <input
-              ref={renameInputRef}
-              aria-label={`Session name for ${displayName}`}
-              value={renameDraft}
-              disabled={renameSaving}
-              onChange={(event) => setRenameDraft(event.target.value)}
-              onClick={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              onMouseDown={(event) => event.stopPropagation()}
-              onBlur={finishRename}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void commitRename();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelRename();
-                }
-              }}
-              style={SESSION_RENAME_INPUT_STYLE}
-            />
-          ) : (
-            <button
-              type="button"
-              data-session-name={shell.name}
-              data-testid={`terminal-session-name-${shell.name}`}
-              aria-label={`Open ${displayName}`}
-              className="min-w-0 truncate"
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpen();
-              }}
-              style={{
-                ...SESSION_NAME_BUTTON_BASE_STYLE,
-                color: foreground ? "var(--terminal-drawer-fg)" : "var(--terminal-drawer-muted)",
-              }}
-            >
-              {displayName}
-            </button>
-          )}
-          {!renaming && (
-            <div
-              data-testid={`terminal-session-actions-${shell.name}`}
-              aria-hidden={showActions ? undefined : "true"}
-              className="flex shrink-0 items-center justify-end"
-              style={{
-                ...SESSION_ACTIONS_STYLE,
-                opacity: showActions ? 1 : 0,
-                pointerEvents: showActions ? "auto" : "none",
-              }}
-            >
-              <button
-                type="button"
-                aria-label={renameControlLabel}
-                title={renameControlLabel}
-                disabled={renameSaving}
-                tabIndex={showActions ? 0 : -1}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setRenameDraft(shell.name);
-                  setRenaming(true);
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                onMouseDown={(event) => event.stopPropagation()}
-                className="flex items-center justify-center"
-                style={{
-                  ...SESSION_RENAME_BUTTON_STYLE,
-                  cursor: renameSaving ? "not-allowed" : "pointer",
-                  opacity: showRenameControl ? 1 : 0,
-                }}
-              >
-                <PencilIcon size={12} strokeWidth={2} />
-              </button>
-              <div style={{ position: "relative" }}>
-                <button
-                  ref={moreButtonRef}
-                  type="button"
-                  aria-label={`More actions for ${displayName}`}
-                  aria-haspopup="menu"
-                  aria-expanded={contextMenuOpen}
-                  tabIndex={showActions ? 0 : -1}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    restoreFocusAfterMenuCloseRef.current = true;
-                    setContextMenuOpen((open) => !open);
-                  }}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onMouseDown={(event) => event.stopPropagation()}
-                  className="flex items-center justify-center"
-                  style={{
-                    ...SESSION_MORE_BUTTON_STYLE,
-                    opacity: showActions ? 1 : 0,
-                  }}
-                >
-                  <MoreHorizontalIcon size={14} strokeWidth={2.2} />
-                </button>
-                {contextMenuOpen ? (
-                  <div
-                    ref={contextMenuRef}
-                    role="menu"
-                    aria-label={`Actions for ${displayName}`}
-                    tabIndex={-1}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onKeyDown={handleContextMenuKeyDown}
-                    style={SESSION_CONTEXT_MENU_STYLE}
-                  >
-                    <SessionContextMenuItem
-                      label={toggleMenuLabel}
-                      onClick={() => {
-                        closeContextMenuWithFocusReturn();
-                        onToggle();
-                      }}
-                    >
-                      <Rows2Icon size={13} strokeWidth={2} />
-                    </SessionContextMenuItem>
-                    <SessionContextMenuItem
-                      label="Copy Command"
-                      onClick={() => {
-                        void copyAttachCommand();
-                        closeContextMenuWithFocusReturn();
-                      }}
-                    >
-                      <LinkIcon size={13} strokeWidth={2} />
-                    </SessionContextMenuItem>
-                    <SessionContextMenuItem
-                      label={deleting ? "Deleting" : "Close"}
-                      disabled={deleting}
-                      onClick={() => {
-                        if (deleting) return;
-                        closeContextMenuWithFocusReturn();
-                        onDelete();
-                      }}
-                    >
-                      <Trash2Icon size={13} strokeWidth={2} />
-                    </SessionContextMenuItem>
-                  </div>
-                ) : null}
-              </div>
-              {copyFeedback ? (
-                <output
-                  data-testid={`terminal-session-copy-toast-${shell.name}`}
-                  aria-live="polite"
-                  style={{
-                    ...SESSION_COPY_FEEDBACK_STYLE,
-                    color: copyFeedback === "copied"
-                      ? "var(--terminal-drawer-selected-stripe)"
-                      : "var(--terminal-drawer-warning-fg)",
-                  }}
-                >
-                  {copyFeedback === "copied" ? (
-                    <CheckIcon aria-hidden="true" size={12} strokeWidth={2.4} />
-                  ) : (
-                    <span aria-hidden="true" style={{ fontSize: 12, fontWeight: 900 }}>!</span>
-                  )}
-                  <span>{copyFeedback === "copied" ? "Copied" : "Copy failed"}</span>
-                </output>
-              ) : null}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SessionContextMenuItem({
-  label,
-  children,
-  disabled = false,
-  onClick,
-}: {
-  label: string;
-  children: React.ReactNode;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      aria-label={label}
-      disabled={disabled}
-      onClick={(event) => {
-        event.stopPropagation();
-        onClick();
-      }}
-      style={{
-        ...SESSION_CONTEXT_MENU_ITEM_STYLE,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.62 : 1,
-      }}
-      onMouseEnter={(event) => {
-        if (!disabled) event.currentTarget.style.background = "var(--terminal-drawer-action-bg)";
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.background = "transparent";
-      }}
-    >
-      <span aria-hidden="true" style={{ color: "var(--terminal-drawer-action-fg)", display: "flex", flexShrink: 0 }}>
-        {children}
-      </span>
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function SessionCard({
-  session,
-  onObserve,
-  onTakeover,
-  onDuplicate,
-  onKill,
-}: {
-  session: WorkspaceSessionSummary;
-  onObserve: () => void;
-  onTakeover: () => void;
-  onDuplicate: () => void;
-  onKill: () => void;
-}) {
-  const health = session.runtime?.status ?? session.status ?? "unknown";
-  return (
-    <div
-      style={{
-        margin: "3px 8px",
-        padding: "8px 10px 6px",
-        borderRadius: 6,
-        border: "1px solid var(--border)",
-        background: "var(--background)",
-      }}
-    >
-      <div className="flex items-center gap-1.5" style={{ marginBottom: 4 }}>
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: health === "running" ? "var(--success)" : "var(--muted-foreground)",
-            flexShrink: 0,
-          }}
-        />
-        <span className="text-[12px] truncate flex-1" style={{ color: "var(--foreground)", fontWeight: 500 }}>
-          {session.id}
-        </span>
-      </div>
-      <div className="text-[10px] truncate" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
-        {health} health
-      </div>
-      <div className="text-[10px] truncate" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
-        {[session.projectSlug, session.taskId, session.agent ?? session.kind ?? "shell"].filter(Boolean).join(" · ")}
-      </div>
-      {session.nativeAttachCommand && (
-        <div
-          className="text-[10px] truncate"
-          style={{ color: "var(--muted-foreground)", fontFamily: "var(--font-mono, ui-monospace, monospace)", paddingLeft: 12, marginTop: 4 }}
-        >
-          {session.nativeAttachCommand.join(" ")}
-        </div>
-      )}
-      <div className="flex flex-wrap items-center gap-1" style={{ marginTop: 6, paddingLeft: 12 }}>
-        <SessionActionBtn label="Observe" sessionId={session.id} onClick={onObserve} />
-        <SessionActionBtn label="Take over" sessionId={session.id} onClick={onTakeover} />
-        <SessionActionBtn label="Duplicate" sessionId={session.id} onClick={onDuplicate} />
-        <SessionActionBtn label="Kill" sessionId={session.id} onClick={onKill} danger />
-      </div>
-    </div>
-  );
-}
-
-function SessionActionBtn({
-  label,
-  sessionId,
-  onClick,
-  danger,
-  disabled,
-}: {
-  label: string;
-  sessionId: string;
-  onClick: () => void;
-  danger?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={`${label} ${sessionId}`}
-      onClick={onClick}
-      disabled={disabled}
-      className="text-[10px] cursor-pointer transition-colors"
-      style={{
-        padding: "2px 6px",
-        borderRadius: 3,
-        background: danger ? "var(--destructive)" : "var(--card)",
-        color: danger ? "white" : "var(--foreground)",
-        border: danger ? "none" : "1px solid var(--border)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.65 : 1,
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-interface ProjectCardProps {
-  project: ProjectInfo;
-  onOpenShell: () => void;
-  onOpenClaude: () => void;
-  onOpenZellij: () => void;
-  onSelect: () => void;
-  isSelected: boolean;
-}
-
-function ProjectCard({ project, onOpenShell, onOpenClaude, onOpenZellij, onSelect, isSelected }: ProjectCardProps) {
-  const [hover, setHover] = useState(false);
-  return (
-    // react-doctor-disable-next-line react-doctor/prefer-tag-over-role -- cannot be a native <button>: this selectable card contains nested interactive <button> children (shell and agent actions), and nesting a button inside a button is invalid HTML; role="button" + tabIndex + keyboard handler is the correct accessible pattern here.
-    <div
-      role="button"
-      tabIndex={0}
-      aria-pressed={isSelected}
-      aria-label={`Select project ${project.name}`}
-      className="cursor-pointer transition-colors"
-      style={{
-        margin: "3px 8px",
-        padding: "8px 10px 6px",
-        borderRadius: 6,
-        background: isSelected ? "var(--accent)" : hover ? "var(--accent)" : "transparent",
-        border: `1px solid ${isSelected ? "var(--primary)" : "transparent"}`,
-      }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onClick={onSelect}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
-      onDoubleClick={onOpenShell}
-      title={`${project.path}\nDouble-click to open terminal`}
-    >
-      <div className="flex items-center gap-1.5" style={{ marginBottom: 4 }}>
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: project.dirtyCount > 0 ? "var(--warning)" : project.isGit ? "var(--success)" : "var(--muted-foreground)",
-            flexShrink: 0,
-          }}
-        />
-        <span
-          className="text-[12px] truncate flex-1"
-          style={{ color: "var(--foreground)", fontWeight: 500 }}
-        >
-          {project.name}
-        </span>
-      </div>
-      <div className="flex items-center gap-1.5 text-[10px]" style={{ color: "var(--muted-foreground)", paddingLeft: 12 }}>
-        {project.isGit && project.branch && (
-          <span style={PROJECT_BRANCH_BADGE_STYLE}>
-            {project.branch}
-          </span>
-        )}
-        {project.dirtyCount > 0 && (
-          <span
-            style={{
-              padding: "1px 5px",
-              borderRadius: 3,
-              background: "var(--warning)",
-              color: "var(--card)",
-              fontWeight: 600,
-            }}
-          >
-            {project.dirtyCount}
-          </span>
-        )}
-        {!project.isGit && <span style={{ opacity: 0.6 }}>folder</span>}
-      </div>
-      <div
-        className="flex items-center gap-1"
-        style={{
-          marginTop: 6,
-          paddingLeft: 12,
-          opacity: hover || isSelected ? 1 : 0,
-          maxHeight: hover || isSelected ? 22 : 0,
-          overflow: "hidden",
-          // react-doctor-disable-next-line react-doctor/no-layout-transition-inline -- intentional max-height collapse so the hover action row reclaims its vertical space when not active and the project list stays compact; transform/opacity cannot reclaim layout space, and the transition is a short bounded 120ms micro-reveal
-          transition: "opacity 120ms, max-height 120ms",
-        }}
-      >
-        <ProjectActionBtn label="Shell" onClick={(e) => { e.stopPropagation(); onOpenShell(); }} />
-        <ProjectActionBtn label="Claude" onClick={(e) => { e.stopPropagation(); onOpenClaude(); }} accent="var(--success)" />
-        <ProjectActionBtn label="Session" onClick={(e) => { e.stopPropagation(); onOpenZellij(); }} accent="var(--primary)" />
-      </div>
-    </div>
-  );
-}
-
-function ProjectActionBtn({
-  label,
-  onClick,
-  accent,
-}: {
-  label: string;
-  onClick: (e: React.MouseEvent) => void;
-  accent?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="text-[10px] cursor-pointer transition-colors"
-      style={{
-        padding: "2px 6px",
-        borderRadius: 3,
-        background: accent ?? "var(--background)",
-        color: accent ? "white" : "var(--foreground)",
-        border: accent ? "none" : "1px solid var(--border)",
-        opacity: 0.9,
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-// ---- Tree helpers ----
-
-interface TreeNode { name: string; type: "file" | "directory"; size?: number; gitStatus: string | null; changedCount?: number; path: string; children?: TreeNode[]; expanded?: boolean; }
-
-const GIT_COLORS: Record<string, string> = { modified: "var(--warning)", added: "var(--success)", untracked: "var(--success)", deleted: "var(--destructive)", renamed: "var(--primary)" };
-
-function filterTreeNodes(nodes: TreeNode[], normalizedFilter: string): TreeNode[] {
-  return nodes.flatMap((node) => {
-    const children = node.children ? filterTreeNodes(node.children, normalizedFilter) : [];
-    const matches = [
-      node.name,
-      node.path,
-      node.gitStatus,
-    ].filter(Boolean).join(" ").toLowerCase().includes(normalizedFilter);
-
-    if (matches) {
-      return [{ ...node, expanded: node.type === "directory" ? true : node.expanded }];
-    }
-    if (children.length > 0) {
-      return [{ ...node, children, expanded: true }];
-    }
-    return [];
-  });
-}
-
-function TreeItem({ node, depth, selectedPath, onToggle, onSelect, onOpenTerminal }: { node: TreeNode; depth: number; selectedPath: string | null; onToggle: (n: TreeNode) => void; onSelect: (n: TreeNode) => void; onOpenTerminal: (path: string) => void }) {
-  const rowStyle = {
-    paddingLeft: 8 + depth * 12,
-    background: selectedPath === node.path ? "var(--accent)" : undefined,
-    color: (node.gitStatus && GIT_COLORS[node.gitStatus]) ?? "var(--foreground)",
-  };
-  const rowContent = (
-    <>
-      {node.type === "directory" ? <span className="text-[10px] opacity-60" style={{ width: 10 }}>{node.expanded ? "▾" : "▸"}</span> : <span style={{ width: 10 }} />}
-      <span className="truncate flex-1">{node.name}</span>
-      {node.type === "directory" && (node.changedCount ?? 0) > 0 && <span className="text-[9px] px-1 rounded" style={{ background: "var(--warning)", color: "var(--card)", opacity: 0.8 }}>{node.changedCount}</span>}
-    </>
-  );
-
-  if (node.type !== "directory") {
-    return (
-      <div
-        aria-label={node.name}
-        className="w-full text-left flex items-center gap-1 px-2 py-0.5"
-        style={rowStyle}
-      >
-        {rowContent}
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <button
-        type="button"
-        aria-label={node.name}
-        className="w-full text-left flex items-center gap-1 px-2 py-0.5 cursor-pointer hover:bg-[var(--accent)] transition-colors"
-        style={rowStyle}
-        onClick={() => { if (node.type === "directory") { onToggle(node); onSelect(node); } }}
-        onDoubleClick={() => { if (node.type === "directory") onOpenTerminal(node.path); }}
-      >
-        {rowContent}
-      </button>
-      {node.expanded && node.children?.map(c => <TreeItem key={c.path} node={c} depth={depth + 1} selectedPath={selectedPath} onToggle={onToggle} onSelect={onSelect} onOpenTerminal={onOpenTerminal} />)}
-    </>
-  );
-}
-
-function updateNode(nodes: TreeNode[], path: string, update: Partial<TreeNode>): TreeNode[] {
-  return nodes.map(n => {
-    if (n.path === path) return { ...n, ...update };
-    if (n.children) return { ...n, children: updateNode(n.children, path, update) };
-    return n;
-  });
 }

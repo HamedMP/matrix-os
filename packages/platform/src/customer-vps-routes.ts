@@ -17,6 +17,8 @@ import { refreshVpsMetrics, refreshVpsRuntimeMetrics, vpsProvisionFailuresTotal 
 import type { VpsRuntimeMetricInput } from './metrics.js';
 
 const VPS_BODY_LIMIT = 4096;
+const RUNTIME_ACTIVATED_EVENT =
+  MATRIX_TELEMETRY_EVENTS.RUNTIME_ACTIVATED ?? 'matrix_runtime_activated';
 
 export interface MessagingResourceShape {
   vcpu: number;
@@ -144,7 +146,12 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
     const handle = parsed.data.handle;
     emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_REQUESTED, {
       distinctId: clerkUserId ?? handle,
-      properties: { handle },
+      properties: {
+        handle,
+        runtime_slot: parsed.data.runtimeSlot,
+        requested_server_type: parsed.data.serverType,
+        developer_tools_count: parsed.data.developerTools?.length,
+      },
     });
     try {
       return c.json(await deps.service.provision(parsed.data), 202);
@@ -181,6 +188,11 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_REGISTERED, {
         properties: { machine_id: machineId },
       });
+      if (result.status === 'running') {
+        emitTelemetry(RUNTIME_ACTIVATED_EVENT, {
+          properties: { machine_id: machineId, image_version: parsed.data.imageVersion },
+        });
+      }
       return c.json(result, 200);
     } catch (err: unknown) {
       emitTelemetry(MATRIX_TELEMETRY_EVENTS.VPS_REGISTRATION_FAILED, {

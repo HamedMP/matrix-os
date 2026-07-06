@@ -1412,7 +1412,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
           />
         ) : null}
       </MenuBar>
-      <div className="relative flex-1 flex flex-col md:flex-row md:pt-7">
+      <div className="relative flex-1 flex flex-col md:flex-row md:pt-8">
         {/* Desktop dock -- hidden in ambient/conversational modes. */}
         {modeConfig.showDock && <div
           className={[

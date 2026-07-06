@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { ArrowRightIcon, CheckCircle2Icon, CreditCardIcon, ShieldCheckIcon } from "lucide-react";
+import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { LANDING_PLANS, specLine } from "@/lib/billing-plans";
 import { palette as c, fonts } from "./theme";
@@ -29,7 +30,7 @@ const valueProps = [
 
 export function LandingBilling() {
   useEffect(() => {
-    capturePostHogEvent("marketing_billing_viewed", {
+    capturePostHogEvent(MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_VIEWED, {
       surface: "www",
       location: "landing_pricing",
       pricing_mode: "stripe_static_plans",
@@ -79,7 +80,7 @@ export function LandingBilling() {
                   <a
                     key={plan.planSlug}
                     href={`/sign-up?plan=${plan.urlSlug}`}
-                    data-ph-event="marketing_billing_plan_clicked"
+                    data-ph-event={MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_PLAN_CLICKED}
                     data-ph-location="pricing_section"
                     data-ph-target={plan.urlSlug}
                     className={`group flex items-center justify-between gap-4 px-5 py-5 transition-colors hover:bg-[rgba(67,78,63,0.05)] ${

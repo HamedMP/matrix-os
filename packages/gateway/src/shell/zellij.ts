@@ -17,6 +17,7 @@ import {
   type MatrixZellijShellThemeId,
   type MatrixZellijConfigPaths,
 } from "./zellij-config.js";
+import { applyTerminalTruecolorEnv } from "../terminal-env.js";
 
 type ExecFile = typeof nodeExecFile;
 type Disposable = { dispose(): void };
@@ -147,17 +148,12 @@ function attachEnv(
       env[key] = value;
     }
   }
-  env.TERM = "xterm-256color";
-  env.COLORTERM = "truecolor";
-  env.CLICOLOR = "1";
-  env.FORCE_COLOR = "3";
-  env.COLORFGBG = "15;0";
   env.LANG = env.LANG || "en_US.UTF-8";
   if (configPaths) {
     env.ZELLIJ_CONFIG_DIR = configPaths.dir;
     env.ZELLIJ_CONFIG_FILE = configPaths.file;
   }
-  return env;
+  return applyTerminalTruecolorEnv(env);
 }
 
 export function sanitizeZellijError(stderr: string): string {

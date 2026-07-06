@@ -94,6 +94,7 @@ import {
 import { createBillingRoutes } from './billing-routes.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
 import { backfillFirstRunRecords } from './journey.js';
+import { appDomainServiceWorkerResponse } from './app-domain-service-worker.js';
 import { appOrigin } from './origins.js';
 import {
   createStripeBillingClient,
@@ -714,102 +715,6 @@ function applyNoStoreResponseHeaders(headers: Headers): void {
   headers.set('cloudflare-cdn-cache-control', 'no-store');
   headers.set('pragma', 'no-cache');
   headers.set('expires', '0');
-}
-
-const APP_DOMAIN_SAFE_SERVICE_WORKER = `
-const VERSION = "app-v1";
-const CACHE_STATIC = "matrix-os-static-" + VERSION;
-
-self.addEventListener("install", () => {
-  self.skipWaiting();
-});
-
-self.addEventListener("activate", (event) => {
-  event.waitUntil((async () => {
-    const keys = await caches.keys();
-    await Promise.all(keys
-      .filter((key) => key.startsWith("matrix-os-static-") && key !== CACHE_STATIC)
-      .map((key) => caches.delete(key)));
-    await self.clients.claim();
-  })());
-});
-
-function isBypassed(url) {
-  if (url.origin !== self.location.origin) return true;
-  const p = url.pathname;
-  return (
-    p.startsWith("/api/") ||
-    p.startsWith("/v1/") ||
-    p.startsWith("/clerk") ||
-    p.startsWith("/_clerk") ||
-    p.startsWith("/__clerk") ||
-    p.startsWith("/__session") ||
-    p.startsWith("/sign-in") ||
-    p.startsWith("/sign-up") ||
-    p.startsWith("/files/apps/") ||
-    p.includes("/__nextjs_") ||
-    p.startsWith("/_next/data/")
-  );
-}
-
-function isStaticAsset(url) {
-  const p = url.pathname;
-  return (
-    p.startsWith("/_next/static/") ||
-    p.startsWith("/icons/") ||
-    p.startsWith("/wallpapers/") ||
-    p.startsWith("/files/system/wallpapers/") ||
-    p.startsWith("/textures/") ||
-    p.startsWith("/fonts/") ||
-    /\\.(?:png|jpg|jpeg|svg|webp|woff2?|ttf|css|js|wav|mp3)$/.test(p)
-  );
-}
-
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  if (req.method !== "GET") return;
-  const url = new URL(req.url);
-  if (isBypassed(url) || !isStaticAsset(url)) return;
-  event.respondWith(cacheFirst(req));
-});
-
-async function cacheFirst(req) {
-  const cache = await caches.open(CACHE_STATIC);
-  const cached = await cache.match(req);
-  if (cached) return cached;
-  try {
-    const res = await fetch(req, { signal: AbortSignal.timeout(30000) });
-    if (res.ok && res.type === "basic") {
-      cache.put(req, res.clone()).catch((err) => {
-        console.warn("[app sw] static cache put failed:", err?.message ?? err);
-      });
-    }
-    return res;
-  } catch (_err) {
-    return new Response("offline", {
-      status: 504,
-      headers: {
-        "content-type": "text/plain; charset=utf-8",
-        "cache-control": "no-store",
-      },
-    });
-  }
-}
-`.trim();
-
-function appDomainServiceWorkerResponse(): Response {
-  return new Response(APP_DOMAIN_SAFE_SERVICE_WORKER, {
-    status: 200,
-    headers: {
-      'content-type': 'text/javascript; charset=utf-8',
-      'cache-control': 'no-store, private',
-      'cdn-cache-control': 'no-store',
-      'cloudflare-cdn-cache-control': 'no-store',
-      'pragma': 'no-cache',
-      'expires': '0',
-      'service-worker-allowed': '/',
-    },
-  });
 }
 
 function isPostHogRelayPath(path: string): boolean {
@@ -1701,6 +1606,7 @@ async function resolveAppDomainIdentity(opts: {
   db: PlatformDB;
   platformJwtSecret: string;
   allowUnroutedClerkIdentity?: boolean;
+  legacyContainerRoutingEnabled?: boolean;
   requestedHandle?: string | null;
   runtimeSlot: string;
   wsToken?: string | null;
@@ -1724,7 +1630,9 @@ async function resolveAppDomainIdentity(opts: {
           }
         }
       }
-      const record = await getContainer(opts.db, claims.handle);
+      const record = opts.legacyContainerRoutingEnabled === false
+        ? undefined
+        : await getContainer(opts.db, claims.handle);
       if (record?.clerkUserId === claims.sub) {
         return {
           handle: record.handle,
@@ -1787,7 +1695,9 @@ async function resolveAppDomainIdentity(opts: {
     }
   }
 
-  const record = await getContainerByClerkId(opts.db, result.userId);
+  const record = opts.legacyContainerRoutingEnabled === false
+    ? undefined
+    : await getContainerByClerkId(opts.db, result.userId);
   if (record) {
     return {
       handle: record.handle,
@@ -2241,7 +2151,10 @@ export function createApp(deps: {
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce);
       const authMode = c.req.path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
-      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url)), 200);
+      return c.html(
+        getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)),
+        200,
+      );
     }
   }
 
@@ -2754,6 +2667,7 @@ export function createApp(deps: {
         jwtSecret: platformJwtSecret,
         platformUrl: deviceAuthPublicUrl,
         gatewayUrlForHandle: getGatewayUrlForHandle,
+        ignoreLegacyContainers: Boolean(deps.customerVpsService),
         fetchUserProfile: (clerkUserId) => fetchDeviceDisplayProfile(clerkUserId, process.env),
         captureEvent: (event, properties) => {
           capturePlatformEvent(MATRIX_TELEMETRY_EVENTS.CLI_COMMAND_RUN, {
@@ -2923,6 +2837,7 @@ export function createApp(deps: {
           cookieHeader: undefined,
           db,
           platformJwtSecret,
+          legacyContainerRoutingEnabled,
           runtimeSlot: requestedRuntimeSlot,
         });
         if (nativeIdentity) {
@@ -2956,7 +2871,9 @@ export function createApp(deps: {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const record = await getContainerByClerkId(db, result.userId);
+    const record = legacyContainerRoutingEnabled
+      ? await getContainerByClerkId(db, result.userId)
+      : undefined;
     const machine = record ? undefined : await getActiveUserMachineByClerkId(db, result.userId, requestedRuntimeSlot);
     const handle = record?.handle ?? machine?.handle;
     if (!handle) {
@@ -3204,6 +3121,7 @@ export function createApp(deps: {
       clerkAuth,
       db,
       platformJwtSecret,
+      legacyContainerRoutingEnabled,
       allowUnroutedClerkIdentity: Boolean(explicitVmRoute) || allowAuthShellUnroutedIdentity,
       requestedHandle: requestedRouteHandle,
       runtimeSlot: requestRuntimeSlot,
@@ -3279,7 +3197,7 @@ export function createApp(deps: {
       }
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce);
-      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url)));
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
     }
 
     console.log(`[${isCodeDomain ? 'code' : 'app'}] verified request path=${path}`);
@@ -4852,6 +4770,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
         clerkAuth,
         db,
         platformJwtSecret: PLATFORM_JWT_SECRET,
+        legacyContainerRoutingEnabled,
         runtimeSlot: requestRuntimeSlot,
         wsToken,
       });
