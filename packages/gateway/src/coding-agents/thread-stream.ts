@@ -15,6 +15,7 @@ import {
 const MAX_INBOUND_FRAME_BYTES = 4096;
 const DEFAULT_MAX_SUBSCRIBERS = 64;
 const DEFAULT_SUBSCRIBER_TTL_MS = 5 * 60 * 1000;
+const MAX_BUFFERED_ATTACH_EVENTS = 200;
 
 const ThreadStreamClientFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ping") }).strict(),
@@ -44,6 +45,8 @@ interface Subscriber {
   threadId: string;
   ws: CodingAgentThreadStreamSocket;
   lastTouched: number;
+  replaying: boolean;
+  bufferedEvents: AgentThreadEvent[];
 }
 
 export function threadStreamFrameDataToString(data: unknown): string | null {
@@ -87,6 +90,7 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
   const subscriberTtlMs = options.subscriberTtlMs ?? DEFAULT_SUBSCRIBER_TTL_MS;
   const now = options.now ?? (() => Date.now());
   let nextSubscriberId = 0;
+  let shuttingDown = false;
 
   const eventSink = options.threads.registerEventSink(({ ownerId, threadId, events }) => {
     broadcast(ownerId, threadId, events);
@@ -134,6 +138,13 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
         continue;
       }
       subscriber.lastTouched = now();
+      if (subscriber.replaying) {
+        subscriber.bufferedEvents.push(...events.map((event) => AgentThreadEventSchema.parse(event)));
+        if (subscriber.bufferedEvents.length > MAX_BUFFERED_ATTACH_EVENTS) {
+          deadSubscriberIds.push(id);
+        }
+        continue;
+      }
       for (const event of events) {
         const parsed = AgentThreadEventSchema.parse(event);
         if (!sendJson(subscriber.ws, { type: "thread.event", event: parsed })) {
@@ -154,9 +165,14 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
     cursor?: string;
   }): Promise<CodingAgentThreadStreamSession> {
     let threadId: string;
+    let openedSubscriberId: string | null = null;
     try {
+      if (shuttingDown) {
+        sendJson(input.ws, { type: "thread.stream.closing", reason: "server_shutdown" });
+        closeSocket(input.ws);
+        return { onMessage: () => undefined, onClose: () => undefined };
+      }
       threadId = ThreadIdSchema.parse(input.threadId);
-      const snapshot = await options.threads.getThread(input.principal, threadId, input.cursor);
       enforceSubscriberCap();
       const id = `thread_sub_${++nextSubscriberId}`;
       const subscriber: Subscriber = {
@@ -165,13 +181,23 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
         threadId,
         ws: input.ws,
         lastTouched: now(),
+        replaying: true,
+        bufferedEvents: [],
       };
       subscribers.set(id, subscriber);
+      openedSubscriberId = id;
+
+      const snapshot = await options.threads.getThread(input.principal, threadId, input.cursor);
+      const currentSubscriber = subscribers.get(id);
+      if (!currentSubscriber) {
+        return { onMessage: () => undefined, onClose: () => undefined };
+      }
 
       if (!sendJson(input.ws, { type: "thread.stream.attached", threadId })) {
         evictSubscriber(id, "send_failed");
         return { onMessage: () => undefined, onClose: () => undefined };
       }
+      const replayedEventIds = snapshot.events.items.map((event) => event.eventId);
       for (const event of snapshot.events.items) {
         if (!sendJson(input.ws, { type: "thread.event", event })) {
           evictSubscriber(id, "send_failed");
@@ -179,6 +205,10 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
         }
       }
       sendJson(input.ws, { type: "thread.replay.end", nextCursor: snapshot.events.nextCursor });
+      currentSubscriber.replaying = false;
+      const bufferedEvents = currentSubscriber.bufferedEvents.filter((event) => !replayedEventIds.includes(event.eventId));
+      currentSubscriber.bufferedEvents = [];
+      broadcast(input.principal.userId, threadId, bufferedEvents);
 
       return {
         onMessage(raw) {
@@ -216,6 +246,9 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
         },
       };
     } catch (err: unknown) {
+      if (openedSubscriberId) {
+        subscribers.delete(openedSubscriberId);
+      }
       const safeError = err instanceof CodingAgentThreadError
         ? safeThreadError(err.code)
         : SafeClientErrorSchema.parse({
@@ -234,6 +267,7 @@ export function createCodingAgentThreadStream(options: CodingAgentThreadStreamOp
   }
 
   function shutdown(): void {
+    shuttingDown = true;
     for (const id of Array.from(subscribers.keys())) {
       evictSubscriber(id, "server_shutdown");
     }

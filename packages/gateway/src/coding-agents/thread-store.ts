@@ -410,7 +410,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
     },
     registerEventSink(sink) {
       if (eventSinks.length >= 8) {
-        eventSinks.shift();
+        throw new CodingAgentThreadError("thread_store_unavailable", "Too many thread event sinks");
       }
       eventSinks.push(sink);
       return {

@@ -3,8 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  AgentThreadEventSchema,
+  AgentThreadSnapshotSchema,
+  type AgentThreadEvent,
+  type AgentThreadSummary,
+} from "@matrix-os/contracts";
+import {
+  CodingAgentThreadError,
   createCodingAgentThreadStore,
   createFakeCodingAgentProvider,
+  type CodingAgentThreadStore,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import {
   createCodingAgentThreadStream,
@@ -78,6 +86,81 @@ describe("coding agent thread stream", () => {
     expect(ws.sent.at(-1)).toMatchObject({
       type: "thread.event",
       event: { type: "thread.completed", outcome: "aborted" },
+    });
+    session.onClose();
+  });
+
+  it("does not drop events committed while attach replay is loading", async () => {
+    const threadId = "thread_attach_race";
+    const thread: AgentThreadSummary = {
+      id: threadId,
+      providerId: "codex",
+      title: "Run tests.",
+      status: "running",
+      attention: "none",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    const createdEvent = AgentThreadEventSchema.parse({
+      type: "thread.created",
+      eventId: "evt_created",
+      threadId,
+      occurredAt: now.toISOString(),
+      thread,
+    });
+    const liveEvent = AgentThreadEventSchema.parse({
+      type: "thread.completed",
+      eventId: "evt_live_completed",
+      threadId,
+      occurredAt: now.toISOString(),
+      outcome: "completed",
+    });
+    let eventSink: ((input: { ownerId: string; threadId: string; events: AgentThreadEvent[] }) => void) | undefined;
+    const threads: CodingAgentThreadStore = {
+      async createThread() {
+        throw new Error("not used");
+      },
+      async listThreads() {
+        return { items: [], hasMore: false, limit: 50 };
+      },
+      async getThread() {
+        eventSink?.({ ownerId: testPrincipal.userId, threadId, events: [liveEvent] });
+        return AgentThreadSnapshotSchema.parse({
+          thread,
+          events: {
+            items: [createdEvent],
+            hasMore: false,
+            nextCursor: createdEvent.eventId,
+            limit: 200,
+          },
+        });
+      },
+      async abortThread() {
+        throw new Error("not used");
+      },
+      registerEventSink(sink) {
+        eventSink = sink;
+        return {
+          dispose() {
+            eventSink = undefined;
+          },
+        };
+      },
+    };
+    const stream = createCodingAgentThreadStream({ threads });
+    const ws = socket();
+
+    const session = await stream.open({ ws, principal: testPrincipal, threadId });
+
+    expect(ws.sent.map((frame) => (frame as { type?: string }).type)).toEqual([
+      "thread.stream.attached",
+      "thread.event",
+      "thread.replay.end",
+      "thread.event",
+    ]);
+    expect(ws.sent.at(-1)).toMatchObject({
+      type: "thread.event",
+      event: { type: "thread.completed", outcome: "completed" },
     });
     session.onClose();
   });
@@ -168,6 +251,45 @@ describe("coding agent thread stream", () => {
     });
     expect(ws.closed).toBe(true);
     expect(stream.activeSubscriberCount()).toBe(0);
+  });
+
+  it("closes a pending attach if shutdown races with replay loading", async () => {
+    const { threads, threadId } = await createHarness();
+    let releaseReplay!: () => void;
+    const replayReady = new Promise<void>((resolve) => {
+      releaseReplay = resolve;
+    });
+    const delayedThreads: CodingAgentThreadStore = {
+      ...threads,
+      async getThread(principal, requestedThreadId, cursor) {
+        await replayReady;
+        return threads.getThread(principal, requestedThreadId, cursor);
+      },
+    };
+    const stream = createCodingAgentThreadStream({ threads: delayedThreads });
+    const ws = socket();
+
+    const opened = stream.open({ ws, principal: testPrincipal, threadId });
+    stream.shutdown();
+    releaseReplay();
+    await opened;
+
+    expect(ws.sent.at(-1)).toEqual({
+      type: "thread.stream.closing",
+      reason: "server_shutdown",
+    });
+    expect(ws.closed).toBe(true);
+    expect(stream.activeSubscriberCount()).toBe(0);
+  });
+
+  it("rejects extra stream sink registrations instead of detaching existing streams silently", async () => {
+    const { threads } = await createHarness();
+
+    for (let index = 0; index < 7; index += 1) {
+      createCodingAgentThreadStream({ threads });
+    }
+
+    expect(() => createCodingAgentThreadStream({ threads })).toThrow(CodingAgentThreadError);
   });
 
   it("allows coding-agent thread WebSocket query-token auth through the shared middleware", async () => {
