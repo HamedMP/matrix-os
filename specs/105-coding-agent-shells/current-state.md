@@ -206,7 +206,7 @@ Screen:
 
 - `apps/mobile/app/agents.tsx`
 - Read-only phone-first dashboard with providers, active threads, and terminal sessions.
-- Flag: `apps/mobile/lib/feature-flags.ts` with `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE !== "0"`.
+- Flag: `apps/mobile/lib/feature-flags.ts` with `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE === "1"`.
 
 Persisted UI references:
 
@@ -248,7 +248,7 @@ Defined capabilities in `RuntimeSummary`:
 Client flags:
 
 - Desktop: `VITE_CODING_AGENTS_DESKTOP_WORKSPACE !== "0"`.
-- Mobile: `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE !== "0"`.
+- Mobile: `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE === "1"`.
 
 Server flags:
 
