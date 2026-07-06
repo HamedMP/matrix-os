@@ -4,7 +4,13 @@ import {
   parseShellSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
-import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
+import {
+  AgentThreadSnapshotSchema,
+  RuntimeSummarySchema,
+  type CreateAgentThreadRequest,
+  type RuntimeSummary,
+} from "@matrix-os/contracts";
+import type { z } from "zod/v4";
 
 function randomShellSuffix(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -71,6 +77,10 @@ export interface MatrixAppManifestResponse {
 export type CodingAgentRuntimeSummaryResult =
   | { ok: true; summary: RuntimeSummary }
   | { ok: false; error: "Runtime summary unavailable" };
+
+export type CodingAgentThreadCreateResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Agent run could not be started. Try again." };
 
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
@@ -516,6 +526,31 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/coding-agents/summary unavailable");
       return { ok: false, error: "Runtime summary unavailable" };
+    }
+  }
+
+  async createCodingAgentThread(
+    request: CreateAgentThreadRequest,
+  ): Promise<CodingAgentThreadCreateResult> {
+    try {
+      const res = await this.fetchGateway("/api/coding-agents/threads", {
+        method: "POST",
+        body: JSON.stringify(request),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/threads unavailable", res.status);
+        return { ok: false, error: "Agent run could not be started. Try again." };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/threads returned invalid payload");
+        return { ok: false, error: "Agent run could not be started. Try again." };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/threads unavailable");
+      return { ok: false, error: "Agent run could not be started. Try again." };
     }
   }
 

@@ -6,6 +6,12 @@ jest.mock("@/lib/feature-flags", () => ({
   CODING_AGENTS_MOBILE_WORKSPACE: true,
 }));
 
+jest.mock("expo-router", () => ({
+  useRouter: () => ({
+    push: jest.fn(),
+  }),
+}));
+
 import React from "react";
 import { act, render, screen, waitFor } from "@testing-library/react-native";
 import AgentsScreen from "../app/agents";

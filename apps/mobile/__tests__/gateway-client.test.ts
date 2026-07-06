@@ -3,6 +3,7 @@ import {
   DEFAULT_GATEWAY_FETCH_TIMEOUT_MS,
   assertSecureTokenTransport,
 } from "../lib/gateway-client";
+import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 import { jsonResponse } from "./mobile-shell-test-utils";
 
 describe("GatewayClient", () => {
@@ -233,6 +234,74 @@ describe("GatewayClient", () => {
       }),
       signal: expect.any(Object),
     }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("creates coding agent threads with the existing auth header", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_mobile_create",
+        providerId: "codex",
+        title: "Investigate mobile composer",
+        status: "queued",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      events: {
+        items: [],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const request: CreateAgentThreadRequest = {
+      providerId: "codex",
+      prompt: "Investigate mobile composer",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+      clientRequestId: "req_mobile_1",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createCodingAgentThread(request)).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/coding-agents/threads", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "Content-Type": "application/json",
+      }),
+      body: JSON.stringify(request),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile thread create error for invalid gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      thread: {
+        id: "../bad",
+        providerId: "codex",
+        title: "/home/matrix/private",
+        status: "queued",
+      },
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createCodingAgentThread({
+      providerId: "codex",
+      prompt: "Investigate mobile composer",
+      clientRequestId: "req_mobile_1",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Agent run could not be started. Try again.",
+    });
 
     fetchMock.mockRestore();
   });
