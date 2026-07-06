@@ -362,7 +362,7 @@ Goal: make threads start actual coding-agent provider work through the Matrix ru
 
 ### 4.1 Provider Adapter Interface
 
-- [ ] Define provider adapter interface:
+- [X] Define provider adapter interface:
   - `getSummary`
   - `healthCheck`
   - `buildSetupAction`
@@ -370,14 +370,14 @@ Goal: make threads start actual coding-agent provider work through the Matrix ru
   - `abortThread`
   - `submitApproval`
   - `submitInput`
-- [ ] Keep provider-specific logic out of clients.
-- [ ] Normalize provider events to `AgentThreadEvent`.
+- [X] Keep provider-specific logic out of clients.
+- [X] Normalize provider events to `AgentThreadEvent`.
 
 Tests:
 
-- [ ] Fake provider emits normalized events.
-- [ ] Provider error maps to safe thread error.
-- [ ] Abort maps correctly.
+- [X] Fake provider emits normalized events.
+- [X] Provider error maps to safe thread error.
+- [X] Abort maps correctly.
 
 ### 4.2 First Provider Path
 

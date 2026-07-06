@@ -163,6 +163,8 @@ export const SafeSetupActionSchema = z.discriminatedUnion("kind", [
   }).strict(),
 ]);
 
+export type SafeSetupAction = z.infer<typeof SafeSetupActionSchema>;
+
 export const AgentProviderSummarySchema = z.object({
   id: ProviderIdSchema,
   displayName: SafeDisplayStringSchema,
@@ -268,6 +270,8 @@ export const ApprovalDecisionRequestSchema = z.object({
   correlationId: CorrelationIdSchema,
 }).strict();
 
+export type ApprovalDecisionRequest = z.infer<typeof ApprovalDecisionRequestSchema>;
+
 export const UserInputRequestSchema = z.object({
   requestId: RequestIdSchema,
   threadId: ThreadIdSchema,
@@ -284,6 +288,8 @@ export const UserInputAnswerRequestSchema = z.object({
   clientRequestId: RequestIdSchema,
   correlationId: CorrelationIdSchema,
 }).strict();
+
+export type UserInputAnswerRequest = z.infer<typeof UserInputAnswerRequestSchema>;
 
 const BaseThreadEventSchema = z.object({
   eventId: EventIdSchema,
