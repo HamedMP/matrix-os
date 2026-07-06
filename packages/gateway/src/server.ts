@@ -15,7 +15,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
@@ -52,7 +52,7 @@ import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
 import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
-import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
+import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
@@ -217,6 +217,16 @@ import {
   MainWsClientMessageSchema,
   type MainWsClientMessage,
 } from "./ws-message-schema.js";
+import type { GatewayConfig, ServerMessage } from "./server/types.js";
+import {
+  kernelEventToServerMessage,
+  send,
+  sendClientAck,
+} from "./server/main-ws-messages.js";
+import {
+  resolveInitialSymphonyPort,
+  symphonyUpstreamOriginForPort,
+} from "./server/symphony-origin.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -254,6 +264,11 @@ export {
   TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
   type TerminalSessionRouteRegistry,
 } from "./terminal-session-routes.js";
+export type { GatewayConfig, ServerMessage } from "./server/types.js";
+export {
+  readInitialSymphonyPort,
+  resolveInitialSymphonyPort,
+} from "./server/symphony-origin.js";
 
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 
@@ -288,165 +303,11 @@ export async function resetVolatilePtySessionList(persistPath: string): Promise<
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 
-export interface GatewayConfig {
-  homePath: string;
-  port?: number;
-  model?: string;
-  maxTurns?: number;
-  spawnFn?: SpawnFn;
-  syncReport?: { added: string[]; updated: string[]; skipped: string[] };
-}
-
-export type ServerMessage =
-  | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
-  | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
-  | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
-  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string; eventId?: string }
-  | { type: "kernel:result"; data: unknown; requestId?: string; eventId?: string }
-  | { type: "kernel:error"; message: string; requestId?: string; eventId?: string }
-  | { type: "kernel:aborted"; requestId?: string; eventId?: string }
-  | { type: "file:change"; path: string; event: string }
-  | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
-  | { type: "task:updated"; taskId: string; status: string }
-  | { type: "provision:start"; appCount: number }
-  | { type: "provision:complete"; total: number; succeeded: number; failed: number }
-  | { type: "session:switched"; sessionId: string }
-  | {
-      type: "approval:request";
-      id: string;
-      toolName: string;
-      args: unknown;
-      timeout: number;
-      requestId?: string;
-      eventId?: string;
-    }
-  | {
-      type: "client:ack";
-      actionId: string;
-      actionType: string;
-      status: "accepted" | "rejected";
-      retryable?: boolean;
-    }
-  | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
-  | { type: "data:change"; app: string; key: string }
-  | { type: "integration:connected"; service: string; accountLabel: string }
-  | { type: "integration:disconnected"; service: string; id: string }
-  | { type: "integration:expired"; service: string; id: string; accountLabel: string }
-  | { type: "pong" }
-  | { type: "sync:change"; files: Array<{ path: string; hash: string; size: number; action: string }>; peerId: string; manifestVersion: number }
-  | { type: "sync:conflict"; path: string; localHash: string; remoteHash: string; remotePeerId: string; conflictPath: string }
-  | { type: "sync:peer-join"; peerId: string; hostname: string; platform: string }
-  | { type: "sync:peer-leave"; peerId: string }
-  | { type: "sync:share-invite"; shareId: string; ownerHandle: string; path: string; role: string }
-  | { type: "sync:access-revoked"; shareId: string; ownerHandle: string; path: string };
-
-function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
-  switch (event.type) {
-    case "init":
-      return { type: "kernel:init", sessionId: event.sessionId, requestId };
-    case "text":
-      return { type: "kernel:text", text: event.text, requestId };
-    case "tool_start":
-      return { type: "kernel:tool_start", tool: event.tool, requestId };
-    case "tool_end":
-      return { type: "kernel:tool_end", input: event.input, requestId };
-    case "result":
-      return { type: "kernel:result", data: event.data, requestId };
-    case "aborted":
-      return { type: "kernel:aborted", requestId };
-  }
-}
-
-function send(ws: WSContext, msg: ServerMessage): boolean {
-  try {
-    ws.send(JSON.stringify(msg));
-    return true;
-  } catch (err: unknown) {
-    console.warn("[gateway] Main WebSocket send failed:", err instanceof Error ? err.name : typeof err);
-    return false;
-  }
-}
-
-function actionIdForClientMessage(message: MainWsClientMessage): string | null {
-  if ("requestId" in message && typeof message.requestId === "string" && message.requestId.length > 0) {
-    return message.requestId;
-  }
-  if (message.type === "approval_response") return message.id;
-  if (message.type === "switch_session") return `switch_session:${message.sessionId}`;
-  return null;
-}
-
-function sendClientAck(
-  ws: WSContext,
-  message: MainWsClientMessage,
-  status: "accepted" | "rejected",
-  retryable = status !== "accepted",
-) {
-  const actionId = actionIdForClientMessage(message);
-  if (!actionId) return;
-  send(ws, {
-    type: "client:ack",
-    actionId,
-    actionType: message.type,
-    status,
-    retryable,
-  });
-}
-
 const CONVERSATION_REPLAY_BATCH_SIZE = 100;
 const CONVERSATION_RECONNECT_GRACE_MS = 30_000;
 const MAX_RECONNECTABLE_ABORT_CONTROLLERS = 100;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
-
-type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
-
-export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getConfig">): Promise<number | undefined> {
-  try {
-    return (await runner.getConfig()).port;
-  } catch (err: unknown) {
-    if (err instanceof SymphonyConfigLoadError) {
-      console.warn("[gateway] Ignoring invalid Symphony config while seeding CORS origins");
-      return undefined;
-    }
-    throw err;
-  }
-}
-
-function parseSymphonyPort(value: string | undefined): number | undefined {
-  if (!value || !/^(?:0|[1-9]\d*)$/.test(value)) return undefined;
-  const port = Number(value);
-  return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : undefined;
-}
-
-function parseLoopbackOriginPort(value: string | undefined): number | undefined {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
-      return undefined;
-    }
-    return parseSymphonyPort(url.port);
-  } catch (err: unknown) {
-    if (!(err instanceof TypeError)) {
-      console.warn("[gateway] Ignoring invalid Symphony upstream origin:", err);
-    }
-    return undefined;
-  }
-}
-
-export async function resolveInitialSymphonyPort(
-  runner: Pick<SymphonyRunner, "getConfig">,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<number | undefined> {
-  return parseLoopbackOriginPort(env.SYMPHONY_UPSTREAM_ORIGIN) ??
-    parseSymphonyPort(env.SYMPHONY_PORT) ??
-    await readInitialSymphonyPort(runner);
-}
-
-function symphonyUpstreamOriginForPort(port: number | undefined): string | undefined {
-  return port ? `http://127.0.0.1:${port}` : undefined;
-}
 
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
