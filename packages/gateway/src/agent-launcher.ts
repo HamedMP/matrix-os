@@ -19,6 +19,7 @@ export interface AgentStatus {
 
 export interface AgentLaunchSandbox {
   enabled: boolean;
+  mode?: "read-only" | "workspace-write" | "danger-full-access";
   writableRoots?: string[];
   adminOverride?: boolean;
 }
@@ -28,6 +29,7 @@ export interface AgentLaunchInput {
   cwd: string;
   prompt?: string;
   sandbox?: AgentLaunchSandbox;
+  approvalPolicy?: "untrusted" | "on-request" | "on-failure" | "never";
   runtimeHome?: string;
 }
 
@@ -93,9 +95,12 @@ function codexSandboxArgs(sandbox?: AgentLaunchSandbox): string[] {
     }
     throw new Error("Codex sandbox preflight is required");
   }
-  const args = ["--sandbox", "workspace-write"];
-  for (const root of sandbox.writableRoots ?? []) {
-    args.push("--add-dir", root);
+  const mode = sandbox.mode ?? "workspace-write";
+  const args = ["--sandbox", mode];
+  if (mode === "workspace-write") {
+    for (const root of sandbox.writableRoots ?? []) {
+      args.push("--add-dir", root);
+    }
   }
   return args;
 }
@@ -116,7 +121,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
         command,
         args: [
           "--ask-for-approval",
-          "never",
+          input.approvalPolicy ?? "never",
           "exec",
           "--skip-git-repo-check",
           ...codexSandboxArgs(input.sandbox),

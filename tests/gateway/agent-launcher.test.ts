@@ -164,6 +164,27 @@ describe("agent-launcher", () => {
     expect(launch.args.at(-1)).toBe("--help");
   });
 
+  it("applies explicit Codex approval and read-only sandbox settings", () => {
+    const launch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "review only",
+      approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "read-only", writableRoots: ["/tmp/ignored"] },
+    });
+
+    expect(launch.args).toEqual([
+      "--ask-for-approval",
+      "on-request",
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "--",
+      "review only",
+    ]);
+  });
+
   it("requires Codex sandbox metadata unless explicitly overridden", () => {
     expect(() => buildAgentLaunch({
       agent: "codex",

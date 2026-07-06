@@ -78,13 +78,16 @@ describe("coding agent workspace provider", () => {
         prompt: createBody.prompt,
         runtimePreference: "zellij",
         sessionId: expect.stringMatching(/^sess_[A-Za-z0-9_-]+$/),
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
       }),
     });
     expect(snapshot.thread).toMatchObject({
       providerId: "codex",
       projectId: "repo-main",
       taskId: "task_abc123",
-      terminalSessionId: "matrix-agent-workspace-1",
+      terminalSessionId: "term_sess_workspace_1",
       status: "running",
       attention: "none",
     });

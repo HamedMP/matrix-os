@@ -85,7 +85,7 @@ describe("workspace session orchestrator", () => {
     expect(d.agentSessionManager.startSession).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
       ownerId: "user_workspace",
-      sandbox: { enabled: true, writableRoots: [worktree.path] },
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: [worktree.path] },
       sessionId: "sess_fixed",
     }));
     expect(d.eventPublisher.publishSessionStarted).toHaveBeenCalledWith(session);

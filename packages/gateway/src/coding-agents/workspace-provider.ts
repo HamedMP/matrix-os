@@ -43,8 +43,8 @@ function terminalSessionIdFor(session: {
   id?: unknown;
 }): string {
   const candidates = [
-    session.runtime?.zellijSession,
     session.terminalSessionId,
+    session.runtime?.zellijSession,
     session.id,
   ];
   for (const candidate of candidates) {
@@ -129,6 +129,9 @@ export function createWorkspaceCodingAgentProvider(
           projectSlug: request.projectId,
           taskId: request.taskId,
           worktreeId: request.worktreeId,
+          mode: request.mode,
+          approvalPolicy: request.approvalPolicy,
+          sandboxMode: request.sandboxMode,
           runtimePreference: "zellij",
         },
       });

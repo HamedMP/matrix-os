@@ -17,6 +17,7 @@ import type { createZellijRuntime } from "./zellij-runtime.js";
 
 export type SessionKind = "shell" | "agent";
 export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
+type SessionApprovalPolicy = "untrusted" | "on_request" | "on_failure" | "never";
 
 export interface WorkspaceSession {
   id: string;
@@ -73,6 +74,7 @@ const SlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
 const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/);
 const AgentSandboxSchema = z.object({
   enabled: z.boolean(),
+  mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
   writableRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
   adminOverride: z.boolean().optional(),
 }).strict();
@@ -86,6 +88,9 @@ const StartSessionSchema = z.object({
   pr: z.number().int().positive().optional(),
   agent: SupportedAgentSchema.optional(),
   prompt: PromptContentSchema.optional(),
+  mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
+  approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "never"]).optional(),
+  sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
   runtimePreference: z.enum(["zellij"]).optional(),
   sandbox: AgentSandboxSchema.optional(),
 });
@@ -105,6 +110,12 @@ function nowIso(now?: () => string): string {
 
 function failure(status: number, code: string, message: string, holderId?: string): Failure {
   return { ok: false, status, error: { code, message }, holderId };
+}
+
+function toAgentApprovalPolicy(policy?: SessionApprovalPolicy): "untrusted" | "on-request" | "on-failure" | "never" | undefined {
+  if (policy === "on_request") return "on-request";
+  if (policy === "on_failure") return "on-failure";
+  return policy;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -286,6 +297,7 @@ export function createAgentSessionManager(options: {
             cwd,
             prompt: request.prompt,
             sandbox: request.sandbox,
+            approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
           })
           : { command: "bash", args: [], cwd, env: {} };
       } catch (err: unknown) {
