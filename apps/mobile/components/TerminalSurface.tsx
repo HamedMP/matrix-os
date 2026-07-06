@@ -1,5 +1,12 @@
-import React, { forwardRef, useCallback, useImperativeHandle, useMemo, useRef } from "react";
-import { StyleSheet, View } from "react-native";
+import React, {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from "react";
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { colors } from "@/lib/theme";
 
@@ -11,6 +18,9 @@ export interface TerminalSurfaceHandle {
   write: (data: string) => void;
   clear: () => void;
   focus: () => void;
+  blur: () => void;
+  scrollLines: (lines: number) => void;
+  scrollToBottom: () => void;
 }
 
 interface TerminalSurfaceProps {
@@ -62,9 +72,24 @@ function buildHtml(fontScale: number): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@${XTERM_VERSION}/css/xterm.css" integrity="sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP" crossorigin="anonymous" />
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: ${theme.background}; overflow: hidden; }
-  #term { height: 100%; width: 100%; padding: 8px 10px; box-sizing: border-box; }
-  .xterm .xterm-viewport { background: ${theme.background} !important; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: ${theme.background};
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #term { height: 100%; width: 100%; padding: 8px 10px; box-sizing: border-box; position: relative; }
+  .xterm .xterm-viewport {
+    background: ${theme.background} !important;
+    overflow-y: scroll !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
   .xterm-viewport::-webkit-scrollbar { width: 0; height: 0; }
 </style>
 </head>
@@ -84,7 +109,7 @@ function buildHtml(fontScale: number): string {
         fontSize: ${fontSize},
         lineHeight: 1.15,
         cursorBlink: true,
-        scrollback: 5000,
+        scrollback: 12000,
         convertEol: false,
         theme: ${JSON.stringify(theme)},
       });
@@ -92,6 +117,26 @@ function buildHtml(fontScale: number): string {
       term.loadAddon(fit);
       term.open(document.getElementById("term"));
       window.__term = term;
+      window.__matrixTerminal = {
+        focus: function () { term.focus(); },
+        blur: function () {
+          try { term.blur(); } catch (e) {}
+          try {
+            var textarea = document.querySelector(".xterm-helper-textarea");
+            if (textarea && textarea.blur) textarea.blur();
+            var active = document.activeElement;
+            if (active && active.blur) active.blur();
+            document.body.setAttribute("tabindex", "-1");
+            document.body.focus({ preventScroll: true });
+          } catch (e) {}
+        },
+        scrollLines: function (lines) {
+          try { term.scrollLines(lines); } catch (e) {}
+        },
+        scrollToBottom: function () {
+          try { term.scrollToBottom(); } catch (e) {}
+        }
+      };
 
       function doFit() {
         try { fit.fit(); post({ type: "resize", cols: term.cols, rows: term.rows }); } catch (e) {}
@@ -99,6 +144,7 @@ function buildHtml(fontScale: number): string {
       doFit();
       window.addEventListener("resize", doFit);
       term.onData(function (data) { post({ type: "input", data: data }); });
+
       post({ type: "ready", cols: term.cols, rows: term.rows });
     }
     boot();
@@ -121,6 +167,11 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
       webRef.current?.injectJavaScript(`${js};true;`);
     }, []);
 
+    const scrollLines = useCallback((lines: number) => {
+      if (!Number.isFinite(lines) || lines === 0) return;
+      inject(`window.__matrixTerminal && window.__matrixTerminal.scrollLines(${Math.trunc(lines)})`);
+    }, [inject]);
+
     const flush = useCallback(() => {
       if (!readyRef.current || pendingRef.current.length === 0) return;
       const buffered = pendingRef.current.join("");
@@ -139,9 +190,12 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           pendingRef.current = [];
           inject("window.__term && window.__term.clear()");
         },
-        focus: () => inject("window.__term && window.__term.focus()"),
+        focus: () => inject("window.__matrixTerminal && window.__matrixTerminal.focus()"),
+        blur: () => inject("window.__matrixTerminal && window.__matrixTerminal.blur()"),
+        scrollLines,
+        scrollToBottom: () => inject("window.__matrixTerminal && window.__matrixTerminal.scrollToBottom()"),
       }),
-      [flush, inject],
+      [flush, inject, scrollLines],
     );
 
     const handleMessage = useCallback(
@@ -154,7 +208,9 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         }
         if (msg.type === "ready") {
           readyRef.current = true;
-          if (typeof msg.cols === "number" && typeof msg.rows === "number") onResize(msg.cols, msg.rows);
+          if (typeof msg.cols === "number" && typeof msg.rows === "number") {
+            onResize(msg.cols, msg.rows);
+          }
           flush();
           return;
         }
@@ -172,14 +228,16 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
     return (
       <View style={styles.container}>
         <WebView
+          key="terminal-webview-accessory-enabled"
           ref={webRef}
           originWhitelist={["*"]}
           source={{ html }}
           onMessage={handleMessage}
           // Terminal owns scrolling; the RN side should not bounce.
-          scrollEnabled={false}
+          scrollEnabled
           overScrollMode="never"
           bounces={false}
+          hideKeyboardAccessoryView={false}
           keyboardDisplayRequiresUserAction={false}
           androidLayerType="hardware"
           setBuiltInZoomControls={false}
@@ -191,7 +249,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
   },
 );
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: T.bg, overflow: "hidden" },
-  web: { flex: 1, backgroundColor: T.bg },
-});
+const styles = StyleSheet.create((theme) => ({
+  container: { flex: 1, backgroundColor: theme.terminal.bg, overflow: "hidden" },
+  web: { flex: 1, backgroundColor: theme.terminal.bg },
+}));

@@ -1,7 +1,7 @@
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Ionicons } from "@expo/vector-icons";
 import type { ConnectionState } from "@/lib/gateway-client";
-import { colors, fonts, spacing } from "@/lib/theme";
 
 interface ConnectionBannerProps {
   state: ConnectionState;
@@ -17,12 +17,13 @@ const STATE_CONFIG: Record<ConnectionState, { label: string; icon: keyof typeof 
 };
 
 export function ConnectionBanner({ state, queueCount, onRetry }: ConnectionBannerProps) {
+  const { theme } = useUnistyles();
   const config = STATE_CONFIG[state];
   if (!config) return null;
 
   return (
     <View style={styles.container}>
-      <Ionicons name={config.icon} size={14} color={colors.light.forest} />
+      <Ionicons name={config.icon} size={14} color={theme.colors.forest} />
       <Text style={styles.label}>
         {config.label}
         {queueCount > 0 ? ` (${queueCount} queued)` : ""}
@@ -36,36 +37,36 @@ export function ConnectionBanner({ state, queueCount, onRetry }: ConnectionBanne
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: spacing.sm,
+    gap: theme.spacing.sm,
     paddingVertical: 6,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
     borderBottomWidth: 1,
-    borderBottomColor: colors.light.border,
-    backgroundColor: colors.light.secondary,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.secondary,
   },
   label: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 12,
-    color: colors.light.forest,
+    color: theme.colors.forest,
   },
   retryButton: {
-    marginLeft: spacing.sm,
+    marginLeft: theme.spacing.sm,
     borderRadius: 4,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    paddingHorizontal: spacing.sm,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.sm,
     paddingVertical: 2,
   },
   retryText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 11,
-    color: colors.light.forest,
+    color: theme.colors.forest,
   },
-});
+}));

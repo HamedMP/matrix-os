@@ -98,6 +98,9 @@ export const fonts = {
   sansMedium: "Inter_500Medium" as const,
   mono: "JetBrainsMono_400Regular" as const,
   monoBold: "JetBrainsMono_700Bold" as const,
+  // Bricolage Grotesque — brand/display face for big titles only. Use sparingly.
+  display: "BricolageGrotesque_700Bold" as const,
+  displaySemiBold: "BricolageGrotesque_600SemiBold" as const,
 } as const;
 
 export const spacing = {
@@ -131,10 +134,23 @@ export const type = {
   caption: { fontFamily: fonts.mono, fontSize: 11, lineHeight: 14, letterSpacing: 0.2 },
 } as const;
 
-// Elevation (RN boxShadow strings, supported on RN 0.76+ / web).
+// Elevation (RN boxShadow strings, supported on RN 0.76+ / web). Shadows are
+// forest-tinted (50, 61, 46) so depth reads botanical rather than neutral-grey.
 export const shadows = {
-  sm: "0 1px 3px rgba(26, 29, 24, 0.05)",
-  card: "0 4px 14px rgba(26, 29, 24, 0.05)",
-  raised: "0 6px 18px rgba(26, 29, 24, 0.06)",
-  nav: "0 10px 28px rgba(50, 61, 46, 0.10)",
+  sm: "0 1px 3px rgba(50, 61, 46, 0.06)",
+  card: "0 4px 14px rgba(50, 61, 46, 0.08)",
+  raised: "0 8px 22px rgba(50, 61, 46, 0.10)",
+  nav: "0 14px 34px rgba(50, 61, 46, 0.16)",
+} as const;
+
+// Frosted-glass recipe for floating/elevated chrome (tab bar, cards, modals,
+// search). `tint`/`panelSurface` are the BlurView fallback fills; `border` is the
+// hairline glass edge; `blurIntensity` feeds expo-blur. Botanical-tinted, light.
+export const glass = {
+  tint: "rgba(250, 250, 249, 0.82)",
+  panelSurface: "rgba(252, 252, 251, 0.94)",
+  border: "rgba(50, 61, 46, 0.10)",
+  borderStrong: "rgba(50, 61, 46, 0.14)",
+  highlight: "rgba(255, 255, 255, 0.55)",
+  blurIntensity: 88,
 } as const;

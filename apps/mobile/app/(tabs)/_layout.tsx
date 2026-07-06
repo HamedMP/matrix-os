@@ -1,9 +1,14 @@
 import { Tabs } from "expo-router";
-import { View, StyleSheet } from "react-native";
+import { View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
-import { colors, fonts } from "@/lib/theme";
+
+// Chat is hidden from the tab bar, so land on Apps by default.
+export const unstable_settings = {
+  initialRouteName: "apps",
+};
 
 const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; filled: keyof typeof Ionicons.glyphMap }> = {
   chat: { outline: "chatbubble-outline", filled: "chatbubble" },
@@ -13,6 +18,7 @@ const TAB_ICONS: Record<string, { outline: keyof typeof Ionicons.glyphMap; fille
 };
 
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
+  const { theme } = useUnistyles();
   const icons = TAB_ICONS[name];
   if (!icons) return null;
 
@@ -21,7 +27,7 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
       <Ionicons
         name={focused ? icons.filled : icons.outline}
         size={20}
-        color={focused ? colors.light.forest : colors.light.moss}
+        color={focused ? theme.colors.forest : theme.colors.moss}
       />
     </View>
   );
@@ -36,7 +42,8 @@ function ConnectionDot({ connected }: { connected: boolean }) {
 }
 
 export default function TabsLayout() {
-  const { connectionState, unreadCount } = useGateway();
+  const { theme } = useUnistyles();
+  const { connectionState } = useGateway();
   const isConnected = connectionState === "connected";
 
   return (
@@ -45,27 +52,20 @@ export default function TabsLayout() {
         tabBarStyle: styles.tabBar,
         tabBarHideOnKeyboard: true,
         tabBarBackground: () => (
-          <BlurView tint="light" intensity={88} style={styles.tabBarBackdrop} />
+          <BlurView tint="light" intensity={theme.glass.blurIntensity} style={styles.tabBarBackdrop} />
         ),
-        tabBarActiveTintColor: colors.light.forest,
-        tabBarInactiveTintColor: colors.light.moss,
+        tabBarActiveTintColor: theme.colors.forest,
+        tabBarInactiveTintColor: theme.colors.moss,
         tabBarLabelStyle: styles.tabBarLabel,
         tabBarItemStyle: styles.tabBarItem,
         headerStyle: styles.header,
-        headerTintColor: colors.light.foreground,
+        headerTintColor: theme.colors.foreground,
         headerTitleStyle: styles.headerTitle,
         headerRight: () => <ConnectionDot connected={isConnected} />,
       }}
     >
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: "Chat",
-          tabBarIcon: ({ focused }) => <TabIcon name="chat" focused={focused} />,
-          tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
-          tabBarBadgeStyle: unreadCount > 0 ? styles.badge : undefined,
-        }}
-      />
+      {/* Chat is intentionally hidden from the tab bar; route kept for deep links. */}
+      <Tabs.Screen name="chat" options={{ href: null }} />
       <Tabs.Screen
         name="apps"
         options={{
@@ -98,34 +98,33 @@ export default function TabsLayout() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme, rt) => ({
+  // Full-width frosted bar anchored to the bottom edge — no floating gaps, so the
+  // paper background never peeks around it. Content scrolls under the blur.
   tabBar: {
     position: "absolute" as const,
-    left: 14,
-    right: 14,
-    bottom: process.env.EXPO_OS === "ios" ? 12 : 10,
-    height: process.env.EXPO_OS === "ios" ? 78 : 66,
-    paddingTop: 8,
-    paddingBottom: process.env.EXPO_OS === "ios" ? 18 : 8,
-    borderTopWidth: 0,
-    borderRadius: 26,
-    borderCurve: "continuous" as const,
-    borderWidth: 1,
-    borderColor: "rgba(50, 61, 46, 0.10)",
-    backgroundColor: "rgba(250, 250, 249, 0.86)",
-    overflow: "hidden",
-    boxShadow: "0 14px 34px rgba(50, 61, 46, 0.16)",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: (process.env.EXPO_OS === "ios" ? 56 : 60) + rt.insets.bottom,
+    paddingTop: 10,
+    paddingBottom: rt.insets.bottom > 0 ? rt.insets.bottom - 4 : 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.glass.border,
+    backgroundColor: theme.glass.tint,
+    elevation: 0,
+    boxShadow: "0 -1px 14px rgba(50, 61, 46, 0.05)",
   },
   tabBarBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(250, 250, 249, 0.78)",
+    backgroundColor: theme.glass.tint,
   },
   tabBarItem: {
-    borderRadius: 20,
+    borderRadius: 18,
     borderCurve: "continuous" as const,
   },
   tabBarLabel: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 11,
     marginTop: 0,
   },
@@ -142,12 +141,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(50, 61, 46, 0.08)",
   },
   header: {
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
     boxShadow: "none",
   },
   headerTitle: {
-    fontFamily: fonts.sansSemiBold,
-    color: colors.light.foreground,
+    fontFamily: theme.fonts.sansSemiBold,
+    color: theme.colors.foreground,
   },
   headerRight: {
     marginRight: 16,
@@ -161,17 +160,17 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   dotConnected: {
-    backgroundColor: colors.light.success,
+    backgroundColor: theme.colors.success,
   },
   dotDisconnected: {
-    backgroundColor: colors.light.moss,
+    backgroundColor: theme.colors.moss,
   },
   badge: {
-    backgroundColor: colors.light.forest,
-    color: colors.light.background,
+    backgroundColor: theme.colors.forest,
+    color: theme.colors.background,
     fontSize: 10,
     minWidth: 18,
     height: 18,
     lineHeight: 18,
   },
-});
+}));

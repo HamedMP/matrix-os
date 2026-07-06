@@ -7,9 +7,9 @@ import {
   RefreshControl,
   TextInput,
   Alert,
-  StyleSheet,
   type ListRenderItemInfo,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Swipeable } from "react-native-gesture-handler";
 import Animated, { ZoomIn } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
@@ -17,7 +17,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "../_layout";
 import { TaskCard, type Task } from "@/components/TaskCard";
 import { TaskDetail } from "@/components/TaskDetail";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 type FilterStatus = "all" | "pending" | "in-progress" | "completed";
 
@@ -185,6 +184,7 @@ function SwipeableTaskCard({ task, onPress, onComplete, onDelete }: SwipeableTas
 }
 
 export default function MissionControlScreen() {
+  const { theme } = useUnistyles();
   const { client } = useGateway();
   const [state, dispatch] = useReducer(missionReducer, INITIAL_MISSION_STATE);
   const { tasks, cronJobs, filter, refreshing, selectedTask, showAddForm, newTaskInput } = state;
@@ -295,10 +295,10 @@ export default function MissionControlScreen() {
       <RefreshControl
         refreshing={refreshing}
         onRefresh={handleRefresh}
-        tintColor={colors.light.primary}
+        tintColor={theme.colors.primary}
       />
     ),
-    [refreshing, handleRefresh],
+    [refreshing, handleRefresh, theme.colors.primary],
   );
 
   return (
@@ -340,7 +340,7 @@ export default function MissionControlScreen() {
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIcon}>
-              <Ionicons name="clipboard-outline" size={36} color={colors.light.primary} />
+              <Ionicons name="clipboard-outline" size={36} color={theme.colors.primary} />
             </View>
             <Text style={styles.emptyLabel}>Tasks</Text>
             <Text style={styles.emptySubtitle}>No tasks yet</Text>
@@ -365,7 +365,7 @@ export default function MissionControlScreen() {
                           isActive ? styles.cronStatusActive : styles.cronStatusPaused,
                         ]}
                       />
-                      <Ionicons name="time-outline" size={16} color={colors.light.primary} />
+                      <Ionicons name="time-outline" size={16} color={theme.colors.primary} />
                     </View>
                     <View style={styles.cronTextContainer}>
                       <Text style={styles.cronName}>
@@ -388,7 +388,7 @@ export default function MissionControlScreen() {
               })
             ) : (
               <View style={styles.cronEmptyContainer}>
-                <Ionicons name="calendar-outline" size={24} color={colors.light.mutedForeground} />
+                <Ionicons name="calendar-outline" size={24} color={theme.colors.mutedForeground} />
                 <Text style={styles.cronEmptyText}>No scheduled jobs</Text>
                 <Text style={styles.cronEmptySubtext}>
                   Ask your AI to set up recurring tasks or reminders.
@@ -407,7 +407,7 @@ export default function MissionControlScreen() {
             value={newTaskInput}
             onChangeText={(value) => dispatch({ type: "setNewTaskInput", value })}
             placeholder="What needs to be done?"
-            placeholderTextColor={colors.light.mutedForeground}
+            placeholderTextColor={theme.colors.mutedForeground}
             autoFocus
           />
           <View style={styles.addFormButtons}>
@@ -443,7 +443,7 @@ export default function MissionControlScreen() {
             onPress={() => dispatch({ type: "setShowAddForm", value: true })}
             style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
           >
-            <Ionicons name="add" size={28} color={colors.light.primaryForeground} />
+            <Ionicons name="add" size={28} color={theme.colors.primaryForeground} />
           </Pressable>
         </Animated.View>
       )}
@@ -468,134 +468,134 @@ export default function MissionControlScreen() {
   );
 }
 
-const swipeStyles = StyleSheet.create({
+const swipeStyles = StyleSheet.create((theme) => ({
   completeAction: {
-    backgroundColor: colors.light.success,
+    backgroundColor: theme.colors.success,
     justifyContent: "center",
     alignItems: "center",
     width: 90,
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     flexDirection: "column",
     gap: 4,
   },
   deleteAction: {
-    backgroundColor: colors.light.destructive,
+    backgroundColor: theme.colors.destructive,
     justifyContent: "center",
     alignItems: "center",
     width: 90,
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     flexDirection: "column",
     gap: 4,
   },
   actionText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 11,
     color: "#fff",
   },
-});
+}));
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
   },
   filterRow: {
     flexDirection: "row",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    gap: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
   },
   filterChip: {
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.lg,
+    borderRadius: theme.radius.full,
+    paddingHorizontal: theme.spacing.lg,
     paddingVertical: 6,
   },
   filterChipActive: {
-    backgroundColor: colors.light.primary,
+    backgroundColor: theme.colors.primary,
   },
   filterChipInactive: {
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
   filterChipText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 12,
   },
   filterChipTextActive: {
-    color: colors.light.primaryForeground,
+    color: theme.colors.primaryForeground,
   },
   filterChipTextInactive: {
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   listContent: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
     paddingBottom: 100,
-    gap: spacing.sm,
+    gap: theme.spacing.sm,
   },
   emptyContainer: {
     alignItems: "center",
     paddingVertical: 60,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: theme.spacing.xl,
   },
   emptyIcon: {
     width: 72,
     height: 72,
     borderRadius: 18,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: spacing.lg,
+    marginBottom: theme.spacing.lg,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
   },
   emptyLabel: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 11,
-    color: colors.light.primary,
+    color: theme.colors.primary,
     letterSpacing: 2,
     textTransform: "uppercase",
-    marginBottom: spacing.sm,
+    marginBottom: theme.spacing.sm,
   },
   emptySubtitle: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 16,
-    color: colors.light.foreground,
-    marginBottom: spacing.sm,
+    color: theme.colors.foreground,
+    marginBottom: theme.spacing.sm,
   },
   emptyDescription: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     textAlign: "center",
     lineHeight: 20,
   },
   cronSection: {
-    marginTop: spacing.xl,
+    marginTop: theme.spacing.xl,
   },
   cronSectionLabel: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 11,
-    color: colors.light.primary,
+    color: theme.colors.primary,
     letterSpacing: 2,
     textTransform: "uppercase",
-    marginBottom: spacing.sm,
+    marginBottom: theme.spacing.sm,
   },
   cronCard: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.md,
-    marginBottom: spacing.sm,
-    borderRadius: radius.lg,
+    gap: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
   },
   cronIconContainer: {
     position: "relative",
@@ -609,143 +609,143 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     zIndex: 1,
     borderWidth: 1.5,
-    borderColor: colors.light.card,
+    borderColor: theme.colors.card,
   },
   cronStatusActive: {
-    backgroundColor: colors.light.success,
+    backgroundColor: theme.colors.success,
   },
   cronStatusPaused: {
-    backgroundColor: colors.light.mutedForeground,
+    backgroundColor: theme.colors.mutedForeground,
   },
   cronTextContainer: {
     flex: 1,
   },
   cronName: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   cronMetaRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    gap: theme.spacing.sm,
     marginTop: 2,
   },
   cronSchedule: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 12,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   cronNextRun: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 11,
-    color: colors.light.primary,
+    color: theme.colors.primary,
   },
   cronBadge: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 10,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: theme.spacing.sm,
     paddingVertical: 2,
-    borderRadius: radius.full,
+    borderRadius: theme.radius.full,
     overflow: "hidden",
   },
   cronBadgeActive: {
     backgroundColor: "rgba(34, 197, 94, 0.1)",
-    color: colors.light.success,
+    color: theme.colors.success,
   },
   cronBadgePaused: {
     backgroundColor: "rgba(120, 113, 108, 0.1)",
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   cronEmptyContainer: {
     alignItems: "center",
-    paddingVertical: spacing.xl,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.lg,
+    paddingVertical: theme.spacing.xl,
+    paddingHorizontal: theme.spacing.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
     borderStyle: "dashed",
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
   },
   cronEmptyText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.mutedForeground,
-    marginTop: spacing.sm,
+    color: theme.colors.mutedForeground,
+    marginTop: theme.spacing.sm,
   },
   cronEmptySubtext: {
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 12,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
     textAlign: "center",
-    marginTop: spacing.xs,
+    marginTop: theme.spacing.xs,
     lineHeight: 18,
   },
   addForm: {
     position: "absolute",
     bottom: 24,
-    left: spacing.lg,
-    right: spacing.lg,
-    borderRadius: radius.xl,
+    left: theme.spacing.lg,
+    right: theme.spacing.lg,
+    borderRadius: theme.radius.xl,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    padding: spacing.lg,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.lg,
     boxShadow: "0 4px 12px rgba(0, 0, 0, 0.12)",
   },
   addFormInput: {
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 15,
-    color: colors.light.foreground,
-    borderRadius: radius.md,
+    color: theme.colors.foreground,
+    borderRadius: theme.radius.md,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.background,
-    paddingHorizontal: spacing.md,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: theme.spacing.md,
     paddingVertical: 10,
-    marginBottom: spacing.md,
+    marginBottom: theme.spacing.md,
   },
   addFormButtons: {
     flexDirection: "row",
-    gap: spacing.md,
+    gap: theme.spacing.md,
   },
   addFormCancel: {
     flex: 1,
     alignItems: "center",
-    borderRadius: radius.md,
+    borderRadius: theme.radius.md,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
     paddingVertical: 10,
   },
   addFormCancelText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   addFormSubmit: {
     flex: 1,
     alignItems: "center",
-    borderRadius: radius.md,
+    borderRadius: theme.radius.md,
     borderCurve: "continuous" as const,
     paddingVertical: 10,
   },
   addFormSubmitActive: {
-    backgroundColor: colors.light.primary,
+    backgroundColor: theme.colors.primary,
   },
   addFormSubmitDisabled: {
-    backgroundColor: colors.light.muted,
+    backgroundColor: theme.colors.muted,
   },
   addFormSubmitText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 14,
-    color: colors.light.primaryForeground,
+    color: theme.colors.primaryForeground,
   },
   addFormSubmitTextDisabled: {
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   buttonPressed: {
     opacity: 0.85,
@@ -758,7 +758,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: colors.light.primary,
+    backgroundColor: theme.colors.primary,
     alignItems: "center",
     justifyContent: "center",
     boxShadow: "0 4px 8px rgba(194, 112, 58, 0.3)",
@@ -767,4 +767,4 @@ const styles = StyleSheet.create({
     opacity: 0.85,
     transform: [{ scale: 0.95 }],
   },
-});
+}));

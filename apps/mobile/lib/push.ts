@@ -1,5 +1,8 @@
 import * as Notifications from "expo-notifications";
-import type { Router } from "expo-router";
+// expo-router 57 renamed the exported `Router` type to `ImperativeRouter`.
+// A type-only `typeof import(...)` alias tracks the router shape without a
+// runtime import and stays correct across future renames.
+type Router = typeof import("expo-router").router;
 
 export type NotificationCategory = "message" | "task" | "cron" | "security";
 

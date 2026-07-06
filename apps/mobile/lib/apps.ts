@@ -32,6 +32,7 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Chat",
     description: "Talk to your Matrix OS kernel.",
+    icon: "chat",
     category: "System",
     file: "chat/index.html",
     path: "/files/apps/chat/index.html",
@@ -39,13 +40,16 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Apps",
     description: "Browse and open apps in your Matrix OS.",
+    icon: "grid",
     category: "System",
+    slug: "apps",
     file: "apps/index.html",
     path: "/files/apps/apps/index.html",
   },
   {
     name: "Terminal",
     description: "Open a Matrix VPS shell session.",
+    icon: "terminal",
     category: "System",
     slug: "terminal",
     file: "terminal/index.html",
@@ -54,6 +58,7 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Canvas",
     description: "Open your workspace canvas when spatial context helps.",
+    icon: "whiteboard",
     category: "System",
     slug: "canvas",
     file: "canvas/index.html",
@@ -62,6 +67,7 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Tasks",
     description: "Track tasks, cron jobs, and background work.",
+    icon: "task-manager",
     category: "System",
     file: "tasks/index.html",
     path: "/files/apps/tasks/index.html",
@@ -69,6 +75,7 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
   {
     name: "Settings",
     description: "Review your hosted Matrix OS connection and profile.",
+    icon: "settings",
     category: "System",
     file: "settings/index.html",
     path: "/files/apps/settings/index.html",
