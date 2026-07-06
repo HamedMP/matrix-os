@@ -346,6 +346,10 @@ function includesAbortedCompletion(events: AgentThreadEvent[]): boolean {
   return events.some((event) => event.type === "thread.completed" && event.outcome === "aborted");
 }
 
+function includesNonAbortedCompletion(events: AgentThreadEvent[]): boolean {
+  return events.some((event) => event.type === "thread.completed" && event.outcome !== "aborted");
+}
+
 export function safeThreadError(code: CodingAgentThreadError["code"]) {
   if (code === "provider_unavailable") {
     return SafeClientErrorSchema.parse({
@@ -518,7 +522,7 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
               now,
               nextEventId,
             }), threadId);
-            if (abortEvents.length === 0) {
+            if (abortEvents.length === 0 || includesNonAbortedCompletion(abortEvents)) {
               abortEvents = defaultAbortEvents(threadId, now, nextEventId);
             }
           } catch (err: unknown) {
