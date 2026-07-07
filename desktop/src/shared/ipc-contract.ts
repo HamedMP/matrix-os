@@ -7,6 +7,8 @@ import {
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   AgentThreadSnapshotSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
   CreateAgentThreadRequestSchema,
   CursorSchema,
   FileBrowseRequestSchema,
@@ -124,6 +126,14 @@ export const INVOKE_CHANNELS = {
   "runtime:get-summary": {
     request: Empty,
     response: RuntimeSummarySchema,
+  },
+  "runtime:get-notification-preferences": {
+    request: Empty,
+    response: CodingAgentNotificationPreferencesSchema,
+  },
+  "runtime:update-notification-preferences": {
+    request: CodingAgentNotificationPreferencesUpdateSchema,
+    response: CodingAgentNotificationPreferencesSchema,
   },
   "runtime:get-reviews": {
     request: z.object({ cursor: CursorSchema.optional() }).strict(),

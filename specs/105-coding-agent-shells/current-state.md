@@ -1,6 +1,6 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-notification-prefs`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-notification-controls`
 **Updated**: 2026-07-07
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
@@ -202,6 +202,8 @@ IPC contract:
 
 - `desktop/src/shared/ipc-contract.ts`
 - `runtime:get-summary` returns `RuntimeSummarySchema`.
+- `runtime:get-notification-preferences` returns `CodingAgentNotificationPreferencesSchema` through the trusted main process.
+- `runtime:update-notification-preferences` accepts `CodingAgentNotificationPreferencesUpdateSchema` and returns `CodingAgentNotificationPreferencesSchema` through the trusted main process.
 - `runtime:get-thread-snapshot` accepts a bounded `threadId` and returns `AgentThreadSnapshotSchema`.
 - `runtime:submit-approval-decision` accepts bounded thread/approval ids plus `ApprovalDecisionRequestSchema` fields and returns `AgentThreadSnapshotSchema`.
 - `runtime:submit-input-answer` accepts bounded thread/input request ids plus `UserInputAnswerRequestSchema` fields and returns `AgentThreadSnapshotSchema`.
@@ -218,6 +220,7 @@ Main process:
 
 - `desktop/src/main/coding-agents/runtime-summary-client.ts`
 - Fetches `/api/coding-agents/summary` from the selected runtime origin with bearer auth in the main process.
+- Fetches and updates `/api/coding-agents/notification-preferences` from the selected runtime origin with bearer auth in the main process, validates the gateway `{ preferences }` envelope, and returns only the preference object to the renderer.
 - Fetches `/api/coding-agents/threads/:threadId` from the selected runtime origin with bearer auth in the main process and validates `AgentThreadSnapshotSchema`.
 - Posts approval decisions to `/api/coding-agents/threads/:threadId/approvals/:approvalId/decision` from the main process with bearer auth, a timeout, and `AgentThreadSnapshotSchema` response validation.
 - Posts user-input answers to `/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer` from the main process with bearer auth, a timeout, and `AgentThreadSnapshotSchema` response validation.
@@ -238,6 +241,7 @@ Renderer:
 Current behavior:
 
 - Read-only dashboard renders providers, gateway-owned attention threads, active threads, and terminals.
+- Notification controls render approval, input, and failed-run attention push preferences, load them through trusted IPC, and submit full replacement updates through trusted IPC with generic error states.
 - Attention thread rows read only from `RuntimeSummarySchema.attentionThreads`, show safe attention labels such as approval/input/failed, and open the existing bounded thread detail path through trusted IPC.
 - Active thread rows with a matching attachable `terminalSessionId` can open the existing desktop Terminal tab for that canonical session; stale or unavailable terminal bindings do not render an action.
 - Selected active threads hydrate a bounded thread snapshot through `runtime:get-thread-snapshot`, show provider/status/terminal metadata, event counts, loading and safe generic error states, and render gateway-bounded snapshot events with generic copy for assistant text, tool output, file changes, approval/input prompts, and unsafe runtime errors.
@@ -271,6 +275,8 @@ Gateway client:
 
 - `apps/mobile/lib/gateway-client.ts`
 - `getCodingAgentRuntimeSummary()` calls `GET /api/coding-agents/summary`, validates `RuntimeSummarySchema`, and returns the safe `"Runtime summary unavailable"` error on failure.
+- `getCodingAgentNotificationPreferences()` calls `GET /api/coding-agents/notification-preferences`, validates the gateway `{ preferences }` envelope with `CodingAgentNotificationPreferencesSchema`, and returns the safe `"Notification settings unavailable"` error on failure.
+- `updateCodingAgentNotificationPreferences()` sends a full `CodingAgentNotificationPreferencesUpdateSchema` body to `PUT /api/coding-agents/notification-preferences`, validates the gateway `{ preferences }` envelope, and returns the safe `"Notification settings could not be saved. Try again."` error on failure.
 - `getCodingAgentThreadSnapshot()` calls `GET /api/coding-agents/threads/:threadId`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Thread state unavailable"` error on failure.
 - `submitCodingAgentApprovalDecision()` posts bounded approval decisions to `POST /api/coding-agents/threads/:threadId/approvals/:approvalId/decision`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Approval could not be sent. Try again."` error on failure.
 - `submitCodingAgentInputAnswer()` posts bounded answers to `POST /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Input could not be sent. Try again."` error on failure.
@@ -288,6 +294,7 @@ Screen:
 - `apps/mobile/app/agents/new.tsx`
 - `apps/mobile/app/agents/[threadId].tsx`
 - Read-only phone-first dashboard with providers, gateway-owned attention threads, active threads, and terminal sessions.
+- Notification controls render approval, input, and failed-run attention push switches, load them through the authenticated gateway client, submit full replacement updates, and keep preference state transient in component memory.
 - Attention thread rows read only from `RuntimeSummarySchema.attentionThreads`, show safe attention labels such as approval/input/failed, and navigate to the existing bounded thread detail route.
 - When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the authenticated gateway client and renders project, PR, round, status, and high-severity count.
 - Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, gateway-bounded hunk lines, and safe finding summaries.
@@ -418,5 +425,5 @@ git diff --check
 - File/review/preview/source-control shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata and capped hunk line bodies from safe owner worktrees plus partial findings-derived fallback metadata for shell diff panels. Runtime summaries now include safe preview summary rows from existing workspace preview records, and the desktop/mobile Agents workspaces render those rows read-only. Desktop also has a read-only preview inspector with HTTPS-only external launch through the existing safe IPC path, mobile has an HTTPS-only preview route using the existing app runtime frame, and the browser Workspace preview panel renders validated active-project coding-agent preview origin/status rows with direct launch limited to HTTPS origins. Gateway now has bounded browse/search/read and conflict-safe write routes for owner worktree files, desktop/mobile review details can render one selected bounded file snapshot through trusted clients, desktop/mobile review details can prepare a local source-control commit through trusted clients, the gateway can create or return a GitHub pull request from a validated owner worktree without exposing credentials, and desktop/mobile review details can trigger that PR creation through trusted clients with generic safe error states and safe HTTPS open actions for the returned pull request URL. Remaining work: browser-shell source-control entry if needed.
 - Approval/input shell actions: desktop and mobile approval decisions plus user-input answers now use trusted gateway clients, bounded UI controls, idempotent request ids, and focused tests. Remaining work: cross-shell resolved-state refresh tests and richer mobile action-sheet polish.
 - Browser shell entry point: Canvas-first placement is still undecided.
-- Notifications/attention routing: desktop notification IPC exists and notification clicks focus the coding-agent workspace thread in the Agents tab with a visible current-thread marker. Gateway runtime summaries expose bounded `attentionThreads` separately from `activeThreads`, allowing failed or waiting attention to be surfaced without reclassifying terminal threads as active. Desktop and mobile dashboards now render the `attentionThreads` list directly. Gateway thread-event sinks can emit safe push-channel payloads for approval-required, input-required, and failed attention events through a capped TTL dedupe registry, per-owner notification preferences can disable approval/input/failed attention push delivery before channel send, and mobile push notification taps can route bounded coding-agent `threadId` payloads into the existing thread detail route. Remaining work: desktop/mobile preference controls and cross-device delivery policy are not yet implemented.
+- Notifications/attention routing: desktop notification IPC exists and notification clicks focus the coding-agent workspace thread in the Agents tab with a visible current-thread marker. Gateway runtime summaries expose bounded `attentionThreads` separately from `activeThreads`, allowing failed or waiting attention to be surfaced without reclassifying terminal threads as active. Desktop and mobile dashboards now render the `attentionThreads` list directly. Gateway thread-event sinks can emit safe push-channel payloads for approval-required, input-required, and failed attention events through a capped TTL dedupe registry, per-owner notification preferences can disable approval/input/failed attention push delivery before channel send, mobile push notification taps can route bounded coding-agent `threadId` payloads into the existing thread detail route, and desktop/mobile Agents workspaces expose transient controls for the three owner-scoped attention push preferences. Remaining work: cross-device delivery policy is not yet implemented.
 - Public docs: public Matrix OS docs and the internal operator runbook are present. Remaining work is keeping them synchronized with later write/source-control, provider setup, and browser entry slices.

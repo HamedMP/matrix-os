@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Search, Server, SquareTerminal } from "lucide-react";
+import { Bell, Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Search, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
@@ -50,6 +50,7 @@ type ComposerSeed = {
   seedId: number;
   draft: AgentThreadComposerDraft;
 };
+type NotificationPreferenceKey = "approval" | "input" | "failed";
 type SelectedReviewHunk = {
   key: string;
   file: ReviewSnapshotFile;
@@ -115,6 +116,65 @@ function RuntimeHeader({ summary, onRefresh }: { summary: RuntimeSummary; onRefr
         Refresh
       </Button>
     </div>
+  );
+}
+
+const NOTIFICATION_TOGGLES: Array<{ key: NotificationPreferenceKey; label: string; detail: string }> = [
+  { key: "approval", label: "Approval alerts", detail: "Approval-required runs" },
+  { key: "input", label: "Input request alerts", detail: "Runs waiting for a response" },
+  { key: "failed", label: "Failed run alerts", detail: "Runs that need recovery" },
+];
+
+function NotificationPreferencesPanel() {
+  const status = useCodingAgentWorkspace((s) => s.notificationPreferencesStatus);
+  const preferences = useCodingAgentWorkspace((s) => s.notificationPreferences);
+  const error = useCodingAgentWorkspace((s) => s.notificationPreferencesError);
+  const updateNotificationPreferences = useCodingAgentWorkspace((s) => s.updateNotificationPreferences);
+  const disabled = status === "loading" || status === "saving" || !preferences;
+
+  return (
+    <Section title="Notifications">
+      <div
+        className="grid gap-2 rounded-md border p-3 md:grid-cols-3"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+      >
+        {NOTIFICATION_TOGGLES.map((item) => (
+          <label
+            key={item.key}
+            className="flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2"
+            style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <Bell size={14} aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{item.label}</span>
+                <span className="block truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {item.detail}
+                </span>
+              </span>
+            </span>
+            <input
+              aria-label={item.label}
+              type="checkbox"
+              className="h-4 w-4 shrink-0"
+              checked={Boolean(preferences?.attentionPush[item.key])}
+              disabled={disabled}
+              onChange={(event) => {
+                if (!preferences) return;
+                void updateNotificationPreferences({
+                  attentionPush: { [item.key]: event.currentTarget.checked },
+                });
+              }}
+            />
+          </label>
+        ))}
+        {error ? (
+          <p className="md:col-span-3 text-xs" style={{ color: "var(--danger)" }}>
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </Section>
   );
 }
 
@@ -1713,11 +1773,13 @@ export default function AgentWorkspace() {
   const threadSnapshot = useCodingAgentWorkspace((s) => s.threadSnapshot);
   const threadSnapshotError = useCodingAgentWorkspace((s) => s.threadSnapshotError);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
+  const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
 
   useEffect(() => {
     void refresh();
-  }, [refresh, runtimeSlot]);
+    void loadNotificationPreferences();
+  }, [loadNotificationPreferences, refresh, runtimeSlot]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -1755,6 +1817,7 @@ export default function AgentWorkspace() {
       <RuntimeHeader summary={summary} onRefresh={() => void refresh()} />
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
         <AgentComposer summary={summary} seed={composerSeed} />
+        <NotificationPreferencesPanel />
         <ProviderList summary={summary} />
         <AttentionThreadList summary={summary} />
         <div className="grid gap-4 xl:grid-cols-2">

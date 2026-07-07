@@ -10,6 +10,7 @@ import {
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
   fetchCodingAgentFileSearch,
+  fetchCodingAgentNotificationPreferences,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   fetchCodingAgentReviewSummaries,
@@ -18,6 +19,7 @@ import {
   saveCodingAgentFileContent,
   submitCodingAgentApprovalDecision,
   submitCodingAgentInputAnswer,
+  updateCodingAgentNotificationPreferences,
 } from "./coding-agents/runtime-summary-client";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
@@ -242,6 +244,8 @@ if (!gotLock) {
         },
         getUpdateStatus: () => updater.status(),
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
+        fetchNotificationPreferences: () => fetchCodingAgentNotificationPreferences(auth),
+        updateNotificationPreferences: (request) => updateCodingAgentNotificationPreferences(auth, request),
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
         fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
         fetchFileBrowse: (request) => fetchCodingAgentFileBrowse(auth, request),

@@ -538,6 +538,42 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("fetches and updates coding agent notification preferences with the existing auth header", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ preferences: { attentionPush: { approval: true, input: true, failed: false } } }))
+      .mockResolvedValueOnce(jsonResponse({ preferences: { attentionPush: { approval: true, input: true, failed: true } } }));
+
+    try {
+      const client = new GatewayClient("http://localhost:4000", "token");
+      await expect(client.getCodingAgentNotificationPreferences()).resolves.toEqual({
+        ok: true,
+        preferences: { attentionPush: { approval: true, input: true, failed: false } },
+      });
+      await expect(client.updateCodingAgentNotificationPreferences({ attentionPush: { approval: true, input: true, failed: true } })).resolves.toEqual({
+        ok: true,
+        preferences: { attentionPush: { approval: true, input: true, failed: true } },
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost:4000/api/coding-agents/notification-preferences", expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }));
+      expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost:4000/api/coding-agents/notification-preferences", expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true } }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }));
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("submits coding agent approval decisions with the existing auth header", async () => {
     const snapshot = {
       thread: {

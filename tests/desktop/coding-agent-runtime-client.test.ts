@@ -4,12 +4,14 @@ import {
   fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
   fetchCodingAgentFileSearch,
+  fetchCodingAgentNotificationPreferences,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   prepareCodingAgentSourceCommit,
   saveCodingAgentFileContent,
   submitCodingAgentApprovalDecision,
   submitCodingAgentInputAnswer,
+  updateCodingAgentNotificationPreferences,
 } from "../../desktop/src/main/coding-agents/runtime-summary-client";
 import type { AuthService } from "../../desktop/src/main/auth/auth-service";
 
@@ -186,6 +188,42 @@ function threadSnapshotBody() {
 }
 
 describe("coding agent desktop runtime client", () => {
+  it("fetches and updates notification preferences with bearer auth", async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ preferences: { attentionPush: { approval: true, input: true, failed: false } } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ preferences: { attentionPush: { approval: true, input: true, failed: true } } }), { status: 200 }));
+
+    await expect(fetchCodingAgentNotificationPreferences(auth(), fetchFn)).resolves.toEqual({
+      attentionPush: { approval: true, input: true, failed: false },
+    });
+    await expect(updateCodingAgentNotificationPreferences(auth(), { attentionPush: { approval: true, input: true, failed: true } }, fetchFn)).resolves.toEqual({
+      attentionPush: { approval: true, input: true, failed: true },
+    });
+    expect(fetchFn).toHaveBeenNthCalledWith(1, "https://runtime.test/api/coding-agents/notification-preferences", expect.objectContaining({
+      method: "GET",
+      headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
+      signal: expect.any(Object),
+    }));
+    expect(fetchFn).toHaveBeenNthCalledWith(2, "https://runtime.test/api/coding-agents/notification-preferences", expect.objectContaining({
+      method: "PUT",
+      headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
+      body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true } }),
+      signal: expect.any(Object),
+    }));
+  });
+
+  it("rejects unsafe notification preference payloads with generic errors", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      preferences: {
+        attentionPush: { approval: true, input: true, failed: false },
+        token: "secret",
+      },
+    }), { status: 200 }));
+
+    await expect(fetchCodingAgentNotificationPreferences(auth(), fetchFn)).rejects.toThrow("notification settings unavailable");
+    await expect(updateCodingAgentNotificationPreferences(auth(), { attentionPush: { failed: true } } as never, fetchFn)).rejects.toThrow("notification settings unavailable");
+  });
+
   it("fetches thread snapshots with bearer auth and validates safe output", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(threadSnapshotBody()), { status: 200 }));
 

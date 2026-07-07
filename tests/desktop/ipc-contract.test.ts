@@ -14,6 +14,8 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:get-notification-preferences",
+      "runtime:update-notification-preferences",
       "runtime:submit-approval-decision",
       "runtime:submit-input-answer",
       "runtime:get-thread-snapshot",
@@ -251,6 +253,18 @@ describe("IPC contract", () => {
 
     expect(schema.safeParse(valid).success).toBe(true);
     expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+  });
+
+  it("validates notification preference IPC without credential fields", () => {
+    const getSchema = INVOKE_CHANNELS["runtime:get-notification-preferences"].response;
+    const updateRequestSchema = INVOKE_CHANNELS["runtime:update-notification-preferences"].request;
+    const updateResponseSchema = INVOKE_CHANNELS["runtime:update-notification-preferences"].response;
+
+    expect(getSchema.safeParse({ attentionPush: { approval: true, input: true, failed: false } }).success).toBe(true);
+    expect(getSchema.safeParse({ attentionPush: { approval: true, input: true, failed: false }, accessToken: "secret" }).success).toBe(false);
+    expect(updateRequestSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true } }).success).toBe(true);
+    expect(updateRequestSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true }, bearerToken: "secret" }).success).toBe(false);
+    expect(updateResponseSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true } }).success).toBe(true);
   });
 
   it("validates runtime:get-reviews responses and rejects credential leakage shapes", () => {

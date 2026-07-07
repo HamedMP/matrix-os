@@ -9,6 +9,8 @@ import {
   AgentThreadSnapshotSchema,
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
   CursorSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
@@ -31,6 +33,8 @@ import {
   UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
   type AgentThreadEvent,
+  type CodingAgentNotificationPreferences,
+  type CodingAgentNotificationPreferencesUpdate,
   type FileBrowseRequest,
   type FileBrowseResponse,
   type FileReadRequest,
@@ -114,6 +118,18 @@ export interface MatrixAppManifestResponse {
 export type CodingAgentRuntimeSummaryResult =
   | { ok: true; summary: RuntimeSummary }
   | { ok: false; error: "Runtime summary unavailable" };
+
+const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
+  preferences: CodingAgentNotificationPreferencesSchema,
+}).strict();
+
+export type CodingAgentNotificationPreferencesResult =
+  | { ok: true; preferences: CodingAgentNotificationPreferences }
+  | { ok: false; error: "Notification settings unavailable" };
+
+export type CodingAgentNotificationPreferencesUpdateResult =
+  | { ok: true; preferences: CodingAgentNotificationPreferences }
+  | { ok: false; error: "Notification settings could not be saved. Try again." };
 
 export type CodingAgentThreadCreateResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
@@ -734,6 +750,55 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/coding-agents/summary unavailable");
       return { ok: false, error: "Runtime summary unavailable" };
+    }
+  }
+
+  async getCodingAgentNotificationPreferences(): Promise<CodingAgentNotificationPreferencesResult> {
+    try {
+      const res = await this.fetchGateway("/api/coding-agents/notification-preferences");
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/notification-preferences unavailable", res.status);
+        return { ok: false, error: "Notification settings unavailable" };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/notification-preferences returned invalid payload");
+        return { ok: false, error: "Notification settings unavailable" };
+      }
+      return { ok: true, preferences: parsed.data.preferences };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/notification-preferences unavailable");
+      return { ok: false, error: "Notification settings unavailable" };
+    }
+  }
+
+  async updateCodingAgentNotificationPreferences(
+    request: CodingAgentNotificationPreferencesUpdate,
+  ): Promise<CodingAgentNotificationPreferencesUpdateResult> {
+    try {
+      const parsedRequest = CodingAgentNotificationPreferencesUpdateSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/notification-preferences", {
+        method: "PUT",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/notification-preferences update unavailable", res.status);
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/notification-preferences update returned invalid payload");
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      return { ok: true, preferences: parsed.data.preferences };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/notification-preferences update unavailable");
+      return { ok: false, error: "Notification settings could not be saved. Try again." };
     }
   }
 
