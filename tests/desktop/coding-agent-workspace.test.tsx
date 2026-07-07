@@ -1293,6 +1293,62 @@ describe("AgentWorkspace", () => {
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
+  it("saves edited file content through trusted IPC without exposing credentials", async () => {
+    const savedFile = {
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 38,
+        etag: "sha256_desktop_file_next",
+        updatedAt: "2026-07-06T00:04:00.000Z",
+      },
+      encoding: "utf8",
+      writtenBytes: 38,
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ files: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      if (channel === "runtime:get-file-content") return Promise.resolve(fileReadFixture());
+      if (channel === "runtime:save-file-content") return Promise.resolve(savedFile);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    fireEvent.click(screen.getByRole("button", {
+      name: /Open file packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    }));
+    const editor = await screen.findByLabelText("Edit file packages/gateway/src/coding-agents/routes.ts");
+    fireEvent.change(editor, { target: { value: "export const safeRoute = false;\n" } });
+    fireEvent.click(screen.getByRole("button", {
+      name: /Save file packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:save-file-content", expect.objectContaining({
+        projectId: "matrix-os",
+        worktreeId: "wt_desktop_1",
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        content: "export const safeRoute = false;\n",
+        encoding: "utf8",
+        baseEtag: "sha256_desktop_file",
+      }));
+    });
+    const saveCall = vi.mocked(window.operator.invoke).mock.calls.find(([channel]) => channel === "runtime:save-file-content");
+    expect(saveCall?.[1]).toEqual(expect.objectContaining({
+      clientRequestId: expect.stringMatching(/^req_desktop_/),
+    }));
+    expect(JSON.stringify(saveCall?.[1])).not.toMatch(/token|bearer|secret/i);
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    expect((screen.getByLabelText("Edit file packages/gateway/src/coding-agents/routes.ts") as HTMLTextAreaElement).value)
+      .toBe("export const safeRoute = false;\n");
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
   it("renders selectable review hunk metadata without raw diff contents", async () => {
     render(<AgentWorkspace />);
 

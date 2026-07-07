@@ -5,6 +5,7 @@ import {
   type AgentThreadComposerDraft,
   type FileReadRequest,
   type FileReadResponse,
+  type FileWriteRequest,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -16,6 +17,7 @@ import { invoke } from "../lib/operator";
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
 type FileReadStatus = "idle" | "loading" | "ready" | "error";
+type FileWriteStatus = "idle" | "saving" | "saved" | "error";
 type CreateStatus = "idle" | "submitting";
 type ActionStatus = "idle" | "submitting";
 type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
@@ -40,6 +42,8 @@ interface CodingAgentWorkspaceState {
   fileReadStatus: FileReadStatus;
   fileRead: FileReadResponse | null;
   fileReadError: string | null;
+  fileWriteStatus: FileWriteStatus;
+  fileWriteError: string | null;
   selectedFilePath: string | null;
   threadSnapshotStatus: ReviewStatus;
   threadSnapshot: AgentThreadSnapshot | null;
@@ -60,6 +64,7 @@ interface CodingAgentWorkspaceState {
   refresh: () => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
   loadFileContent: (request: FileReadRequest) => Promise<void>;
+  saveFileContent: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => Promise<void>;
   loadThreadSnapshot: (threadId: string) => Promise<void>;
   submitApprovalDecision: (input: {
     threadId: string;
@@ -101,6 +106,8 @@ function clearFileReadState() {
     fileReadStatus: "idle" as const,
     fileRead: null,
     fileReadError: null,
+    fileWriteStatus: "idle" as const,
+    fileWriteError: null,
     selectedFilePath: null,
   };
 }
@@ -211,6 +218,8 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   fileReadStatus: "idle",
   fileRead: null,
   fileReadError: null,
+  fileWriteStatus: "idle",
+  fileWriteError: null,
   selectedFilePath: null,
   threadSnapshotStatus: "idle",
   threadSnapshot: null,
@@ -347,6 +356,8 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       fileReadStatus: state.fileRead?.metadata.path === request.path ? "ready" : "loading",
       fileRead: state.fileRead?.metadata.path === request.path ? state.fileRead : null,
       fileReadError: null,
+      fileWriteStatus: "idle",
+      fileWriteError: null,
     }));
     try {
       const response = await invoke("runtime:get-file-content", request);
@@ -356,6 +367,8 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         fileReadStatus: "ready",
         fileRead: response,
         fileReadError: null,
+        fileWriteStatus: "idle",
+        fileWriteError: null,
       });
     } catch {
       console.warn("[coding-agents] file content load failed");
@@ -365,6 +378,49 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         fileReadStatus: "error",
         fileRead: null,
         fileReadError: "File content unavailable",
+        fileWriteStatus: "idle",
+        fileWriteError: null,
+      });
+    }
+  },
+
+  saveFileContent: async (request) => {
+    const { fileWriteStatus } = useCodingAgentWorkspace.getState();
+    if (fileWriteStatus === "saving") return;
+
+    set({
+      fileWriteStatus: "saving",
+      fileWriteError: null,
+    });
+    try {
+      const response = await invoke("runtime:save-file-content", {
+        ...request,
+        encoding: "utf8",
+        clientRequestId: nextActionRequestId(),
+      });
+      set((state) => {
+        const stillSelected = state.selectedFilePath === request.path;
+        return {
+          fileReadStatus: stillSelected ? "ready" : state.fileReadStatus,
+          fileRead: stillSelected
+            ? {
+                metadata: response.metadata,
+                content: request.content,
+                encoding: "utf8" as const,
+                truncated: false,
+                limitBytes: state.fileRead?.limitBytes ?? response.metadata.sizeBytes,
+              }
+            : state.fileRead,
+          fileReadError: stillSelected ? null : state.fileReadError,
+          fileWriteStatus: stillSelected ? "saved" : "idle",
+          fileWriteError: null,
+        };
+      });
+    } catch {
+      console.warn("[coding-agents] file content save failed");
+      set({
+        fileWriteStatus: "error",
+        fileWriteError: "File could not be saved. Refresh and try again.",
       });
     }
   },

@@ -18,6 +18,7 @@ describe("IPC contract", () => {
       "runtime:submit-input-answer",
       "runtime:get-thread-snapshot",
       "runtime:get-file-content",
+      "runtime:save-file-content",
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
@@ -381,6 +382,41 @@ describe("IPC contract", () => {
     expect(schema.safeParse({
       ...valid,
       metadata: { ...valid.metadata, path: "/home/matrix/private/secret.ts" },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:save-file-content requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:save-file-content"].request;
+    const schema = INVOKE_CHANNELS["runtime:save-file-content"].response;
+    const request = {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
+    };
+    const response = {
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 38,
+        etag: "sha256_desktop_file_next",
+        updatedAt: "2026-07-06T00:04:00.000Z",
+      },
+      encoding: "utf8",
+      writtenBytes: 38,
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, accessToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, path: "../system/config.json" }).success).toBe(false);
+    expect(schema.safeParse(response).success).toBe(true);
+    expect(schema.safeParse({ ...response, bearerToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...response,
+      metadata: { ...response.metadata, path: "/home/matrix/private/secret.ts" },
     }).success).toBe(false);
   });
 

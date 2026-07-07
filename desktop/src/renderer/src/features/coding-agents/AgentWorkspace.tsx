@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, GitBranch, Monitor, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
+import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, GitBranch, Monitor, Play, RefreshCw, Save, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
@@ -39,6 +39,7 @@ type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
 type ReviewSnapshotHunk = ReviewSnapshotFile["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
 type FileReadStatus = "idle" | "loading" | "ready" | "error";
+type FileWriteStatus = "idle" | "saving" | "saved" | "error";
 type ComposerSeed = {
   seedId: number;
   draft: AgentThreadComposerDraft;
@@ -979,9 +980,12 @@ function ReviewList({
   const fileReadStatus = useCodingAgentWorkspace((s) => s.fileReadStatus);
   const fileRead = useCodingAgentWorkspace((s) => s.fileRead);
   const fileReadError = useCodingAgentWorkspace((s) => s.fileReadError);
+  const fileWriteStatus = useCodingAgentWorkspace((s) => s.fileWriteStatus);
+  const fileWriteError = useCodingAgentWorkspace((s) => s.fileWriteError);
   const selectedFilePath = useCodingAgentWorkspace((s) => s.selectedFilePath);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const loadFileContent = useCodingAgentWorkspace((s) => s.loadFileContent);
+  const saveFileContent = useCodingAgentWorkspace((s) => s.saveFileContent);
   const items = reviews?.items ?? [];
 
   return (
@@ -1034,8 +1038,11 @@ function ReviewList({
           fileReadStatus={fileReadStatus}
           fileRead={fileRead}
           fileReadError={fileReadError}
+          fileWriteStatus={fileWriteStatus}
+          fileWriteError={fileWriteError}
           selectedFilePath={selectedFilePath}
           onOpenFile={loadFileContent}
+          onSaveFile={saveFileContent}
           canCreateFollowUp={canCreateFollowUp}
           onAskHunkFollowUp={onAskHunkFollowUp}
         />
@@ -1057,8 +1064,11 @@ function ReviewSnapshotPanel({
   fileReadStatus,
   fileRead,
   fileReadError,
+  fileWriteStatus,
+  fileWriteError,
   selectedFilePath,
   onOpenFile,
+  onSaveFile,
   canCreateFollowUp,
   onAskHunkFollowUp,
 }: {
@@ -1069,8 +1079,11 @@ function ReviewSnapshotPanel({
   fileReadStatus: FileReadStatus;
   fileRead: FileReadResponse | null;
   fileReadError: string | null;
+  fileWriteStatus: FileWriteStatus;
+  fileWriteError: string | null;
   selectedFilePath: string | null;
   onOpenFile: (request: FileReadRequest) => void;
+  onSaveFile: (request: { projectId: string; worktreeId: string; path: string; content: string; baseEtag: string | null }) => void;
   canCreateFollowUp: boolean;
   onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
 }) {
@@ -1167,6 +1180,11 @@ function ReviewSnapshotPanel({
                 status={fileReadStatus}
                 file={fileRead}
                 error={fileReadError}
+                writeStatus={fileWriteStatus}
+                writeError={fileWriteError}
+                projectId={snapshot.review.projectId}
+                worktreeId={snapshot.review.worktreeId}
+                onSave={onSaveFile}
               />
             ) : null}
             {file.findings?.length ? (
@@ -1260,11 +1278,27 @@ function FileContentPanel({
   status,
   file,
   error,
+  writeStatus,
+  writeError,
+  projectId,
+  worktreeId,
+  onSave,
 }: {
   status: FileReadStatus;
   file: FileReadResponse | null;
   error: string | null;
+  writeStatus: FileWriteStatus;
+  writeError: string | null;
+  projectId: string;
+  worktreeId: string;
+  onSave: (request: { projectId: string; worktreeId: string; path: string; content: string; baseEtag: string | null }) => void;
 }) {
+  const [draft, setDraft] = useState(file?.content ?? "");
+
+  useEffect(() => {
+    setDraft(file?.content ?? "");
+  }, [file?.metadata.etag, file?.content]);
+
   if (status === "loading") {
     return (
       <p className="rounded-md border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
@@ -1281,21 +1315,58 @@ function FileContentPanel({
   }
   if (!file) return null;
 
+  const dirty = draft !== file.content;
+  const saveDisabled = writeStatus === "saving" || !dirty || file.truncated;
+
   return (
     <div className="grid gap-2 rounded-md border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
       <div className="flex items-center justify-between gap-3 border-b px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
         <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
           {`${file.metadata.sizeBytes} bytes`}
         </span>
-        {file.truncated ? (
-          <span className="shrink-0 text-xs" style={{ color: "var(--warning)" }}>
-            Truncated
-          </span>
-        ) : null}
+        <div className="flex shrink-0 items-center gap-2">
+          {writeStatus === "saved" ? (
+            <span className="text-xs" style={{ color: "var(--success)" }}>
+              Saved
+            </span>
+          ) : null}
+          {file.truncated ? (
+            <span className="text-xs" style={{ color: "var(--warning)" }}>
+              Truncated
+            </span>
+          ) : null}
+          <Button
+            variant="ghost"
+            type="button"
+            disabled={saveDisabled}
+            aria-label={`Save file ${file.metadata.path}`}
+            title={file.truncated ? "Cannot save truncated file" : `Save file ${file.metadata.path}`}
+            onClick={() => onSave({
+              projectId,
+              worktreeId,
+              path: file.metadata.path,
+              content: draft,
+              baseEtag: file.metadata.etag,
+            })}
+          >
+            <Save size={14} />
+            {writeStatus === "saving" ? "Saving" : "Save"}
+          </Button>
+        </div>
       </div>
-      <pre className="max-h-80 overflow-auto px-3 py-2 text-xs" style={{ color: "var(--text-primary)" }}>
-        <code className="whitespace-pre-wrap break-words">{file.content}</code>
-      </pre>
+      <textarea
+        aria-label={`Edit file ${file.metadata.path}`}
+        className="min-h-[240px] max-h-80 resize-y overflow-auto rounded-b-md border-0 px-3 py-2 font-mono text-xs outline-none"
+        spellCheck={false}
+        value={draft}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        style={{ background: "transparent", color: "var(--text-primary)" }}
+      />
+      {writeStatus === "error" ? (
+        <p className="px-3 pb-2 text-xs" style={{ color: "var(--danger)" }}>
+          {writeError ?? "File could not be saved. Refresh and try again."}
+        </p>
+      ) : null}
     </div>
   );
 }
