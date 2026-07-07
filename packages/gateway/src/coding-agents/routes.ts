@@ -28,7 +28,10 @@ import {
   safeThreadError,
   type CodingAgentThreadStore,
 } from "./thread-store.js";
-import type { CodingAgentReviewSummaryStore } from "./review-summary.js";
+import {
+  CodingAgentReviewSnapshotError,
+  type CodingAgentReviewSummaryStore,
+} from "./review-summary.js";
 
 export interface CodingAgentRouteDeps {
   service: CodingAgentRuntimeSummaryService;
@@ -74,6 +77,14 @@ function reviewsUnavailable() {
     safeMessage: "Review state is temporarily unavailable. Try again.",
     retryable: true,
     recoveryActions: ["retry"],
+  });
+}
+
+function reviewNotFound() {
+  return SafeClientErrorSchema.parse({
+    code: "review_not_found",
+    safeMessage: "Review is unavailable. Refresh and try again.",
+    retryable: false,
   });
 }
 
@@ -237,6 +248,10 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         }
         if (err instanceof z.ZodError) {
           return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentReviewSnapshotError) {
+          const status = err.code === "review_not_found" ? 404 : 503;
+          return c.json({ error: err.code === "review_not_found" ? reviewNotFound() : reviewsUnavailable() }, status);
         }
         console.warn("[coding-agents] review snapshot route failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: reviewsUnavailable() }, 503);

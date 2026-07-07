@@ -5,6 +5,7 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
 } from "@matrix-os/contracts";
+import { resolve, sep } from "node:path";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ReviewLoopRecord } from "../review-loop.js";
 import {
@@ -19,6 +20,14 @@ const RAW_REVIEW_SCAN_LIMIT = 100;
 const MAX_REVIEW_SCAN_PAGES = 5;
 const REVIEW_SNAPSHOT_FILE_LIMIT = 100;
 const REVIEW_SNAPSHOT_FINDINGS_PER_FILE_LIMIT = 100;
+
+type ReviewSnapshotErrorCode = "review_not_found" | "review_state_unavailable";
+
+export class CodingAgentReviewSnapshotError extends Error {
+  constructor(public readonly code: ReviewSnapshotErrorCode) {
+    super(code === "review_not_found" ? "Review was not found" : "Review state unavailable");
+  }
+}
 
 export interface CodingAgentReviewSummaryStore {
   listReviews(
@@ -100,25 +109,45 @@ function toReviewSummary(review: ReviewLoopRecord): ReviewSummary | null {
 
 type FindingsReader = (path: string) => Promise<FindingsParseSuccess | FindingsParseFailure>;
 
-function latestSuccessfulFindingsPath(review: ReviewLoopRecord): string | undefined {
+function latestSuccessfulFindingsRound(review: ReviewLoopRecord) {
   return review.rounds
     .slice()
     .reverse()
     .find((round) => round.parserStatus === "success" && typeof round.findingsPath === "string" && round.findingsPath.length > 0)
-    ?.findingsPath;
+}
+
+function reviewOwnerMatchesPrincipal(review: ReviewLoopRecord, principal: RequestPrincipal, ownerIds: readonly string[]): boolean {
+  if (!canReadReviewSummaries(principal, ownerIds)) return false;
+  if (!review.ownerId) return true;
+  return ownerIds.includes(review.ownerId);
+}
+
+function safeFindingsPath(input: { homePath?: string; review: ReviewLoopRecord; round: number; findingsPath?: string }): string | null {
+  if (!input.homePath || !input.findingsPath) return null;
+  if (input.findingsPath !== `.matrix/review-round-${input.round}.md`) return null;
+  const safeProject = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(input.review.projectSlug);
+  const safeWorktree = /^wt_[A-Za-z0-9_-]{1,128}$/.test(input.review.worktreeId);
+  if (!safeProject || !safeWorktree) return null;
+  const worktreeRoot = resolve(input.homePath, "projects", input.review.projectSlug, "worktrees", input.review.worktreeId);
+  const resolved = resolve(worktreeRoot, input.findingsPath);
+  return resolved.startsWith(`${worktreeRoot}${sep}`) ? resolved : null;
 }
 
 function snapshotFilesFromFindings(review: ReviewLoopRecord, findings: ParsedFinding[]) {
   const files = new Map<string, ParsedFinding[]>();
+  let hasMore = false;
   for (const finding of findings) {
-    if (files.size >= REVIEW_SNAPSHOT_FILE_LIMIT && !files.has(finding.file)) break;
+    if (files.size >= REVIEW_SNAPSHOT_FILE_LIMIT && !files.has(finding.file)) {
+      hasMore = true;
+      continue;
+    }
     const current = files.get(finding.file) ?? [];
     if (current.length >= REVIEW_SNAPSHOT_FINDINGS_PER_FILE_LIMIT) continue;
     current.push(finding);
     files.set(finding.file, current);
   }
 
-  return [...files.entries()]
+  const items = [...files.entries()]
     .map(([path, fileFindings], fileIndex) => ReviewSnapshotFileSchema.safeParse({
       path,
       status: "modified",
@@ -143,23 +172,35 @@ function snapshotFilesFromFindings(review: ReviewLoopRecord, findings: ParsedFin
     }))
     .filter((parsed) => parsed.success)
     .map((parsed) => parsed.data);
+  return { items, hasMore };
 }
 
-async function toPartialReviewSnapshot(review: ReviewLoopRecord, findingsReader: FindingsReader): Promise<ReviewSnapshot | null> {
+async function toPartialReviewSnapshot(
+  review: ReviewLoopRecord,
+  options: { findingsReader: FindingsReader; homePath?: string },
+): Promise<ReviewSnapshot | null> {
   const summary = toReviewSummary(review);
   if (!summary) return null;
-  const findingsPath = latestSuccessfulFindingsPath(review);
-  const parsedFindings = findingsPath ? await findingsReader(findingsPath) : null;
-  const files = parsedFindings?.ok ? snapshotFilesFromFindings(review, parsedFindings.findings) : [];
+  const findingsRound = latestSuccessfulFindingsRound(review);
+  const findingsPath = findingsRound
+    ? safeFindingsPath({
+      homePath: options.homePath,
+      review,
+      round: findingsRound.round,
+      findingsPath: findingsRound.findingsPath,
+    })
+    : null;
+  const parsedFindings = findingsPath ? await options.findingsReader(findingsPath) : null;
+  const files = parsedFindings?.ok ? snapshotFilesFromFindings(review, parsedFindings.findings) : { items: [], hasMore: false };
   const parsed = ReviewSnapshotSchema.safeParse({
     review: summary,
     files: {
-      items: files.slice(0, REVIEW_SNAPSHOT_FILE_LIMIT),
-      hasMore: files.length > REVIEW_SNAPSHOT_FILE_LIMIT,
+      items: files.items.slice(0, REVIEW_SNAPSHOT_FILE_LIMIT),
+      hasMore: files.hasMore,
       limit: REVIEW_SNAPSHOT_FILE_LIMIT,
     },
     partial: true,
-    safeNotice: files.length > 0
+    safeNotice: files.items.length > 0
       ? "Diff content is not available yet. Showing bounded review findings."
       : "Diff content is not available yet. Showing bounded review state.",
     updatedAt: review.updatedAt,
@@ -169,7 +210,7 @@ async function toPartialReviewSnapshot(review: ReviewLoopRecord, findingsReader:
 
 export function createCodingAgentReviewSummaryStore(
   store: ReviewLoopStore,
-  options: { ownerId?: string; principalOwnerIds?: readonly string[]; findingsReader?: FindingsReader } = {},
+  options: { ownerId?: string; principalOwnerIds?: readonly string[]; findingsReader?: FindingsReader; homePath?: string } = {},
 ): CodingAgentReviewSummaryStore {
   const ownerIds = ownerIdsFor(options);
   const findingsReader = options.findingsReader ?? parseFindingsFile;
@@ -214,18 +255,21 @@ export function createCodingAgentReviewSummaryStore(
 
     async getReviewSnapshot(principal: RequestPrincipal, reviewId: string) {
       if (!canReadReviewSummaries(principal, ownerIds)) {
-        throw new Error("Review state unavailable");
+        throw new CodingAgentReviewSnapshotError("review_not_found");
       }
       if (!("getReview" in store) || typeof store.getReview !== "function") {
-        throw new Error("Review state unavailable");
+        throw new CodingAgentReviewSnapshotError("review_state_unavailable");
       }
       const result = await store.getReview(reviewId);
       if (!result.ok) {
-        throw new Error("Review state unavailable");
+        throw new CodingAgentReviewSnapshotError(result.status === 404 || result.status === 403 ? "review_not_found" : "review_state_unavailable");
       }
-      const snapshot = await toPartialReviewSnapshot(result.review, findingsReader);
+      if (!reviewOwnerMatchesPrincipal(result.review, principal, ownerIds)) {
+        throw new CodingAgentReviewSnapshotError("review_not_found");
+      }
+      const snapshot = await toPartialReviewSnapshot(result.review, { findingsReader, homePath: options.homePath });
       if (!snapshot) {
-        throw new Error("Review state unavailable");
+        throw new CodingAgentReviewSnapshotError("review_state_unavailable");
       }
       return snapshot;
     },

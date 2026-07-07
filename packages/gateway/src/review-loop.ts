@@ -32,6 +32,7 @@ export interface ReviewRoundRecord {
 
 export interface ReviewLoopRecord {
   id: string;
+  ownerId?: string;
   projectSlug: string;
   worktreeId: string;
   pr: number;
@@ -73,8 +74,14 @@ function replaceCurrentRound(review: ReviewLoopRecord, round: ReviewRoundRecord)
   return review.rounds.map((entry, index) => index === review.rounds.length - 1 ? round : entry);
 }
 
+function safeRoundFindingsPath(round: number, findingsPath?: string): string | undefined {
+  const expected = `.matrix/review-round-${round}.md`;
+  return findingsPath === expected ? findingsPath : undefined;
+}
+
 export function createReviewLoopRecord(input: {
   id: string;
+  ownerId?: string;
   projectSlug: string;
   worktreeId: string;
   pr: number;
@@ -88,6 +95,7 @@ export function createReviewLoopRecord(input: {
   const timestamp = nowIso(input.now);
   return {
     id: input.id,
+    ownerId: input.ownerId,
     projectSlug: input.projectSlug,
     worktreeId: input.worktreeId,
     pr: input.pr,
@@ -150,6 +158,7 @@ export function completeReview(
   review: ReviewLoopRecord,
   input: {
     parseResult: FindingsParseSuccess | FindingsParseFailure;
+    findingsPath?: string;
     now?: () => string;
   },
 ): Result {
@@ -180,6 +189,7 @@ export function completeReview(
   const round: ReviewRoundRecord = {
     ...current,
     parserStatus: "success",
+    findingsPath: safeRoundFindingsPath(current.round, input.findingsPath) ?? current.findingsPath,
     findingsCount: input.parseResult.findingsCount,
     severityCounts: input.parseResult.severityCounts,
     completedAt: timestamp,
