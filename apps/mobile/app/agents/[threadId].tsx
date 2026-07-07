@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
+import { isSafeShellSessionName } from "@/lib/terminal-state";
 
 type ThreadRouteState =
   | { status: "loading"; snapshot: null; error: null }
@@ -67,6 +68,10 @@ export default function AgentThreadRoute() {
   const openBoundTerminal = useCallback(async () => {
     if (!boundTerminalSessionId) return;
     setTerminalOpenError(null);
+    if (!isSafeShellSessionName(boundTerminalSessionId)) {
+      setTerminalOpenError("Terminal session unavailable. Try again.");
+      return;
+    }
     try {
       const savedState = await loadMobileShellState();
       await saveMobileShellState({

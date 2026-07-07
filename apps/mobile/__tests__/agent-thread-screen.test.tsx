@@ -165,6 +165,32 @@ describe("AgentThreadRoute", () => {
     warnSpy.mockRestore();
   });
 
+  it("does not open terminal fallback when the bound session id is not attachable", async () => {
+    const snapshot = threadSnapshotFixture();
+    snapshot.thread.terminalSessionId = "term_sess_workspace_1";
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open bound terminal"));
+    });
+
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(await screen.findByText("Terminal session unavailable. Try again.")).toBeTruthy();
+  });
+
   it("renders a readable bounded event timeline from the thread snapshot", async () => {
     const snapshot = {
       ...threadSnapshotFixture(),
