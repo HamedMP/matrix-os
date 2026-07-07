@@ -3771,8 +3771,9 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.delete("/api/push/register", pushRegistrationBodyLimit, async (c) => {
+    let principal;
     try {
-      requireRequestPrincipal(c);
+      principal = requireRequestPrincipal(c);
     } catch (err: unknown) {
       if (isRequestPrincipalError(err)) {
         const mapped = mapRequestPrincipalError(err, "Push registration failed");
@@ -3797,7 +3798,7 @@ export async function createGateway(config: GatewayConfig) {
       return c.json({ error: "Invalid push registration" }, 400);
     }
 
-    pushAdapter.removeToken(parsed.data.token);
+    pushAdapter.removeToken(parsed.data.token, principal.userId);
     return c.json({ ok: true });
   });
 

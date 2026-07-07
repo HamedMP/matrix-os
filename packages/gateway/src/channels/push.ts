@@ -41,7 +41,7 @@ function safePushData(reply: ChannelReply): Record<string, unknown> {
 
 export function createPushAdapter(): ChannelAdapter & {
   registerToken(token: string, platform: string, ownerId?: string): void;
-  removeToken(token: string): void;
+  removeToken(token: string, ownerId?: string): void;
   getTokens(): PushToken[];
 } {
   const tokens: Map<string, PushToken> = new Map();
@@ -107,7 +107,8 @@ export function createPushAdapter(): ChannelAdapter & {
       tokens.set(token, { token, platform, ownerId, registeredAt: Date.now() });
     },
 
-    removeToken(token: string) {
+    removeToken(token: string, ownerId?: string) {
+      if (ownerId !== undefined && tokens.get(token)?.ownerId !== ownerId) return;
       tokens.delete(token);
     },
 

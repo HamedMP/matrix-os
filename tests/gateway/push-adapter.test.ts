@@ -32,6 +32,14 @@ describe("Push Notification Adapter", () => {
     expect(adapter.getTokens()).toHaveLength(0);
   });
 
+  it("does not remove another owner's push token", () => {
+    adapter.registerToken("ExponentPushToken[abc123]", "ios", "owner_a");
+    adapter.removeToken("ExponentPushToken[abc123]", "owner_b");
+    expect(adapter.getTokens()).toHaveLength(1);
+    adapter.removeToken("ExponentPushToken[abc123]", "owner_a");
+    expect(adapter.getTokens()).toHaveLength(0);
+  });
+
   it("handles multiple tokens", () => {
     adapter.registerToken("token1", "ios");
     adapter.registerToken("token2", "android");
