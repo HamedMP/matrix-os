@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, Text, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -144,6 +144,13 @@ export default function AgentPreviewRoute() {
   }
 
   const { preview } = state;
+  const openPreviewExternally = () => {
+    if (!isHttpsUrl(preview.origin)) return;
+    void Linking.openURL(preview.origin).catch(() => {
+      console.warn("[agents-preview] external preview open failed");
+    });
+  };
+
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: preview.label }} />
@@ -163,6 +170,17 @@ export default function AgentPreviewRoute() {
           <Text numberOfLines={1} style={styles.title}>{preview.label}</Text>
           <Text numberOfLines={1} style={styles.body}>{preview.status}</Text>
         </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open preview in browser"
+          onPress={openPreviewExternally}
+          style={({ pressed }) => [
+            styles.headerButton,
+            pressed ? styles.buttonPressed : null,
+          ]}
+        >
+          <Ionicons name="open-outline" size={20} color={theme.colors.foreground} />
+        </Pressable>
       </View>
       <AppRuntimeFrame
         url={preview.origin}
