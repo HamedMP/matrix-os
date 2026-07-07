@@ -19,6 +19,8 @@ import {
   ReviewSummarySchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
@@ -29,6 +31,8 @@ import {
   type FileWriteResponse,
   type ReviewSnapshot,
   type RuntimeSummary,
+  type SourceControlPrepareCommitRequest,
+  type SourceControlPrepareCommitResponse,
   boundedListSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -132,6 +136,10 @@ export type CodingAgentFileContentResult =
 export type CodingAgentFileSaveResult =
   | { ok: true; file: FileWriteResponse }
   | { ok: false; error: "File could not be saved. Refresh and try again." };
+
+export type CodingAgentSourceCommitResult =
+  | { ok: true; commit: SourceControlPrepareCommitResponse }
+  | { ok: false; error: "Source commit could not be prepared. Refresh and try again." };
 
 export type CodingAgentThreadStreamStatus = "connecting" | "open" | "closed" | "error";
 
@@ -953,6 +961,36 @@ export class GatewayClient {
       const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
       console.warn(`[mobile] /api/coding-agents/files/write ${reason}`);
       return { ok: false, error: "File could not be saved. Refresh and try again." };
+    }
+  }
+
+  async prepareCodingAgentSourceCommit(
+    request: SourceControlPrepareCommitRequest,
+  ): Promise<CodingAgentSourceCommitResult> {
+    try {
+      const parsedRequest = SourceControlPrepareCommitRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/source-control/prepare-commit", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/source-control/prepare-commit unavailable");
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = SourceControlPrepareCommitResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/source-control/prepare-commit returned invalid payload");
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      return { ok: true, commit: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/source-control/prepare-commit ${reason}`);
+      return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
     }
   }
 

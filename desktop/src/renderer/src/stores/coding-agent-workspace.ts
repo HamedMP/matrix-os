@@ -9,6 +9,8 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
+  type SourceControlPrepareCommitRequest,
+  type SourceControlPrepareCommitResponse,
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
 import { create } from "zustand";
@@ -18,6 +20,7 @@ type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
 type FileReadStatus = "idle" | "loading" | "ready" | "error";
 type FileWriteStatus = "idle" | "saving" | "saved" | "error";
+type SourceCommitStatus = "idle" | "preparing" | "prepared" | "error";
 type CreateStatus = "idle" | "submitting";
 type ActionStatus = "idle" | "submitting";
 type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
@@ -45,6 +48,9 @@ interface CodingAgentWorkspaceState {
   fileReadError: string | null;
   fileWriteStatus: FileWriteStatus;
   fileWriteError: string | null;
+  sourceCommitStatus: SourceCommitStatus;
+  sourceCommit: SourceControlPrepareCommitResponse | null;
+  sourceCommitError: string | null;
   selectedFilePath: string | null;
   selectedFileReference: FileReference | null;
   threadSnapshotStatus: ReviewStatus;
@@ -67,6 +73,7 @@ interface CodingAgentWorkspaceState {
   selectReview: (reviewId: string) => Promise<void>;
   loadFileContent: (request: FileReadRequest) => Promise<void>;
   saveFileContent: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => Promise<void>;
+  prepareSourceCommit: (request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">) => Promise<void>;
   loadThreadSnapshot: (threadId: string) => Promise<void>;
   submitApprovalDecision: (input: {
     threadId: string;
@@ -110,6 +117,9 @@ function clearFileReadState() {
     fileReadError: null,
     fileWriteStatus: "idle" as const,
     fileWriteError: null,
+    sourceCommitStatus: "idle" as const,
+    sourceCommit: null,
+    sourceCommitError: null,
     selectedFilePath: null,
     selectedFileReference: null,
   };
@@ -229,6 +239,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   fileReadError: null,
   fileWriteStatus: "idle",
   fileWriteError: null,
+  sourceCommitStatus: "idle",
+  sourceCommit: null,
+  sourceCommitError: null,
   selectedFilePath: null,
   selectedFileReference: null,
   threadSnapshotStatus: "idle",
@@ -436,6 +449,59 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         return {
           fileWriteStatus: "error",
           fileWriteError: "File could not be saved. Refresh and try again.",
+        };
+      });
+    }
+  },
+
+  prepareSourceCommit: async (request) => {
+    const { sourceCommitStatus } = useCodingAgentWorkspace.getState();
+    if (sourceCommitStatus === "preparing") return;
+
+    set({
+      sourceCommitStatus: "preparing",
+      sourceCommit: null,
+      sourceCommitError: null,
+    });
+    try {
+      const response = await invoke("runtime:prepare-source-commit", {
+        ...request,
+        clientRequestId: nextActionRequestId(),
+      });
+      set((state) => {
+        const selectedReview = state.reviewSnapshot?.review;
+        if (
+          !selectedReview
+          || selectedReview.projectId !== request.projectId
+          || selectedReview.worktreeId !== request.worktreeId
+        ) {
+          return {
+            sourceCommitStatus: "idle",
+            sourceCommit: null,
+            sourceCommitError: null,
+          };
+        }
+        return {
+          sourceCommitStatus: "prepared",
+          sourceCommit: response,
+          sourceCommitError: null,
+        };
+      });
+    } catch {
+      console.warn("[coding-agents] source commit prepare failed");
+      set((state) => {
+        const selectedReview = state.reviewSnapshot?.review;
+        if (
+          !selectedReview
+          || selectedReview.projectId !== request.projectId
+          || selectedReview.worktreeId !== request.worktreeId
+        ) {
+          return state;
+        }
+        return {
+          sourceCommitStatus: "error",
+          sourceCommit: null,
+          sourceCommitError: "Source commit could not be prepared. Refresh and try again.",
         };
       });
     }

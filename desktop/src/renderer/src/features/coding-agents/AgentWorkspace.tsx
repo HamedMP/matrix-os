@@ -1,4 +1,4 @@
-import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, GitBranch, Monitor, Play, RefreshCw, Save, Server, SquareTerminal } from "lucide-react";
+import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, GitBranch, GitCommitHorizontal, Monitor, Play, RefreshCw, Save, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
@@ -11,6 +11,7 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
+  type SourceControlPrepareCommitRequest,
 } from "@matrix-os/contracts";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
 import { invoke } from "../../lib/operator";
@@ -963,10 +964,12 @@ function ReviewDiffLines({ lines }: { lines: ReviewSnapshotLine[] }) {
 
 function ReviewList({
   canReadFiles,
+  canPrepareCommit,
   canCreateFollowUp,
   onAskHunkFollowUp,
 }: {
   canReadFiles: boolean;
+  canPrepareCommit: boolean;
   canCreateFollowUp: boolean;
   onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
 }) {
@@ -982,10 +985,13 @@ function ReviewList({
   const fileReadError = useCodingAgentWorkspace((s) => s.fileReadError);
   const fileWriteStatus = useCodingAgentWorkspace((s) => s.fileWriteStatus);
   const fileWriteError = useCodingAgentWorkspace((s) => s.fileWriteError);
+  const sourceCommitStatus = useCodingAgentWorkspace((s) => s.sourceCommitStatus);
+  const sourceCommitError = useCodingAgentWorkspace((s) => s.sourceCommitError);
   const selectedFilePath = useCodingAgentWorkspace((s) => s.selectedFilePath);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const loadFileContent = useCodingAgentWorkspace((s) => s.loadFileContent);
   const saveFileContent = useCodingAgentWorkspace((s) => s.saveFileContent);
+  const prepareSourceCommit = useCodingAgentWorkspace((s) => s.prepareSourceCommit);
   const items = reviews?.items ?? [];
 
   return (
@@ -1040,9 +1046,13 @@ function ReviewList({
           fileReadError={fileReadError}
           fileWriteStatus={fileWriteStatus}
           fileWriteError={fileWriteError}
+          sourceCommitStatus={sourceCommitStatus}
+          sourceCommitError={sourceCommitError}
           selectedFilePath={selectedFilePath}
           onOpenFile={loadFileContent}
           onSaveFile={saveFileContent}
+          canPrepareCommit={canPrepareCommit}
+          onPrepareCommit={prepareSourceCommit}
           canCreateFollowUp={canCreateFollowUp}
           onAskHunkFollowUp={onAskHunkFollowUp}
         />
@@ -1066,9 +1076,13 @@ function ReviewSnapshotPanel({
   fileReadError,
   fileWriteStatus,
   fileWriteError,
+  sourceCommitStatus,
+  sourceCommitError,
   selectedFilePath,
   onOpenFile,
   onSaveFile,
+  canPrepareCommit,
+  onPrepareCommit,
   canCreateFollowUp,
   onAskHunkFollowUp,
 }: {
@@ -1081,9 +1095,13 @@ function ReviewSnapshotPanel({
   fileReadError: string | null;
   fileWriteStatus: FileWriteStatus;
   fileWriteError: string | null;
+  sourceCommitStatus: "idle" | "preparing" | "prepared" | "error";
+  sourceCommitError: string | null;
   selectedFilePath: string | null;
   onOpenFile: (request: FileReadRequest) => void;
   onSaveFile: (request: { projectId: string; worktreeId: string; path: string; content: string; baseEtag: string | null }) => void;
+  canPrepareCommit: boolean;
+  onPrepareCommit: (request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">) => void;
   canCreateFollowUp: boolean;
   onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
 }) {
@@ -1119,6 +1137,8 @@ function ReviewSnapshotPanel({
     );
   }
   if (!snapshot) return null;
+  const prepareCommitPaths = snapshot.files.items.map((file) => file.path).slice(0, 100);
+  const prepareCommitDisabled = sourceCommitStatus === "preparing" || prepareCommitPaths.length === 0;
 
   return (
     <article className="grid gap-3 rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
@@ -1135,6 +1155,35 @@ function ReviewSnapshotPanel({
           {reviewStatusLabel(snapshot.review.status)}
         </span>
       </div>
+      {canPrepareCommit ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {sourceCommitStatus === "prepared" ? (
+            <span className="text-xs" style={{ color: "var(--success)" }}>
+              Commit prepared
+            </span>
+          ) : null}
+          {sourceCommitStatus === "error" ? (
+            <span className="text-xs" style={{ color: "var(--danger)" }}>
+              {sourceCommitError ?? "Source commit could not be prepared. Refresh and try again."}
+            </span>
+          ) : null}
+          <Button
+            variant="ghost"
+            type="button"
+            disabled={prepareCommitDisabled}
+            aria-label={`Prepare commit for review PR #${snapshot.review.pullRequestNumber}`}
+            onClick={() => onPrepareCommit({
+              projectId: snapshot.review.projectId,
+              worktreeId: snapshot.review.worktreeId,
+              message: `fix: apply review updates for PR #${snapshot.review.pullRequestNumber}`,
+              paths: prepareCommitPaths,
+            })}
+          >
+            <GitCommitHorizontal size={14} />
+            {sourceCommitStatus === "preparing" ? "Preparing" : "Prepare commit"}
+          </Button>
+        </div>
+      ) : null}
       {snapshot.safeNotice ? (
         <p className="rounded-md border px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
           {snapshot.safeNotice}
@@ -1479,6 +1528,7 @@ export default function AgentWorkspace() {
         {capabilityEnabled(summary, "codingAgentsReview") ? (
           <ReviewList
             canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
+            canPrepareCommit={capabilityEnabled(summary, "codingAgentsSourceControl")}
             canCreateFollowUp={canCreateFollowUp}
             onAskHunkFollowUp={(snapshot, selected) => {
               setComposerSeed({

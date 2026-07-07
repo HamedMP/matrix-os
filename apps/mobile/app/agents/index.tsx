@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInp
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { FileReadRequest, FileReadResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { FileReadRequest, FileReadResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -40,6 +40,12 @@ type FileSaveState =
   | { status: "saved"; error: null }
   | { status: "error"; error: "File could not be saved. Refresh and try again." };
 
+type SourceCommitState =
+  | { status: "idle"; error: null }
+  | { status: "preparing"; error: null }
+  | { status: "prepared"; error: null }
+  | { status: "error"; error: "Source commit could not be prepared. Refresh and try again." };
+
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
@@ -73,6 +79,7 @@ const INITIAL_FILE_CONTENT_STATE: FileContentState = {
 };
 
 const INITIAL_FILE_SAVE_STATE: FileSaveState = { status: "idle", error: null };
+const INITIAL_SOURCE_COMMIT_STATE: SourceCommitState = { status: "idle", error: null };
 
 const SECRET_LIKE_FINDING_TEXT =
   /(gh[psuor]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9_]{20,}|ya29[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:A3T|AKIA|ASIA)[A-Z0-9]{16}|bearer\s+[A-Za-z0-9._-]{12,}|sk(?:_live|_test)?[_-][A-Za-z0-9_-]{16,})/i;
@@ -81,10 +88,16 @@ const HIDDEN_REVIEW_NOTICE = "Review notice hidden for safety.";
 const HIDDEN_FILE_PATH = "File path hidden for safety.";
 
 let fileSaveRequestSeq = 0;
+let sourceCommitRequestSeq = 0;
 
 function nextFileSaveRequestId(): string {
   fileSaveRequestSeq += 1;
   return `req_mobile_${Date.now().toString(36)}_${fileSaveRequestSeq}`;
+}
+
+function nextSourceCommitRequestId(): string {
+  sourceCommitRequestSeq += 1;
+  return `req_mobile_${Date.now().toString(36)}_${sourceCommitRequestSeq}`;
 }
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
@@ -190,6 +203,7 @@ export default function AgentsScreen() {
   const [reviewSnapshotState, setReviewSnapshotState] = useState<ReviewSnapshotState>(INITIAL_REVIEW_SNAPSHOT_STATE);
   const [fileContentState, setFileContentState] = useState<FileContentState>(INITIAL_FILE_CONTENT_STATE);
   const [fileSaveState, setFileSaveState] = useState<FileSaveState>(INITIAL_FILE_SAVE_STATE);
+  const [sourceCommitState, setSourceCommitState] = useState<SourceCommitState>(INITIAL_SOURCE_COMMIT_STATE);
   const [refreshing, setRefreshing] = useState(false);
   const requestGeneration = useRef(0);
   const reviewSnapshotGeneration = useRef(0);
@@ -204,6 +218,7 @@ export default function AgentsScreen() {
     activeFileSaveReferenceRef.current = null;
     setFileContentState(INITIAL_FILE_CONTENT_STATE);
     setFileSaveState(INITIAL_FILE_SAVE_STATE);
+    setSourceCommitState(INITIAL_SOURCE_COMMIT_STATE);
   }, []);
 
   const clearReviewSnapshot = useCallback(() => {
@@ -343,6 +358,36 @@ export default function AgentsScreen() {
     setFileSaveState({ status: "saved", error: null });
   }, [client, fileSaveState.status]);
 
+  const prepareSourceCommit = useCallback(async (
+    request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">,
+  ) => {
+    if (!client || sourceCommitState.status === "preparing") return;
+    setSourceCommitState({ status: "preparing", error: null });
+    const result = await client.prepareCodingAgentSourceCommit({
+      ...request,
+      clientRequestId: nextSourceCommitRequestId(),
+    });
+    if (!result.ok) {
+      setSourceCommitState({
+        status: "error",
+        error: "Source commit could not be prepared. Refresh and try again.",
+      });
+      return;
+    }
+    const currentReview = selectedReviewIdRef.current;
+    const selectedReview = reviewSnapshotState.status === "ready" ? reviewSnapshotState.snapshot.review : null;
+    if (
+      !currentReview
+      || !selectedReview
+      || selectedReview.projectId !== request.projectId
+      || selectedReview.worktreeId !== request.worktreeId
+    ) {
+      setSourceCommitState(INITIAL_SOURCE_COMMIT_STATE);
+      return;
+    }
+    setSourceCommitState({ status: "prepared", error: null });
+  }, [client, reviewSnapshotState, sourceCommitState.status]);
+
   const loadSummary = useCallback(async () => {
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
@@ -432,6 +477,7 @@ export default function AgentsScreen() {
 
   const summary = state.summary;
   const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
+  const canPrepareCommit = capabilityEnabled(summary, "codingAgentsSourceControl");
   return (
     <ScrollView
       style={styles.container}
@@ -570,9 +616,12 @@ export default function AgentsScreen() {
           snapshotState={reviewSnapshotState}
           fileContentState={fileContentState}
           fileSaveState={fileSaveState}
+          sourceCommitState={sourceCommitState}
           onSelectReview={selectReview}
           onOpenFile={loadFileContent}
           onSaveFile={saveFileContent}
+          canPrepareCommit={canPrepareCommit}
+          onPrepareCommit={prepareSourceCommit}
         />
       ) : null}
     </ScrollView>
@@ -653,9 +702,12 @@ function ReviewSection({
   snapshotState,
   fileContentState,
   fileSaveState,
+  sourceCommitState,
   onSelectReview,
   onOpenFile,
   onSaveFile,
+  canPrepareCommit,
+  onPrepareCommit,
 }: {
   canCreate: boolean;
   canReadFiles: boolean;
@@ -663,9 +715,12 @@ function ReviewSection({
   snapshotState: ReviewSnapshotState;
   fileContentState: FileContentState;
   fileSaveState: FileSaveState;
+  sourceCommitState: SourceCommitState;
   onSelectReview: (reviewId: string) => void;
   onOpenFile: (request: FileReadRequest) => void;
   onSaveFile: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
+  canPrepareCommit: boolean;
+  onPrepareCommit: (request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">) => void;
 }) {
   const { theme } = useUnistyles();
   const items = state.reviews?.items ?? [];
@@ -708,8 +763,11 @@ function ReviewSection({
         state={snapshotState}
         fileContentState={fileContentState}
         fileSaveState={fileSaveState}
+        sourceCommitState={sourceCommitState}
         onOpenFile={onOpenFile}
         onSaveFile={onSaveFile}
+        canPrepareCommit={canPrepareCommit}
+        onPrepareCommit={onPrepareCommit}
       />
     </Section>
   );
@@ -721,16 +779,22 @@ function ReviewSnapshotPanel({
   state,
   fileContentState,
   fileSaveState,
+  sourceCommitState,
   onOpenFile,
   onSaveFile,
+  canPrepareCommit,
+  onPrepareCommit,
 }: {
   canCreate: boolean;
   canReadFiles: boolean;
   state: ReviewSnapshotState;
   fileContentState: FileContentState;
   fileSaveState: FileSaveState;
+  sourceCommitState: SourceCommitState;
   onOpenFile: (request: FileReadRequest) => void;
   onSaveFile: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
+  canPrepareCommit: boolean;
+  onPrepareCommit: (request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">) => void;
 }) {
   const { theme } = useUnistyles();
   const router = useRouter();
@@ -748,6 +812,8 @@ function ReviewSnapshotPanel({
   const activeSelectedHunk = selectedHunk?.reviewId === state.selectedReviewId && selectedHunk.snapshotKey === snapshotKey
     ? selectedHunk
     : null;
+  const prepareCommitPaths = state.snapshot.files.items.map((file) => file.path).slice(0, 100);
+  const prepareCommitDisabled = sourceCommitState.status === "preparing" || prepareCommitPaths.length === 0;
 
   return (
     <View style={styles.reviewDetailPanel}>
@@ -758,6 +824,35 @@ function ReviewSnapshotPanel({
         </View>
         <Text style={styles.rowMeta}>{reviewStatusLabel(state.snapshot.review.status)}</Text>
       </View>
+      {canPrepareCommit ? (
+        <View style={styles.reviewCommitActions}>
+          {sourceCommitState.status === "prepared" ? (
+            <Text style={styles.fileContentSaved}>Commit prepared</Text>
+          ) : null}
+          {sourceCommitState.status === "error" ? (
+            <Text style={styles.reviewError}>{sourceCommitState.error}</Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Prepare commit for review PR #${state.snapshot.review.pullRequestNumber}`}
+            accessibilityState={{ disabled: prepareCommitDisabled }}
+            disabled={prepareCommitDisabled}
+            onPress={() => onPrepareCommit({
+              projectId: state.snapshot.review.projectId,
+              worktreeId: state.snapshot.review.worktreeId,
+              message: `fix: apply review updates for PR #${state.snapshot.review.pullRequestNumber}`,
+              paths: prepareCommitPaths,
+            })}
+            style={[
+              styles.reviewFileOpenButton,
+              prepareCommitDisabled ? styles.fileContentSaveButtonDisabled : null,
+            ]}
+          >
+            <Ionicons name="git-branch-outline" size={15} color={theme.colors.background} />
+            <Text style={styles.reviewFileOpenText}>{sourceCommitState.status === "preparing" ? "Preparing" : "Prepare commit"}</Text>
+          </Pressable>
+        </View>
+      ) : null}
       {state.snapshot.safeNotice ? (
         <Text style={styles.reviewDetailNotice}>{safeSnapshotText(state.snapshot.safeNotice, HIDDEN_REVIEW_NOTICE)}</Text>
       ) : null}
@@ -1349,6 +1444,10 @@ const styles = StyleSheet.create((theme, rt) => ({
     gap: theme.spacing.xs,
     paddingHorizontal: theme.spacing.md,
     backgroundColor: theme.colors.forest,
+  },
+  reviewCommitActions: {
+    alignItems: "flex-start",
+    gap: theme.spacing.sm,
   },
   reviewFileOpenText: {
     fontFamily: theme.fonts.sansSemiBold,

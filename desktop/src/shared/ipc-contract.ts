@@ -16,6 +16,8 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
   ThreadIdSchema,
   RequestIdSchema,
   UserInputAnswerRequestSchema,
@@ -132,6 +134,10 @@ export const INVOKE_CHANNELS = {
   "runtime:save-file-content": {
     request: FileWriteRequestSchema,
     response: FileWriteResponseSchema,
+  },
+  "runtime:prepare-source-commit": {
+    request: SourceControlPrepareCommitRequestSchema,
+    response: SourceControlPrepareCommitResponseSchema,
   },
   "runtime:get-thread-snapshot": {
     request: z.object({ threadId: ThreadIdSchema }).strict(),

@@ -11,6 +11,7 @@ import {
   fetchCodingAgentReviewSnapshot,
   fetchCodingAgentReviewSummaries,
   fetchCodingAgentRuntimeSummary,
+  prepareCodingAgentSourceCommit,
   saveCodingAgentFileContent,
   submitCodingAgentApprovalDecision,
   submitCodingAgentInputAnswer,
@@ -242,6 +243,7 @@ if (!gotLock) {
         fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
         fetchFileContent: (request) => fetchCodingAgentFileContent(auth, request),
         saveFileContent: (request) => saveCodingAgentFileContent(auth, request),
+        prepareSourceCommit: (request) => prepareCodingAgentSourceCommit(auth, request),
         fetchThreadSnapshot: (options) => fetchCodingAgentThreadSnapshot(auth, options),
         submitApprovalDecision: ({ threadId, approvalId, decision, clientRequestId, correlationId }) =>
           submitCodingAgentApprovalDecision(auth, {

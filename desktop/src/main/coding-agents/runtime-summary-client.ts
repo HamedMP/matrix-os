@@ -7,6 +7,8 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
   type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
   type FileReadRequest,
@@ -16,6 +18,8 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
+  type SourceControlPrepareCommitRequest,
+  type SourceControlPrepareCommitResponse,
   type UserInputAnswerRequest,
   boundedListSchema,
 } from "@matrix-os/contracts";
@@ -27,6 +31,7 @@ const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
 const FILE_READ_TIMEOUT_MS = 10_000;
 const FILE_WRITE_TIMEOUT_MS = 10_000;
+const SOURCE_CONTROL_TIMEOUT_MS = 10_000;
 const THREAD_CREATE_TIMEOUT_MS = 15_000;
 const THREAD_SNAPSHOT_TIMEOUT_MS = 10_000;
 const APPROVAL_DECISION_TIMEOUT_MS = 10_000;
@@ -356,6 +361,44 @@ export async function saveCodingAgentFileContent(
   const parsed = FileWriteResponseSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("file save unavailable");
+  }
+  return parsed.data;
+}
+
+export async function prepareCodingAgentSourceCommit(
+  auth: AuthService,
+  request: SourceControlPrepareCommitRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<SourceControlPrepareCommitResponse> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("source commit unavailable");
+  }
+
+  const parsedRequest = SourceControlPrepareCommitRequestSchema.safeParse(request);
+  if (!parsedRequest.success) {
+    throw new Error("source commit unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/source-control/prepare-commit", auth.getGatewayOrigin());
+  const res = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(parsedRequest.data),
+    signal: AbortSignal.timeout(SOURCE_CONTROL_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("source commit unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = SourceControlPrepareCommitResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("source commit unavailable");
   }
   return parsed.data;
 }
