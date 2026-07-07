@@ -10,6 +10,7 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  ThreadIdSchema,
   boundedListSchema,
 } from "@matrix-os/contracts";
 
@@ -115,6 +116,10 @@ export const INVOKE_CHANNELS = {
   "runtime:get-review-snapshot": {
     request: z.object({ reviewId: ReviewIdSchema }).strict(),
     response: ReviewSnapshotSchema,
+  },
+  "runtime:get-thread-snapshot": {
+    request: z.object({ threadId: ThreadIdSchema }).strict(),
+    response: AgentThreadSnapshotSchema,
   },
   "runtime:create-thread": {
     request: CreateAgentThreadRequestSchema,

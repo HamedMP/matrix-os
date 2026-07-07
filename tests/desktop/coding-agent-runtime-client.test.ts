@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
 } from "../../desktop/src/main/coding-agents/runtime-summary-client";
 import type { AuthService } from "../../desktop/src/main/auth/auth-service";
@@ -58,7 +59,77 @@ function snapshotBody() {
   };
 }
 
+function threadSnapshotBody() {
+  return {
+    thread: {
+      id: "thread_desktop_1",
+      providerId: "codex",
+      title: "Fix desktop notifications",
+      status: "waiting_for_approval",
+      attention: "approval_required",
+      terminalSessionId: "matrix-abc1234",
+      createdAt: "2026-07-06T00:00:00.000Z",
+      updatedAt: "2026-07-06T00:01:00.000Z",
+    },
+    events: {
+      items: [
+        {
+          type: "approval.requested",
+          eventId: "evt_approval_1",
+          threadId: "thread_desktop_1",
+          occurredAt: "2026-07-06T00:01:00.000Z",
+          approval: {
+            approvalId: "appr_desktop_1",
+            threadId: "thread_desktop_1",
+            actionKind: "command",
+            risk: "medium",
+            title: "Run tests",
+            safeDescription: "Run the focused desktop tests.",
+            allowedDecisions: ["approve", "decline"],
+            correlationId: "corr_desktop_1",
+          },
+        },
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  };
+}
+
 describe("coding agent desktop runtime client", () => {
+  it("fetches thread snapshots with bearer auth and validates safe output", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(threadSnapshotBody()), { status: 200 }));
+
+    const snapshot = await fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/threads/thread_desktop_1",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(snapshot.thread.id).toBe("thread_desktop_1");
+    expect(snapshot.events.items[0]?.type).toBe("approval.requested");
+  });
+
+  it("rejects unsafe or malformed thread snapshot responses with a generic error", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...threadSnapshotBody(),
+      thread: {
+        ...threadSnapshotBody().thread,
+        accessToken: "secret",
+      },
+    }), { status: 200 }));
+
+    await expect(fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.toThrow("thread state unavailable");
+    await expect(fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.not.toThrow("secret");
+  });
+
   it("fetches review snapshots with bearer auth and validates safe output", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(snapshotBody()), { status: 200 }));
 

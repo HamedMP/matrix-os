@@ -1,5 +1,6 @@
 import {
   buildCreateAgentThreadRequestFromComposer,
+  type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
   type ReviewSnapshot,
   type ReviewSummary,
@@ -29,17 +30,22 @@ interface CodingAgentWorkspaceState {
   reviewSnapshotStatus: ReviewStatus;
   reviewSnapshot: ReviewSnapshot | null;
   reviewSnapshotError: string | null;
+  threadSnapshotStatus: ReviewStatus;
+  threadSnapshot: AgentThreadSnapshot | null;
+  threadSnapshotError: string | null;
   createStatus: CreateStatus;
   createError: string | null;
   activeThreadId: string | null;
   refresh: () => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
+  loadThreadSnapshot: (threadId: string) => Promise<void>;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
 }
 
 let refreshSeq = 0;
 let reviewsSeq = 0;
 let reviewSnapshotSeq = 0;
+let threadSnapshotSeq = 0;
 let createRequestSeq = 0;
 
 function clearReviewSelectionState() {
@@ -49,6 +55,15 @@ function clearReviewSelectionState() {
     reviewSnapshotStatus: "idle" as const,
     reviewSnapshot: null,
     reviewSnapshotError: null,
+  };
+}
+
+function clearThreadSnapshotState() {
+  threadSnapshotSeq += 1;
+  return {
+    threadSnapshotStatus: "idle" as const,
+    threadSnapshot: null,
+    threadSnapshotError: null,
   };
 }
 
@@ -68,6 +83,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   reviewSnapshotStatus: "idle",
   reviewSnapshot: null,
   reviewSnapshotError: null,
+  threadSnapshotStatus: "idle",
+  threadSnapshot: null,
+  threadSnapshotError: null,
   createStatus: "idle",
   createError: null,
   activeThreadId: null,
@@ -81,7 +99,22 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     try {
       const summary = await invoke("runtime:get-summary", {});
       if (seq !== refreshSeq) return;
-      set({ status: "ready", summary, error: null });
+      set((state) => {
+        const activeThreadStillPresent = state.activeThreadId
+          ? summary.activeThreads.items.some((thread) => thread.id === state.activeThreadId)
+          : true;
+        return {
+          status: "ready",
+          summary,
+          error: null,
+          ...(activeThreadStillPresent
+            ? {}
+            : {
+                activeThreadId: null,
+                ...clearThreadSnapshotState(),
+              }),
+        };
+      });
       if (!summary.capabilities.some((capability) => capability.id === "codingAgentsReview" && capability.enabled)) {
         set({
           reviewsStatus: "idle",
@@ -131,6 +164,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         reviews: null,
         reviewsError: null,
         ...clearReviewSelectionState(),
+        ...clearThreadSnapshotState(),
       });
     }
   },
@@ -164,6 +198,35 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     }
   },
 
+  loadThreadSnapshot: async (threadId) => {
+    const seq = ++threadSnapshotSeq;
+    set((state) => ({
+      activeThreadId: threadId,
+      threadSnapshotStatus: state.threadSnapshot?.thread.id === threadId ? "ready" : "loading",
+      threadSnapshot: state.threadSnapshot?.thread.id === threadId ? state.threadSnapshot : null,
+      threadSnapshotError: null,
+    }));
+    try {
+      const snapshot = await invoke("runtime:get-thread-snapshot", { threadId });
+      if (seq !== threadSnapshotSeq) return;
+      set({
+        activeThreadId: threadId,
+        threadSnapshotStatus: "ready",
+        threadSnapshot: snapshot,
+        threadSnapshotError: null,
+      });
+    } catch {
+      console.warn("[coding-agents] thread snapshot refresh failed");
+      if (seq !== threadSnapshotSeq) return;
+      set({
+        activeThreadId: threadId,
+        threadSnapshotStatus: "error",
+        threadSnapshot: null,
+        threadSnapshotError: "Thread state unavailable",
+      });
+    }
+  },
+
   createThread: async (draft) => {
     const { summary, createStatus } = useCodingAgentWorkspace.getState();
     if (createStatus === "submitting") {
@@ -191,7 +254,14 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       set((state) => {
         const currentSummary = state.summary;
         if (!currentSummary) {
-          return { createStatus: "idle", activeThreadId: thread.id, createError: null };
+          return {
+            createStatus: "idle",
+            activeThreadId: thread.id,
+            threadSnapshotStatus: "ready",
+            threadSnapshot: snapshot,
+            threadSnapshotError: null,
+            createError: null,
+          };
         }
         const limit = currentSummary.activeThreads.limit;
         const items = [
@@ -201,6 +271,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         return {
           createStatus: "idle",
           activeThreadId: thread.id,
+          threadSnapshotStatus: "ready",
+          threadSnapshot: snapshot,
+          threadSnapshotError: null,
           createError: null,
           summary: {
             ...currentSummary,

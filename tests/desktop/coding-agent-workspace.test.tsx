@@ -194,6 +194,43 @@ function reviewSnapshotFixture() {
   };
 }
 
+function threadSnapshotFixture() {
+  return {
+    thread: {
+      id: "thread_alpha",
+      providerId: "codex",
+      title: "Fix settings route",
+      status: "waiting_for_approval",
+      attention: "approval_required",
+      terminalSessionId: "matrix-abc1234",
+      createdAt: "2026-07-06T00:00:00.000Z",
+      updatedAt: "2026-07-06T00:04:00.000Z",
+    },
+    events: {
+      items: [
+        {
+          type: "approval.requested",
+          eventId: "evt_approval_desktop_1",
+          threadId: "thread_alpha",
+          occurredAt: "2026-07-06T00:03:00.000Z",
+          approval: {
+            approvalId: "appr_desktop_1",
+            threadId: "thread_alpha",
+            actionKind: "command",
+            risk: "medium",
+            title: "Run tests",
+            safeDescription: "Run the focused desktop tests.",
+            allowedDecisions: ["approve", "decline"],
+            correlationId: "corr_desktop_1",
+          },
+        },
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  };
+}
+
 describe("AgentWorkspace", () => {
   beforeEach(() => {
     useCodingAgentWorkspace.setState({
@@ -207,6 +244,9 @@ describe("AgentWorkspace", () => {
       reviewSnapshotStatus: "idle",
       reviewSnapshot: null,
       reviewSnapshotError: null,
+      threadSnapshotStatus: "idle",
+      threadSnapshot: null,
+      threadSnapshotError: null,
       createStatus: "idle",
       createError: null,
       activeThreadId: null,
@@ -224,6 +264,7 @@ describe("AgentWorkspace", () => {
         if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
         if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
         if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+        if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
         return Promise.reject(new Error("unexpected channel"));
       }),
       on: vi.fn(() => () => undefined),
@@ -253,6 +294,51 @@ describe("AgentWorkspace", () => {
 
     const activeThread = await screen.findByLabelText("Active thread Fix settings route");
     expect(activeThread.getAttribute("aria-current")).toBe("true");
+  });
+
+  it("hydrates selected thread details through trusted IPC", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Thread details")).toBeTruthy();
+    expect(screen.getByText("waiting for approval")).toBeTruthy();
+    expect(screen.getAllByText("matrix-abc1234").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Approval needed")).toBeTruthy();
+    expect(screen.getByText("Run the focused desktop tests.")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-thread-snapshot", { threadId: "thread_alpha" });
+  });
+
+  it("clears selected thread details when the refreshed summary no longer includes the thread", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Thread details")).toBeTruthy();
+
+    const refreshedSummary = {
+      ...summaryFixture(),
+      activeThreads: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(refreshedSummary);
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Thread details")).toBeNull();
+    });
+    expect(useCodingAgentWorkspace.getState().activeThreadId).toBeNull();
+    expect(useCodingAgentWorkspace.getState().threadSnapshot).toBeNull();
+    expect(screen.getByText("No active threads.")).toBeTruthy();
   });
 
   it("opens a bound thread terminal in the existing terminal tab model", async () => {

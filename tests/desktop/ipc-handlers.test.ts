@@ -39,6 +39,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     fetchRuntimeSummary: vi.fn(),
     fetchReviewSummaries: vi.fn(),
     fetchReviewSnapshot: vi.fn(),
+    fetchThreadSnapshot: vi.fn(),
     createAgentThread: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
@@ -264,6 +265,57 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-review-snapshot", { reviewId: "rev_desktop_1" })).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-review-snapshot", { reviewId: "rev_desktop_1" })).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("returns a coding agent thread snapshot through a strict trusted-core IPC channel", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "waiting_for_approval",
+        attention: "approval_required",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:01:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "approval.requested",
+            eventId: "evt_approval_1",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:01:00.000Z",
+            approval: {
+              approvalId: "appr_desktop_1",
+              threadId: "thread_desktop_1",
+              actionKind: "command",
+              risk: "medium",
+              title: "Run tests",
+              safeDescription: "Run the focused desktop tests.",
+              allowedDecisions: ["approve", "decline"],
+              correlationId: "corr_desktop_1",
+            },
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchThreadSnapshot = vi.fn().mockResolvedValue(snapshot);
+    const harness = makeHarness({ fetchThreadSnapshot } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-thread-snapshot", { threadId: "thread_desktop_1" })).resolves.toEqual(snapshot);
+    expect(fetchThreadSnapshot).toHaveBeenCalledWith({ threadId: "thread_desktop_1" });
+  });
+
+  it("maps thread snapshot failures to a generic IPC error", async () => {
+    const fetchThreadSnapshot = vi
+      .fn()
+      .mockRejectedValue(new Error("provider failed at /home/matrix/home with token secret"));
+    const harness = makeHarness({ fetchThreadSnapshot } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-thread-snapshot", { threadId: "thread_desktop_1" })).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:get-thread-snapshot", { threadId: "thread_desktop_1" })).rejects.not.toThrow("/home/matrix");
   });
 
   it("creates agent threads through trusted-core IPC without exposing credentials", async () => {
