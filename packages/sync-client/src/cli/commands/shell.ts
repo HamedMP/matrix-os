@@ -7,7 +7,7 @@ import { defineCommand } from "citty";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
 import { createShellClient } from "../shell-client.js";
-import type { ShellAttachOptions, ShellSendInputOptions } from "../shell-client.js";
+import type { ShellAttachOptions } from "../shell-client.js";
 import { requireCliAuthToken } from "../auth-state.js";
 import { uploadLocalFile } from "../file-transfer-client.js";
 
@@ -390,9 +390,6 @@ async function pasteLocalFileIntoShell(args: Record<string, unknown>, input: {
     { force: args.force === true },
   );
   const client = createShellClient({ gatewayUrl: profile.gatewayUrl, token });
-  const sendInputOptions: ShellSendInputOptions = typeof args.WebSocketImpl === "function"
-    ? { WebSocketImpl: args.WebSocketImpl as ShellSendInputOptions["WebSocketImpl"] }
-    : {};
   const text = formatPasteText({
     remotePath: result.path,
     format: parsePasteFormat(args.format),
@@ -401,7 +398,6 @@ async function pasteLocalFileIntoShell(args: Record<string, unknown>, input: {
   await client.sendInput(
     String(args.session),
     `${bracketTerminalPaste(text)}${args.enter === true ? "\r" : ""}`,
-    sendInputOptions,
   );
   return { path: result.path, size: result.size, session: String(args.session) };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
@@ -24,8 +24,6 @@ import { buildTerminalFontStack } from "./terminal-fonts";
 import { createCodexTuiCompatTransform, transformTerminalOutputForCompat, type CodexTuiCompatTransform } from "./codex-tui-compat";
 import { sendTerminalResize } from "./terminal-remote-resize";
 import {
-  clipboardDataHasImage,
-  pasteClipboardDataIntoTerminal,
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
 import {
@@ -38,6 +36,10 @@ import type { TerminalCompatMode } from "@/stores/terminal-store";
 
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
+const BRACKETED_PASTE_OPEN = "\u001b[200~";
+const BRACKETED_PASTE_CLOSE = "\u001b[201~";
+const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
+const MAX_TERMINAL_INPUT = 65_536;
 const SUPPORTED_TERMINAL_PASTE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
 const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
@@ -444,7 +446,6 @@ export function TerminalPane({
   const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
   const isFocusedRef = useRef(isFocused);
   const allowRemoteResizeRef = useRef(allowRemoteResize);
-  const pasteSubmitRequestedRef = useRef(false);
   const compatModeRef = useRef<TerminalCompatMode | undefined>(compatMode);
   const codexCompatTransformRef = useRef<CodexTuiCompatTransform | null>(null);
 
@@ -579,34 +580,6 @@ export function TerminalPane({
 
   const showPasteError = (message = "Image paste failed. Try a smaller image or paste a saved file with `mos shell paste-file`.") => {
     setPasteError(message);
-  };
-
-  const handleKeyDownCapture = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if ((event.metaKey || event.ctrlKey) && event.altKey && event.key.toLowerCase() === "v") {
-      pasteSubmitRequestedRef.current = true;
-      window.setTimeout(() => {
-        pasteSubmitRequestedRef.current = false;
-      }, 750);
-    }
-  };
-
-  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
-    if (!clipboardDataHasImage(event.clipboardData)) {
-      return;
-    }
-    event.preventDefault();
-    handleFocus();
-    const submit = pasteSubmitRequestedRef.current;
-    pasteSubmitRequestedRef.current = false;
-    pasteClipboardDataIntoTerminal({
-      clipboardData: event.clipboardData,
-      gatewayUrl: getGatewayUrl(),
-      ws: wsRef.current,
-      submit,
-    }).catch((err: unknown) => {
-      console.warn("Clipboard image paste failed:", err instanceof Error ? err.message : err);
-      showPasteError();
-    });
   };
 
   useEffect(() => {
@@ -1751,8 +1724,6 @@ export function TerminalPane({
       }}
       onPointerDown={handleFocus}
       onClick={handleFocus}
-      onKeyDownCapture={handleKeyDownCapture}
-      onPasteCapture={handlePaste}
     >
       {pasteError && (
         <div
