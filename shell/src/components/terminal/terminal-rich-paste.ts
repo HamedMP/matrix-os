@@ -4,6 +4,7 @@ const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_C
 const MAX_TERMINAL_INPUT = 65_536;
 const TERMINAL_PASTE_IMAGE_DIR = "data/terminal-paste";
 const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
+const MATRIX_HOME_ABSOLUTE_PATH = "/home/matrix/home";
 
 type TerminalInputSink = {
   readyState: number;
@@ -41,6 +42,38 @@ export function sendBracketedTerminalPaste(ws: TerminalInputSink | null | undefi
   }
   ws.send(JSON.stringify({ type: "input", data: bracketTerminalPaste(text) }));
   return true;
+}
+
+function sendFormattedTerminalPaste(input: {
+  ws: TerminalInputSink | null | undefined;
+  text: string;
+  submit?: boolean;
+}): boolean {
+  if (!sendBracketedTerminalPaste(input.ws, input.text)) {
+    return false;
+  }
+  if (input.submit === true) {
+    input.ws?.send(JSON.stringify({ type: "input", data: "\r" }));
+  }
+  return true;
+}
+
+function normalizeMatrixPath(path: string): string {
+  return path.replace(/^~\//, "").replace(/^\/home\/matrix\/home\//, "").replace(/^\/+/, "");
+}
+
+export function formatTerminalPastePrompt(paths: string[], message?: string): string {
+  const normalizedPaths = paths.map(normalizeMatrixPath).filter((path) => path.length > 0);
+  if (normalizedPaths.length === 0) {
+    return message?.trim() || "";
+  }
+  const prefix = message?.trim() ? `${message.trim()}\n\n` : "";
+  if (normalizedPaths.length === 1) {
+    const path = normalizedPaths[0]!;
+    return `${prefix}Screenshot attached at ${MATRIX_HOME_ABSOLUTE_PATH}/${path} (also ~/${path}). Please inspect it.`;
+  }
+  const lines = normalizedPaths.map((path) => `- ${MATRIX_HOME_ABSOLUTE_PATH}/${path} (also ~/${path})`);
+  return `${prefix}Screenshots attached:\n${lines.join("\n")}\nPlease inspect them.`;
 }
 
 function extensionForMime(type: string): string | null {
@@ -176,6 +209,7 @@ export async function pasteClipboardDataIntoTerminal(input: {
   clipboardData: ClipboardDataLike | null | undefined;
   gatewayUrl: string;
   ws: TerminalInputSink | null | undefined;
+  submit?: boolean;
 }): Promise<"image" | "empty"> {
   const imagePaths = await readClipboardDataImagePaths({
     clipboardData: input.clipboardData,
@@ -184,7 +218,11 @@ export async function pasteClipboardDataIntoTerminal(input: {
   if (imagePaths.length === 0) {
     return "empty";
   }
-  sendBracketedTerminalPaste(input.ws, imagePaths.join("\n"));
+  sendFormattedTerminalPaste({
+    ws: input.ws,
+    text: formatTerminalPastePrompt(imagePaths),
+    submit: input.submit,
+  });
   return "image";
 }
 
@@ -192,6 +230,7 @@ export async function pasteClipboardIntoTerminal(input: {
   clipboard: ClipboardLike | undefined;
   gatewayUrl: string;
   ws: TerminalInputSink | null | undefined;
+  submit?: boolean;
 }): Promise<"image" | "text" | "empty" | "unavailable"> {
   if (!input.clipboard?.read && !input.clipboard?.readText) {
     return "unavailable";
@@ -204,7 +243,11 @@ export async function pasteClipboardIntoTerminal(input: {
         gatewayUrl: input.gatewayUrl,
       });
       if (imagePaths.length > 0) {
-        sendBracketedTerminalPaste(input.ws, imagePaths.join("\n"));
+        sendFormattedTerminalPaste({
+          ws: input.ws,
+          text: formatTerminalPastePrompt(imagePaths),
+          submit: input.submit,
+        });
         return "image";
       }
     } catch (err: unknown) {
@@ -220,6 +263,6 @@ export async function pasteClipboardIntoTerminal(input: {
   if (text.length === 0) {
     return "empty";
   }
-  sendBracketedTerminalPaste(input.ws, text);
+  sendFormattedTerminalPaste({ ws: input.ws, text, submit: input.submit });
   return "text";
 }

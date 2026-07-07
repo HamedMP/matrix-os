@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bracketTerminalPaste,
   clipboardDataHasImage,
+  formatTerminalPastePrompt,
   pasteClipboardDataIntoTerminal,
   pasteClipboardIntoTerminal,
   terminalPasteImagePath,
@@ -22,6 +23,11 @@ describe("terminal rich clipboard paste", () => {
     expect(path).toMatch(/^data\/terminal-paste\/paste-20260624T123456Z-[a-f0-9-]{8}\.png$/);
   });
 
+  it("formats image paths as agent-readable prompts with absolute and home-relative paths", () => {
+    expect(formatTerminalPastePrompt(["~/data/terminal-paste/paste-1.png"])).toBe(
+      "Screenshot attached at /home/matrix/home/data/terminal-paste/paste-1.png (also ~/data/terminal-paste/paste-1.png). Please inspect it.",
+    );
+  });
 
   it("uploads images from paste event clipboard data", async () => {
     vi.stubGlobal("WebSocket", { OPEN: 1 });
@@ -55,7 +61,9 @@ describe("terminal rich clipboard paste", () => {
     );
     expect(timeoutSpy).toHaveBeenCalledWith(30_000);
     const sent = JSON.parse(ws.send.mock.calls[0]![0]);
-    expect(sent.data).toContain("~/data/terminal-paste/paste-");
+    expect(sent.data).toContain("Screenshot attached at /home/matrix/home/data/terminal-paste/paste-");
+    expect(sent.data).toContain("(also ~/data/terminal-paste/paste-");
+    expect(sent.data).toContain("Please inspect it.");
     expect(sent.data).toContain(".png");
   });
 
@@ -88,8 +96,35 @@ describe("terminal rich clipboard paste", () => {
     expect(clipboard.readText).not.toHaveBeenCalled();
     const sent = JSON.parse(ws.send.mock.calls[0]![0]);
     expect(sent).toMatchObject({ type: "input" });
-    expect(sent.data.startsWith("\x1b[200~~/data/terminal-paste/paste-")).toBe(true);
-    expect(sent.data.endsWith(".png\x1b[201~")).toBe(true);
+    expect(sent.data.startsWith("\x1b[200~Screenshot attached at /home/matrix/home/data/terminal-paste/paste-")).toBe(true);
+    expect(sent.data.endsWith(". Please inspect it.\x1b[201~")).toBe(true);
+  });
+
+  it("can submit immediately after a rich image paste", async () => {
+    vi.stubGlobal("WebSocket", { OPEN: 1 });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
+    const blob = new Blob(["fake image"], { type: "image/png" });
+    const clipboardData = {
+      items: [
+        {
+          kind: "file",
+          type: "image/png",
+          getAsFile: vi.fn(() => blob),
+        },
+      ],
+      files: [],
+    };
+    const ws = { readyState: 1, send: vi.fn() };
+
+    await expect(pasteClipboardDataIntoTerminal({
+      clipboardData,
+      gatewayUrl: "https://gateway.example",
+      ws,
+      submit: true,
+    })).resolves.toBe("image");
+
+    expect(ws.send).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(ws.send.mock.calls[1]![0])).toEqual({ type: "input", data: "\r" });
   });
 
   it("keeps the native clipboard read method bound to the clipboard object", async () => {

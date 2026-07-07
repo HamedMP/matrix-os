@@ -227,7 +227,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
     const app = apps.find((candidate) => candidate.path === launchAppPath);
     if (!app) return;
     launchPathConsumedRef.current = launchAppPath;
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
+    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state, react-doctor/no-adjust-state-on-prop-change -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
     openApp(app);
   }, [apps, launchAppPath, openApp]);
 
