@@ -335,31 +335,53 @@ function AgentComposer({ summary, seed }: { summary: RuntimeSummary; seed: Compo
 }
 
 function ThreadList({ summary }: { summary: RuntimeSummary }) {
+  const openTab = useTabs((s) => s.openTab);
+  const findAttachableSessionName = (sessionId: string): string | null =>
+    summary.terminalSessions.items.find((session) => session.id === sessionId && session.attachable)?.name ?? null;
+
   return (
     <Section title="Active Threads" count={summary.activeThreads.items.length}>
       <div className="grid gap-2">
-        {summary.activeThreads.items.map((thread) => (
-          <article
-            key={thread.id}
-            className="flex items-center justify-between gap-3 rounded-md border p-3"
-            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <GitBranch size={15} style={{ color: "var(--text-tertiary)" }} />
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-                  {thread.title}
-                </h3>
-                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-                  {thread.providerId}
-                </p>
+        {summary.activeThreads.items.map((thread) => {
+          const terminalSessionName = thread.terminalSessionId
+            ? findAttachableSessionName(thread.terminalSessionId)
+            : null;
+
+          return (
+            <article
+              key={thread.id}
+              className="flex items-center justify-between gap-3 rounded-md border p-3"
+              style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <GitBranch size={15} style={{ color: "var(--text-tertiary)" }} />
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                    {thread.title}
+                  </h3>
+                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                    {thread.providerId}
+                  </p>
+                </div>
               </div>
-            </div>
-            <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
-              {thread.status.replace(/_/g, " ")}
-            </span>
-          </article>
-        ))}
+              <div className="flex shrink-0 items-center gap-2">
+                {terminalSessionName ? (
+                  <Button
+                    variant="ghost"
+                    aria-label={`Open terminal for ${thread.title}`}
+                    title={`Open terminal for ${thread.title}`}
+                    onClick={() => openTab({ kind: "terminal", sessionName: thread.terminalSessionId, title: terminalSessionName })}
+                  >
+                    <SquareTerminal size={14} />
+                  </Button>
+                ) : null}
+                <span className="text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
+                  {thread.status.replace(/_/g, " ")}
+                </span>
+              </div>
+            </article>
+          );
+        })}
         {summary.activeThreads.items.length === 0 ? (
           <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             No active threads.

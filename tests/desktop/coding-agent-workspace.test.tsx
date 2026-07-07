@@ -9,8 +9,13 @@ import AgentWorkspace, {
 } from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 
-function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {}) {
+function summaryFixture({
+  threadCreate = false,
+  threadTerminalSessionId,
+  terminalSessionName = "matrix-abc1234",
+}: { threadCreate?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -57,6 +62,7 @@ function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {
           providerId: "codex",
           title: "Fix settings route",
           status: "running",
+          ...(threadTerminalSessionId ? { terminalSessionId: threadTerminalSessionId } : {}),
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:01:00.000Z",
         },
@@ -68,7 +74,7 @@ function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {
       items: [
         {
           id: "matrix-abc1234",
-          name: "matrix-abc1234",
+          name: terminalSessionName,
           status: "running",
           attachable: true,
           createdAt: "2026-07-06T00:00:00.000Z",
@@ -212,6 +218,7 @@ describe("AgentWorkspace", () => {
       runtimeSlot: "primary",
       api: null,
     });
+    useTabs.setState({ tabs: [], activeTabId: null });
     window.operator = {
       invoke: vi.fn((channel: string) => {
         if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
@@ -237,6 +244,72 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Fix settings route")).toBeTruthy();
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
+  });
+
+  it("opens a bound thread terminal in the existing terminal tab model", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        return Promise.resolve(summaryFixture({ threadTerminalSessionId: "matrix-abc1234" }));
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("Fix settings route");
+    fireEvent.click(screen.getByRole("button", { name: "Open terminal for Fix settings route" }));
+
+    const tabs = useTabs.getState().tabs;
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toMatchObject({
+      kind: "terminal",
+      sessionName: "matrix-abc1234",
+      title: "matrix-abc1234",
+    });
+    expect(useTabs.getState().activeTabId).toBe(tabs[0]?.id);
+  });
+
+  it("opens a bound thread terminal by canonical session id when the display name differs", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        return Promise.resolve(summaryFixture({
+          threadTerminalSessionId: "matrix-abc1234",
+          terminalSessionName: "friendly-shell",
+        }));
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("Fix settings route");
+    fireEvent.click(screen.getByRole("button", { name: "Open terminal for Fix settings route" }));
+
+    const tabs = useTabs.getState().tabs;
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]).toMatchObject({
+      kind: "terminal",
+      sessionName: "matrix-abc1234",
+      title: "friendly-shell",
+    });
+  });
+
+  it("does not open stale thread terminal bindings", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        return Promise.resolve(summaryFixture({ threadTerminalSessionId: "matrix-missing" }));
+      }
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("Fix settings route");
+    expect(screen.queryByRole("button", { name: "Open terminal for Fix settings route" })).toBeNull();
+    expect(useTabs.getState().tabs).toHaveLength(0);
   });
 
   it("renders read-only review summaries through trusted IPC", async () => {
