@@ -1,8 +1,8 @@
 # Feature Specification: Coding Agent Shells
 
-**Feature Branch**: `chore/mobile-expo-sdk-57`  
-**Created**: 2026-07-06  
-**Status**: Draft  
+**Feature Branch**: `chore/mobile-expo-sdk-57`
+**Created**: 2026-07-06
+**Status**: Draft
 **Input**: Upgrade Matrix OS desktop and mobile shells into first-class interfaces for managing multiple coding agents on the user's remote Matrix computer, while preserving every existing desktop and mobile capability.
 
 ## Overview

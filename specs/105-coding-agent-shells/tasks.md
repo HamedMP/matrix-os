@@ -1,7 +1,7 @@
 # Tasks: Coding Agent Shells
 
-**Status**: Draft  
-**Branch**: `chore/mobile-expo-sdk-57`  
+**Status**: Draft
+**Branch**: `chore/mobile-expo-sdk-57`
 **Rule**: Preserve all existing desktop and mobile functionality. Add coding-agent capabilities incrementally behind contracts, tests, and feature flags.
 
 ## Agent Instructions

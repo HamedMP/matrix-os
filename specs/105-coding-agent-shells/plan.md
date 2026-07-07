@@ -1,7 +1,7 @@
 # Implementation Plan: Coding Agent Shells
 
-**Status**: Draft  
-**Created**: 2026-07-06  
+**Status**: Draft
+**Created**: 2026-07-06
 **Planning horizon**: Incremental PR series, not a single mega-branch.
 
 ## Summary

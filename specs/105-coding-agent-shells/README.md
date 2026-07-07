@@ -1,8 +1,8 @@
 # 105 - Coding Agent Shells
 
-**Status**: Draft  
-**Created**: 2026-07-06  
-**Branch**: `chore/mobile-expo-sdk-57`  
+**Status**: Draft
+**Created**: 2026-07-06
+**Branch**: `chore/mobile-expo-sdk-57`
 **Scope**: Desktop and mobile shell upgrade for multi-agent coding work on the user's Matrix computer.
 
 ## Documents

@@ -1,7 +1,7 @@
 # Architecture: Coding Agent Shells
 
-**Status**: Draft  
-**Last Updated**: 2026-07-06  
+**Status**: Draft
+**Last Updated**: 2026-07-06
 **Audience**: Agents implementing gateway, desktop, mobile, shell, and runtime changes.
 
 ## Design Thesis
