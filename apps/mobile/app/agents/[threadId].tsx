@@ -180,6 +180,18 @@ export default function AgentThreadRoute() {
     router.push("/terminal");
   }, [boundTerminalSessionId, router]);
 
+  const openThreadFollowUp = useCallback(() => {
+    if (state.status !== "ready") return;
+    router.push({
+      pathname: "/agents/new",
+      params: {
+        sourceThreadId: state.snapshot.thread.id,
+        sourceThreadTitle: state.snapshot.thread.title,
+        sourceProviderId: state.snapshot.thread.providerId,
+      },
+    });
+  }, [router, state]);
+
   if (state.status === "loading") {
     return (
       <View style={styles.centered}>
@@ -251,6 +263,15 @@ export default function AgentThreadRoute() {
           <Text style={styles.inlineError}>{terminalOpenError}</Text>
         ) : null}
         <View style={styles.actionRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Ask follow-up about this thread"
+            onPress={openThreadFollowUp}
+            style={styles.secondaryButton}
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={16} color={theme.colors.forest} />
+            <Text style={styles.secondaryText}>Follow up</Text>
+          </Pressable>
           {thread.terminalSessionId ? (
             <Pressable
               accessibilityRole="button"

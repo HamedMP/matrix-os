@@ -320,6 +320,33 @@ describe("AgentThreadRoute", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
   });
 
+  it("opens a bounded follow-up composer for the current thread", async () => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Ask follow-up about this thread"));
+
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: "/agents/new",
+      params: {
+        sourceThreadId: "thread_mobile",
+        sourceThreadTitle: "Repair mobile route",
+        sourceProviderId: "codex",
+      },
+    });
+  });
+
   it("submits an approval decision and applies the returned thread snapshot", async () => {
     const client = {
       getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({

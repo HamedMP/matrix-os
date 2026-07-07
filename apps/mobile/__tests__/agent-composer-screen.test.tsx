@@ -111,6 +111,14 @@ function reviewHunkRouteParams(): Record<string, string> {
   };
 }
 
+function threadFollowUpRouteParams(): Record<string, string> {
+  return {
+    sourceThreadId: "thread_mobile",
+    sourceThreadTitle: "Repair mobile route",
+    sourceProviderId: "codex",
+  };
+}
+
 describe("AgentComposerScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -251,6 +259,67 @@ describe("AgentComposerScreen", () => {
     });
   });
 
+  it("seeds and submits a bounded source-thread follow-up from route params", async () => {
+    mockSearchParams = threadFollowUpRouteParams();
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      createCodingAgentThread: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: {
+          thread: {
+            id: "thread_mobile_followup",
+            providerId: "codex",
+            title: "Follow up on thread",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
+        },
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentComposerScreen />);
+
+    const prompt = await screen.findByLabelText("Agent run prompt");
+    expect(prompt.props.value).toContain("Please follow up on this agent run.");
+    expect(prompt.props.value).toContain("Thread: thread_mobile");
+    expect(prompt.props.value).toContain("Title: Repair mobile route");
+    expect(prompt.props.value).not.toMatch(/evt_mobile|matrix-abc1234|home\/matrix|token|secret/i);
+
+    fireEvent.press(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => {
+      expect(client.createCodingAgentThread).toHaveBeenCalledWith(expect.objectContaining({
+        providerId: "codex",
+        prompt: expect.stringContaining("Please follow up on this agent run."),
+        attachments: [
+          expect.objectContaining({
+            id: "thread:thread_mobile",
+            kind: "structured_ref",
+            label: "Source thread",
+          }),
+        ],
+      }));
+      expect(mockRouterPush).toHaveBeenCalledWith({
+        pathname: "/agents/[threadId]",
+        params: { threadId: "thread_mobile_followup" },
+      });
+    });
+  });
+
   it("applies review hunk route params that arrive after the initial draft", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
@@ -275,6 +344,38 @@ describe("AgentComposerScreen", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Agent run prompt").props.value).toContain("PR #759");
       expect(screen.getByLabelText("Agent run prompt").props.value).toContain("@@ -88,1 +93,2 @@");
+    });
+  });
+
+  it("applies source-thread route params that arrive after a provider change", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      createCodingAgentThread: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const view = render(<AgentComposerScreen />);
+
+    const prompt = await screen.findByLabelText("Agent run prompt");
+    expect(prompt.props.value).toBe("");
+
+    fireEvent.press(screen.getByLabelText("Provider Codex"));
+    fireEvent.press(screen.getByLabelText("Claude"));
+    expect(screen.getByLabelText("Provider Claude")).toBeTruthy();
+
+    mockSearchParams = threadFollowUpRouteParams();
+    view.rerender(<AgentComposerScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Agent run prompt").props.value).toContain("Thread: thread_mobile");
+      expect(screen.getByLabelText("Agent run prompt").props.value).toContain("Title: Repair mobile route");
+      expect(screen.getByLabelText("Provider Claude")).toBeTruthy();
     });
   });
 
