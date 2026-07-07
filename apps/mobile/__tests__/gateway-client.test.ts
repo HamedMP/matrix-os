@@ -3,7 +3,7 @@ import {
   DEFAULT_GATEWAY_FETCH_TIMEOUT_MS,
   assertSecureTokenTransport,
 } from "../lib/gateway-client";
-import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
+import type { AgentThreadEvent, CreateAgentThreadRequest } from "@matrix-os/contracts";
 import { jsonResponse } from "./mobile-shell-test-utils";
 
 function reviewSnapshotPayload(id = "rev_mobile_1") {
@@ -211,6 +211,109 @@ describe("GatewayClient", () => {
       { headers: { Authorization: "Bearer clerk-token" } },
     );
 
+    global.WebSocket = OriginalWebSocket;
+  });
+
+  it("subscribes to bounded coding-agent thread stream events", async () => {
+    const OriginalWebSocket = global.WebSocket;
+    const events: AgentThreadEvent[] = [];
+    type StreamSocketMock = {
+      readyState: number;
+      sent: string[];
+      closed: boolean;
+      send: jest.Mock;
+      close: jest.Mock;
+      onopen: (() => void) | null;
+      onmessage: ((event: { data: string }) => void) | null;
+      onerror: (() => void) | null;
+      onclose: (() => void) | null;
+    };
+    const sockets: StreamSocketMock[] = [];
+    const webSocketMock = jest.fn().mockImplementation(() => {
+      let socket!: StreamSocketMock;
+      socket = {
+        readyState: 0,
+        sent: [],
+        closed: false,
+        send: jest.fn((frame: string) => socket.sent.push(frame)),
+        close: jest.fn(() => {
+          socket.closed = true;
+          socket.readyState = 3;
+        }),
+        onopen: null,
+        onmessage: null,
+        onerror: null,
+        onclose: null,
+      };
+      sockets.push(socket);
+      return socket;
+    });
+    global.WebSocket = {
+      OPEN: 1,
+      CLOSED: 3,
+    } as typeof WebSocket;
+    global.WebSocket = webSocketMock as unknown as typeof WebSocket;
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      token: "stream-token",
+      expiresAt: Date.now() + 300_000,
+    }));
+
+    const client = new GatewayClient("https://app.matrix-os.com", "clerk-token");
+    const subscription = await client.subscribeCodingAgentThreadEvents({
+      threadId: "thread_mobile",
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(subscription).not.toBeNull();
+    expect(webSocketMock).toHaveBeenCalledWith(
+      "wss://app.matrix-os.com/ws/coding-agents/thread/thread_mobile?token=stream-token",
+      [],
+      { headers: { Authorization: "Bearer clerk-token" } },
+    );
+
+    sockets[0]!.readyState = 1;
+    sockets[0]!.onopen?.();
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "thread.stream.attached", threadId: "thread_mobile" }) });
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "thread.event",
+        event: {
+          eventId: "evt_stream_mobile_1",
+          threadId: "thread_mobile",
+          type: "assistant.text.delta",
+          messageId: "msg_mobile_1",
+          delta: "Checking /home/matrix/secret and token_sk_live_123.",
+          occurredAt: "2026-07-06T00:02:00.000Z",
+        },
+      }),
+    });
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "thread.event",
+        event: {
+          eventId: "../unsafe",
+          threadId: "thread_mobile",
+          type: "assistant.text.delta",
+          messageId: "msg_mobile_1",
+          delta: "unsafe",
+          occurredAt: "2026-07-06T00:02:00.000Z",
+        },
+      }),
+    });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "thread.replay.end", nextCursor: "evt_stream_mobile_1" }) });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      eventId: "evt_stream_mobile_1",
+      threadId: "thread_mobile",
+      type: "assistant.text.delta",
+    });
+
+    subscription?.detach();
+    expect(sockets[0]!.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "detach" });
+    expect(sockets[0]!.closed).toBe(true);
+
+    fetchMock.mockRestore();
     global.WebSocket = OriginalWebSocket;
   });
 

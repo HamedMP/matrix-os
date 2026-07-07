@@ -5,6 +5,7 @@ import {
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
 import {
+  AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
@@ -15,16 +16,18 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  SafeClientErrorSchema,
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
+  type AgentThreadEvent,
   type FileReadRequest,
   type FileReadResponse,
   type ReviewSnapshot,
   type RuntimeSummary,
   boundedListSchema,
 } from "@matrix-os/contracts";
-import type { z } from "zod/v4";
+import { z } from "zod/v4";
 
 function randomShellSuffix(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -122,6 +125,20 @@ export type CodingAgentFileContentResult =
   | { ok: true; file: FileReadResponse }
   | { ok: false; error: "File content unavailable" };
 
+export type CodingAgentThreadStreamStatus = "connecting" | "open" | "closed" | "error";
+
+export interface CodingAgentThreadEventSubscription {
+  detach(): void;
+}
+
+export interface CodingAgentThreadEventSubscriptionOptions {
+  threadId: string;
+  cursor?: string;
+  onEvent: (event: AgentThreadEvent) => void;
+  onStatus?: (status: CodingAgentThreadStreamStatus) => void;
+  onError?: (error: "Thread stream unavailable") => void;
+}
+
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
   | { type: "switch_session"; sessionId: string }
@@ -145,6 +162,32 @@ const SECURE_TOKEN_TRANSPORT_ERROR =
   "Matrix OS Cloud requires HTTPS/WSS.";
 const CLEARTEXT_HOST_ERROR =
   "Self-hosted gateways with saved credentials require HTTPS/WSS unless they are local.";
+
+const ThreadStreamServerFrameSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("thread.stream.attached"),
+    threadId: ThreadIdSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.event"),
+    event: AgentThreadEventSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.replay.end"),
+    nextCursor: CursorSchema.optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("thread.stream.error"),
+    error: SafeClientErrorSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.stream.closing"),
+    reason: z.string().trim().min(1).max(64),
+  }).strict(),
+  z.object({ type: z.literal("pong") }).strict(),
+]);
+
+const WS_OPEN = 1;
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -411,6 +454,90 @@ export class GatewayClient {
         ? { headers: { Authorization: authorization } }
         : undefined,
     );
+  }
+
+  async subscribeCodingAgentThreadEvents(
+    options: CodingAgentThreadEventSubscriptionOptions,
+  ): Promise<CodingAgentThreadEventSubscription | null> {
+    const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+    const parsedCursor = options.cursor ? CursorSchema.safeParse(options.cursor) : null;
+    if (!parsedThreadId.success || (parsedCursor && !parsedCursor.success)) {
+      options.onError?.("Thread stream unavailable");
+      return null;
+    }
+    const token = await this.getWsToken();
+    if (token) this.setWebSocketToken(token);
+    const params = new URLSearchParams();
+    if (token) params.set("token", token);
+    if (parsedCursor?.success) params.set("cursor", parsedCursor.data);
+    const query = params.toString();
+    const wsUrl = `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`;
+    const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
+    const authorization = formatAuthorizationHeader(this.token);
+    const ws = new WebSocketWithOptions(
+      wsUrl,
+      [],
+      authorization
+        ? { headers: { Authorization: authorization } }
+        : undefined,
+    );
+    let detached = false;
+
+    ws.onopen = () => {
+      options.onStatus?.("open");
+    };
+
+    ws.onmessage = (event) => {
+      if (detached) return;
+      if (typeof event.data !== "string") return;
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(event.data);
+      } catch {
+        console.warn("[mobile] coding-agent thread stream sent invalid JSON");
+        return;
+      }
+      const frame = ThreadStreamServerFrameSchema.safeParse(parsedJson);
+      if (!frame.success) {
+        console.warn("[mobile] coding-agent thread stream sent invalid frame");
+        return;
+      }
+      if (frame.data.type === "thread.event") {
+        options.onEvent(frame.data.event);
+        return;
+      }
+      if (frame.data.type === "thread.stream.error") {
+        options.onError?.("Thread stream unavailable");
+      }
+    };
+
+    ws.onerror = () => {
+      options.onStatus?.("error");
+      options.onError?.("Thread stream unavailable");
+    };
+
+    ws.onclose = () => {
+      options.onStatus?.("closed");
+    };
+
+    options.onStatus?.("connecting");
+    return {
+      detach() {
+        detached = true;
+        if (ws.readyState === WS_OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: "detach" }));
+          } catch {
+            console.warn("[mobile] coding-agent thread stream detach failed");
+          }
+        }
+        try {
+          ws.close();
+        } catch {
+          console.warn("[mobile] coding-agent thread stream close failed");
+        }
+      },
+    };
   }
 
   async healthCheck(): Promise<{ ok: boolean; data?: unknown; error?: string }> {

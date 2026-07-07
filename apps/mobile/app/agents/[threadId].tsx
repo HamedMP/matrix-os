@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { AgentThreadEvent, AgentThreadSnapshot, ApprovalDecisionRequest } from "@matrix-os/contracts";
+import type { AgentThreadEvent, AgentThreadSnapshot, AgentThreadSummary, ApprovalDecisionRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { loadMobileShellState, saveMobileShellState } from "@/lib/mobile-shell-state";
 import { isSafeShellSessionName } from "@/lib/terminal-state";
@@ -34,6 +34,49 @@ export default function AgentThreadRoute() {
   const [pendingActionIds, setPendingActionIds] = useState<Record<string, true>>({});
   const [threadActionErrors, setThreadActionErrors] = useState<Record<string, ThreadActionError>>({});
   const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
+  const streamSubscriptionRef = useRef<{ detach(): void } | null>(null);
+  const streamGenerationRef = useRef(0);
+
+  const attachThreadStream = useCallback((snapshot: AgentThreadSnapshot) => {
+    streamGenerationRef.current += 1;
+    const streamGeneration = streamGenerationRef.current;
+    streamSubscriptionRef.current?.detach();
+    streamSubscriptionRef.current = null;
+    if (!client || !threadId) return;
+    const subscribe = client.subscribeCodingAgentThreadEvents;
+    if (typeof subscribe !== "function") return;
+    const cursor = snapshot.events.nextCursor ?? snapshot.events.items.at(-1)?.eventId;
+    const handleStreamUnavailable = () => {
+      console.warn("[mobile] coding-agent thread stream unavailable");
+      if (streamGeneration !== streamGenerationRef.current) return;
+      setState((current) => current.status === "ready"
+        ? { ...current, error: "Thread state unavailable", refreshing: false }
+        : current);
+    };
+
+    try {
+      const subscriptionPromise = subscribe.call(client, {
+        threadId,
+        cursor,
+        onEvent: (event: AgentThreadEvent) => {
+          if (streamGeneration !== streamGenerationRef.current) return;
+          setState((current) => current.status === "ready"
+            ? { ...current, snapshot: mergeLiveThreadEvent(current.snapshot, event), error: null, refreshing: false }
+            : current);
+        },
+        onError: handleStreamUnavailable,
+      });
+      void Promise.resolve(subscriptionPromise).then((subscription) => {
+        if (streamGeneration !== streamGenerationRef.current) {
+          subscription?.detach();
+          return;
+        }
+        streamSubscriptionRef.current = subscription;
+      }).catch(handleStreamUnavailable);
+    } catch {
+      handleStreamUnavailable();
+    }
+  }, [client, threadId]);
 
   const loadSnapshot = useCallback(async (cancelled: () => boolean = () => false) => {
     setTerminalOpenError(null);
@@ -53,12 +96,13 @@ export default function AgentThreadRoute() {
     if (cancelled() || generation !== requestGeneration.current) return;
     if (result.ok) {
       setState({ status: "ready", snapshot: result.snapshot, error: null, refreshing: false });
+      attachThreadStream(result.snapshot);
       return;
     }
     setState((current) => current.status === "ready"
       ? { ...current, error: "Thread state unavailable", refreshing: false }
       : { status: "error", snapshot: null, error: "Thread state unavailable" });
-  }, [client, threadId]);
+  }, [attachThreadStream, client, threadId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,6 +114,12 @@ export default function AgentThreadRoute() {
       clearTimeout(timer);
     };
   }, [loadSnapshot]);
+
+  useEffect(() => () => {
+    streamGenerationRef.current += 1;
+    streamSubscriptionRef.current?.detach();
+    streamSubscriptionRef.current = null;
+  }, []);
 
   const submitApprovalDecision = useCallback(async (
     event: Extract<AgentThreadEvent, { type: "approval.requested" }>,
@@ -316,6 +366,116 @@ export default function AgentThreadRoute() {
       ) : null}
     </ScrollView>
   );
+}
+
+function mergeLiveThreadEvent(snapshot: AgentThreadSnapshot, event: AgentThreadEvent): AgentThreadSnapshot {
+  if (event.threadId !== snapshot.thread.id) return snapshot;
+  if (snapshot.events.items.some((item) => item.eventId === event.eventId)) return snapshot;
+  const limit = snapshot.events.limit;
+  const items = [...snapshot.events.items, event]
+    .sort(compareThreadEvents)
+    .slice(-limit);
+  return {
+    ...snapshot,
+    thread: deriveLiveThreadSummary(snapshot.thread, items, event),
+    events: {
+      ...snapshot.events,
+      items,
+      nextCursor: event.eventId,
+    },
+  };
+}
+
+function compareThreadEvents(a: AgentThreadEvent, b: AgentThreadEvent): number {
+  const byOccurredAt = a.occurredAt.localeCompare(b.occurredAt);
+  if (byOccurredAt !== 0) return byOccurredAt;
+  return a.eventId.localeCompare(b.eventId);
+}
+
+function deriveLiveThreadSummary(
+  baseThread: AgentThreadSummary,
+  events: AgentThreadEvent[],
+  event: AgentThreadEvent,
+): AgentThreadSummary {
+  const thread: AgentThreadSummary = {
+    ...baseThread,
+    updatedAt: latestIsoTimestamp(baseThread.updatedAt, event.occurredAt),
+  };
+  switch (event.type) {
+    case "thread.created":
+      return event.occurredAt.localeCompare(baseThread.updatedAt) >= 0
+        ? { ...event.thread, updatedAt: event.occurredAt }
+        : thread;
+    case "thread.status":
+      return {
+        ...thread,
+        status: event.status,
+        attention: attentionForThreadStatus(event.status),
+      };
+    case "terminal.bound":
+      return { ...thread, terminalSessionId: event.terminalSessionId };
+    case "approval.requested":
+      if (isTerminalThreadStatus(thread.status) || hasResolvedApproval(events, event)) return thread;
+      return { ...thread, status: "waiting_for_approval", attention: "approval_required" };
+    case "approval.resolved":
+      return { ...thread, status: "running", attention: "none" };
+    case "user_input.requested":
+      if (isTerminalThreadStatus(thread.status) || hasAnsweredInput(events, event)) return thread;
+      return { ...thread, status: "waiting_for_input", attention: "input_required" };
+    case "user_input.answered":
+      return { ...thread, status: "running", attention: "none" };
+    case "thread.error":
+      return { ...thread, status: "failed", attention: "failed" };
+    case "thread.completed":
+      return {
+        ...thread,
+        status: event.outcome,
+        attention: event.outcome === "completed" ? "completed" : event.outcome === "failed" ? "failed" : "none",
+      };
+    default:
+      return thread;
+  }
+}
+
+function latestIsoTimestamp(a: string, b: string): string {
+  return a.localeCompare(b) >= 0 ? a : b;
+}
+
+function hasResolvedApproval(
+  events: AgentThreadEvent[],
+  requestEvent: Extract<AgentThreadEvent, { type: "approval.requested" }>,
+): boolean {
+  return events.some((event) => event.type === "approval.resolved"
+    && event.approvalId === requestEvent.approval.approvalId
+    && event.occurredAt.localeCompare(requestEvent.occurredAt) >= 0);
+}
+
+function hasAnsweredInput(
+  events: AgentThreadEvent[],
+  requestEvent: Extract<AgentThreadEvent, { type: "user_input.requested" }>,
+): boolean {
+  return events.some((event) => event.type === "user_input.answered"
+    && event.requestId === requestEvent.request.requestId
+    && event.occurredAt.localeCompare(requestEvent.occurredAt) >= 0);
+}
+
+function attentionForThreadStatus(status: AgentThreadSummary["status"]): AgentThreadSummary["attention"] {
+  switch (status) {
+    case "waiting_for_approval":
+      return "approval_required";
+    case "waiting_for_input":
+      return "input_required";
+    case "failed":
+      return "failed";
+    case "completed":
+      return "completed";
+    default:
+      return "none";
+  }
+}
+
+function isTerminalThreadStatus(status: AgentThreadSummary["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "aborted" || status === "archived";
 }
 
 function MetaItem({ label, value }: { label: string; value: string }) {
