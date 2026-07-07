@@ -149,6 +149,77 @@ function ProviderList({ summary }: { summary: RuntimeSummary }) {
   );
 }
 
+type RuntimeAttentionThread = RuntimeSummary["attentionThreads"]["items"][number];
+
+function threadAttentionLabel(attention: RuntimeAttentionThread["attention"]): string | null {
+  switch (attention) {
+    case "approval_required":
+      return "Approval needed";
+    case "input_required":
+      return "Input needed";
+    case "failed":
+      return "Failed";
+    case "completed":
+      return "Completed";
+    default:
+      return null;
+  }
+}
+
+function AttentionThreadList({ summary }: { summary: RuntimeSummary }) {
+  const activeThreadId = useCodingAgentWorkspace((s) => s.activeThreadId);
+  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
+
+  return (
+    <Section title="Needs Attention" count={summary.attentionThreads.items.length}>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        {summary.attentionThreads.items.map((thread) => {
+          const active = activeThreadId === thread.id;
+          const attentionLabel = threadAttentionLabel(thread.attention) ?? thread.status.replace(/_/g, " ");
+
+          return (
+            <button
+              key={thread.id}
+              type="button"
+              aria-current={active ? "true" : undefined}
+              aria-label={`Open details for ${thread.title}, ${attentionLabel}`}
+              className="no-drag flex min-h-[68px] w-full items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors duration-100 hover:brightness-105"
+              style={{
+                borderColor: active ? "var(--accent)" : "var(--border-subtle)",
+                background: active ? "var(--accent-muted)" : "var(--bg-surface)",
+              }}
+              onClick={() => void loadThreadSnapshot(thread.id)}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <GitBranch size={15} style={{ color: "var(--text-tertiary)" }} />
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                    {thread.title}
+                  </h3>
+                  <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                    {thread.providerId}
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="rounded-md border px-2 py-1 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+                  {attentionLabel}
+                </span>
+                <ChevronRight size={14} style={{ color: "var(--text-tertiary)" }} />
+              </div>
+            </button>
+          );
+        })}
+        {summary.attentionThreads.items.length === 0 ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            No attention needed.
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
 export function mergeAttachments(
   current: AgentThreadComposerDraft["attachments"],
   seeded: AgentThreadComposerDraft["attachments"],
@@ -1102,6 +1173,7 @@ export default function AgentWorkspace() {
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
         <AgentComposer summary={summary} seed={composerSeed} />
         <ProviderList summary={summary} />
+        <AttentionThreadList summary={summary} />
         <div className="grid gap-4 xl:grid-cols-2">
           <ThreadList summary={summary} />
           <div className="grid gap-4">

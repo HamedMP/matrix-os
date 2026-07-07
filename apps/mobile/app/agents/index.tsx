@@ -339,6 +339,33 @@ export default function AgentsScreen() {
         ))}
       </Section>
 
+      <Section title="Needs Attention" count={summary.attentionThreads.items.length}>
+        {summary.attentionThreads.items.length === 0 ? <EmptyText>No attention needed.</EmptyText> : null}
+        {summary.attentionThreads.items.map((thread) => {
+          const attentionLabel = attentionThreadLabel(thread.attention) ?? thread.status.replace(/_/g, " ");
+
+          return (
+            <Pressable
+              key={thread.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Open attention thread ${thread.title}, ${attentionLabel}`}
+              onPress={() => router.push(`/agents/${thread.id}` as any)}
+              style={styles.row}
+            >
+              <View style={styles.rowIcon}>
+                <Ionicons name="git-branch-outline" size={18} color={theme.colors.moss} />
+              </View>
+              <View style={styles.rowText}>
+                <Text style={styles.rowTitle}>{thread.title}</Text>
+                <Text style={styles.rowSubtitle}>{thread.providerId}</Text>
+                <Text style={styles.attentionBadge}>{attentionLabel}</Text>
+              </View>
+              <Text style={styles.rowMeta}>{thread.status.replace(/_/g, " ")}</Text>
+            </Pressable>
+          );
+        })}
+      </Section>
+
       <Section title="Active Threads" count={summary.activeThreads.items.length}>
         {summary.activeThreads.items.length === 0 ? <EmptyText>No active threads.</EmptyText> : null}
         {summary.activeThreads.items.map((thread) => {
@@ -406,6 +433,20 @@ function threadAttentionLabel(attention?: string): string | null {
       return "Approval needed";
     case "input_required":
       return "Input needed";
+    default:
+      return null;
+  }
+}
+
+function attentionThreadLabel(attention?: string): string | null {
+  switch (attention) {
+    case "approval_required":
+    case "input_required":
+      return threadAttentionLabel(attention);
+    case "failed":
+      return "Failed";
+    case "completed":
+      return "Completed";
     default:
       return null;
   }
