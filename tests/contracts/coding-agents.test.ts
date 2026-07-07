@@ -6,6 +6,8 @@ import {
   ApprovalDecisionRequestSchema,
   AgentThreadComposerDraftSchema,
   CreateAgentThreadRequestSchema,
+  FileReadRequestSchema,
+  FileReadResponseSchema,
   FileMetadataSchema,
   PreviewSessionSummarySchema,
   ReviewDiffLineSchema,
@@ -291,6 +293,30 @@ describe("coding agent contracts", () => {
       updatedAt: now,
     }).path).toBe("src/index.ts");
     expect(() => FileMetadataSchema.parse({ path: "../secret", kind: "file" })).toThrow();
+
+    expect(FileReadRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "src/index.ts",
+    }).path).toBe("src/index.ts");
+    expect(() => FileReadRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+    })).toThrow();
+    expect(FileReadResponseSchema.parse({
+      metadata: {
+        path: "src/index.ts",
+        kind: "file",
+        sizeBytes: 27,
+        etag: "sha256_123",
+        updatedAt: now,
+      },
+      content: "export const answer = 42;\n",
+      encoding: "utf8",
+      truncated: false,
+      limitBytes: 65536,
+    }).truncated).toBe(false);
 
     expect(ReviewSummarySchema.parse({
       id: "rev_123",
