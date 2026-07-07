@@ -95,11 +95,97 @@ describe("AgentThreadRoute", () => {
 
     expect(screen.getByText("Loading thread...")).toBeTruthy();
     expect(await screen.findByText("Repair mobile route")).toBeTruthy();
-    expect(screen.getByText("running")).toBeTruthy();
+    expect(screen.getAllByText("running").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("codex")).toBeTruthy();
-    expect(screen.getByText("matrix-abc1234")).toBeTruthy();
+    expect(screen.getAllByText("matrix-abc1234").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("2 events")).toBeTruthy();
     expect(client.getCodingAgentThreadSnapshot).toHaveBeenCalledWith({ threadId: "thread_mobile" });
+  });
+
+  it("renders a readable bounded event timeline from the thread snapshot", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_3",
+            threadId: "thread_mobile",
+            type: "assistant.text.delta",
+            messageId: "msg_mobile_1",
+            delta: "Checking /home/matrix/secret and token_sk_live_123.",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_4",
+            threadId: "thread_mobile",
+            type: "tool.started",
+            toolCallId: "tool_mobile_1",
+            displayName: "Read source",
+            kind: "file",
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+          {
+            eventId: "evt_mobile_5",
+            threadId: "thread_mobile",
+            type: "file.changed",
+            path: ".ssh/id_rsa",
+            changeKind: "updated",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_6",
+            threadId: "thread_mobile",
+            type: "review.ready",
+            reviewId: "rev_mobile_1",
+            summary: {
+              changedFileCount: 2,
+              additions: 12,
+              deletions: 4,
+              partial: true,
+            },
+            occurredAt: "2026-07-06T00:04:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_7",
+            threadId: "thread_mobile",
+            type: "thread.error",
+            error: {
+              code: "provider_failed",
+              safeMessage: "/home/matrix/token leaked raw detail",
+              retryable: true,
+            },
+            occurredAt: "2026-07-06T00:05:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Activity timeline")).toBeTruthy();
+    expect(screen.getByText("Assistant update")).toBeTruthy();
+    expect(screen.getByText("Text update received")).toBeTruthy();
+    expect(screen.getByText("Tool started")).toBeTruthy();
+    expect(screen.getByText("Read source")).toBeTruthy();
+    expect(screen.getByText("File updated")).toBeTruthy();
+    expect(screen.getByText("Updated file")).toBeTruthy();
+    expect(screen.getByText("Review ready")).toBeTruthy();
+    expect(screen.getByText("2 files changed, +12 -4, partial")).toBeTruthy();
+    expect(screen.getByText("Thread needs attention")).toBeTruthy();
+    expect(screen.getByText("Refresh the thread or check the runtime.")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|leaked|\.ssh|id_rsa/i)).toBeNull();
   });
 
   it("renders a generic thread error without exposing raw gateway details", async () => {

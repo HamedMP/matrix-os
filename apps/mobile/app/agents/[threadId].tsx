@@ -3,7 +3,7 @@ import { useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { AgentThreadSnapshot } from "@matrix-os/contracts";
+import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 
 type ThreadRouteState =
@@ -118,6 +118,14 @@ export default function AgentThreadRoute() {
           <Text style={styles.refreshText}>{state.refreshing ? "Refreshing" : "Refresh"}</Text>
         </Pressable>
       </View>
+      {events.items.length > 0 ? (
+        <View style={styles.timeline}>
+          <Text style={styles.sectionTitle}>Activity timeline</Text>
+          {events.items.map((event) => (
+            <ThreadEventItem key={event.eventId} event={event} />
+          ))}
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -129,6 +137,78 @@ function MetaItem({ label, value }: { label: string; value: string }) {
       <Text selectable style={styles.metaValue}>{value}</Text>
     </View>
   );
+}
+
+function ThreadEventItem({ event }: { event: AgentThreadEvent }) {
+  const { theme } = useUnistyles();
+  const copy = describeThreadEvent(event);
+  return (
+    <View style={styles.eventRow}>
+      <View style={styles.eventIcon}>
+        <Ionicons name={copy.icon} size={14} color={theme.colors.moss} />
+      </View>
+      <View style={styles.eventText}>
+        <Text style={styles.eventTitle}>{copy.title}</Text>
+        <Text selectable style={styles.eventDetail}>{copy.detail}</Text>
+      </View>
+    </View>
+  );
+}
+
+function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } {
+  switch (event.type) {
+    case "thread.created":
+      return { icon: "sparkles-outline", title: "Thread created", detail: event.thread.title };
+    case "thread.status":
+      return { icon: "pulse-outline", title: "Status changed", detail: event.status.replace(/_/g, " ") };
+    case "assistant.text.delta":
+      return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: "Text update received" };
+    case "assistant.text.completed":
+      return { icon: "checkmark-circle-outline", title: "Assistant message complete", detail: event.messageId };
+    case "tool.started":
+      return { icon: "hammer-outline", title: "Tool started", detail: event.displayName };
+    case "tool.output":
+      return {
+        icon: "document-text-outline",
+        title: "Tool output",
+        detail: event.truncated ? "Output received, partial" : "Output received",
+      };
+    case "tool.completed":
+      return { icon: "checkmark-done-outline", title: "Tool completed", detail: event.outcome };
+    case "approval.requested":
+      return { icon: "shield-checkmark-outline", title: "Approval needed", detail: event.approval.safeDescription };
+    case "approval.resolved":
+      return { icon: "shield-outline", title: "Approval resolved", detail: event.decision };
+    case "user_input.requested":
+      return { icon: "create-outline", title: "Input needed", detail: event.request.safeDescription };
+    case "user_input.answered":
+      return { icon: "return-down-forward-outline", title: "Input answered", detail: event.requestId };
+    case "file.changed":
+      return { icon: "document-outline", title: `File ${event.changeKind}`, detail: `${capitalize(event.changeKind)} file` };
+    case "review.ready": {
+      const files = `${event.summary.changedFileCount} ${event.summary.changedFileCount === 1 ? "file" : "files"} changed`;
+      const partial = event.summary.partial ? ", partial" : "";
+      return {
+        icon: "git-pull-request-outline",
+        title: "Review ready",
+        detail: `${files}, +${event.summary.additions} -${event.summary.deletions}${partial}`,
+      };
+    }
+    case "terminal.bound":
+      return { icon: "terminal-outline", title: "Terminal bound", detail: event.terminalSessionId };
+    case "thread.error":
+      return {
+        icon: "warning-outline",
+        title: "Thread needs attention",
+        detail: event.error.retryable ? "Refresh the thread or check the runtime." : "Open the workspace again.",
+      };
+    case "thread.completed":
+      return { icon: "flag-outline", title: "Thread completed", detail: event.outcome };
+  }
+}
+
+function capitalize(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
 
 const styles = StyleSheet.create((theme, rt) => ({
@@ -235,5 +315,47 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 13,
     color: theme.colors.moss,
+  },
+  timeline: {
+    marginTop: theme.spacing.lg,
+    gap: theme.spacing.md,
+  },
+  sectionTitle: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 15,
+    color: theme.colors.foreground,
+  },
+  eventRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing.sm,
+  },
+  eventIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.card,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  eventText: {
+    flex: 1,
+    minWidth: 0,
+    paddingBottom: theme.spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    gap: 2,
+  },
+  eventTitle: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 13,
+    color: theme.colors.foreground,
+  },
+  eventDetail: {
+    fontFamily: theme.fonts.mono,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
   },
 }));
