@@ -110,4 +110,32 @@ describe("mobile shell state", () => {
       lastActiveAppSlug: "games/minesweeper",
     });
   });
+
+  it("keeps safe named shell-session references for cross-shell terminal resume", async () => {
+    jest.mocked(AsyncStorage.setItem).mockResolvedValueOnce();
+
+    expect(parseMobileShellState({
+      mode: "terminal",
+      lastActiveTerminalSessionId: "matrix-abc1234",
+      updatedAt: "2026-05-15T00:00:00.000Z",
+    })).toMatchObject({
+      mode: "terminal",
+      lastActiveTerminalSessionId: "matrix-abc1234",
+    });
+
+    await saveMobileShellState({
+      surface: "native-mobile",
+      mode: "terminal",
+      lastActiveAppSlug: null,
+      lastActiveTerminalSessionId: "main",
+      canvasEnteredAt: null,
+      updatedAt: "2026-05-15T00:00:00.000Z",
+    });
+
+    const saved = JSON.parse(jest.mocked(AsyncStorage.setItem).mock.calls[0][1]);
+    expect(saved).toMatchObject({
+      mode: "terminal",
+      lastActiveTerminalSessionId: "main",
+    });
+  });
 });

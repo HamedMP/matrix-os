@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { isSafeShellSessionName } from "@/lib/terminal-state";
 
 export const MOBILE_SHELL_STATE_STORAGE_KEY = "matrix.mobileShellState.v1";
 
@@ -84,7 +85,7 @@ function safeAppSlug(value: unknown): string | null {
 function safeTerminalSessionId(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const sessionId = value.trim();
-  return SAFE_TERMINAL_SESSION_ID.test(sessionId) ? sessionId : null;
+  return SAFE_TERMINAL_SESSION_ID.test(sessionId) || isSafeShellSessionName(sessionId) ? sessionId : null;
 }
 
 function safeIsoTimestamp(value: unknown): string | null {
