@@ -6,7 +6,7 @@
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with partial findings-derived file metadata. Full file diff and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated diff and preview shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated diff and preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -142,10 +142,11 @@ Thread store behavior:
 Review summary behavior:
 
 - Adapts existing owner-local review-loop records into bounded `ReviewSummarySchema` rows.
-- Adapts existing owner-local review-loop records and structured findings into bounded partial `ReviewSnapshotSchema` rows for the review detail route.
+- Adapts existing owner-local review-loop records, safe owner worktree git diffs, and structured findings into bounded `ReviewSnapshotSchema` rows for the review detail route.
 - Drops malformed legacy records instead of exposing raw review state.
 - Caps the coding-agent route response at 50 items.
 - Drops unsafe findings paths or display text instead of exposing raw filesystem paths, provider output, or parse errors.
+- Reads git diff metadata only from the validated owner worktree root, uses a bounded no-shell `git diff` call with timeout/output cap, and falls back to partial findings metadata when diff state is unavailable.
 
 Focused tests:
 
@@ -328,7 +329,7 @@ git diff --check
 ## Open Questions And Deferred Work
 
 - Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
-- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes partial findings-derived file metadata for later shell diff panels. Full file diffs and previews are not implemented yet.
+- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata from safe owner worktrees and partial findings-derived fallback metadata for later shell diff panels. Full file contents, desktop/mobile diff rendering, and previews are not implemented yet.
 - Browser shell entry point: Canvas-first placement is still undecided.
 - Notifications/attention routing: desktop notification IPC exists, but thread attention notifications are not yet wired end-to-end from gateway events.
 - Public docs: public Matrix OS docs should be updated once the user-facing coding-agent shell flow is stable enough to document.

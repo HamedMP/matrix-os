@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -21,6 +26,7 @@ import { MissingRequestPrincipalError } from "../../packages/gateway/src/request
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = new Date("2026-07-06T12:00:00.000Z");
+const execFileAsync = promisify(execFile);
 
 function reviewRecord(overrides: Record<string, unknown> = {}) {
   return {
@@ -640,6 +646,354 @@ describe("coding agent runtime summary", () => {
     });
     expect(reader).toHaveBeenCalledWith("/home/matrix/home/projects/matrix-os/worktrees/wt_abc123def456/.matrix/review-round-1.md");
     expect(JSON.stringify(snapshot)).not.toMatch(/\/home\/matrix|secret|Postgres|token/i);
+  });
+
+  it("adds bounded diff hunk metadata for safe owner review worktrees", async () => {
+    const diffReader = vi.fn(async () => ({
+      ok: true as const,
+      files: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified" as const,
+          additions: 2,
+          deletions: 1,
+          partial: false,
+          hunks: [
+            {
+              id: "hunk_packages_gateway_src_coding_agents_routes_ts_0",
+              oldStart: 10,
+              oldLines: 2,
+              newStart: 10,
+              newLines: 3,
+              heading: "@@ -10,2 +10,3 @@",
+              partial: false,
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      partial: false,
+    }));
+    const store = createCodingAgentReviewSummaryStore({
+      getReview: async () => ({
+        ok: true,
+        review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+      }),
+      listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+    } as ReviewLoopStore, {
+      ownerId: testPrincipal.userId,
+      homePath: "/home/matrix/home",
+      diffReader,
+      findingsReader: async () => ({
+        ok: true,
+        parserStatus: "success",
+        findingsCount: 0,
+        severityCounts: { high: 0, medium: 0, low: 0 },
+        findings: [],
+      }),
+    });
+
+    const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+    expect(diffReader).toHaveBeenCalledWith("/home/matrix/home/projects/matrix-os/worktrees/wt_abc123def456");
+    expect(snapshot.partial).toBe(false);
+    expect(snapshot.files).toMatchObject({
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+          partial: false,
+          hunks: [expect.objectContaining({ oldStart: 10, oldLines: 2, newStart: 10, newLines: 3, partial: false })],
+        },
+      ],
+      hasMore: false,
+      limit: 100,
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("/home/matrix/home");
+  });
+
+  it("summarizes a small git diff from a safe owner review worktree", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-review-diff-"));
+    try {
+      const worktreeRoot = join(homePath, "projects", "matrix-os", "worktrees", "wt_abc123def456");
+      const sourceDir = join(worktreeRoot, "packages", "gateway", "src", "coding-agents");
+      const spacedSourceDir = join(worktreeRoot, "packages", "gateway", "src", "coding agents");
+      const tabbedSourceDir = join(worktreeRoot, "packages", "gateway", "src", "tabbed\tagents");
+      await mkdir(sourceDir, { recursive: true });
+      await mkdir(spacedSourceDir, { recursive: true });
+      await mkdir(tabbedSourceDir, { recursive: true });
+      await mkdir(join(worktreeRoot, ".matrix"), { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 1;\n");
+      await writeFile(join(spacedSourceDir, "quoted.ts"), "export const quoted = 1;\n");
+      await writeFile(join(tabbedSourceDir, "quoted.ts"), "export const tabbed = 1;\n");
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 2;\nexport const next = 3;\n");
+      await writeFile(join(spacedSourceDir, "quoted.ts"), "export const quoted = 2;\n");
+      await writeFile(join(tabbedSourceDir, "quoted.ts"), "export const tabbed = 2;\n");
+      await writeFile(join(worktreeRoot, ".matrix", "review-round-1.md"), "## Findings\n\nNo findings.\n");
+      const store = createCodingAgentReviewSummaryStore({
+        getReview: async () => ({
+          ok: true,
+          review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+        }),
+        listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+      } as ReviewLoopStore, {
+        ownerId: testPrincipal.userId,
+        homePath,
+      });
+
+      const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+      expect(snapshot.partial).toBe(true);
+      expect(snapshot.safeNotice).toBe("Some diff content is unavailable. Showing bounded review metadata.");
+      expect(snapshot.files.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+          partial: true,
+          hunks: [expect.objectContaining({ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 })],
+        }),
+        expect.objectContaining({
+          path: "packages/gateway/src/coding agents/quoted.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          partial: true,
+          hunks: [expect.objectContaining({ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 })],
+        }),
+        expect.objectContaining({
+          path: "packages/gateway/src/tabbed\tagents/quoted.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          partial: true,
+          hunks: [expect.objectContaining({ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 })],
+        }),
+      ]));
+      expect(snapshot.files.items).toHaveLength(3);
+      expect(JSON.stringify(snapshot)).not.toContain(homePath);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps unquoted binary diff headers aligned when paths contain the header separator text", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-review-binary-header-diff-"));
+    try {
+      const worktreeRoot = join(homePath, "projects", "matrix-os", "worktrees", "wt_abc123def456");
+      const sourceDir = join(worktreeRoot, "packages", "foo", " b");
+      await mkdir(sourceDir, { recursive: true });
+      await mkdir(join(worktreeRoot, ".matrix"), { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "core.quotePath", "false"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.email", "matrix@example.invalid"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.name", "Matrix Review"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "bar.bin"), Buffer.from([0, 1, 2, 3, 4, 5]));
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await execFileAsync("git", ["commit", "-m", "base"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "bar.bin"), Buffer.from([0, 1, 2, 9, 4, 5]));
+      await writeFile(join(worktreeRoot, ".matrix", "review-round-1.md"), "## Findings\n\nNo findings.\n");
+      const store = createCodingAgentReviewSummaryStore({
+        getReview: async () => ({
+          ok: true,
+          review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+        }),
+        listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+      } as ReviewLoopStore, {
+        ownerId: testPrincipal.userId,
+        homePath,
+      });
+
+      const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+      expect(snapshot.partial).toBe(true);
+      expect(snapshot.safeNotice).toBe("Some diff content is unavailable. Showing bounded review metadata.");
+      expect(snapshot.files.items).toEqual([
+        expect.objectContaining({
+          path: "packages/foo/ b/bar.bin",
+          status: "binary",
+          partial: true,
+        }),
+      ]);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps snapshots partial when an empty diff falls back to findings metadata", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      getReview: async () => ({
+        ok: true,
+        review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+      }),
+      listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+    } as ReviewLoopStore, {
+      ownerId: testPrincipal.userId,
+      homePath: "/home/matrix/home",
+      diffReader: async () => ({
+        ok: true,
+        files: [],
+        hasMore: false,
+        partial: false,
+      }),
+      findingsReader: async () => ({
+        ok: true,
+        parserStatus: "success",
+        findingsCount: 1,
+        severityCounts: { high: 1, medium: 0, low: 0 },
+        findings: [{
+          id: "HIGH-1",
+          severity: "high",
+          file: "packages/gateway/src/coding-agents/routes.ts",
+          line: 42,
+          summary: "Finding-only metadata remains partial.",
+        }],
+      }),
+    });
+
+    const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+    expect(snapshot.partial).toBe(true);
+    expect(snapshot.safeNotice).toBe("Some diff content is unavailable. Showing bounded review metadata.");
+    expect(snapshot.files.items[0]).toMatchObject({
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      partial: true,
+    });
+  });
+
+  it("summarizes committed review branch changes against the tracked base", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-review-branch-diff-"));
+    try {
+      const worktreeRoot = join(homePath, "projects", "matrix-os", "worktrees", "wt_abc123def456");
+      const sourceDir = join(worktreeRoot, "packages", "gateway", "src", "coding-agents");
+      await mkdir(sourceDir, { recursive: true });
+      await mkdir(join(worktreeRoot, ".matrix"), { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.email", "matrix@example.invalid"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.name", "Matrix Review"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 1;\n");
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await execFileAsync("git", ["commit", "-m", "base"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 2;\nexport const next = 3;\n");
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await execFileAsync("git", ["commit", "-m", "review change"], { cwd: worktreeRoot });
+      await writeFile(join(worktreeRoot, ".matrix", "review-round-1.md"), "## Findings\n\nNo findings.\n");
+      const store = createCodingAgentReviewSummaryStore({
+        getReview: async () => ({
+          ok: true,
+          review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+        }),
+        listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+      } as ReviewLoopStore, {
+        ownerId: testPrincipal.userId,
+        homePath,
+      });
+
+      const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+      expect(snapshot.partial).toBe(false);
+      expect(snapshot.files.items).toEqual([
+        expect.objectContaining({
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+          partial: false,
+          hunks: [expect.objectContaining({ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 })],
+        }),
+      ]);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps committed review snapshots partial when no trusted base ref exists", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-review-no-base-diff-"));
+    try {
+      const worktreeRoot = join(homePath, "projects", "matrix-os", "worktrees", "wt_abc123def456");
+      const sourceDir = join(worktreeRoot, "packages", "gateway", "src", "coding-agents");
+      await mkdir(sourceDir, { recursive: true });
+      await mkdir(join(worktreeRoot, ".matrix"), { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.email", "matrix@example.invalid"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.name", "Matrix Review"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 1;\n");
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await execFileAsync("git", ["commit", "-m", "base"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 2;\nexport const next = 3;\n");
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await execFileAsync("git", ["commit", "-m", "review change"], { cwd: worktreeRoot });
+      await writeFile(join(worktreeRoot, ".matrix", "review-round-1.md"), "## Findings\n\nNo findings.\n");
+      const store = createCodingAgentReviewSummaryStore({
+        getReview: async () => ({
+          ok: true,
+          review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+        }),
+        listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+      } as ReviewLoopStore, {
+        ownerId: testPrincipal.userId,
+        homePath,
+      });
+
+      const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+      expect(snapshot.partial).toBe(true);
+      expect(snapshot.files).toMatchObject({ items: [], hasMore: true, limit: 100 });
+      expect(snapshot.safeNotice).toBe("Diff content is not available yet. Showing bounded review state.");
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps no-base snapshots partial even when local edits produce diff metadata", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-review-no-base-local-diff-"));
+    try {
+      const worktreeRoot = join(homePath, "projects", "matrix-os", "worktrees", "wt_abc123def456");
+      const sourceDir = join(worktreeRoot, "packages", "gateway", "src", "coding-agents");
+      await mkdir(sourceDir, { recursive: true });
+      await mkdir(join(worktreeRoot, ".matrix"), { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.email", "matrix@example.invalid"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.name", "Matrix Review"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 1;\n");
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await execFileAsync("git", ["commit", "-m", "base"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 2;\nexport const next = 3;\n");
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await execFileAsync("git", ["commit", "-m", "review change"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), "export const value = 4;\nexport const next = 3;\n");
+      await writeFile(join(worktreeRoot, ".matrix", "review-round-1.md"), "## Findings\n\nNo findings.\n");
+      const store = createCodingAgentReviewSummaryStore({
+        getReview: async () => ({
+          ok: true,
+          review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+        }),
+        listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+      } as ReviewLoopStore, {
+        ownerId: testPrincipal.userId,
+        homePath,
+      });
+
+      const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+      expect(snapshot.partial).toBe(true);
+      expect(snapshot.safeNotice).toBe("Some diff content is unavailable. Showing bounded review metadata.");
+      expect(snapshot.files.items).toEqual([
+        expect.objectContaining({
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          partial: true,
+        }),
+      ]);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 
   it("returns safe not-found for owner-mismatched review snapshots", async () => {

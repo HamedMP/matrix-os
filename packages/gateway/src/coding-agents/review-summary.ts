@@ -5,7 +5,10 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
 } from "@matrix-os/contracts";
+import { execFile } from "node:child_process";
+import { access } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ReviewLoopRecord } from "../review-loop.js";
 import {
@@ -20,8 +23,22 @@ const RAW_REVIEW_SCAN_LIMIT = 100;
 const MAX_REVIEW_SCAN_PAGES = 5;
 const REVIEW_SNAPSHOT_FILE_LIMIT = 100;
 const REVIEW_SNAPSHOT_FINDINGS_PER_FILE_LIMIT = 100;
+const REVIEW_DIFF_OUTPUT_BYTES = 256 * 1024;
+const REVIEW_DIFF_TIMEOUT_MS = 5_000;
+
+const execFileAsync = promisify(execFile);
 
 type ReviewSnapshotErrorCode = "review_not_found" | "review_state_unavailable";
+type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
+type ReviewDiffReadResult = {
+  ok: true;
+  files: ReviewSnapshotFile[];
+  hasMore: boolean;
+  partial: boolean;
+} | {
+  ok: false;
+};
+type ReviewDiffReader = (worktreeRoot: string) => Promise<ReviewDiffReadResult>;
 
 export class CodingAgentReviewSnapshotError extends Error {
   constructor(public readonly code: ReviewSnapshotErrorCode) {
@@ -133,6 +150,297 @@ function safeFindingsPath(input: { homePath?: string; review: ReviewLoopRecord; 
   return resolved.startsWith(`${worktreeRoot}${sep}`) ? resolved : null;
 }
 
+function safeWorktreeRoot(input: { homePath?: string; review: ReviewLoopRecord }): string | null {
+  if (!input.homePath) return null;
+  const safeProject = /^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(input.review.projectSlug);
+  const safeWorktree = /^wt_[A-Za-z0-9_-]{1,128}$/.test(input.review.worktreeId);
+  if (!safeProject || !safeWorktree) return null;
+  return resolve(input.homePath, "projects", input.review.projectSlug, "worktrees", input.review.worktreeId);
+}
+
+function hunkIdFor(path: string, index: number): string {
+  return `hunk_${path.replace(/[^A-Za-z0-9_-]+/g, "_").slice(0, 96)}_${index}`;
+}
+
+function parseRangeStart(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? "0", 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function parseRangeLines(value: string | undefined): number {
+  if (value === undefined) return 1;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function readGitPathToken(input: string, startIndex = 0): { token: string; nextIndex: number } | null {
+  let index = startIndex;
+  while (input[index] === " ") index += 1;
+  if (index >= input.length) return null;
+  if (input[index] !== '"') {
+    const end = input.indexOf(" ", index);
+    const nextIndex = end === -1 ? input.length : end;
+    return { token: input.slice(index, nextIndex), nextIndex };
+  }
+
+  index += 1;
+  let token = "";
+  while (index < input.length) {
+    const char = input[index]!;
+    if (char === '"') {
+      return { token, nextIndex: index + 1 };
+    }
+    if (char !== "\\") {
+      token += char;
+      index += 1;
+      continue;
+    }
+    const escaped = input[index + 1];
+    if (!escaped) return null;
+    if (/[0-7]/.test(escaped)) {
+      const octal = input.slice(index + 1, index + 4).match(/^[0-7]{1,3}/)?.[0] ?? escaped;
+      token += String.fromCharCode(Number.parseInt(octal, 8));
+      index += 1 + octal.length;
+      continue;
+    }
+    token += escaped === "t" ? "\t" : escaped === "n" ? "\n" : escaped;
+    index += 2;
+  }
+  return null;
+}
+
+function cleanGitPathToken(token: string, options: { stripTabMetadata?: boolean } = {}): string {
+  const value = options.stripTabMetadata ? token.split("\t")[0] ?? token : token;
+  return value.startsWith("a/") || value.startsWith("b/")
+    ? value.slice(2)
+    : value;
+}
+
+function parseDiffGitHeader(line: string): { oldPath: string; newPath: string } | null {
+  if (!line.startsWith("diff --git ")) return null;
+  const rest = line.slice("diff --git ".length);
+  if (rest.startsWith("a/")) {
+    const candidates: Array<{ oldPath: string; newPath: string }> = [];
+    let separator = rest.indexOf(" b/");
+    while (separator !== -1) {
+      const oldRaw = rest.slice(0, separator);
+      const newRaw = rest.slice(separator + 1);
+      if (oldRaw.startsWith("a/") && newRaw.startsWith("b/")) {
+        candidates.push({
+          oldPath: cleanGitPathToken(oldRaw),
+          newPath: cleanGitPathToken(newRaw),
+        });
+      }
+      separator = rest.indexOf(" b/", separator + 1);
+    }
+    return candidates.find((candidate) => candidate.oldPath === candidate.newPath)
+      ?? candidates[candidates.length - 1]
+      ?? null;
+  }
+  const oldToken = readGitPathToken(rest);
+  if (!oldToken) return null;
+  const newToken = readGitPathToken(rest, oldToken.nextIndex);
+  if (!newToken) return null;
+  return {
+    oldPath: cleanGitPathToken(oldToken.token),
+    newPath: cleanGitPathToken(newToken.token),
+  };
+}
+
+function markDiffReadResultPartial(result: ReviewDiffReadResult): ReviewDiffReadResult {
+  if (!result.ok) return result;
+  return {
+    ...result,
+    files: result.files.map((file) => ({ ...file, partial: true })),
+    hasMore: true,
+    partial: true,
+  };
+}
+
+function parseDiffFileMarker(line: string, marker: "--- " | "+++ "): string | null {
+  if (!line.startsWith(marker)) return null;
+  const raw = line.slice(marker.length);
+  if (raw.startsWith('"')) {
+    const token = readGitPathToken(raw);
+    if (!token || token.token === "/dev/null") return null;
+    return cleanGitPathToken(token.token);
+  }
+  if (raw === "/dev/null") return null;
+  return cleanGitPathToken(raw, { stripTabMetadata: true });
+}
+
+function parseUnifiedDiff(stdout: string): ReviewDiffReadResult {
+  const files: ReviewSnapshotFile[] = [];
+  let current: {
+    path: string;
+    status: ReviewSnapshotFile["status"];
+    additions: number;
+    deletions: number;
+    hunks: ReviewSnapshotFile["hunks"];
+    partial: boolean;
+  } | null = null;
+  let hasMore = false;
+
+  const pushCurrent = () => {
+    if (!current) return;
+    const parsed = ReviewSnapshotFileSchema.safeParse({
+      path: current.path,
+      status: current.status,
+      additions: current.additions,
+      deletions: current.deletions,
+      partial: current.partial,
+      hunks: current.hunks.slice(0, 100),
+    });
+    if (!parsed.success) {
+      current = null;
+      return;
+    }
+    if (files.length >= REVIEW_SNAPSHOT_FILE_LIMIT) {
+      hasMore = true;
+      current = null;
+      return;
+    }
+    files.push(parsed.data);
+    current = null;
+  };
+
+  for (const line of stdout.split("\n")) {
+    const diffHeader = parseDiffGitHeader(line);
+    if (diffHeader) {
+      pushCurrent();
+      current = {
+        path: diffHeader.newPath || diffHeader.oldPath,
+        status: "modified",
+        additions: 0,
+        deletions: 0,
+        hunks: [],
+        partial: false,
+      };
+      continue;
+    }
+    if (!current) continue;
+    if (line.startsWith("new file mode")) {
+      current.status = "added";
+      continue;
+    }
+    if (line.startsWith("deleted file mode")) {
+      current.status = "deleted";
+      continue;
+    }
+    if (line.startsWith("similarity index") || line.startsWith("rename from ") || line.startsWith("rename to ")) {
+      current.status = "renamed";
+      continue;
+    }
+    if (line.startsWith("Binary files ")) {
+      current.status = "binary";
+      current.partial = true;
+      continue;
+    }
+    const newPath = parseDiffFileMarker(line, "+++ ");
+    if (newPath) {
+      current.path = newPath;
+      continue;
+    }
+    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(line);
+    if (hunk) {
+      if (current.hunks.length >= 100) {
+        current.partial = true;
+        hasMore = true;
+        continue;
+      }
+      current.hunks.push({
+        id: hunkIdFor(current.path, current.hunks.length),
+        oldStart: parseRangeStart(hunk[1]),
+        oldLines: parseRangeLines(hunk[2]),
+        newStart: parseRangeStart(hunk[3]),
+        newLines: parseRangeLines(hunk[4]),
+        heading: line.slice(0, 120),
+        partial: false,
+      });
+      continue;
+    }
+    if (line.startsWith("+") && !line.startsWith("+++")) current.additions += 1;
+    if (line.startsWith("-") && !line.startsWith("---")) current.deletions += 1;
+  }
+  pushCurrent();
+  return {
+    ok: true,
+    files,
+    hasMore,
+    partial: hasMore || files.some((file) => file.partial),
+  };
+}
+
+async function execGit(worktreeRoot: string, args: string[], options: { maxBuffer?: number; logFailure?: boolean } = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REVIEW_DIFF_TIMEOUT_MS);
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-C", worktreeRoot, ...args],
+      {
+        encoding: "utf8",
+        maxBuffer: options.maxBuffer ?? REVIEW_DIFF_OUTPUT_BYTES,
+        signal: controller.signal,
+      },
+    );
+    return stdout;
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+    if (options.logFailure ?? true) {
+      console.warn("[coding-agents] review diff unavailable", code ? `(${code})` : "");
+    }
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readGitReviewDiff(worktreeRoot: string): Promise<ReviewDiffReadResult> {
+  try {
+    await access(worktreeRoot);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+    if (["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
+      return { ok: false };
+    }
+    console.warn("[coding-agents] review worktree unavailable");
+    return { ok: false };
+  }
+  const diffArgs = ["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--unified=0"];
+  let base: string | undefined;
+  for (const candidate of ["origin/HEAD", "origin/main", "origin/master", "origin/develop"]) {
+    base = (await execGit(worktreeRoot, ["merge-base", "HEAD", candidate], {
+      maxBuffer: 64 * 1024,
+      logFailure: false,
+    }))?.trim();
+    if (base) break;
+  }
+  const baseStdout = base
+    ? await execGit(worktreeRoot, [...diffArgs, base, "--", "."], { logFailure: false })
+    : null;
+  if (base && baseStdout === null) {
+    return { ok: true, files: [], hasMore: true, partial: true };
+  }
+  if (!base) {
+    const headStdout = await execGit(worktreeRoot, [...diffArgs, "HEAD", "--", "."], { logFailure: false });
+    if (headStdout !== null) {
+      if (headStdout.trim().length === 0) {
+        return { ok: true, files: [], hasMore: true, partial: true };
+      }
+      return markDiffReadResultPartial(parseUnifiedDiff(headStdout));
+    }
+    const workingTreeStdout = await execGit(worktreeRoot, [...diffArgs, "--", "."]);
+    if (workingTreeStdout === null) return { ok: false };
+    if (workingTreeStdout.trim().length === 0) {
+      return { ok: true, files: [], hasMore: true, partial: true };
+    }
+    return markDiffReadResultPartial(parseUnifiedDiff(workingTreeStdout));
+  }
+  const stdout = baseStdout;
+  return stdout === null ? { ok: false } : parseUnifiedDiff(stdout);
+}
+
 function snapshotFilesFromFindings(review: ReviewLoopRecord, findings: ParsedFinding[]) {
   const files = new Map<string, ParsedFinding[]>();
   let hasMore = false;
@@ -178,9 +486,43 @@ function snapshotFilesFromFindings(review: ReviewLoopRecord, findings: ParsedFin
   return { items, hasMore };
 }
 
+function mergeDiffAndFindings(input: {
+  diff: ReviewDiffReadResult | null;
+  findings: ReturnType<typeof snapshotFilesFromFindings>;
+}) {
+  if (!input.diff?.ok) return input.findings;
+  if (input.diff.files.length === 0) {
+    return {
+      items: input.findings.items,
+      hasMore: input.diff.hasMore || input.diff.partial || input.findings.hasMore,
+    };
+  }
+  const findingsByPath = new Map(input.findings.items.map((file) => [file.path, file.findings ?? []]));
+  const files: ReviewSnapshotFile[] = [];
+  let hasMore = input.diff.hasMore || input.findings.hasMore;
+  for (const file of input.diff.files) {
+    const parsed = ReviewSnapshotFileSchema.safeParse({
+      ...file,
+      findings: findingsByPath.get(file.path),
+    });
+    if (!parsed.success) continue;
+    files.push(parsed.data);
+  }
+  const diffPaths = new Set(files.map((file) => file.path));
+  for (const findingFile of input.findings.items) {
+    if (diffPaths.has(findingFile.path)) continue;
+    if (files.length >= REVIEW_SNAPSHOT_FILE_LIMIT) {
+      hasMore = true;
+      break;
+    }
+    files.push(findingFile);
+  }
+  return { items: files.slice(0, REVIEW_SNAPSHOT_FILE_LIMIT), hasMore };
+}
+
 async function toPartialReviewSnapshot(
   review: ReviewLoopRecord,
-  options: { findingsReader: FindingsReader; homePath?: string },
+  options: { findingsReader: FindingsReader; diffReader: ReviewDiffReader; homePath?: string },
 ): Promise<ReviewSnapshot | null> {
   const summary = toReviewSummary(review);
   if (!summary) return null;
@@ -194,7 +536,11 @@ async function toPartialReviewSnapshot(
     })
     : null;
   const parsedFindings = findingsPath ? await options.findingsReader(findingsPath) : null;
-  const files = parsedFindings?.ok ? snapshotFilesFromFindings(review, parsedFindings.findings) : { items: [], hasMore: false };
+  const worktreeRoot = safeWorktreeRoot({ homePath: options.homePath, review });
+  const parsedDiff = worktreeRoot ? await options.diffReader(worktreeRoot) : null;
+  const findingsFiles = parsedFindings?.ok ? snapshotFilesFromFindings(review, parsedFindings.findings) : { items: [], hasMore: false };
+  const files = mergeDiffAndFindings({ diff: parsedDiff, findings: findingsFiles });
+  const snapshotPartial = !parsedDiff?.ok || parsedDiff.partial || files.hasMore || files.items.some((file) => file.partial);
   const parsed = ReviewSnapshotSchema.safeParse({
     review: summary,
     files: {
@@ -202,10 +548,12 @@ async function toPartialReviewSnapshot(
       hasMore: files.hasMore,
       limit: REVIEW_SNAPSHOT_FILE_LIMIT,
     },
-    partial: true,
-    safeNotice: files.items.length > 0
-      ? "Diff content is not available yet. Showing bounded review findings."
-      : "Diff content is not available yet. Showing bounded review state.",
+    partial: snapshotPartial,
+    safeNotice: snapshotPartial
+      ? files.items.length > 0
+        ? "Some diff content is unavailable. Showing bounded review metadata."
+        : "Diff content is not available yet. Showing bounded review state."
+      : undefined,
     updatedAt: review.updatedAt,
   });
   return parsed.success ? parsed.data : null;
@@ -213,10 +561,17 @@ async function toPartialReviewSnapshot(
 
 export function createCodingAgentReviewSummaryStore(
   store: ReviewLoopStore,
-  options: { ownerId?: string; principalOwnerIds?: readonly string[]; findingsReader?: FindingsReader; homePath?: string } = {},
+  options: {
+    ownerId?: string;
+    principalOwnerIds?: readonly string[];
+    findingsReader?: FindingsReader;
+    diffReader?: ReviewDiffReader;
+    homePath?: string;
+  } = {},
 ): CodingAgentReviewSummaryStore {
   const ownerIds = ownerIdsFor(options);
   const findingsReader = options.findingsReader ?? parseFindingsFile;
+  const diffReader = options.diffReader ?? readGitReviewDiff;
   return {
     async listReviews(principal: RequestPrincipal, listOptions: { cursor?: string } = {}) {
       if (!canReadReviewSummaries(principal, ownerIds)) {
@@ -270,7 +625,7 @@ export function createCodingAgentReviewSummaryStore(
       if (!reviewOwnerMatchesPrincipal(result.review, principal, ownerIds)) {
         throw new CodingAgentReviewSnapshotError("review_not_found");
       }
-      const snapshot = await toPartialReviewSnapshot(result.review, { findingsReader, homePath: options.homePath });
+      const snapshot = await toPartialReviewSnapshot(result.review, { findingsReader, diffReader, homePath: options.homePath });
       if (!snapshot) {
         throw new CodingAgentReviewSnapshotError("review_state_unavailable");
       }
