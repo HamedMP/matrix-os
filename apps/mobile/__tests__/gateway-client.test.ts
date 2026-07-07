@@ -330,6 +330,124 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("submits coding agent approval decisions with the existing auth header", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_mobile",
+        providerId: "codex",
+        title: "Repair mobile route",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:02:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            eventId: "evt_mobile_approval_resolved",
+            threadId: "thread_mobile",
+            type: "approval.resolved",
+            approvalId: "appr_mobile_1",
+            decision: "approve",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.submitCodingAgentApprovalDecision({
+      threadId: "thread_mobile",
+      approvalId: "appr_mobile_1",
+      decision: "approve",
+      correlationId: "corr_mobile_1",
+      clientRequestId: "req_mobile_approval_1",
+    })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/threads/thread_mobile/approvals/appr_mobile_1/decision",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      decision: "approve",
+      correlationId: "corr_mobile_1",
+      clientRequestId: "req_mobile_approval_1",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("submits coding agent input answers with the existing auth header", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_mobile",
+        providerId: "codex",
+        title: "Repair mobile route",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            eventId: "evt_mobile_input_answered",
+            threadId: "thread_mobile",
+            type: "user_input.answered",
+            requestId: "req_mobile_prompt_1",
+            correlationId: "corr_input_mobile_1",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.submitCodingAgentInputAnswer({
+      threadId: "thread_mobile",
+      inputRequestId: "req_mobile_prompt_1",
+      answer: "Run the focused mobile thread test.",
+      correlationId: "corr_input_mobile_1",
+      clientRequestId: "req_mobile_input_1",
+    })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/threads/thread_mobile/inputs/req_mobile_prompt_1/answer",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      answer: "Run the focused mobile thread test.",
+      correlationId: "corr_input_mobile_1",
+      clientRequestId: "req_mobile_input_1",
+    });
+
+    fetchMock.mockRestore();
+  });
+
   it("creates coding agent threads with the existing auth header", async () => {
     const snapshot = {
       thread: {
@@ -583,6 +701,36 @@ describe("GatewayClient", () => {
     })).resolves.toEqual({
       ok: false,
       error: "Agent run could not be started. Try again.",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns safe mobile action errors for invalid approval and input payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ token: "/home/matrix/secret" }))
+      .mockResolvedValueOnce(jsonResponse({ token: "sk_live_secret" }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.submitCodingAgentApprovalDecision({
+      threadId: "thread_mobile",
+      approvalId: "appr_mobile_1",
+      decision: "approve",
+      correlationId: "corr_mobile_1",
+      clientRequestId: "req_mobile_approval_1",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Approval could not be sent. Try again.",
+    });
+    await expect(client.submitCodingAgentInputAnswer({
+      threadId: "thread_mobile",
+      inputRequestId: "req_mobile_prompt_1",
+      answer: "Proceed.",
+      correlationId: "corr_mobile_1",
+      clientRequestId: "req_mobile_input_1",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Input could not be sent. Try again.",
     });
 
     fetchMock.mockRestore();

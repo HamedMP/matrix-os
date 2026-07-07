@@ -1,12 +1,12 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-desktop-input-actions`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-mobile-thread-actions`
 **Updated**: 2026-07-07
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop and mobile review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Mobile active thread rows now open a bounded thread detail route that hydrates `AgentThreadSnapshotSchema` through the authenticated gateway client, renders safe thread metadata, event counts, and a read-only snapshot event timeline, and can hand a bound canonical terminal session to the existing mobile Terminal tab. Desktop active thread rows can open a matching attachable bound canonical terminal session in the existing Terminal tab model and selected desktop threads now hydrate `AgentThreadSnapshotSchema` through trusted main-process IPC for safe metadata and event timeline rendering. Desktop approval-request events can submit allowed decisions, and desktop user-input request events can submit bounded answers, through trusted main-process IPC and replace local details with the gateway-returned bounded thread snapshot. Desktop native notification clicks focus the Agents tab and visibly select the bounded coding-agent workspace thread reference in the active thread list. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop and mobile review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Mobile active thread rows now open a bounded thread detail route that hydrates `AgentThreadSnapshotSchema` through the authenticated gateway client, renders safe thread metadata, event counts, and snapshot event timeline, can hand a bound canonical terminal session to the existing mobile Terminal tab, and can submit approval decisions plus user-input answers through the authenticated gateway client. Desktop active thread rows can open a matching attachable bound canonical terminal session in the existing Terminal tab model and selected desktop threads now hydrate `AgentThreadSnapshotSchema` through trusted main-process IPC for safe metadata and event timeline rendering. Desktop approval-request events can submit allowed decisions, and desktop user-input request events can submit bounded answers, through trusted main-process IPC and replace local details with the gateway-returned bounded thread snapshot. Desktop native notification clicks focus the Agents tab and visibly select the bounded coding-agent workspace thread reference in the active thread list. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -240,6 +240,8 @@ Gateway client:
 - `apps/mobile/lib/gateway-client.ts`
 - `getCodingAgentRuntimeSummary()` calls `GET /api/coding-agents/summary`, validates `RuntimeSummarySchema`, and returns the safe `"Runtime summary unavailable"` error on failure.
 - `getCodingAgentThreadSnapshot()` calls `GET /api/coding-agents/threads/:threadId`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Thread state unavailable"` error on failure.
+- `submitCodingAgentApprovalDecision()` posts bounded approval decisions to `POST /api/coding-agents/threads/:threadId/approvals/:approvalId/decision`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Approval could not be sent. Try again."` error on failure.
+- `submitCodingAgentInputAnswer()` posts bounded answers to `POST /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer`, validates `AgentThreadSnapshotSchema`, and returns the safe `"Input could not be sent. Try again."` error on failure.
 - `getCodingAgentReviews()` calls `GET /api/coding-agents/reviews`, validates a bounded review summary list, and returns the safe `"Review state unavailable"` error on failure.
 - Existing terminal session methods call `/api/terminal/sessions`.
 
@@ -253,7 +255,9 @@ Screen:
 - Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, gateway-bounded hunk lines, and safe finding summaries.
 - Safe generic review error state if review summaries are unavailable; review failures do not drop the runtime summary dashboard.
 - Composer route for creating accepted coding-agent threads.
-- Active thread rows navigate to `/agents/:threadId`; the thread route hydrates a bounded thread snapshot, shows provider/status/terminal metadata, event counts, loading, refresh, safe generic error states, and a read-only event timeline for gateway-bounded snapshot events. Assistant text and file-change events render generic summaries instead of raw event text or paths. Live replay/subscription and richer transcript grouping remain follow-up work.
+- Active thread rows navigate to `/agents/:threadId`; the thread route hydrates a bounded thread snapshot, shows provider/status/terminal metadata, event counts, loading, refresh, safe generic error states, and an event timeline for gateway-bounded snapshot events. Assistant text and file-change events render generic summaries instead of raw event text or paths. Live replay/subscription and richer transcript grouping remain follow-up work.
+- Approval-request events render allowed decisions in the mobile thread route. Decisions use mobile-generated idempotency request ids, go through the authenticated gateway client, and replace local thread details with the gateway-returned bounded snapshot. Failed decisions show a generic recovery-oriented message.
+- User-input request events render a transient bounded answer composer in the mobile thread route. Answers use mobile-generated idempotency request ids, go through the authenticated gateway client, and replace local thread details with the gateway-returned bounded snapshot. Failed submissions show a generic recovery-oriented message.
 - Thread details with a bound `terminalSessionId` can open the existing `/terminal` tab after persisting only the safe canonical shell-session reference in `mobile-shell-state`; terminal output and transcripts remain outside AsyncStorage.
 - Flag: `apps/mobile/lib/feature-flags.ts` with `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE === "1"`.
 
@@ -268,6 +272,7 @@ Focused tests:
 
 - `apps/mobile/__tests__/gateway-client.test.ts`
 - `apps/mobile/__tests__/agents-screen.test.tsx`
+- `apps/mobile/__tests__/agent-thread-screen.test.tsx`
 - `apps/mobile/__tests__/agent-workspace-state.test.ts`
 
 ## Browser Shell State

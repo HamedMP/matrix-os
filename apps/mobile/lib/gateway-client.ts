@@ -6,11 +6,15 @@ import {
 } from "@/lib/terminal-state";
 import {
   AgentThreadSnapshotSchema,
+  ApprovalDecisionRequestSchema,
+  ApprovalIdSchema,
   CursorSchema,
+  RequestIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
   ThreadIdSchema,
+  UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
   type ReviewSnapshot,
   type RuntimeSummary,
@@ -91,6 +95,14 @@ export type CodingAgentThreadCreateResult =
 export type CodingAgentThreadSnapshotResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
   | { ok: false; error: "Thread state unavailable" };
+
+export type CodingAgentApprovalDecisionResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Approval could not be sent. Try again." };
+
+export type CodingAgentInputAnswerResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Input could not be sent. Try again." };
 
 const CodingAgentReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
 
@@ -598,6 +610,90 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable");
       return { ok: false, error: "Thread state unavailable" };
+    }
+  }
+
+  async submitCodingAgentApprovalDecision(options: {
+    threadId: string;
+    approvalId: string;
+    decision: unknown;
+    correlationId: string;
+    clientRequestId: string;
+  }): Promise<CodingAgentApprovalDecisionResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      const parsedApprovalId = ApprovalIdSchema.safeParse(options.approvalId);
+      const parsedBody = ApprovalDecisionRequestSchema.safeParse({
+        decision: options.decision,
+        correlationId: options.correlationId,
+        clientRequestId: options.clientRequestId,
+      });
+      if (!parsedThreadId.success || !parsedApprovalId.success || !parsedBody.success) {
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      const res = await this.fetchGateway(
+        `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/approvals/${encodeURIComponent(parsedApprovalId.data)}/decision`,
+        {
+          method: "POST",
+          body: JSON.stringify(parsedBody.data),
+        },
+      );
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", res.status);
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision returned invalid payload");
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable");
+      return { ok: false, error: "Approval could not be sent. Try again." };
+    }
+  }
+
+  async submitCodingAgentInputAnswer(options: {
+    threadId: string;
+    inputRequestId: string;
+    answer: string;
+    correlationId: string;
+    clientRequestId: string;
+  }): Promise<CodingAgentInputAnswerResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      const parsedInputRequestId = RequestIdSchema.safeParse(options.inputRequestId);
+      const parsedBody = UserInputAnswerRequestSchema.safeParse({
+        answer: options.answer,
+        correlationId: options.correlationId,
+        clientRequestId: options.clientRequestId,
+      });
+      if (!parsedThreadId.success || !parsedInputRequestId.success || !parsedBody.success) {
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      const res = await this.fetchGateway(
+        `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/inputs/${encodeURIComponent(parsedInputRequestId.data)}/answer`,
+        {
+          method: "POST",
+          body: JSON.stringify(parsedBody.data),
+        },
+      );
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", res.status);
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer returned invalid payload");
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable");
+      return { ok: false, error: "Input could not be sent. Try again." };
     }
   }
 
