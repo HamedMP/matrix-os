@@ -139,6 +139,32 @@ describe("AgentThreadRoute", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
   });
 
+  it("does not open a stale terminal session when safe resume state cannot be saved", async () => {
+    jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error("storage unavailable"));
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: threadSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Repair mobile route")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open bound terminal"));
+    });
+
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(await screen.findByText("Terminal session unavailable. Try again.")).toBeTruthy();
+    warnSpy.mockRestore();
+  });
+
   it("renders a readable bounded event timeline from the thread snapshot", async () => {
     const snapshot = {
       ...threadSnapshotFixture(),

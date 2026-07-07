@@ -21,14 +21,14 @@ describe("mobile shell state", () => {
       surface: "native-mobile",
       mode: "app",
       lastActiveAppSlug: "games/snake",
-      lastActiveTerminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
+      lastActiveTerminalSessionId: "main",
       canvasEnteredAt: "2026-05-12T00:00:00.000Z",
       updatedAt: "2026-05-12T00:01:00.000Z",
     })).toMatchObject({
       surface: "native-mobile",
       mode: "app",
       lastActiveAppSlug: "games/snake",
-      lastActiveTerminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
+      lastActiveTerminalSessionId: "main",
       canvasEnteredAt: "2026-05-12T00:00:00.000Z",
       updatedAt: "2026-05-12T00:01:00.000Z",
     });
@@ -136,6 +136,17 @@ describe("mobile shell state", () => {
     expect(saved).toMatchObject({
       mode: "terminal",
       lastActiveTerminalSessionId: "main",
+    });
+  });
+
+  it("drops legacy UUID terminal references that cannot resume named shell sessions", () => {
+    expect(parseMobileShellState({
+      mode: "terminal",
+      lastActiveTerminalSessionId: "550e8400-e29b-41d4-a716-446655440000",
+      updatedAt: "2026-05-16T00:00:00.000Z",
+    })).toMatchObject({
+      mode: "terminal",
+      lastActiveTerminalSessionId: null,
     });
   });
 });

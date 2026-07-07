@@ -12,7 +12,7 @@ import {
   webViewInjections,
 } from "../__mocks__/react-native-webview";
 
-const SESSION_ID = "c4319d6a-a24c-4820-a0f8-f6f8a6ce76b9";
+const SESSION_ID = "matrix-abc1234";
 
 // Auto-confirm the End-session / Detach confirmation dialogs in tests.
 function autoConfirmAlerts() {

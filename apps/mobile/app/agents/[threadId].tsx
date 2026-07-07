@@ -12,6 +12,8 @@ type ThreadRouteState =
   | { status: "ready"; snapshot: AgentThreadSnapshot; error: "Thread state unavailable" | null; refreshing: boolean }
   | { status: "error"; snapshot: null; error: "Thread state unavailable" };
 
+type TerminalOpenError = "Terminal session unavailable. Try again.";
+
 export default function AgentThreadRoute() {
   const { theme } = useUnistyles();
   const params = useLocalSearchParams<{ threadId?: string }>();
@@ -24,8 +26,10 @@ export default function AgentThreadRoute() {
     snapshot: null,
     error: null,
   });
+  const [terminalOpenError, setTerminalOpenError] = useState<TerminalOpenError | null>(null);
 
   const loadSnapshot = useCallback(async (cancelled: () => boolean = () => false) => {
+    setTerminalOpenError(null);
     if (!client || !threadId) {
       setState((current) => current.status === "ready"
         ? { ...current, error: "Thread state unavailable", refreshing: false }
@@ -62,6 +66,7 @@ export default function AgentThreadRoute() {
   const boundTerminalSessionId = state.status === "ready" ? state.snapshot.thread.terminalSessionId ?? null : null;
   const openBoundTerminal = useCallback(async () => {
     if (!boundTerminalSessionId) return;
+    setTerminalOpenError(null);
     try {
       const savedState = await loadMobileShellState();
       await saveMobileShellState({
@@ -72,6 +77,8 @@ export default function AgentThreadRoute() {
       });
     } catch {
       console.warn("[mobile] failed to remember bound terminal session");
+      setTerminalOpenError("Terminal session unavailable. Try again.");
+      return;
     }
     router.push("/terminal");
   }, [boundTerminalSessionId, router]);
@@ -126,6 +133,9 @@ export default function AgentThreadRoute() {
         ) : null}
         {state.error ? (
           <Text style={styles.inlineError}>{state.error}</Text>
+        ) : null}
+        {terminalOpenError ? (
+          <Text style={styles.inlineError}>{terminalOpenError}</Text>
         ) : null}
         <View style={styles.actionRow}>
           {thread.terminalSessionId ? (
