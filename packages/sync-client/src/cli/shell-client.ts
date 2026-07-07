@@ -34,6 +34,7 @@ export interface ShellClient {
   applyLayout(session: string, layout: string): Promise<Record<string, unknown>>;
   dumpLayout(session: string): Promise<Record<string, unknown>>;
   createAttachUrl(name: string, options?: { fromSeq?: number; token?: string }): string;
+  sendInput(name: string, data: string, options?: ShellSendInputOptions): Promise<void>;
   attachSession(name: string, options?: ShellAttachOptions): Promise<{ detached: boolean }>;
 }
 
@@ -56,6 +57,11 @@ interface AttachWebSocket {
   close(): void;
   on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void): AttachWebSocket;
   off?(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void): AttachWebSocket;
+}
+
+export interface ShellSendInputOptions {
+  WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
+  timeoutMs?: number;
 }
 
 export interface ShellAttachOptions {
@@ -421,6 +427,75 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       return (await request(`${terminalSessionsPath}/${encodeURIComponent(session)}/layout`)) as Record<string, unknown>;
     },
     createAttachUrl,
+    async sendInput(name, data, sendOptions = {}) {
+      const WebSocketImpl =
+        sendOptions.WebSocketImpl ??
+        (await import("ws").then((mod) => mod.WebSocket as unknown as ShellSendInputOptions["WebSocketImpl"]));
+      if (!WebSocketImpl) {
+        throw Object.assign(new Error("Request failed"), { code: "websocket_unavailable" });
+      }
+      if (data.length > 65_536) {
+        throw Object.assign(new Error("Request failed"), { code: "invalid_request" });
+      }
+
+      const headers = options.token ? { Authorization: `Bearer ${options.token}` } : undefined;
+      const timeout = sendOptions.timeoutMs ?? timeoutMs;
+      const ws = new WebSocketImpl(createAttachUrl(name), headers ? { headers } : undefined);
+
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          finish(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
+        }, timeout);
+        timer.unref?.();
+
+        const finish = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          try {
+            ws.close();
+          } catch (_err: unknown) {
+            // Best effort close after the input frame has been sent.
+          }
+          fn();
+        };
+
+        ws.on("message", (raw: unknown) => {
+          let parsed: unknown;
+          try {
+            const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+            parsed = JSON.parse(text);
+          } catch (_err: unknown) {
+            return;
+          }
+          if (!parsed || typeof parsed !== "object") return;
+          const msg = parsed as { type?: unknown; code?: unknown };
+          if (msg.type === "attached") {
+            try {
+              ws.send(JSON.stringify({ type: "input", data }));
+              ws.send(JSON.stringify({ type: "detach" }));
+              finish(resolve);
+            } catch (_err: unknown) {
+              finish(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
+            }
+            return;
+          }
+          if (msg.type === "error") {
+            const code = typeof msg.code === "string" && SAFE_SHELL_SERVER_ERROR_CODES.has(msg.code)
+              ? msg.code
+              : "attach_failed";
+            finish(() => reject(Object.assign(new Error("Request failed"), { code })));
+          }
+        });
+        ws.on("close", () => {
+          finish(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
+        });
+        ws.on("error", () => {
+          finish(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
+        });
+      });
+    },
     async attachSession(name, attachOptions = {}) {
       const WebSocketImpl =
         attachOptions.WebSocketImpl ??

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
@@ -24,6 +24,11 @@ import { buildTerminalFontStack } from "./terminal-fonts";
 import { createCodexTuiCompatTransform, transformTerminalOutputForCompat, type CodexTuiCompatTransform } from "./codex-tui-compat";
 import { sendTerminalResize } from "./terminal-remote-resize";
 import {
+  clipboardDataHasImage,
+  pasteClipboardDataIntoTerminal,
+  pasteClipboardIntoTerminal,
+} from "./terminal-rich-paste";
+import {
   isCanonicalShellSessionId,
   isLegacyPtySessionId,
   terminalWebSocketPathForSession,
@@ -31,10 +36,6 @@ import {
 import { createXtermLogger } from "./xterm-logger";
 import type { TerminalCompatMode } from "@/stores/terminal-store";
 
-const BRACKETED_PASTE_OPEN = "\x1b[200~";
-const BRACKETED_PASTE_CLOSE = "\x1b[201~";
-const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
-const MAX_TERMINAL_INPUT = 65_536;
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
 const TERMINAL_SCROLLBACK_LINES = 10_000;
@@ -373,6 +374,7 @@ export function TerminalPane({
   const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const outputBufferRef = useRef("");
   const commandBlockBufferRef = useRef("");
   const activeCommandBlockRef = useRef(false);
@@ -381,6 +383,7 @@ export function TerminalPane({
   const heartbeatRef = useRef<ReturnType<typeof createSocketHealth> | null>(null);
   const isFocusedRef = useRef(isFocused);
   const allowRemoteResizeRef = useRef(allowRemoteResize);
+  const pasteSubmitRequestedRef = useRef(false);
   const compatModeRef = useRef<TerminalCompatMode | undefined>(compatMode);
   const codexCompatTransformRef = useRef<CodexTuiCompatTransform | null>(null);
 
@@ -513,6 +516,38 @@ export function TerminalPane({
     (termRef.current as { focus?: () => void } | null)?.focus?.();
   };
 
+  const showPasteError = (message = "Image paste failed. Try a smaller image or paste a saved file with `mos shell paste-file`.") => {
+    setPasteError(message);
+  };
+
+  const handleKeyDownCapture = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.altKey && event.key.toLowerCase() === "v") {
+      pasteSubmitRequestedRef.current = true;
+      window.setTimeout(() => {
+        pasteSubmitRequestedRef.current = false;
+      }, 750);
+    }
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    if (!clipboardDataHasImage(event.clipboardData)) {
+      return;
+    }
+    event.preventDefault();
+    handleFocus();
+    const submit = pasteSubmitRequestedRef.current;
+    pasteSubmitRequestedRef.current = false;
+    pasteClipboardDataIntoTerminal({
+      clipboardData: event.clipboardData,
+      gatewayUrl: getGatewayUrl(),
+      ws: wsRef.current,
+      submit,
+    }).catch((err: unknown) => {
+      console.warn("Clipboard image paste failed:", err instanceof Error ? err.message : err);
+      showPasteError();
+    });
+  };
+
   useEffect(() => {
     isClosingRef.current = !!isClosing;
   }, [isClosing]);
@@ -536,24 +571,14 @@ export function TerminalPane({
         return;
       }
       if (detail.action === "paste") {
-        // navigator.clipboard is undefined on insecure-origin mobile browsers
-        // and WebViews with a denied clipboard policy; reading it without a
-        // guard throws synchronously before .catch() can attach. Degrade quietly.
-        const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
-        if (!clipboard?.readText) {
-          console.warn("Clipboard paste unavailable: navigator.clipboard.readText is not supported in this context");
-          return;
-        }
-        clipboard.readText().then((text) => {
-          const ws = wsRef.current;
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            const safe = text.replace(/\x1b\[20[01]~/g, "");
-            const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
-            const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
-            ws.send(JSON.stringify({ type: "input", data: bracketed }));
-          }
+        pasteClipboardIntoTerminal({
+          clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+          gatewayUrl: getGatewayUrl(),
+          ws: wsRef.current,
+          submit: detail.submit === true,
         }).catch((err: unknown) => {
           console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+          showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
         });
         return;
       }
@@ -1329,16 +1354,14 @@ export function TerminalPane({
         }
 
         if (ev.ctrlKey && ev.shiftKey && ev.key === "V") {
-          navigator.clipboard.readText().then((text) => {
-            const ws = wsRef.current;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              const safe = text.replace(/\x1b\[20[01]~/g, "");
-              const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
-              const bracketed = `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
-              ws.send(JSON.stringify({ type: "input", data: bracketed }));
-            }
+          pasteClipboardIntoTerminal({
+            clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
+            gatewayUrl: getGatewayUrl(),
+            ws: wsRef.current,
+            submit: ev.altKey,
           }).catch((err: unknown) => {
             console.warn("Clipboard paste failed:", err instanceof Error ? err.message : err);
+            showPasteError("Clipboard paste failed. Try again or paste a saved file with `mos shell paste-file`.");
           });
           return false;
         }
@@ -1536,6 +1559,12 @@ export function TerminalPane({
     };
   }, [viewportHeight, viewportOffsetTop, keyboardOpen, suppressNativeKeyboard]);
 
+  useEffect(() => {
+    if (!pasteError) return;
+    const timer = window.setTimeout(() => setPasteError(null), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [pasteError]);
+
   return (
     // react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly.
     <div
@@ -1551,7 +1580,37 @@ export function TerminalPane({
       }}
       onPointerDown={handleFocus}
       onClick={handleFocus}
+      onKeyDownCapture={handleKeyDownCapture}
+      onPasteCapture={handlePaste}
     >
+      {pasteError && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            ...AUTH_BANNER_BASE_STYLE,
+            top: authUrl ? 76 : 8,
+            background: "rgba(127, 29, 29, 0.95)",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>{pasteError}</div>
+          <button
+            type="button"
+            onClick={() => setPasteError(null)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "rgba(255,255,255,0.78)",
+              cursor: "pointer",
+              fontSize: 16,
+              padding: "0 4px",
+              lineHeight: 1,
+            }}
+          >
+            x
+          </button>
+        </div>
+      )}
       {authUrl && (
         <div
           style={{
