@@ -124,4 +124,41 @@ describe("preview-manager", () => {
       "https://127.0.0.1:8443/docs",
     ]);
   });
+
+  it("lists recent previews newest-first across large project history", async () => {
+    const manager = createPreviewManager({ homePath });
+    for (let index = 0; index < 260; index += 1) {
+      await atomicWriteJson(join(homePath, "projects", "repo", "previews", `prev_old_${index}.json`), {
+        id: `prev_old_${index}`,
+        projectSlug: "repo",
+        label: `Old preview ${index}`,
+        url: "http://localhost:3000",
+        lastStatus: "ok",
+        displayPreference: "panel",
+        createdAt: new Date(Date.UTC(2026, 3, 26, 0, 0, index % 60)).toISOString(),
+        updatedAt: new Date(Date.UTC(2026, 3, 26, 0, 0, index % 60)).toISOString(),
+      });
+    }
+    await atomicWriteJson(join(homePath, "projects", "repo", "previews", "prev_newest.json"), {
+      id: "prev_newest",
+      projectSlug: "repo",
+      label: "Newest preview",
+      url: "http://localhost:4000",
+      lastStatus: "ok",
+      displayPreference: "panel",
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T01:00:00.000Z",
+    });
+
+    const result = await manager.listRecentPreviews("repo", { limit: 50 });
+
+    expect(result).toMatchObject({
+      ok: true,
+      nextCursor: expect.any(String),
+    });
+    expect(result.ok && result.previews[0]).toMatchObject({
+      id: "prev_newest",
+      label: "Newest preview",
+    });
+  });
 });

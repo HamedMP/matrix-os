@@ -111,6 +111,7 @@ export const RuntimeCapabilityIdSchema = z.enum([
   "codingAgentsThreadCreate",
   "codingAgentsApprovals",
   "codingAgentsReview",
+  "codingAgentsPreview",
   "codingAgentsNativeMobileTerminal",
 ]);
 
@@ -526,6 +527,16 @@ export const ProjectSummarySchema = z.object({
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
 
+export const PreviewSessionSummarySchema = z.object({
+  id: referenceId(128),
+  label: SafeDisplayStringSchema,
+  status: z.enum(["starting", "running", "failed", "stopped", "unknown"]),
+  origin: z.string().url().max(2048).optional(),
+  updatedAt: IsoTimestampSchema.optional(),
+}).strict();
+
+export type PreviewSessionSummary = z.infer<typeof PreviewSessionSummarySchema>;
+
 export const ActivityEventSummarySchema = z.object({
   id: EventIdSchema,
   kind: z.enum(["thread", "terminal", "provider", "runtime", "review", "preview"]),
@@ -545,6 +556,11 @@ export const RuntimeSummarySchema = z.object({
     limit: 20,
   }),
   terminalSessions: boundedListSchema(TerminalSessionSummarySchema, 50),
+  previewSessions: boundedListSchema(PreviewSessionSummarySchema, 50).default({
+    items: [],
+    hasMore: false,
+    limit: 50,
+  }),
   recentActivity: boundedListSchema(ActivityEventSummarySchema, 100),
   limits: RuntimeLimitsSchema,
   serverTime: IsoTimestampSchema,
@@ -751,11 +767,3 @@ export const ReviewSnapshotSchema = z.object({
 }).strict();
 
 export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
-
-export const PreviewSessionSummarySchema = z.object({
-  id: referenceId(128),
-  label: SafeDisplayStringSchema,
-  status: z.enum(["starting", "running", "failed", "stopped", "unknown"]),
-  origin: z.string().url().max(2048).optional(),
-  updatedAt: IsoTimestampSchema.optional(),
-}).strict();

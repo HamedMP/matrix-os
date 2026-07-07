@@ -20,6 +20,7 @@ import {
   createCodingAgentReviewSummaryStore,
   type ReviewLoopStore,
 } from "../../packages/gateway/src/coding-agents/review-summary.js";
+import { createCodingAgentPreviewSummaryStore } from "../../packages/gateway/src/coding-agents/preview-summary.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
@@ -330,6 +331,226 @@ describe("coding agent runtime summary", () => {
     expect(summary.activeThreads.items.map((thread) => thread.id)).toEqual(["thread_running", "thread_approval"]);
     expect(summary.attentionThreads.items.map((thread) => thread.id)).toEqual(["thread_approval", "thread_failed"]);
     expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|Postgres|token|secret/i);
+  });
+
+  it("exposes bounded safe preview summaries when the preview adapter is wired", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      previews: {
+        listPreviewSessions: async () => ({
+          items: Array.from({ length: 60 }, (_, index) => ({
+            id: `prev_${index}`,
+            label: index === 0 ? "Local web app" : `Preview ${index}`,
+            status: index === 0 ? "running" : "unknown",
+            origin: index === 0 ? "http://localhost:3000" : undefined,
+            updatedAt: new Date(now.getTime() - index * 1000).toISOString(),
+          })),
+          hasMore: true,
+          limit: 50,
+        }),
+      },
+      capabilities: {
+        preview: true,
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(capability(summary, "codingAgentsPreview")).toMatchObject({ enabled: true });
+    expect(summary.previewSessions.items).toHaveLength(50);
+    expect(summary.previewSessions.hasMore).toBe(true);
+    expect(summary.previewSessions.items[0]).toMatchObject({
+      id: "prev_0",
+      label: "Local web app",
+      status: "running",
+      origin: "http://localhost:3000",
+    });
+    expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|Postgres|token|secret/i);
+  });
+
+  it("keeps preview summaries generic when the preview adapter fails", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      previews: {
+        listPreviewSessions: async () => {
+          throw new Error("preview token failed at /home/matrix/home");
+        },
+      },
+      capabilities: {
+        preview: true,
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(capability(summary, "codingAgentsPreview")).toMatchObject({ enabled: true });
+    expect(summary.previewSessions).toEqual({ items: [], hasMore: false, limit: 50 });
+    expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|preview token|Postgres|secret/i);
+  });
+
+  it("adapts existing workspace preview records into safe coding-agent summaries", async () => {
+    const listPreviews = vi.fn(async () => ({
+      ok: true as const,
+      previews: [
+        {
+          id: "prev_local",
+          projectSlug: "repo",
+          label: "Local web app",
+          url: "http://localhost:3000/dashboard?token=secret",
+          lastStatus: "ok",
+          displayPreference: "panel",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        },
+        {
+          id: "prev_internal",
+          projectSlug: "repo",
+          label: "Internal service",
+          url: "http://internal.service:8080/private",
+          lastStatus: "ok",
+          displayPreference: "external",
+          createdAt: now.toISOString(),
+          updatedAt: new Date(now.getTime() - 1000).toISOString(),
+        },
+      ],
+      nextCursor: null,
+    }));
+    const store = createCodingAgentPreviewSummaryStore({
+      homePath: "/home/matrix/home",
+      previewManager: { listPreviews },
+      projectSlugs: async () => ["repo"],
+      ownerId: testPrincipal.userId,
+    });
+
+    const summaries = await store.listPreviewSessions(testPrincipal);
+
+    expect(listPreviews).toHaveBeenCalledWith("repo", { limit: 50 });
+    expect(summaries).toEqual({
+      items: [
+        {
+          id: "prev_local",
+          label: "Local web app",
+          status: "running",
+          origin: "http://localhost:3000",
+          updatedAt: now.toISOString(),
+        },
+        {
+          id: "prev_internal",
+          label: "Internal service",
+          status: "running",
+          updatedAt: new Date(now.getTime() - 1000).toISOString(),
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    });
+    expect(JSON.stringify(summaries)).not.toMatch(/token=secret|internal\.service|\/home\/matrix/i);
+  });
+
+  it("withholds owner-local preview summaries from other principals", async () => {
+    const listPreviews = vi.fn(async () => ({
+      ok: true as const,
+      previews: [],
+      nextCursor: null,
+    }));
+    const store = createCodingAgentPreviewSummaryStore({
+      homePath: "/home/matrix/home",
+      previewManager: { listPreviews },
+      projectSlugs: async () => ["repo"],
+      ownerId: "owner_user",
+    });
+    const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "configured-container" };
+
+    await expect(store.listPreviewSessions(otherPrincipal)).resolves.toEqual({
+      items: [],
+      hasMore: false,
+      limit: 50,
+    });
+    expect(listPreviews).not.toHaveBeenCalled();
+  });
+
+  it("allows configured Clerk owner principals to read preview summaries", async () => {
+    const listPreviews = vi.fn(async () => ({
+      ok: true as const,
+      previews: [
+        {
+          id: "prev_local",
+          projectSlug: "repo",
+          label: "Local web app",
+          url: "http://localhost:3000",
+          lastStatus: "ok",
+          displayPreference: "panel",
+          createdAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        },
+      ],
+      nextCursor: null,
+    }));
+    const store = createCodingAgentPreviewSummaryStore({
+      homePath: "/home/matrix/home",
+      previewManager: { listPreviews },
+      projectSlugs: async () => ["repo"],
+      ownerId: "owner_user",
+      principalOwnerIds: ["clerk_owner_subject"],
+    });
+    const clerkPrincipal: RequestPrincipal = { userId: "clerk_owner_subject", source: "jwt" };
+
+    await expect(store.listPreviewSessions(clerkPrincipal)).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: "prev_local", origin: "http://localhost:3000" })],
+      hasMore: false,
+      limit: 50,
+    });
+    expect(listPreviews).toHaveBeenCalledWith("repo", { limit: 50 });
+  });
+
+  it("scans bounded preview pages so newest preview summaries are not hidden by old rows", async () => {
+    const oldPreviews = Array.from({ length: 50 }, (_, index) => ({
+      id: `prev_old_${index}`,
+      projectSlug: "repo",
+      label: `Old preview ${index}`,
+      url: "http://localhost:3000",
+      lastStatus: "ok" as const,
+      displayPreference: "panel" as const,
+      createdAt: new Date(now.getTime() - (100 + index) * 1000).toISOString(),
+      updatedAt: new Date(now.getTime() - (100 + index) * 1000).toISOString(),
+    }));
+    const newestPreview = {
+      id: "prev_newest",
+      projectSlug: "repo",
+      label: "Newest preview",
+      url: "http://localhost:4000",
+      lastStatus: "ok" as const,
+      displayPreference: "panel" as const,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    const listPreviews = vi.fn(async (_projectSlug: string, input?: unknown) => {
+      const cursor = typeof input === "object" && input && "cursor" in input ? (input as { cursor?: string }).cursor : undefined;
+      return cursor === "prev_old_49"
+        ? { ok: true as const, previews: [newestPreview], nextCursor: null }
+        : { ok: true as const, previews: oldPreviews, nextCursor: "prev_old_49" };
+    });
+    const store = createCodingAgentPreviewSummaryStore({
+      homePath: "/home/matrix/home",
+      previewManager: { listPreviews },
+      projectSlugs: async () => ["repo"],
+      ownerId: testPrincipal.userId,
+    });
+
+    const summaries = await store.listPreviewSessions(testPrincipal);
+
+    expect(summaries.items[0]).toMatchObject({
+      id: "prev_newest",
+      label: "Newest preview",
+      origin: "http://localhost:4000",
+    });
+    expect(summaries.items).toHaveLength(50);
+    expect(listPreviews).toHaveBeenCalledWith("repo", { limit: 50 });
+    expect(listPreviews).toHaveBeenCalledWith("repo", { limit: 50, cursor: "prev_old_49" });
   });
 
   it("keeps approvals disabled for workspace providers without approval decision bridging", async () => {

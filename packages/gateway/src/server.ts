@@ -34,6 +34,7 @@ import {
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createPreviewManager } from "./preview-manager.js";
 import { createReviewStore } from "./review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
@@ -103,6 +104,7 @@ import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./
 import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
+import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
@@ -539,15 +541,25 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentThreadStream = codingAgentThreadStore
     ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
     : undefined;
+  const codingAgentPreviewSummaryStore = createCodingAgentPreviewSummaryStore({
+    homePath,
+    previewManager: createPreviewManager({ homePath }),
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
+      (id): id is string => typeof id === "string" && id.length > 0,
+    ),
+  });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
     terminalRegistry: zellijShellRegistry,
     agentCredentials: agentCredentialService,
     threads: codingAgentThreadStore,
+    previews: codingAgentPreviewSummaryStore,
     capabilities: {
       workspace: codingAgentWorkspaceEnabled,
       approvals: false,
       review: true,
+      preview: true,
     },
     terminalOwnerId: process.env.MATRIX_USER_ID,
   });
