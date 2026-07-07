@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } 
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { FileReadRequest, FileReadResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { FileReadRequest, FileReadResponse, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -455,7 +455,21 @@ export default function AgentsScreen() {
       </Section>
 
       {capabilityEnabled(summary, "codingAgentsPreview") ? (
-        <PreviewSection summary={summary} />
+        <PreviewSection
+          summary={summary}
+          onOpenPreview={(preview) => {
+            router.push({
+              pathname: "/agents/preview",
+              params: {
+                id: preview.id,
+                label: preview.label,
+                status: preview.status,
+                ...(preview.origin ? { origin: preview.origin } : {}),
+                ...(preview.updatedAt ? { updatedAt: preview.updatedAt } : {}),
+              },
+            });
+          }}
+        />
       ) : null}
 
       <Section title="Terminals" count={summary.terminalSessions.items.length}>
@@ -489,7 +503,13 @@ export default function AgentsScreen() {
   );
 }
 
-function PreviewSection({ summary }: { summary: RuntimeSummary }) {
+function PreviewSection({
+  summary,
+  onOpenPreview,
+}: {
+  summary: RuntimeSummary;
+  onOpenPreview: (preview: PreviewSessionSummary) => void;
+}) {
   const { theme } = useUnistyles();
   const previews = summary.previewSessions ?? { items: [], hasMore: false, limit: 50 };
 
@@ -497,7 +517,16 @@ function PreviewSection({ summary }: { summary: RuntimeSummary }) {
     <Section title="Previews" count={previews.items.length}>
       {previews.items.length === 0 ? <EmptyText>No previews.</EmptyText> : null}
       {previews.items.map((preview) => (
-        <View key={preview.id} style={styles.row}>
+        <Pressable
+          key={preview.id}
+          accessibilityRole="button"
+          accessibilityLabel={`Open preview ${preview.label}`}
+          onPress={() => onOpenPreview(preview)}
+          style={({ pressed }) => [
+            styles.row,
+            pressed ? styles.rowPressed : null,
+          ]}
+        >
           <View style={styles.rowIcon}>
             <Ionicons name="browsers-outline" size={18} color={theme.colors.moss} />
           </View>
@@ -506,7 +535,7 @@ function PreviewSection({ summary }: { summary: RuntimeSummary }) {
             <Text style={styles.rowSubtitle}>{preview.origin ?? "No local origin"}</Text>
           </View>
           <Text style={styles.rowMeta}>{preview.status}</Text>
-        </View>
+        </Pressable>
       ))}
     </Section>
   );
@@ -982,6 +1011,9 @@ const styles = StyleSheet.create((theme, rt) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing.sm,
+  },
+  rowPressed: {
+    opacity: 0.82,
   },
   selectedReviewRow: {
     borderColor: theme.colors.forest,
