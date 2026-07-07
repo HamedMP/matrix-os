@@ -6,7 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
-import type { CreateAgentThreadRequest, ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { CreateAgentThreadRequest, FileReadRequest, FileReadResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 
@@ -31,6 +31,7 @@ export interface HandlerContext {
     options: { cursor?: string },
   ) => Promise<{ items: ReviewSummary[]; hasMore: boolean; limit: number; nextCursor?: string }>;
   fetchReviewSnapshot: (options: { reviewId: string }) => Promise<ReviewSnapshot>;
+  fetchFileContent: (request: FileReadRequest) => Promise<FileReadResponse>;
   fetchThreadSnapshot: (
     options: { threadId: string },
   ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
@@ -101,6 +102,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:get-summary", () => ctx.fetchRuntimeSummary());
   handle("runtime:get-reviews", (request) => ctx.fetchReviewSummaries(request));
   handle("runtime:get-review-snapshot", (request) => ctx.fetchReviewSnapshot(request));
+  handle("runtime:get-file-content", (request) => ctx.fetchFileContent(request));
   handle("runtime:get-thread-snapshot", (request) => ctx.fetchThreadSnapshot(request));
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));

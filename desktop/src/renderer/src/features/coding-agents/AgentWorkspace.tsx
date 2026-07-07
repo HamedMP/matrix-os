@@ -5,6 +5,8 @@ import {
   type AgentThreadEvent,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
+  type FileReadRequest,
+  type FileReadResponse,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -34,6 +36,7 @@ type ThreadDetailStatus = "idle" | "loading" | "ready" | "error";
 type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
 type ReviewSnapshotHunk = ReviewSnapshotFile["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
+type FileReadStatus = "idle" | "loading" | "ready" | "error";
 type ComposerSeed = {
   seedId: number;
   draft: AgentThreadComposerDraft;
@@ -878,9 +881,11 @@ function ReviewDiffLines({ lines }: { lines: ReviewSnapshotLine[] }) {
 }
 
 function ReviewList({
+  canReadFiles,
   canCreateFollowUp,
   onAskHunkFollowUp,
 }: {
+  canReadFiles: boolean;
   canCreateFollowUp: boolean;
   onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
 }) {
@@ -891,7 +896,12 @@ function ReviewList({
   const reviewSnapshotStatus = useCodingAgentWorkspace((s) => s.reviewSnapshotStatus);
   const reviewSnapshot = useCodingAgentWorkspace((s) => s.reviewSnapshot);
   const reviewSnapshotError = useCodingAgentWorkspace((s) => s.reviewSnapshotError);
+  const fileReadStatus = useCodingAgentWorkspace((s) => s.fileReadStatus);
+  const fileRead = useCodingAgentWorkspace((s) => s.fileRead);
+  const fileReadError = useCodingAgentWorkspace((s) => s.fileReadError);
+  const selectedFilePath = useCodingAgentWorkspace((s) => s.selectedFilePath);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
+  const loadFileContent = useCodingAgentWorkspace((s) => s.loadFileContent);
   const items = reviews?.items ?? [];
 
   return (
@@ -940,6 +950,12 @@ function ReviewList({
           status={reviewSnapshotStatus}
           snapshot={reviewSnapshot}
           error={reviewSnapshotError}
+          canReadFiles={canReadFiles}
+          fileReadStatus={fileReadStatus}
+          fileRead={fileRead}
+          fileReadError={fileReadError}
+          selectedFilePath={selectedFilePath}
+          onOpenFile={loadFileContent}
           canCreateFollowUp={canCreateFollowUp}
           onAskHunkFollowUp={onAskHunkFollowUp}
         />
@@ -957,12 +973,24 @@ function ReviewSnapshotPanel({
   status,
   snapshot,
   error,
+  canReadFiles,
+  fileReadStatus,
+  fileRead,
+  fileReadError,
+  selectedFilePath,
+  onOpenFile,
   canCreateFollowUp,
   onAskHunkFollowUp,
 }: {
   status: ReviewDetailStatus;
   snapshot: ReviewSnapshot | null;
   error: string | null;
+  canReadFiles: boolean;
+  fileReadStatus: FileReadStatus;
+  fileRead: FileReadResponse | null;
+  fileReadError: string | null;
+  selectedFilePath: string | null;
+  onOpenFile: (request: FileReadRequest) => void;
   canCreateFollowUp: boolean;
   onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
 }) {
@@ -1037,6 +1065,30 @@ function ReviewSnapshotPanel({
                 {file.status}
               </span>
             </div>
+            {canReadFiles ? (
+              <div className="flex justify-end">
+                <Button
+                  variant="ghost"
+                  type="button"
+                  aria-label={`Open file ${file.path}`}
+                  onClick={() => onOpenFile({
+                    projectId: snapshot.review.projectId,
+                    worktreeId: snapshot.review.worktreeId,
+                    path: file.path,
+                  })}
+                >
+                  <FileText size={14} />
+                  Open file
+                </Button>
+              </div>
+            ) : null}
+            {selectedFilePath === file.path ? (
+              <FileContentPanel
+                status={fileReadStatus}
+                file={fileRead}
+                error={fileReadError}
+              />
+            ) : null}
             {file.findings?.length ? (
               <div className="grid gap-1">
                 {file.findings.map((finding) => (
@@ -1121,6 +1173,50 @@ function ReviewSnapshotPanel({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function FileContentPanel({
+  status,
+  file,
+  error,
+}: {
+  status: FileReadStatus;
+  file: FileReadResponse | null;
+  error: string | null;
+}) {
+  if (status === "loading") {
+    return (
+      <p className="rounded-md border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+        Loading file...
+      </p>
+    );
+  }
+  if (status === "error") {
+    return (
+      <p className="rounded-md border px-3 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+        {error ?? "File content unavailable"}
+      </p>
+    );
+  }
+  if (!file) return null;
+
+  return (
+    <div className="grid gap-2 rounded-md border" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+      <div className="flex items-center justify-between gap-3 border-b px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
+        <span className="truncate text-xs" style={{ color: "var(--text-tertiary)" }}>
+          {`${file.metadata.sizeBytes} bytes`}
+        </span>
+        {file.truncated ? (
+          <span className="shrink-0 text-xs" style={{ color: "var(--warning)" }}>
+            Truncated
+          </span>
+        ) : null}
+      </div>
+      <pre className="max-h-80 overflow-auto px-3 py-2 text-xs" style={{ color: "var(--text-primary)" }}>
+        <code className="whitespace-pre-wrap break-words">{file.content}</code>
+      </pre>
+    </div>
   );
 }
 
@@ -1231,6 +1327,7 @@ export default function AgentWorkspace() {
         </div>
         {capabilityEnabled(summary, "codingAgentsReview") ? (
           <ReviewList
+            canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
             canCreateFollowUp={canCreateFollowUp}
             onAskHunkFollowUp={(snapshot, selected) => {
               setComposerSeed({

@@ -3,6 +3,8 @@ import {
   type ApprovalDecisionRequest,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
+  type FileReadRequest,
+  type FileReadResponse,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -13,6 +15,7 @@ import { invoke } from "../lib/operator";
 
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
+type FileReadStatus = "idle" | "loading" | "ready" | "error";
 type CreateStatus = "idle" | "submitting";
 type ActionStatus = "idle" | "submitting";
 type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
@@ -34,6 +37,10 @@ interface CodingAgentWorkspaceState {
   reviewSnapshotStatus: ReviewStatus;
   reviewSnapshot: ReviewSnapshot | null;
   reviewSnapshotError: string | null;
+  fileReadStatus: FileReadStatus;
+  fileRead: FileReadResponse | null;
+  fileReadError: string | null;
+  selectedFilePath: string | null;
   threadSnapshotStatus: ReviewStatus;
   threadSnapshot: AgentThreadSnapshot | null;
   threadSnapshotError: string | null;
@@ -52,6 +59,7 @@ interface CodingAgentWorkspaceState {
   activeThreadId: string | null;
   refresh: () => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
+  loadFileContent: (request: FileReadRequest) => Promise<void>;
   loadThreadSnapshot: (threadId: string) => Promise<void>;
   submitApprovalDecision: (input: {
     threadId: string;
@@ -71,6 +79,7 @@ interface CodingAgentWorkspaceState {
 let refreshSeq = 0;
 let reviewsSeq = 0;
 let reviewSnapshotSeq = 0;
+let fileReadSeq = 0;
 let threadSnapshotSeq = 0;
 let createRequestSeq = 0;
 let actionRequestSeq = 0;
@@ -82,6 +91,17 @@ function clearReviewSelectionState() {
     reviewSnapshotStatus: "idle" as const,
     reviewSnapshot: null,
     reviewSnapshotError: null,
+    ...clearFileReadState(),
+  };
+}
+
+function clearFileReadState() {
+  fileReadSeq += 1;
+  return {
+    fileReadStatus: "idle" as const,
+    fileRead: null,
+    fileReadError: null,
+    selectedFilePath: null,
   };
 }
 
@@ -188,6 +208,10 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   reviewSnapshotStatus: "idle",
   reviewSnapshot: null,
   reviewSnapshotError: null,
+  fileReadStatus: "idle",
+  fileRead: null,
+  fileReadError: null,
+  selectedFilePath: null,
   threadSnapshotStatus: "idle",
   threadSnapshot: null,
   threadSnapshotError: null,
@@ -291,6 +315,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       reviewSnapshotStatus: state.reviewSnapshot?.review.id === reviewId ? "ready" : "loading",
       reviewSnapshotError: null,
       reviewSnapshot: state.reviewSnapshot?.review.id === reviewId ? state.reviewSnapshot : null,
+      ...clearFileReadState(),
     }));
     try {
       const snapshot = await invoke("runtime:get-review-snapshot", { reviewId });
@@ -300,6 +325,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         reviewSnapshotStatus: "ready",
         reviewSnapshot: snapshot,
         reviewSnapshotError: null,
+        ...clearFileReadState(),
       });
     } catch {
       console.warn("[coding-agents] review snapshot refresh failed");
@@ -309,6 +335,36 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         reviewSnapshotStatus: "error",
         reviewSnapshot: null,
         reviewSnapshotError: "Review details unavailable",
+        ...clearFileReadState(),
+      });
+    }
+  },
+
+  loadFileContent: async (request) => {
+    const seq = ++fileReadSeq;
+    set((state) => ({
+      selectedFilePath: request.path,
+      fileReadStatus: state.fileRead?.metadata.path === request.path ? "ready" : "loading",
+      fileRead: state.fileRead?.metadata.path === request.path ? state.fileRead : null,
+      fileReadError: null,
+    }));
+    try {
+      const response = await invoke("runtime:get-file-content", request);
+      if (seq !== fileReadSeq) return;
+      set({
+        selectedFilePath: request.path,
+        fileReadStatus: "ready",
+        fileRead: response,
+        fileReadError: null,
+      });
+    } catch {
+      console.warn("[coding-agents] file content load failed");
+      if (seq !== fileReadSeq) return;
+      set({
+        selectedFilePath: request.path,
+        fileReadStatus: "error",
+        fileRead: null,
+        fileReadError: "File content unavailable",
       });
     }
   },

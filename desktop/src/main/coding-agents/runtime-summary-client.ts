@@ -1,10 +1,14 @@
 import {
   AgentThreadSnapshotSchema,
+  FileReadRequestSchema,
+  FileReadResponseSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
   type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
+  type FileReadRequest,
+  type FileReadResponse,
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
@@ -17,6 +21,7 @@ import type { AuthService } from "../auth/auth-service";
 const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
+const FILE_READ_TIMEOUT_MS = 10_000;
 const THREAD_CREATE_TIMEOUT_MS = 15_000;
 const THREAD_SNAPSHOT_TIMEOUT_MS = 10_000;
 const APPROVAL_DECISION_TIMEOUT_MS = 10_000;
@@ -269,6 +274,45 @@ export async function fetchCodingAgentReviewSnapshot(
   const parsed = ReviewSnapshotSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("review state unavailable");
+  }
+  return parsed.data;
+}
+
+export async function fetchCodingAgentFileContent(
+  auth: AuthService,
+  request: FileReadRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<FileReadResponse> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("file content unavailable");
+  }
+
+  const parsedRequest = FileReadRequestSchema.safeParse(request);
+  if (!parsedRequest.success) {
+    throw new Error("file content unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/files/read", auth.getGatewayOrigin());
+  url.searchParams.set("projectId", parsedRequest.data.projectId);
+  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  url.searchParams.set("path", parsedRequest.data.path);
+  const res = await fetchFn(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(FILE_READ_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("file content unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = FileReadResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("file content unavailable");
   }
   return parsed.data;
 }

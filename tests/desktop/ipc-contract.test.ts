@@ -17,6 +17,7 @@ describe("IPC contract", () => {
       "runtime:submit-approval-decision",
       "runtime:submit-input-answer",
       "runtime:get-thread-snapshot",
+      "runtime:get-file-content",
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
@@ -345,6 +346,41 @@ describe("IPC contract", () => {
         ...valid.files,
         items: [{ ...valid.files.items[0], path: "/home/matrix/private/secret.ts" }],
       },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:get-file-content requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-file-content"].request;
+    const schema = INVOKE_CHANNELS["runtime:get-file-content"].response;
+    const valid = {
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 37,
+        etag: "sha256_desktop_file",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      content: "export const safeRoute = true;\n",
+      encoding: "utf8",
+      truncated: false,
+      limitBytes: 65536,
+    };
+
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    }).success).toBe(true);
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+    }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      metadata: { ...valid.metadata, path: "/home/matrix/private/secret.ts" },
     }).success).toBe(false);
   });
 
