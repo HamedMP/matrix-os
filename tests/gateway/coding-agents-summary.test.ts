@@ -287,6 +287,51 @@ describe("coding agent runtime summary", () => {
     expect(capability(summary, "codingAgentsApprovals")).toMatchObject({ enabled: false });
   });
 
+  it("exposes bounded attention threads separately from active threads", async () => {
+    const activeThread = {
+      id: "thread_running",
+      providerId: "codex",
+      title: "Continue implementation",
+      status: "running",
+      attention: "none",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    } as const;
+    const failedThread = {
+      id: "thread_failed",
+      providerId: "codex",
+      title: "Repair failed run",
+      status: "failed",
+      attention: "failed",
+      createdAt: now.toISOString(),
+      updatedAt: new Date(now.getTime() + 1000).toISOString(),
+    } as const;
+    const approvalThread = {
+      id: "thread_approval",
+      providerId: "codex",
+      title: "Approve deployment",
+      status: "waiting_for_approval",
+      attention: "approval_required",
+      createdAt: now.toISOString(),
+      updatedAt: new Date(now.getTime() + 2000).toISOString(),
+    } as const;
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      threads: {
+        listThreads: async () => ({ items: [activeThread, approvalThread], hasMore: false, limit: 50 }),
+        listAttentionThreads: async () => ({ items: [approvalThread, failedThread], hasMore: false, limit: 50 }),
+      },
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+
+    const summary = RuntimeSummarySchema.parse(await service.getSummary(testPrincipal));
+
+    expect(summary.activeThreads.items.map((thread) => thread.id)).toEqual(["thread_running", "thread_approval"]);
+    expect(summary.attentionThreads.items.map((thread) => thread.id)).toEqual(["thread_approval", "thread_failed"]);
+    expect(JSON.stringify(summary)).not.toMatch(/\/home\/matrix|Postgres|token|secret/i);
+  });
+
   it("keeps approvals disabled for workspace providers without approval decision bridging", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",

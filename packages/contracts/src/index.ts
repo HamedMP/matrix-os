@@ -539,6 +539,11 @@ export const RuntimeSummarySchema = z.object({
   providers: z.array(AgentProviderSummarySchema).max(20),
   projects: boundedListSchema(ProjectSummarySchema, 50),
   activeThreads: boundedListSchema(AgentThreadSummarySchema, 50),
+  attentionThreads: boundedListSchema(AgentThreadSummarySchema, 50).default({
+    items: [],
+    hasMore: false,
+    limit: 20,
+  }),
   terminalSessions: boundedListSchema(TerminalSessionSummarySchema, 50),
   recentActivity: boundedListSchema(ActivityEventSummarySchema, 100),
   limits: RuntimeLimitsSchema,

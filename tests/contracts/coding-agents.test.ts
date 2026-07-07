@@ -66,6 +66,21 @@ describe("coding agent contracts", () => {
       providers: [],
       projects: { items: [], hasMore: false, limit: 20 },
       activeThreads: { items: [], hasMore: false, limit: 20 },
+      attentionThreads: {
+        items: [
+          {
+            id: "thread_attention",
+            providerId: "codex",
+            title: "Approve deployment",
+            status: "waiting_for_approval",
+            attention: "approval_required",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
       terminalSessions: {
         items: [
           {
@@ -90,6 +105,10 @@ describe("coding agent contracts", () => {
       serverTime: now,
     });
 
+    expect(summary.attentionThreads.items[0]).toMatchObject({
+      id: "thread_attention",
+      attention: "approval_required",
+    });
     expect(summary.terminalSessions.items[0]?.attachable).toBe(true);
     expect(() =>
       RuntimeSummarySchema.parse({
