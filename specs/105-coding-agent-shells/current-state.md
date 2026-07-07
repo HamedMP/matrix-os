@@ -6,7 +6,7 @@
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, and desktop/mobile read-only review summary panels. File diff and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated diff and preview coding-agent shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with partial findings-derived file metadata. Full file diff and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated diff and preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -28,7 +28,7 @@ Implemented coding-agent schemas:
 - Events: `AgentThreadEventSchema` discriminated union with lifecycle, text delta, tool activity, approval/input, file change, review ready, terminal bound, safe error, and completion event variants.
 - Approvals/input: `AgentApprovalRequestSchema`, `ApprovalDecisionRequestSchema`, `UserInputRequestSchema`, `UserInputAnswerRequestSchema`.
 - Terminal frames/summaries: `TerminalSessionSummarySchema`, `TerminalClientFrameSchema`, `TerminalServerFrameSchema`.
-- File/review/preview: `FilePathSchema`, `FileMetadataSchema`, `ReviewSummarySchema`, `ReviewFileDiffSchema`, `PreviewSessionSummarySchema`.
+- File/review/preview: `FilePathSchema`, `FileMetadataSchema`, `ReviewSummarySchema`, `ReviewFileDiffSchema`, `ReviewDiffHunkSchema`, `ReviewFindingSummarySchema`, `ReviewSnapshotFileSchema`, `ReviewSnapshotSchema`, `PreviewSessionSummarySchema`.
 
 Contract tests:
 
@@ -51,6 +51,7 @@ Implemented routes:
 | `/api/coding-agents/threads/:threadId/approvals/:approvalId/decision` | `POST` | Implemented | Body limit 8 KiB, validates approval id and decision payload. |
 | `/api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer` | `POST` | Implemented | Body limit 40 KiB, validates bounded answer payload. |
 | `/api/coding-agents/reviews` | `GET` | Implemented | Authenticated read-only review summary list. Returns bounded `ReviewSummarySchema` items only. |
+| `/api/coding-agents/reviews/:reviewId` | `GET` | Implemented | Authenticated read-only review snapshot. Returns bounded `ReviewSnapshotSchema` with partial findings-derived file metadata; no diff content or file contents. |
 
 Security and ownership:
 
@@ -141,8 +142,10 @@ Thread store behavior:
 Review summary behavior:
 
 - Adapts existing owner-local review-loop records into bounded `ReviewSummarySchema` rows.
+- Adapts existing owner-local review-loop records and structured findings into bounded partial `ReviewSnapshotSchema` rows for the review detail route.
 - Drops malformed legacy records instead of exposing raw review state.
 - Caps the coding-agent route response at 50 items.
+- Drops unsafe findings paths or display text instead of exposing raw filesystem paths, provider output, or parse errors.
 
 Focused tests:
 
@@ -251,7 +254,7 @@ Relevant existing browser shell paths:
 
 Open follow-up: decide whether a browser-shell coding-agent entry belongs in Canvas, Developer mode, or both after desktop/mobile read-only shells settle.
 
-Public docs note: public docs remain deferred for these review-summary slices because the cross-shell review flow still lacks file diffs and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
+Public docs note: public docs remain deferred for these review-summary/snapshot slices because the cross-shell review flow still lacks full file diffs and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
 
 ## Feature Flags
 
@@ -325,7 +328,7 @@ git diff --check
 ## Open Questions And Deferred Work
 
 - Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
-- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. File diffs and previews are not implemented yet.
+- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes partial findings-derived file metadata for later shell diff panels. Full file diffs and previews are not implemented yet.
 - Browser shell entry point: Canvas-first placement is still undecided.
 - Notifications/attention routing: desktop notification IPC exists, but thread attention notifications are not yet wired end-to-end from gateway events.
 - Public docs: public Matrix OS docs should be updated once the user-facing coding-agent shell flow is stable enough to document.

@@ -9,6 +9,7 @@ import {
   FileMetadataSchema,
   PreviewSessionSummarySchema,
   ReviewFileDiffSchema,
+  ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
@@ -319,6 +320,81 @@ describe("coding agent contracts", () => {
         additions: 1_000_001,
         deletions: 0,
         partial: false,
+      }),
+    ).toThrow();
+
+    const reviewSnapshot = ReviewSnapshotSchema.parse({
+      review: {
+        id: "rev_123",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        updatedAt: now,
+      },
+      files: {
+        items: [
+          {
+            path: "src/index.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [
+              {
+                id: "hunk_rev_123_0_0",
+                oldStart: 12,
+                oldLines: 1,
+                newStart: 12,
+                newLines: 1,
+                heading: "Finding HIGH-1",
+                partial: true,
+              },
+            ],
+            findings: [
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 12,
+                summary: "Validate the request before reading review state.",
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+      updatedAt: now,
+    });
+    expect(reviewSnapshot.files.items[0]?.hunks[0]?.partial).toBe(true);
+    expect(() =>
+      ReviewSnapshotSchema.parse({
+        ...reviewSnapshot,
+        files: {
+          ...reviewSnapshot.files,
+          items: [{ ...reviewSnapshot.files.items[0], path: "../secret.ts" }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      ReviewSnapshotSchema.parse({
+        ...reviewSnapshot,
+        files: {
+          ...reviewSnapshot.files,
+          items: [{
+            ...reviewSnapshot.files.items[0],
+            findings: [{
+              ...reviewSnapshot.files.items[0]!.findings![0],
+              summary: "Postgres failed at /home/matrix/home",
+            }],
+          }],
+        },
       }),
     ).toThrow();
 

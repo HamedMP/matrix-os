@@ -652,6 +652,28 @@ export const ReviewFileDiffSchema = z.object({
   partial: z.boolean(),
 }).strict();
 
+export const ReviewDiffHunkSchema = z.object({
+  id: referenceId(128),
+  oldStart: z.number().int().min(0).max(1_000_000),
+  oldLines: z.number().int().min(0).max(1_000_000),
+  newStart: z.number().int().min(0).max(1_000_000),
+  newLines: z.number().int().min(0).max(1_000_000),
+  heading: SafeDisplayStringSchema.optional(),
+  partial: z.boolean(),
+}).strict();
+
+export const ReviewFindingSummarySchema = z.object({
+  id: referenceId(128),
+  severity: z.enum(["high", "medium", "low"]),
+  line: z.number().int().min(1).max(1_000_000),
+  summary: SafeDisplayStringSchema,
+}).strict();
+
+export const ReviewSnapshotFileSchema = ReviewFileDiffSchema.extend({
+  hunks: z.array(ReviewDiffHunkSchema).max(100),
+  findings: z.array(ReviewFindingSummarySchema).max(100).optional(),
+}).strict();
+
 export const ReviewSummarySchema = z.object({
   id: referenceId(128),
   projectId: ProjectIdSchema,
@@ -684,6 +706,16 @@ export const ReviewSummarySchema = z.object({
 }).strict();
 
 export type ReviewSummary = z.infer<typeof ReviewSummarySchema>;
+
+export const ReviewSnapshotSchema = z.object({
+  review: ReviewSummarySchema,
+  files: boundedListSchema(ReviewSnapshotFileSchema, 100),
+  partial: z.boolean(),
+  safeNotice: SafeDisplayStringSchema.optional(),
+  updatedAt: IsoTimestampSchema,
+}).strict();
+
+export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
 
 export const PreviewSessionSummarySchema = z.object({
   id: referenceId(128),

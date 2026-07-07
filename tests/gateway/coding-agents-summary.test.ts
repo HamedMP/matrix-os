@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import {
+  ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
   boundedListSchema,
@@ -400,6 +401,86 @@ describe("coding agent runtime summary", () => {
     expect(JSON.stringify(body)).not.toMatch(/\/home\/matrix|Postgres|token|secret/i);
   });
 
+  it("serves an authenticated safe review snapshot with partial file metadata", async () => {
+    const service = createCodingAgentRuntimeSummaryService({
+      homePath: "/home/matrix/home",
+      terminalRegistry: registryWith(0),
+      now: () => now,
+      runtime: { id: "rt_primary", label: "Primary Matrix computer" },
+    });
+    const app = new Hono();
+    app.route("/api/coding-agents", createCodingAgentRoutes({
+      service,
+      reviews: {
+        listReviews: async () => ({ items: [], hasMore: false, limit: 50 }),
+        getReviewSnapshot: async () => ReviewSnapshotSchema.parse({
+          review: {
+            id: "rev_1",
+            projectId: "matrix-os",
+            worktreeId: "wt_abc123def456",
+            status: "reviewing",
+            pullRequestNumber: 758,
+            round: 1,
+            maxRounds: 3,
+            reviewer: "codex",
+            implementer: "claude",
+            findings: { total: 1, high: 1, medium: 0, low: 0 },
+            updatedAt: now.toISOString(),
+          },
+          files: {
+            items: [
+              {
+                path: "packages/gateway/src/coding-agents/routes.ts",
+                status: "modified",
+                additions: 0,
+                deletions: 0,
+                partial: true,
+                hunks: [
+                  {
+                    id: "hunk_rev_1_1",
+                    oldStart: 42,
+                    oldLines: 1,
+                    newStart: 42,
+                    newLines: 1,
+                    heading: "Finding HIGH-1",
+                    partial: true,
+                  },
+                ],
+                findings: [
+                  {
+                    id: "HIGH-1",
+                    severity: "high",
+                    line: 42,
+                    summary: "Validate review identifiers before lookup.",
+                  },
+                ],
+              },
+            ],
+            hasMore: false,
+            limit: 100,
+          },
+          partial: true,
+          safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+          updatedAt: now.toISOString(),
+        }),
+      },
+      getPrincipal: () => testPrincipal,
+    }));
+
+    const res = await app.request("/api/coding-agents/reviews/rev_1");
+
+    expect(res.status).toBe(200);
+    const body = ReviewSnapshotSchema.parse(await res.json());
+    expect(body.review.id).toBe("rev_1");
+    expect(body.files.items[0]).toMatchObject({
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      partial: true,
+      hunks: [expect.objectContaining({ id: "hunk_rev_1_1", partial: true })],
+      findings: [expect.objectContaining({ severity: "high", line: 42 })],
+    });
+    expect(JSON.stringify(body)).not.toMatch(/\/home\/matrix|Postgres|token|secret/i);
+  });
+
   it("withholds owner-local review summaries from other principals", async () => {
     const store = createCodingAgentReviewSummaryStore({
       listReviews: async () => ({ ok: true, reviews: [reviewRecord()], nextCursor: null }),
@@ -411,6 +492,68 @@ describe("coding agent runtime summary", () => {
       hasMore: false,
       limit: 50,
     });
+  });
+
+  it("derives partial review snapshot files from safe structured findings only", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      getReview: async () => ({
+        ok: true,
+        review: reviewRecord({
+          rounds: [
+            {
+              round: 1,
+              phase: "review",
+              parserStatus: "success",
+              findingsPath: "/home/matrix/private/review-findings.md",
+              startedAt: now.toISOString(),
+              completedAt: now.toISOString(),
+            },
+          ],
+        }),
+      }),
+      listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+    } as ReviewLoopStore, {
+      findingsReader: async () => ({
+        ok: true,
+        parserStatus: "success",
+        findingsCount: 2,
+        severityCounts: { high: 1, medium: 1, low: 0 },
+        findings: [
+          {
+            id: "HIGH-1",
+            severity: "high",
+            file: "packages/gateway/src/coding-agents/routes.ts",
+            line: 42,
+            summary: "Validate review identifiers before lookup.",
+          },
+          {
+            id: "MED-1",
+            severity: "medium",
+            file: "/home/matrix/private/secret.ts",
+            line: 7,
+            summary: "Unsafe path must be dropped.",
+          },
+        ],
+      }),
+    });
+
+    const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+    expect(snapshot.partial).toBe(true);
+    expect(snapshot.files).toMatchObject({
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified",
+          partial: true,
+          hunks: [expect.objectContaining({ oldStart: 42, newStart: 42, partial: true })],
+          findings: [expect.objectContaining({ id: "HIGH-1", severity: "high", line: 42 })],
+        },
+      ],
+      hasMore: false,
+      limit: 100,
+    });
+    expect(JSON.stringify(snapshot)).not.toMatch(/\/home\/matrix|secret|Postgres|token/i);
   });
 
   it("allows validated jwt review readers even when the configured owner id uses another owner identifier", async () => {
