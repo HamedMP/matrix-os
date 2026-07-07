@@ -361,26 +361,26 @@ export default function AgentsScreen() {
   const prepareSourceCommit = useCallback(async (
     request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">,
   ) => {
-    if (!client || sourceCommitState.status === "preparing") return;
+    const initiatingReview = reviewSnapshotState.status === "ready" ? reviewSnapshotState.snapshot.review : null;
+    const initiatingReviewId = initiatingReview?.id ?? null;
+    if (!client || sourceCommitState.status === "preparing" || !initiatingReview || !initiatingReviewId) return;
     setSourceCommitState({ status: "preparing", error: null });
     const result = await client.prepareCodingAgentSourceCommit({
       ...request,
       clientRequestId: nextSourceCommitRequestId(),
     });
     if (!result.ok) {
+      if (selectedReviewIdRef.current !== initiatingReviewId) return;
       setSourceCommitState({
         status: "error",
         error: "Source commit could not be prepared. Refresh and try again.",
       });
       return;
     }
-    const currentReview = selectedReviewIdRef.current;
-    const selectedReview = reviewSnapshotState.status === "ready" ? reviewSnapshotState.snapshot.review : null;
     if (
-      !currentReview
-      || !selectedReview
-      || selectedReview.projectId !== request.projectId
-      || selectedReview.worktreeId !== request.worktreeId
+      selectedReviewIdRef.current !== initiatingReviewId
+      || initiatingReview.projectId !== request.projectId
+      || initiatingReview.worktreeId !== request.worktreeId
     ) {
       setSourceCommitState(INITIAL_SOURCE_COMMIT_STATE);
       return;

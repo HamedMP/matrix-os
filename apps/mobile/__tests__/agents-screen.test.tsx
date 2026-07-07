@@ -847,6 +847,85 @@ describe("AgentsScreen", () => {
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
+  it("ignores stale mobile commit completions after another review opens the same worktree", async () => {
+    const commitResult = deferred<{
+      ok: true;
+      commit: {
+        status: "committed";
+        commitSha: string;
+        branch: string;
+        changedFileCount: number;
+        safeMessage: string;
+      };
+    }>();
+    const secondReview = {
+      ...reviewsFixture().items[0],
+      id: "rev_mobile_2",
+      pullRequestNumber: 760,
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    };
+    const reviews = {
+      ...reviewsFixture(),
+      items: [reviewsFixture().items[0], secondReview],
+    };
+    const secondSnapshot = {
+      ...reviewSnapshotFixture(),
+      review: secondReview,
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    };
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture({ sourceControl: true }),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews,
+      }),
+      getCodingAgentReviewSnapshot: jest.fn(({ reviewId }: { reviewId: string }) => Promise.resolve({
+        ok: true,
+        snapshot: reviewId === "rev_mobile_2" ? secondSnapshot : reviewSnapshotFixture(),
+      })),
+      prepareCodingAgentSourceCommit: jest.fn(() => commitResult.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByLabelText("Open review PR #759");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Prepare commit for review PR #759"));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #760"));
+    });
+    await screen.findByText("PR #760 review details");
+
+    await act(async () => {
+      commitResult.resolve({
+        ok: true,
+        commit: {
+          status: "committed",
+          commitSha: "0123456789abcdef0123456789abcdef01234567",
+          branch: "feature/review-fix",
+          changedFileCount: 1,
+          safeMessage: "Changes were committed.",
+        },
+      });
+      await commitResult.promise;
+    });
+
+    expect(screen.queryByText("Commit prepared")).toBeNull();
+    expect(screen.queryByText(/Source commit could not be prepared/i)).toBeNull();
+  });
+
   it("ignores stale mobile save completions after another worktree opens the same path", async () => {
     const saveResult = deferred<{ ok: true; file: ReturnType<typeof fileWriteFixture> }>();
     const secondWorktreeFile = {

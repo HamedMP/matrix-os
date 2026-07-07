@@ -455,8 +455,10 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   },
 
   prepareSourceCommit: async (request) => {
-    const { sourceCommitStatus } = useCodingAgentWorkspace.getState();
+    const { sourceCommitStatus, reviewSnapshot } = useCodingAgentWorkspace.getState();
     if (sourceCommitStatus === "preparing") return;
+    const initiatingReviewId = reviewSnapshot?.review.id ?? null;
+    if (!initiatingReviewId) return;
 
     set({
       sourceCommitStatus: "preparing",
@@ -472,14 +474,11 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         const selectedReview = state.reviewSnapshot?.review;
         if (
           !selectedReview
+          || selectedReview.id !== initiatingReviewId
           || selectedReview.projectId !== request.projectId
           || selectedReview.worktreeId !== request.worktreeId
         ) {
-          return {
-            sourceCommitStatus: "idle",
-            sourceCommit: null,
-            sourceCommitError: null,
-          };
+          return state;
         }
         return {
           sourceCommitStatus: "prepared",
@@ -493,6 +492,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         const selectedReview = state.reviewSnapshot?.review;
         if (
           !selectedReview
+          || selectedReview.id !== initiatingReviewId
           || selectedReview.projectId !== request.projectId
           || selectedReview.worktreeId !== request.worktreeId
         ) {
