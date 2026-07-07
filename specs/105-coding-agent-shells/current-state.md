@@ -1,6 +1,6 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-browser-preview-panel`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-operator-runbook`
 **Updated**: 2026-07-07
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
@@ -300,15 +300,16 @@ Focused tests:
 
 The browser shell remains Canvas-first. This stack has not moved coding-agent source of truth into browser shell state.
 
-Relevant existing browser shell paths:
+Relevant browser shell paths touched by this stack:
 
 - `shell/src/lib/proxy-routes.ts` treats `/ws` and `/ws/*` as gateway paths.
 - `shell/src/components/terminal/TerminalApp.tsx` continues to use canonical terminal sessions.
+- `shell/src/components/workspace/WorkspaceApp.tsx` renders validated active-project coding-agent preview origin/status rows from the authenticated runtime summary.
 - Built-in app/canvas behavior remains outside this coding-agent stack.
 
 Open follow-up: decide whether a browser-shell coding-agent entry belongs in Canvas, Developer mode, or both after desktop/mobile read-only shells settle.
 
-Public docs note: public docs remain deferred for these review-summary/snapshot/follow-up slices because the cross-shell review flow still lacks shell-rendered full diff views and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
+Public docs note: `www/content/docs/coding-agents.mdx` now describes the user-facing desktop/mobile workspace, approvals/input, terminal continuity, review/file/diff, preview, and provider setup model at a public-safe level. Keep it updated as later write/source-control and browser-shell entry slices land.
 
 ## Feature Flags
 
@@ -384,8 +385,8 @@ git diff --check
 ## Open Questions And Deferred Work
 
 - Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
-- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata and capped hunk line bodies from safe owner worktrees plus partial findings-derived fallback metadata for later shell diff panels. Runtime summaries now include safe preview summary rows from existing workspace preview records, and the desktop/mobile Agents workspaces render those rows read-only. Desktop also has a read-only preview inspector with HTTPS-only external launch through the existing safe IPC path, mobile has an HTTPS-only preview route using the existing app runtime frame, and the browser Workspace preview panel renders validated active-project coding-agent preview origin/status rows with direct launch limited to HTTPS origins. Gateway now has a bounded read-only file content route for owner worktrees, and desktop/mobile review details can render one selected bounded file snapshot through trusted clients.
-- Approval/input shell actions: desktop approval decisions and user-input answers now have trusted IPC, main-process gateway submission, bounded UI controls, and focused tests. Remaining work: mobile approval/input action sheets and cross-shell resolved-state refresh tests.
+- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata and capped hunk line bodies from safe owner worktrees plus partial findings-derived fallback metadata for shell diff panels. Runtime summaries now include safe preview summary rows from existing workspace preview records, and the desktop/mobile Agents workspaces render those rows read-only. Desktop also has a read-only preview inspector with HTTPS-only external launch through the existing safe IPC path, mobile has an HTTPS-only preview route using the existing app runtime frame, and the browser Workspace preview panel renders validated active-project coding-agent preview origin/status rows with direct launch limited to HTTPS origins. Gateway now has a bounded read-only file content route for owner worktrees, and desktop/mobile review details can render one selected bounded file snapshot through trusted clients. Remaining work: conflict-safe file writes, browse/search normalization under the coding-agent contract, and source-control/PR actions through gateway-owned credentials.
+- Approval/input shell actions: desktop and mobile approval decisions plus user-input answers now use trusted gateway clients, bounded UI controls, idempotent request ids, and focused tests. Remaining work: cross-shell resolved-state refresh tests and richer mobile action-sheet polish.
 - Browser shell entry point: Canvas-first placement is still undecided.
 - Notifications/attention routing: desktop notification IPC exists and notification clicks focus the coding-agent workspace thread in the Agents tab with a visible current-thread marker. Gateway runtime summaries expose bounded `attentionThreads` separately from `activeThreads`, allowing failed or waiting attention to be surfaced without reclassifying terminal threads as active. Desktop and mobile dashboards now render the `attentionThreads` list directly. Gateway thread-event sinks can emit safe push-channel payloads for approval-required, input-required, and failed attention events, and mobile push notification taps can route bounded coding-agent `threadId` payloads into the existing thread detail route. Remaining work: user notification preferences, cross-device delivery policy, and richer notification dedupe windows are not yet implemented.
-- Public docs: public Matrix OS docs should be updated once the user-facing coding-agent shell flow is stable enough to document.
+- Public docs: public Matrix OS docs and the internal operator runbook are present. Remaining work is keeping them synchronized with later write/source-control, provider setup, and browser entry slices.
