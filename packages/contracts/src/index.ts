@@ -672,6 +672,7 @@ export const FileMetadataSchema = z.object({
   etag: referenceId(160).optional(),
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
+export type FileMetadata = z.infer<typeof FileMetadataSchema>;
 export const FileReadRequestSchema = z.object({
   projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
     message: "Invalid project id",
@@ -695,6 +696,41 @@ export const FileReadResponseSchema = z.object({
 }).strict();
 export type FileReadRequest = z.infer<typeof FileReadRequestSchema>;
 export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
+
+const FileListLimitSchema = z.coerce.number().int().min(1).max(100).default(50);
+
+export const FileBrowseRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  path: FilePathSchema.optional(),
+  limit: FileListLimitSchema,
+}).strict();
+export const FileBrowseResponseSchema = z.object({
+  directory: FileMetadataSchema.extend({
+    kind: z.literal("directory"),
+    path: FilePathSchema.optional(),
+  }),
+  entries: boundedListSchema(FileMetadataSchema, 100),
+}).strict();
+export type FileBrowseRequest = z.infer<typeof FileBrowseRequestSchema>;
+export type FileBrowseResponse = z.infer<typeof FileBrowseResponseSchema>;
+
+export const FileSearchRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  path: FilePathSchema.optional(),
+  query: boundedDisplayText(80, 256),
+  limit: FileListLimitSchema,
+}).strict();
+export const FileSearchResponseSchema = z.object({
+  matches: boundedListSchema(FileMetadataSchema, 100),
+}).strict();
+export type FileSearchRequest = z.infer<typeof FileSearchRequestSchema>;
+export type FileSearchResponse = z.infer<typeof FileSearchResponseSchema>;
 
 const FileContentSchema = z.string()
   .max(65_536)

@@ -60,6 +60,78 @@ async function createRouteHarness(options: {
 }
 
 describe("coding agent file read route", () => {
+  it("browses direct owner worktree entries without exposing symlinks or internal paths", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      await mkdir(join(harness.worktreeRoot, "src", "nested"), { recursive: true });
+      await writeFile(join(harness.worktreeRoot, "src", "index.ts"), "export const answer = 42;\n");
+      await writeFile(join(harness.worktreeRoot, "src", "nested", "helper.ts"), "export {};\n");
+      await writeFile(join(harness.worktreeRoot, "src", "readme.md"), "# Notes\n");
+      await symlink(join(harness.homePath, "secret.txt"), join(harness.worktreeRoot, "src", "linked.txt"));
+
+      const res = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=src&limit=2`,
+      );
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.directory).toMatchObject({ path: "src", kind: "directory" });
+      expect(body.entries).toMatchObject({
+        hasMore: true,
+        limit: 2,
+      });
+      expect(body.entries.items.map((entry: { path: string }) => entry.path)).toEqual([
+        "src/index.ts",
+        "src/nested",
+      ]);
+      expect(body.entries.items.find((entry: { path: string }) => entry.path.includes("linked"))).toBeUndefined();
+      expect(JSON.stringify(body)).not.toMatch(/\/tmp\/matrix-coding-agent-files|secret|token/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("searches bounded owner worktree file paths and hides inaccessible worktrees", async () => {
+    const ownerHarness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    const otherHarness = await createRouteHarness({
+      principal: { userId: "other_user", source: "jwt" },
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      await mkdir(join(ownerHarness.worktreeRoot, "src", "nested"), { recursive: true });
+      await writeFile(join(ownerHarness.worktreeRoot, "src", "index.ts"), "export const answer = 42;\n");
+      await writeFile(join(ownerHarness.worktreeRoot, "src", "nested", "index.test.ts"), "test('answer', () => {});\n");
+      await writeFile(join(ownerHarness.worktreeRoot, "src", "nested", "ignore.md"), "# Notes\n");
+
+      const res = await ownerHarness.app.request(
+        `/api/coding-agents/files/search?projectId=${projectId}&worktreeId=${worktreeId}&query=index&path=src&limit=1`,
+      );
+      const body = await res.json();
+      const otherRes = await otherHarness.app.request(
+        `/api/coding-agents/files/search?projectId=${projectId}&worktreeId=${worktreeId}&query=index`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(body.matches).toMatchObject({
+        hasMore: true,
+        limit: 1,
+      });
+      expect(body.matches.items).toEqual([expect.objectContaining({
+        path: "src/index.ts",
+        kind: "file",
+      })]);
+      expect(otherRes.status).toBe(404);
+      expect(JSON.stringify(await otherRes.json())).not.toMatch(/other_user|user_activation_test|\/tmp/i);
+    } finally {
+      await rm(ownerHarness.homePath, { recursive: true, force: true });
+      await rm(otherHarness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("returns a bounded text snapshot from an owner worktree", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],

@@ -1,13 +1,22 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, link, lstat, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, open, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import {
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
+  type FileBrowseRequest,
+  type FileBrowseResponse,
+  type FileMetadata,
   type FileReadRequest,
   type FileReadResponse,
+  type FileSearchRequest,
+  type FileSearchResponse,
   type FileWriteRequest,
   type FileWriteResponse,
 } from "@matrix-os/contracts";
@@ -17,6 +26,9 @@ const DEFAULT_FILE_READ_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_FILE_WRITE_LIMIT_BYTES = 64 * 1024;
 const MAX_FILE_ETAG_BYTES = 100 * 1024 * 1024;
 const MAX_FILE_WRITE_LOCKS = 256;
+const MAX_FILE_LIST_LIMIT = 100;
+const MAX_FILE_SEARCH_VISITS = 2_000;
+const SKIPPED_SEARCH_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".expo"]);
 
 type FileReadErrorCode = "file_not_found" | "not_file" | "file_unavailable";
 type FileWriteErrorCode = "file_not_found" | "not_file" | "file_conflict" | "invalid_request" | "file_unavailable";
@@ -34,7 +46,9 @@ export class CodingAgentFileWriteError extends Error {
 }
 
 export interface CodingAgentFileStore {
+  browseFiles(principal: RequestPrincipal, request: FileBrowseRequest): Promise<FileBrowseResponse>;
   readFile(principal: RequestPrincipal, request: FileReadRequest): Promise<FileReadResponse>;
+  searchFiles(principal: RequestPrincipal, request: FileSearchRequest): Promise<FileSearchResponse>;
   writeFile(principal: RequestPrincipal, request: FileWriteRequest): Promise<FileWriteResponse>;
 }
 
@@ -57,7 +71,7 @@ function isWithin(base: string, target: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function worktreeRootFor(homePath: string, request: FileReadRequest): string {
+function worktreeRootFor(homePath: string, request: Pick<FileReadRequest, "projectId" | "worktreeId">): string {
   return resolve(homePath, "projects", request.projectId, "worktrees", request.worktreeId);
 }
 
@@ -74,6 +88,38 @@ function etagDigest(input: { size: number; mtimeMs: number; hash: ReturnType<typ
 
 function fsErrorCode(err: unknown): string {
   return typeof err === "object" && err !== null && "code" in err ? String(err.code) : "";
+}
+
+function pathForRequest(base: string, requestPath?: string): string {
+  return requestPath ? resolve(base, requestPath) : base;
+}
+
+function pathForResponse(path: string | undefined, childName?: string): string | undefined {
+  const normalizedBase = path?.split(/[\\/]+/).join("/");
+  if (!childName) return normalizedBase;
+  return normalizedBase ? `${normalizedBase}/${childName}` : childName;
+}
+
+async function safeFileMetadata(input: {
+  absolutePath: string;
+  responsePath: string;
+  stats: Awaited<ReturnType<typeof lstat>>;
+}): Promise<FileMetadata | null> {
+  if (input.stats.isSymbolicLink()) return null;
+  if (input.stats.isDirectory()) {
+    return {
+      path: normalizePath(input.responsePath),
+      kind: "directory",
+      updatedAt: input.stats.mtime.toISOString(),
+    };
+  }
+  if (!input.stats.isFile()) return null;
+  return {
+    path: normalizePath(input.responsePath),
+    kind: "file",
+    sizeBytes: Number(input.stats.size),
+    updatedAt: input.stats.mtime.toISOString(),
+  };
 }
 
 async function safeUnlinkTemp(path: string): Promise<void> {
@@ -202,6 +248,84 @@ export function createCodingAgentFileStore(options: {
   const writeLocks = new Map<string, Promise<void>>();
 
   return {
+    async browseFiles(principal, rawRequest) {
+      if (!canAccessFiles(principal, ownerIds)) {
+        throw new CodingAgentFileReadError("file_not_found");
+      }
+      const request = FileBrowseRequestSchema.parse(rawRequest);
+      const limit = Math.min(request.limit, MAX_FILE_LIST_LIMIT);
+      const worktreeRoot = worktreeRootFor(homePath, request);
+      const target = pathForRequest(worktreeRoot, request.path);
+      if (!isWithin(worktreeRoot, target)) {
+        throw new CodingAgentFileReadError("file_not_found");
+      }
+
+      let rootReal: string;
+      let targetReal: string;
+      let targetStats: Awaited<ReturnType<typeof lstat>>;
+      try {
+        rootReal = await realpath(worktreeRoot);
+        targetStats = await lstat(target);
+        targetReal = await realpath(target);
+      } catch (err: unknown) {
+        const code = fsErrorCode(err);
+        if (["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
+          throw new CodingAgentFileReadError("file_not_found");
+        }
+        console.warn("[coding-agents] file browse stat failed");
+        throw new CodingAgentFileReadError("file_unavailable");
+      }
+      if (targetStats.isSymbolicLink()) {
+        throw new CodingAgentFileReadError("file_not_found");
+      }
+      if (!targetStats.isDirectory()) {
+        throw new CodingAgentFileReadError("not_file");
+      }
+      if (!isWithin(rootReal, targetReal)) {
+        throw new CodingAgentFileReadError("file_not_found");
+      }
+
+      const names = await readdir(targetReal).catch((err: unknown) => {
+        const code = fsErrorCode(err);
+        if (["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
+          throw new CodingAgentFileReadError("file_not_found");
+        }
+        console.warn("[coding-agents] file browse readdir failed");
+        throw new CodingAgentFileReadError("file_unavailable");
+      });
+      const entries: FileMetadata[] = [];
+      for (const name of names.sort((a, b) => a.localeCompare(b, "en"))) {
+        const absolutePath = resolve(targetReal, name);
+        const responsePath = pathForResponse(request.path, name);
+        if (!responsePath || entries.length > limit) continue;
+        try {
+          const stats = await lstat(absolutePath);
+          if (!isWithin(rootReal, await realpath(absolutePath))) continue;
+          const metadata = await safeFileMetadata({ absolutePath, responsePath, stats });
+          if (metadata) entries.push(metadata);
+        } catch (err: unknown) {
+          const code = fsErrorCode(err);
+          if (!["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
+            console.warn("[coding-agents] file browse entry skipped");
+          }
+        }
+        if (entries.length > limit) break;
+      }
+
+      return FileBrowseResponseSchema.parse({
+        directory: {
+          path: request.path,
+          kind: "directory",
+          updatedAt: targetStats.mtime.toISOString(),
+        },
+        entries: {
+          items: entries.slice(0, limit),
+          hasMore: entries.length > limit,
+          limit,
+        },
+      });
+    },
+
     async readFile(principal, rawRequest) {
       if (!canAccessFiles(principal, ownerIds)) {
         throw new CodingAgentFileReadError("file_not_found");
@@ -281,6 +405,102 @@ export function createCodingAgentFileStore(options: {
       } finally {
         await handle.close();
       }
+    },
+
+    async searchFiles(principal, rawRequest) {
+      if (!canAccessFiles(principal, ownerIds)) {
+        throw new CodingAgentFileReadError("file_not_found");
+      }
+      const request = FileSearchRequestSchema.parse(rawRequest);
+      const limit = Math.min(request.limit, MAX_FILE_LIST_LIMIT);
+      const worktreeRoot = worktreeRootFor(homePath, request);
+      const start = pathForRequest(worktreeRoot, request.path);
+      if (!isWithin(worktreeRoot, start)) {
+        throw new CodingAgentFileReadError("file_not_found");
+      }
+
+      let rootReal: string;
+      let startReal: string;
+      let startStats: Awaited<ReturnType<typeof lstat>>;
+      try {
+        rootReal = await realpath(worktreeRoot);
+        startStats = await lstat(start);
+        startReal = await realpath(start);
+      } catch (err: unknown) {
+        const code = fsErrorCode(err);
+        if (["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
+          throw new CodingAgentFileReadError("file_not_found");
+        }
+        console.warn("[coding-agents] file search stat failed");
+        throw new CodingAgentFileReadError("file_unavailable");
+      }
+      if (startStats.isSymbolicLink() || !startStats.isDirectory() || !isWithin(rootReal, startReal)) {
+        throw new CodingAgentFileReadError("file_not_found");
+      }
+
+      const query = request.query.trim().toLocaleLowerCase();
+      const matches: FileMetadata[] = [];
+      const queue: Array<{ absolutePath: string; responsePath?: string }> = [{
+        absolutePath: startReal,
+        responsePath: request.path,
+      }];
+      let visited = 0;
+      let hasMore = false;
+      while (queue.length > 0 && visited < MAX_FILE_SEARCH_VISITS && matches.length <= limit) {
+        const current = queue.shift();
+        if (!current) break;
+        visited += 1;
+        let names: string[];
+        try {
+          names = await readdir(current.absolutePath);
+        } catch (err: unknown) {
+          const code = fsErrorCode(err);
+          if (!["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
+            console.warn("[coding-agents] file search directory skipped");
+          }
+          continue;
+        }
+        for (const name of names.sort((a, b) => a.localeCompare(b, "en"))) {
+          const absolutePath = resolve(current.absolutePath, name);
+          const responsePath = pathForResponse(current.responsePath, name);
+          if (!responsePath) continue;
+          let stats: Awaited<ReturnType<typeof lstat>>;
+          let realEntry: string;
+          try {
+            stats = await lstat(absolutePath);
+            if (stats.isSymbolicLink()) continue;
+            realEntry = await realpath(absolutePath);
+          } catch (err: unknown) {
+            const code = fsErrorCode(err);
+            if (!["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
+              console.warn("[coding-agents] file search entry skipped");
+            }
+            continue;
+          }
+          if (!isWithin(rootReal, realEntry)) continue;
+          if (stats.isDirectory()) {
+            if (!SKIPPED_SEARCH_DIRS.has(name)) {
+              queue.push({ absolutePath: realEntry, responsePath });
+            }
+            continue;
+          }
+          if (!stats.isFile() || !responsePath.toLocaleLowerCase().includes(query)) continue;
+          const metadata = await safeFileMetadata({ absolutePath: realEntry, responsePath, stats });
+          if (metadata) matches.push(metadata);
+          if (matches.length > limit) break;
+        }
+      }
+      if (queue.length > 0 || visited >= MAX_FILE_SEARCH_VISITS || matches.length > limit) {
+        hasMore = true;
+      }
+
+      return FileSearchResponseSchema.parse({
+        matches: {
+          items: matches.slice(0, limit),
+          hasMore,
+          limit,
+        },
+      });
     },
 
     async writeFile(principal, rawRequest) {

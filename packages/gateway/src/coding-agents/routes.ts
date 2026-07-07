@@ -7,8 +7,12 @@ import {
   ApprovalIdSchema,
   CreateAgentThreadRequestSchema,
   CursorSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ProjectIdSchema,
@@ -362,6 +366,34 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   }
 
   if (deps.files) {
+    app.get("/files/browse", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = FileBrowseRequestSchema.parse({
+          projectId: c.req.query("projectId"),
+          worktreeId: c.req.query("worktreeId"),
+          path: c.req.query("path"),
+          limit: c.req.query("limit"),
+        });
+        return c.json(FileBrowseResponseSchema.parse(await deps.files!.browseFiles(principal, request)));
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentFileReadError) {
+          if (err.code === "file_not_found") return c.json({ error: fileNotFound() }, 404);
+          if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
+          return c.json({ error: filesUnavailable() }, 503);
+        }
+        console.warn("[coding-agents] file browse route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: filesUnavailable() }, 503);
+      }
+    });
+
     app.get("/files/read", async (c) => {
       try {
         const principal = principalFor(c);
@@ -385,6 +417,35 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           return c.json({ error: filesUnavailable() }, 503);
         }
         console.warn("[coding-agents] file read route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: filesUnavailable() }, 503);
+      }
+    });
+
+    app.get("/files/search", async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = FileSearchRequestSchema.parse({
+          projectId: c.req.query("projectId"),
+          worktreeId: c.req.query("worktreeId"),
+          path: c.req.query("path"),
+          query: c.req.query("query"),
+          limit: c.req.query("limit"),
+        });
+        return c.json(FileSearchResponseSchema.parse(await deps.files!.searchFiles(principal, request)));
+      } catch (err: unknown) {
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentFileReadError) {
+          if (err.code === "file_not_found") return c.json({ error: fileNotFound() }, 404);
+          if (err.code === "not_file") return c.json({ error: validationFailed() }, 400);
+          return c.json({ error: filesUnavailable() }, 503);
+        }
+        console.warn("[coding-agents] file search route failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: filesUnavailable() }, 503);
       }
     });

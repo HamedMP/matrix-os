@@ -6,8 +6,12 @@ import {
   ApprovalDecisionRequestSchema,
   AgentThreadComposerDraftSchema,
   CreateAgentThreadRequestSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
   SourceControlCreatePullRequestRequestSchema,
@@ -361,6 +365,57 @@ describe("coding agent contracts", () => {
       encoding: "utf8",
       writtenBytes: 27,
     }).writtenBytes).toBe(27);
+    expect(FileBrowseRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "src",
+      limit: 20,
+    }).path).toBe("src");
+    expect(FileBrowseRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+    }).path).toBeUndefined();
+    expect(() => FileBrowseRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system",
+    })).toThrow();
+    expect(FileBrowseResponseSchema.parse({
+      directory: {
+        path: "src",
+        kind: "directory",
+      },
+      entries: {
+        items: [{
+          path: "src/index.ts",
+          kind: "file",
+          sizeBytes: 27,
+          etag: "sha256_123",
+          updatedAt: now,
+        }],
+        hasMore: false,
+        limit: 20,
+      },
+    }).entries.items[0]?.path).toBe("src/index.ts");
+    expect(FileSearchRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "index",
+      path: "src",
+      limit: 20,
+    }).query).toBe("index");
+    expect(() => FileSearchRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: " ",
+    })).toThrow();
+    expect(FileSearchResponseSchema.parse({
+      matches: {
+        items: [{ path: "src/index.ts", kind: "file", sizeBytes: 27 }],
+        hasMore: false,
+        limit: 20,
+      },
+    }).matches.items).toHaveLength(1);
 
     expect(SourceControlPrepareCommitRequestSchema.parse({
       projectId: "matrix-os",
