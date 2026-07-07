@@ -7,7 +7,7 @@ import { defineCommand } from "citty";
 import { resolveCliProfile } from "../profiles.js";
 import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
 import { createShellClient } from "../shell-client.js";
-import type { ShellAttachOptions, ShellSendInputOptions } from "../shell-client.js";
+import type { ShellAttachOptions } from "../shell-client.js";
 import { requireCliAuthToken } from "../auth-state.js";
 import { uploadLocalFile } from "../file-transfer-client.js";
 
@@ -145,6 +145,12 @@ function attachOptionsFromArgs(args: Record<string, unknown>) {
   }
   if (args.noMouse === true) {
     options.mouse = false;
+  }
+  if (args.noRichPaste === true) {
+    options.noRichPaste = true;
+  }
+  if (typeof args.cwd === "string") {
+    options.cwd = args.cwd;
   }
   if (typeof args.WebSocketImpl === "function") {
     options.WebSocketImpl = args.WebSocketImpl as ShellAttachOptions["WebSocketImpl"];
@@ -384,9 +390,6 @@ async function pasteLocalFileIntoShell(args: Record<string, unknown>, input: {
     { force: args.force === true },
   );
   const client = createShellClient({ gatewayUrl: profile.gatewayUrl, token });
-  const sendInputOptions: ShellSendInputOptions = typeof args.WebSocketImpl === "function"
-    ? { WebSocketImpl: args.WebSocketImpl as ShellSendInputOptions["WebSocketImpl"] }
-    : {};
   const text = formatPasteText({
     remotePath: result.path,
     format: parsePasteFormat(args.format),
@@ -395,7 +398,6 @@ async function pasteLocalFileIntoShell(args: Record<string, unknown>, input: {
   await client.sendInput(
     String(args.session),
     `${bracketTerminalPaste(text)}${args.enter === true ? "\r" : ""}`,
-    sendInputOptions,
   );
   return { path: result.path, size: result.size, session: String(args.session) };
 }
@@ -445,6 +447,7 @@ function attachCommand(name: string, description: string) {
       layout: { type: "string", required: false },
       cmd: { type: "string", required: false },
       noMouse: { type: "boolean", required: false, default: false },
+      noRichPaste: { type: "boolean", required: false, default: false },
       fromSeq: { type: "string", required: false },
       ...commonArgs,
     },
@@ -510,6 +513,7 @@ export const shellCommand = defineCommand({
         cmd: { type: "string", required: false },
         attach: { type: "boolean", required: false, default: false },
         noMouse: { type: "boolean", required: false, default: false },
+        noRichPaste: { type: "boolean", required: false, default: false },
         ...commonArgs,
       },
       run: async ({ args }) => {

@@ -167,6 +167,12 @@ export const runCommand = defineCommand({
       default: false,
       description: "Drop local terminal mouse escape sequences before forwarding input",
     },
+    noRichPaste: {
+      type: "boolean",
+      required: false,
+      default: false,
+      description: "Forward pasted image paths as text instead of uploading them into the shell session",
+    },
     json: { type: "boolean", required: false, default: false },
   },
   run: async ({ args, rawArgs }) => {
@@ -207,7 +213,11 @@ export const runCommand = defineCommand({
         command,
         sessionProvided,
         mouse: args.noMouse === true ? false : undefined,
-        attachOptions: json ? { output: process.stderr } : undefined,
+        attachOptions: {
+          ...(json ? { output: process.stderr } : {}),
+          ...(typeof args.cwd === "string" ? { cwd: args.cwd } : {}),
+          ...(args.noRichPaste === true ? { noRichPaste: true } : {}),
+        },
       });
       console.log(
         json

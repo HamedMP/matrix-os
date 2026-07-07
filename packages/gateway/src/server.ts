@@ -1483,6 +1483,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellRouteDeps = {
+    homePath,
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
     workspace: zellijAdapter,
@@ -1490,6 +1491,7 @@ export async function createGateway(config: GatewayConfig) {
     shellBackend: zellijAdapter,
     shellThemeConfig: zellijAdapter,
     commandRunner: createShellCommandRunner({ homePath }),
+    terminalInput: zellijAdapter,
     sessionCreateRateLimiter: shellSessionCreateRateLimiter,
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();

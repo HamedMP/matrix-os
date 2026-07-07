@@ -122,6 +122,7 @@ async function runMatrixCli(args: string[]) {
 describe("run CLI command", () => {
   it("exports the developer run command", () => {
     expect(runCommand.meta?.name).toBe("run");
+    expect(runCommand.args).toHaveProperty("noRichPaste");
     expect(PUBLISHED_CLI_COMMANDS.has("run")).toBe(true);
     expect(resolvePublishedCliRedirect(["run", "-it", "--", "claude"])).toEqual([
       "run",
@@ -181,6 +182,24 @@ describe("run CLI command", () => {
       }),
     ).resolves.toEqual({ detached: true });
     expect(client.attachSession).toHaveBeenCalledWith("setup", { mouse: false });
+  });
+
+  it("passes no-rich-paste mode through interactive run attach", async () => {
+    const client = {
+      createSession: vi.fn(async () => ({ name: "setup" })),
+      attachSession: vi.fn(async () => ({ detached: true })),
+    };
+
+    await expect(
+      createOrAttachRunSession(client, {
+        name: "setup",
+        cwd: "projects/app",
+        command: ["codex"],
+        sessionProvided: true,
+        attachOptions: { cwd: "projects/app", noRichPaste: true },
+      }),
+    ).resolves.toEqual({ detached: true });
+    expect(client.attachSession).toHaveBeenCalledWith("setup", { cwd: "projects/app", noRichPaste: true });
   });
 
   it("keeps stdout JSON-only for run -it --json", async () => {

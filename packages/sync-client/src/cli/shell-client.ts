@@ -1,3 +1,5 @@
+import { readFile, stat } from "node:fs/promises";
+import { basename, extname, isAbsolute } from "node:path";
 import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "../protocol/shell.js";
 
 export interface ShellClientOptions {
@@ -34,7 +36,7 @@ export interface ShellClient {
   applyLayout(session: string, layout: string): Promise<Record<string, unknown>>;
   dumpLayout(session: string): Promise<Record<string, unknown>>;
   createAttachUrl(name: string, options?: { fromSeq?: number; token?: string }): string;
-  sendInput(name: string, data: string, options?: ShellSendInputOptions): Promise<void>;
+  sendInput(name: string, data: string): Promise<void>;
   attachSession(name: string, options?: ShellAttachOptions): Promise<{ detached: boolean }>;
 }
 
@@ -59,11 +61,6 @@ interface AttachWebSocket {
   off?(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void): AttachWebSocket;
 }
 
-export interface ShellSendInputOptions {
-  WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
-  timeoutMs?: number;
-}
-
 export interface ShellAttachOptions {
   fromSeq?: number;
   input?: NodeJS.ReadStream;
@@ -77,10 +74,17 @@ export interface ShellAttachOptions {
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
   WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
+  noRichPaste?: boolean;
+  cwd?: string;
 }
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
+const BRACKETED_PASTE_OPEN = "\u001b[200~";
+const BRACKETED_PASTE_CLOSE = "\u001b[201~";
+const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
+const SHELL_INPUT_FRAME_MAX_BYTES = 60_000;
+const TERMINAL_PASTE_ASSET_BODY_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 const RUN_RESPONSE_GRACE_MS = 30_000;
 const SHELL_ATTACH_HEARTBEAT_INTERVAL_MS = 20_000;
@@ -108,6 +112,13 @@ const SAFE_SHELL_SERVER_ERROR_CODES = new Set([
   "auth_expired",
   "session_not_found",
   "zellij_failed",
+]);
+const LOCAL_IMAGE_MIME_BY_EXTENSION = new Map([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
 ]);
 
 type MaybeTtyStream = NodeJS.ReadStream & {
@@ -247,6 +258,136 @@ function createTerminalInputFilter(options: {
   };
 }
 
+function createUnsupportedTerminalControlDropper() {
+  let dropping: "osc" | "string" | null = null;
+  let pendingEsc = false;
+
+  return {
+    filter(chunk: string): string {
+      let output = "";
+      for (let i = 0; i < chunk.length; i += 1) {
+        const char = chunk[i] ?? "";
+        const next = chunk[i + 1];
+
+        if (dropping) {
+          if (dropping === "osc" && char === "\u0007") {
+            dropping = null;
+            continue;
+          }
+          if (char === "\u001b" && next === "\\") {
+            dropping = null;
+            i += 1;
+          }
+          continue;
+        }
+
+        if (pendingEsc) {
+          pendingEsc = false;
+          if (startsUnsupportedStringControl(char)) {
+            dropping = char === "]" ? "osc" : "string";
+            continue;
+          }
+          output += `\u001b${char}`;
+          continue;
+        }
+
+        if (char !== "\u001b") {
+          output += char;
+          continue;
+        }
+
+        if (next === undefined) {
+          pendingEsc = true;
+          continue;
+        }
+        if (startsUnsupportedStringControl(next)) {
+          dropping = next === "]" ? "osc" : "string";
+          i += 1;
+          continue;
+        }
+        output += char;
+      }
+      return output;
+    },
+    reset() {
+      dropping = null;
+      pendingEsc = false;
+    },
+  };
+}
+
+function startsUnsupportedStringControl(char: string | undefined): boolean {
+  return char === "]" || char === "P" || char === "_" || char === "^" || char === "X";
+}
+
+function splitTerminalInputFrames(data: string): string[] {
+  const frames: string[] = [];
+  let current = "";
+  let currentBytes = 0;
+  for (const char of Array.from(data)) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (current && currentBytes + charBytes > SHELL_INPUT_FRAME_MAX_BYTES) {
+      frames.push(current);
+      current = "";
+      currentBytes = 0;
+    }
+    current += char;
+    currentBytes += charBytes;
+  }
+  if (current) {
+    frames.push(current);
+  }
+  return frames;
+}
+
+function parseSingleLocalImagePath(raw: string): string | null {
+  let text = raw.replace(/\x1b\[200~/g, "").replace(/\x1b\[201~/g, "").trim();
+  if ((text.startsWith("\"") && text.endsWith("\"")) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1);
+  }
+  text = text.trim();
+  if (!text || !isAbsolute(text) || text.includes("\0")) {
+    return null;
+  }
+  const ext = extname(text).toLowerCase();
+  return LOCAL_IMAGE_MIME_BY_EXTENSION.has(ext) ? text : null;
+}
+
+function detectLocalImageMime(bytes: Uint8Array): string | null {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6) {
+    const header = String.fromCharCode(...bytes.slice(0, 6));
+    if (header === "GIF87a" || header === "GIF89a") return "image/gif";
+  }
+  if (bytes.length >= 12) {
+    const riff = String.fromCharCode(...bytes.slice(0, 4));
+    const webp = String.fromCharCode(...bytes.slice(8, 12));
+    if (riff === "RIFF" && webp === "WEBP") return "image/webp";
+  }
+  return null;
+}
+
+function isLocalFileAccessMiss(err: unknown): boolean {
+  const code = err instanceof Error && "code" in err ? (err as { code?: unknown }).code : undefined;
+  return code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM";
+}
+
+function bracketPasteData(data: string): string {
+  const capped = data.slice(0, SHELL_INPUT_FRAME_MAX_BYTES - BRACKETED_PASTE_OVERHEAD);
+  return `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
+}
+
 export function createShellClient(options: ShellClientOptions): ShellClient {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -269,9 +410,17 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
 
   async function request(path: string, init: RequestInit = {}, requestTimeoutMs = timeoutMs): Promise<unknown> {
     const headers: Record<string, string> = {};
-    new Headers(init.headers).forEach((value, key) => {
-      headers[key] = value;
-    });
+    if (init.headers instanceof Headers) {
+      init.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+    } else if (Array.isArray(init.headers)) {
+      for (const [key, value] of init.headers) {
+        headers[key] = value;
+      }
+    } else if (init.headers) {
+      Object.assign(headers, init.headers);
+    }
     if (options.token) {
       headers.Authorization = `Bearer ${options.token}`;
     }
@@ -427,73 +576,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       return (await request(`${terminalSessionsPath}/${encodeURIComponent(session)}/layout`)) as Record<string, unknown>;
     },
     createAttachUrl,
-    async sendInput(name, data, sendOptions = {}) {
-      const WebSocketImpl =
-        sendOptions.WebSocketImpl ??
-        (await import("ws").then((mod) => mod.WebSocket as unknown as ShellSendInputOptions["WebSocketImpl"]));
-      if (!WebSocketImpl) {
-        throw Object.assign(new Error("Request failed"), { code: "websocket_unavailable" });
-      }
-      if (data.length > 65_536) {
-        throw Object.assign(new Error("Request failed"), { code: "invalid_request" });
-      }
-
-      const headers = options.token ? { Authorization: `Bearer ${options.token}` } : undefined;
-      const timeout = sendOptions.timeoutMs ?? timeoutMs;
-      const ws = new WebSocketImpl(createAttachUrl(name), headers ? { headers } : undefined);
-
-      await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const timer = setTimeout(() => {
-          finish(() => reject(Object.assign(new Error("Request failed"), { code: "attach_timeout" })));
-        }, timeout);
-        timer.unref?.();
-
-        const finish = (fn: () => void) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          try {
-            ws.close();
-          } catch (_err: unknown) {
-            // Best effort close after the input frame has been sent.
-          }
-          fn();
-        };
-
-        ws.on("message", (raw: unknown) => {
-          let parsed: unknown;
-          try {
-            const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
-            parsed = JSON.parse(text);
-          } catch (_err: unknown) {
-            return;
-          }
-          if (!parsed || typeof parsed !== "object") return;
-          const msg = parsed as { type?: unknown; code?: unknown };
-          if (msg.type === "attached") {
-            try {
-              ws.send(JSON.stringify({ type: "input", data }));
-              ws.send(JSON.stringify({ type: "detach" }));
-              finish(resolve);
-            } catch (_err: unknown) {
-              finish(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
-            }
-            return;
-          }
-          if (msg.type === "error") {
-            const code = typeof msg.code === "string" && SAFE_SHELL_SERVER_ERROR_CODES.has(msg.code)
-              ? msg.code
-              : "attach_failed";
-            finish(() => reject(Object.assign(new Error("Request failed"), { code })));
-          }
-        });
-        ws.on("close", () => {
-          finish(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
-        });
-        ws.on("error", () => {
-          finish(() => reject(Object.assign(new Error("Request failed"), { code: "attach_failed" })));
-        });
+    async sendInput(name, data) {
+      await request(`${terminalSessionsPath}/${encodeURIComponent(name)}/input`, {
+        method: "POST",
+        body: JSON.stringify({ data }),
       });
     },
     async attachSession(name, attachOptions = {}) {
@@ -517,6 +603,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         dropMouse,
         resetLocalInputModes,
       });
+      const controlDropper = createUnsupportedTerminalControlDropper();
       const heartbeatIntervalMs = attachOptions.heartbeatIntervalMs ?? SHELL_ATTACH_HEARTBEAT_INTERVAL_MS;
       const heartbeatTimeoutMs = attachOptions.heartbeatTimeoutMs ?? SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS;
       const heartbeatMissesBeforeReconnect =
@@ -524,6 +611,53 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       const reconnectBaseDelayMs = attachOptions.reconnectBaseDelayMs ?? SHELL_ATTACH_RECONNECT_BASE_DELAY_MS;
       const reconnectMaxDelayMs = attachOptions.reconnectMaxDelayMs ?? SHELL_ATTACH_RECONNECT_MAX_DELAY_MS;
       let pendingInput = "";
+      let inputQueue = Promise.resolve();
+      let queuedAsyncInputs = 0;
+
+      const uploadTerminalPasteAsset = async (filePath: string): Promise<string | null> => {
+        const ext = extname(filePath).toLowerCase();
+        const expectedMime = LOCAL_IMAGE_MIME_BY_EXTENSION.get(ext);
+        if (!expectedMime) {
+          return null;
+        }
+        let fileStat;
+        try {
+          fileStat = await stat(filePath);
+        } catch (err: unknown) {
+          if (isLocalFileAccessMiss(err)) {
+            return null;
+          }
+          throw err;
+        }
+        if (!fileStat.isFile() || fileStat.size < 1 || fileStat.size > TERMINAL_PASTE_ASSET_BODY_LIMIT) {
+          return null;
+        }
+        const bytes = await readFile(filePath);
+        if (detectLocalImageMime(bytes) !== expectedMime) {
+          return null;
+        }
+        const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        const pasteAssetPath = `${terminalSessionsPath}/${encodeURIComponent(name)}/paste-assets${
+          attachOptions.cwd ? `?${new URLSearchParams({ cwd: attachOptions.cwd }).toString()}` : ""
+        }`;
+        const payload = await request(pasteAssetPath, {
+          method: "POST",
+          headers: {
+            "Content-Type": expectedMime,
+            "X-Matrix-Filename": basename(filePath),
+          },
+          body,
+        }, 30_000);
+        if (
+          typeof payload === "object" &&
+          payload !== null &&
+          "terminalPath" in payload &&
+          typeof (payload as { terminalPath?: unknown }).terminalPath === "string"
+        ) {
+          return (payload as { terminalPath: string }).terminalPath;
+        }
+        throw Object.assign(new Error("Request failed"), { code: "invalid_response" });
+      };
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
@@ -555,6 +689,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           process.off("exit", onProcessExit);
           pendingInput = "";
           inputFilter.reset();
+          controlDropper.reset();
           resetLocalInputModes();
           if (rawModeEnabled) {
             input.setRawMode?.(false);
@@ -729,26 +864,53 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             })));
           }
         };
+        const sendInputData = (data: string) => {
+          for (const frameData of splitTerminalInputFrames(data)) {
+            sendFrame(JSON.stringify({ type: "input", data: frameData }));
+          }
+        };
         const detachLocal = () => {
           const wsToClose = currentWs;
           sendFrame(JSON.stringify({ type: "detach" }));
           settle(() => resolve({ detached: true }));
           wsToClose?.close();
         };
-        const onInput = (chunk: Buffer | string) => {
+        const handleInputFailure = (err: unknown) => {
+          errorOutput.write("Shell attach failed\n");
+          settle(() => reject(Object.assign(new Error("Request failed"), {
+            code: err instanceof Error && "code" in err ? (err as { code?: string }).code ?? "attach_failed" : "attach_failed",
+          })));
+        };
+        const processInput = (chunk: Buffer | string): Promise<void> | void => {
           const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
           if (rawModeEnabled && !everAttached && rawData.includes("\u0003")) {
             detachLocal();
             return;
           }
-          const data = inputFilter.filter(rawData);
+          const droppedControls = controlDropper.filter(rawData);
+          if (!attachOptions.noRichPaste) {
+            const localImagePath = parseSingleLocalImagePath(droppedControls);
+            if (localImagePath) {
+              return uploadTerminalPasteAsset(localImagePath).then((terminalPath) => {
+                if (terminalPath) {
+                  sendInputData(bracketPasteData(terminalPath));
+                  return;
+                }
+                processPlainInput(droppedControls);
+              });
+            }
+          }
+          processPlainInput(droppedControls);
+        };
+        const processPlainInput = (inputData: string) => {
+          const data = inputFilter.filter(inputData);
           let outbound = "";
           for (const char of data) {
             pendingInput += char;
             if (pendingInput === detachSequence) {
               pendingInput = "";
               if (outbound.length > 0) {
-                sendFrame(JSON.stringify({ type: "input", data: outbound }));
+                sendInputData(outbound);
               }
               detachLocal();
               return;
@@ -762,7 +924,40 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
           }
           if (outbound.length > 0) {
-            sendFrame(JSON.stringify({ type: "input", data: outbound }));
+            sendInputData(outbound);
+          }
+        };
+        const onInput = (chunk: Buffer | string) => {
+          const run = () => {
+            try {
+              const result = processInput(chunk);
+              return Promise.resolve(result);
+            } catch (err: unknown) {
+              return Promise.reject(err);
+            }
+          };
+          if (queuedAsyncInputs > 0) {
+            queuedAsyncInputs += 1;
+            inputQueue = inputQueue
+              .then(run)
+              .catch(handleInputFailure)
+              .finally(() => {
+                queuedAsyncInputs -= 1;
+              });
+            return;
+          }
+          try {
+            const result = processInput(chunk);
+            if (result && typeof (result as Promise<void>).then === "function") {
+              queuedAsyncInputs = 1;
+              inputQueue = Promise.resolve(result)
+                .catch(handleInputFailure)
+                .finally(() => {
+                  queuedAsyncInputs -= 1;
+                });
+            }
+          } catch (err: unknown) {
+            handleInputFailure(err);
           }
         };
         const sendResizeFrame = () => {

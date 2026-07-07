@@ -89,6 +89,7 @@ export interface ZellijAdapter {
   renameSession(name: string, nextName: string): Promise<void>;
   validateLayout(path: string): Promise<void>;
   attachSession(name: string, options?: AttachOptions): ShellAttachProcess;
+  sendInput(name: string, data: string): Promise<void>;
   listTabs(name: string): Promise<unknown[]>;
   createTab(name: string, input: { name?: string; cwd?: string; cmd?: string }): Promise<unknown>;
   switchTab(name: string, tab: number): Promise<unknown>;
@@ -347,6 +348,29 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
     });
   }
 
+  function attachProcess(name: string, options: AttachOptions = {}): ShellAttachProcess {
+    const pty = spawnPty("zellij", ["attach", name], {
+      name: "xterm-256color",
+      cols: 120,
+      rows: 40,
+      cwd,
+      env: attachEnv(deps.env, zellijConfigPaths),
+    });
+    const abort = () => {
+      pty.kill();
+    };
+    const exitDisposable = pty.onExit(() => {
+      options.signal?.removeEventListener("abort", abort);
+      exitDisposable.dispose();
+    });
+    if (options.signal?.aborted) {
+      abort();
+    } else {
+      options.signal?.addEventListener("abort", abort, { once: true });
+    }
+    return pty;
+  }
+
   return {
     async health() {
       try {
@@ -458,26 +482,10 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       await run(["setup", "--check", "--layout", path], 5_000);
     },
     attachSession(name, options = {}) {
-      const pty = spawnPty("zellij", ["attach", name], {
-        name: "xterm-256color",
-        cols: 120,
-        rows: 40,
-        cwd,
-        env: attachEnv(deps.env, zellijConfigPaths),
-      });
-      const abort = () => {
-        pty.kill();
-      };
-      const exitDisposable = pty.onExit(() => {
-        options.signal?.removeEventListener("abort", abort);
-        exitDisposable.dispose();
-      });
-      if (options.signal?.aborted) {
-        abort();
-      } else {
-        options.signal?.addEventListener("abort", abort, { once: true });
-      }
-      return pty;
+      return attachProcess(name, options);
+    },
+    async sendInput(name, data) {
+      await run(["--session", name, "action", "write-chars", "--", data]);
     },
     async listTabs(name) {
       const stdout = await run(["--session", name, "action", "query-tab-names"]);

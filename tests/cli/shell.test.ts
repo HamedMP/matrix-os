@@ -79,6 +79,23 @@ function createInputWebSocket(sentInputs: string[]) {
   };
 }
 
+function createPasteFetch(uploadPayload: Record<string, unknown>, sentInputs: string[]) {
+  return vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const href = String(url);
+    if (href.includes("/api/files/blob")) {
+      return new Response(JSON.stringify(uploadPayload));
+    }
+    if (href.includes("/api/terminal/sessions/main/input")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { data?: unknown };
+      if (typeof body.data === "string") {
+        sentInputs.push(body.data);
+      }
+      return new Response(JSON.stringify({ ok: true }));
+    }
+    throw new Error(`unexpected fetch ${href}`);
+  });
+}
+
 async function runMatrixCli(args: string[]) {
   const bin = join(process.cwd(), "packages/sync-client/bin/matrix.mjs");
   return await new Promise<{
@@ -143,6 +160,12 @@ describe("shell CLI command", () => {
       "rm",
       "tab",
     ]);
+  });
+
+  it("declares --no-rich-paste on shell attach and new --attach paths", () => {
+    expect(shellCommand.subCommands!.attach.args).toHaveProperty("noRichPaste");
+    expect(shellCommand.subCommands!.connect.args).toHaveProperty("noRichPaste");
+    expect(shellCommand.subCommands!.new.args).toHaveProperty("noRichPaste");
   });
 
   it("keeps aliases as distinct command objects with canonical names", () => {
@@ -373,15 +396,8 @@ describe("shell CLI command", () => {
     await writeFile(localPath, "paste me");
     const sentInputs: string[] = [];
     const longRemotePath = `data/terminal-paste/${"x".repeat(70_000)}.txt`;
-    const fetchImpl = vi.fn(async (url: string) => {
-      if (url.includes("/api/files/blob")) {
-        return new Response(JSON.stringify({ path: longRemotePath, size: 8 }));
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchImpl);
+    vi.stubGlobal("fetch", createPasteFetch({ path: longRemotePath, size: 8 }, sentInputs));
     vi.spyOn(console, "log").mockImplementation(() => {});
-    const InputWebSocket = createInputWebSocket(sentInputs);
 
     await shellCommand.subCommands!["paste-file"].run!({
       args: {
@@ -391,7 +407,6 @@ describe("shell CLI command", () => {
         dev: true,
         token: "tok",
         force: true,
-        WebSocketImpl: InputWebSocket,
       },
     } as never);
 
@@ -407,10 +422,10 @@ describe("shell CLI command", () => {
     const localPath = join(root, "screenshot.png");
     await writeFile(localPath, "fake image");
     const sentInputs: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    vi.stubGlobal("fetch", createPasteFetch({
       path: "data/terminal-paste/paste-1.png",
       size: 10,
-    }))));
+    }, sentInputs));
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await shellCommand.subCommands!["paste-file"].run!({
@@ -419,7 +434,6 @@ describe("shell CLI command", () => {
         local: localPath,
         dev: true,
         token: "tok",
-        WebSocketImpl: createInputWebSocket(sentInputs),
       },
     } as never);
 
@@ -433,10 +447,10 @@ describe("shell CLI command", () => {
     const localPath = join(root, "notes.txt");
     await writeFile(localPath, "notes");
     const sentInputs: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    vi.stubGlobal("fetch", createPasteFetch({
       path: "data/terminal-paste/notes.txt",
       size: 5,
-    }))));
+    }, sentInputs));
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await shellCommand.subCommands!["paste-file"].run!({
@@ -447,7 +461,6 @@ describe("shell CLI command", () => {
         token: "tok",
         format: "path",
         enter: true,
-        WebSocketImpl: createInputWebSocket(sentInputs),
       },
     } as never);
 
@@ -456,10 +469,10 @@ describe("shell CLI command", () => {
 
   it("uploads clipboard images and pastes an agent prompt into the target shell", async () => {
     const sentInputs: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    vi.stubGlobal("fetch", createPasteFetch({
       path: "data/terminal-paste/clipboard.png",
       size: 12,
-    }))));
+    }, sentInputs));
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await shellCommand.subCommands!["paste-clipboard"].run!({
@@ -473,7 +486,6 @@ describe("shell CLI command", () => {
           extension: "png",
           basename: "clipboard.png",
         }),
-        WebSocketImpl: createInputWebSocket(sentInputs),
       },
     } as never);
 
@@ -487,10 +499,10 @@ describe("shell CLI command", () => {
     const screenshotPath = join(root, "captured.png");
     await writeFile(screenshotPath, "fake captured png");
     const sentInputs: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+    vi.stubGlobal("fetch", createPasteFetch({
       path: "data/terminal-paste/captured.png",
       size: 17,
-    }))));
+    }, sentInputs));
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await shellCommand.subCommands!["paste-screenshot"].run!({
@@ -500,7 +512,6 @@ describe("shell CLI command", () => {
         token: "tok",
         area: true,
         captureScreenshot: async () => ({ path: screenshotPath, cleanup: async () => {} }),
-        WebSocketImpl: createInputWebSocket(sentInputs),
       },
     } as never);
 

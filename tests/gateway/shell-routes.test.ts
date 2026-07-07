@@ -1,13 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
+import { shellError } from "../../packages/gateway/src/shell/errors.js";
 import { ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
 import { createRateLimiter } from "../../packages/gateway/src/security/rate-limiter.js";
 
 const roots: string[] = [];
+const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
 
 async function tempRoot() {
   const root = await mkdtemp(join(tmpdir(), "matrix-shell-routes-"));
@@ -22,14 +24,15 @@ afterEach(async () => {
 describe("gateway shell routes", () => {
   function appWithRegistry(registry: {
     list: () => Promise<unknown[]>;
+    get?: (name: string) => Promise<unknown>;
     create: (input: unknown) => Promise<unknown>;
     delete: (name: string, options?: { force?: boolean }) => Promise<void>;
     rename?: (name: string, nextName: string) => Promise<unknown>;
     reorder?: (order: string[]) => Promise<unknown[]>;
-  }, shellBackend?: { health: () => Promise<{ ok: boolean; code: string }> }) {
+  }, shellBackend?: { health: () => Promise<{ ok: boolean; code: string }> }, extraDeps: Record<string, unknown> = {}) {
     const app = new Hono();
-    app.route("/api/terminal", createShellRoutes({ registry, shellBackend }));
-    app.route("/api", createShellRoutes({ registry, shellBackend }));
+    app.route("/api/terminal", createShellRoutes({ registry, shellBackend, ...extraDeps }));
+    app.route("/api", createShellRoutes({ registry, shellBackend, ...extraDeps }));
     return app;
   }
 
@@ -231,6 +234,154 @@ describe("gateway shell routes", () => {
       durationMs: 12,
     });
     expect(commandRunner.run).toHaveBeenCalledWith({ command: ["ls"], cwd: "projects/app" });
+  });
+
+  it("uploads pasted terminal image assets into the project-local paste directory", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "projects", "app"), { recursive: true });
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      get: vi.fn(async () => ({ name: "main", status: "active" })),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry, undefined, { homePath: root });
+
+    const res = await app.request("/api/terminal/sessions/main/paste-assets?cwd=projects/app", {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        "X-Matrix-Filename": "Screenshot 2026-07-07 at 6.50.39 PM.png",
+      },
+      body: PNG_BYTES,
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json() as {
+      path: string;
+      terminalPath: string;
+      size: number;
+      mimeType: string;
+    };
+    expect(body).toMatchObject({
+      size: PNG_BYTES.length,
+      mimeType: "image/png",
+    });
+    expect(body.path).toMatch(/^projects\/app\/\.matrix-terminal-pastes\/\d{4}-\d{2}-\d{2}\//);
+    expect(body.path.endsWith(".png")).toBe(true);
+    expect(body.terminalPath).toBe(join(root, body.path));
+    await expect(readFile(body.terminalPath)).resolves.toEqual(Buffer.from(PNG_BYTES));
+    expect(registry.get).toHaveBeenCalledWith("main");
+  });
+
+  it("rejects unsafe terminal paste uploads with generic client errors", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "projects", "app"), { recursive: true });
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      get: vi.fn(async () => ({ name: "main", status: "active" })),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry, undefined, { homePath: root });
+
+    const unsupportedMagic = await app.request("/api/terminal/sessions/main/paste-assets?cwd=projects/app", {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      body: "<svg><script>alert(1)</script></svg>",
+    });
+    const traversalCwd = await app.request("/api/terminal/sessions/main/paste-assets?cwd=../outside", {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      body: PNG_BYTES,
+    });
+    const unsafeFilename = await app.request("/api/terminal/sessions/main/paste-assets?cwd=projects/app", {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        "X-Matrix-Filename": "../bad.png",
+      },
+      body: PNG_BYTES,
+    });
+    const missingSession = await appWithRegistry({
+      list: vi.fn(async () => []),
+      get: vi.fn(async () => {
+        throw shellError("session_not_found", "Session not found", 404);
+      }),
+      create: vi.fn(),
+      delete: vi.fn(),
+    }, undefined, { homePath: root }).request("/api/terminal/sessions/missing/paste-assets?cwd=projects/app", {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      body: PNG_BYTES,
+    });
+
+    expect(unsupportedMagic.status).toBe(400);
+    await expect(unsupportedMagic.json()).resolves.toEqual({
+      error: { code: "unsupported_media_type", message: "Invalid request" },
+    });
+    expect(traversalCwd.status).toBe(400);
+    await expect(traversalCwd.json()).resolves.toEqual({
+      error: { code: "invalid_request", message: "Invalid request" },
+    });
+    expect(unsafeFilename.status).toBe(400);
+    await expect(unsafeFilename.json()).resolves.toEqual({
+      error: { code: "invalid_request", message: "Invalid request" },
+    });
+    expect(missingSession.status).toBe(404);
+    await expect(missingSession.json()).resolves.toEqual({
+      error: { code: "session_not_found", message: "Session not found" },
+    });
+  });
+
+  it("applies the 10 MiB body limit before terminal paste upload handling", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, "projects", "app"), { recursive: true });
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      get: vi.fn(async () => ({ name: "main", status: "active" })),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const app = appWithRegistry(registry, undefined, { homePath: root });
+    const oversized = new Uint8Array(10 * 1024 * 1024 + 1);
+    oversized.set(PNG_BYTES, 0);
+
+    const res = await app.request("/api/terminal/sessions/main/paste-assets?cwd=projects/app", {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      body: oversized,
+    });
+
+    expect(res.status).toBe(413);
+    await expect(res.json()).resolves.toEqual({
+      error: { code: "payload_too_large", message: "Request too large" },
+    });
+    expect(registry.get).not.toHaveBeenCalled();
+  });
+
+  it("sends one-shot terminal input without attaching a subscriber", async () => {
+    const registry = {
+      list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      get: vi.fn(async () => ({ name: "main", status: "active" })),
+      create: vi.fn(),
+      delete: vi.fn(),
+    };
+    const terminalInput = {
+      sendInput: vi.fn(async () => undefined),
+    };
+    const app = appWithRegistry(registry, undefined, { terminalInput });
+
+    const res = await app.request("/api/terminal/sessions/main/input", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: "pwd\r" }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true });
+    expect(registry.get).toHaveBeenCalledWith("main");
+    expect(terminalInput.sendInput).toHaveBeenCalledWith("main", "pwd\r");
   });
 
   it("allows digit-leading session names consistently across create and route params", async () => {
