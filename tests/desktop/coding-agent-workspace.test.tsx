@@ -276,6 +276,38 @@ function betaThreadSnapshotFixture() {
   };
 }
 
+function betaApprovalSameIdThreadSnapshotFixture() {
+  return {
+    thread: {
+      ...betaThreadSnapshotFixture().thread,
+      status: "waiting_for_approval",
+      attention: "approval_required",
+    },
+    events: {
+      items: [
+        {
+          type: "approval.requested",
+          eventId: "evt_approval_beta_1",
+          threadId: "thread_beta",
+          occurredAt: "2026-07-06T00:12:00.000Z",
+          approval: {
+            approvalId: "appr_desktop_1",
+            threadId: "thread_beta",
+            actionKind: "command",
+            risk: "low",
+            title: "Run beta tests",
+            safeDescription: "Run the beta desktop tests.",
+            allowedDecisions: ["approve", "decline"],
+            correlationId: "corr_desktop_beta_1",
+          },
+        },
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  };
+}
+
 function multiApprovalThreadSnapshotFixture() {
   const base = threadSnapshotFixture();
   return {
@@ -326,7 +358,7 @@ describe("AgentWorkspace", () => {
       approvalActionStatus: "idle",
       pendingApprovalId: null,
       approvalActionError: null,
-      pendingApprovalIds: [],
+      pendingApprovalKeys: [],
       approvalActionErrors: {},
       activeThreadId: null,
     });
@@ -491,6 +523,37 @@ describe("AgentWorkspace", () => {
     });
   });
 
+  it("does not apply pending approval state to another thread with the same approval id", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string, payload?: { approvalId?: string }) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      if (channel === "runtime:submit-approval-decision" && payload?.approvalId === "appr_desktop_1") {
+        return new Promise(() => undefined);
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    const alphaApprove = await screen.findByRole("button", { name: /approve run tests/i });
+    fireEvent.click(alphaApprove);
+    await waitFor(() => expect((alphaApprove as HTMLButtonElement).disabled).toBe(true));
+
+    await act(async () => {
+      useCodingAgentWorkspace.setState({
+        activeThreadId: "thread_beta",
+        threadSnapshotStatus: "ready",
+        threadSnapshot: betaApprovalSameIdThreadSnapshotFixture(),
+      });
+    });
+
+    const betaApprove = await screen.findByRole("button", { name: /approve run beta tests/i });
+    expect((betaApprove as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText("Sending...")).toBeNull();
+  });
+
   it("shows approval submission errors only on the failed approval row", async () => {
     useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
     window.operator.invoke = vi.fn((channel: string, payload?: { approvalId?: string }) => {
@@ -510,6 +573,35 @@ describe("AgentWorkspace", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Approval could not be sent. Try again.")).toHaveLength(1);
     });
+  });
+
+  it("does not apply approval errors to another thread with the same approval id", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string, payload?: { approvalId?: string }) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      if (channel === "runtime:submit-approval-decision" && payload?.approvalId === "appr_desktop_1") {
+        return Promise.reject(new Error("provider leaked /home/matrix"));
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /approve run tests/i }));
+    await screen.findByText("Approval could not be sent. Try again.");
+
+    await act(async () => {
+      useCodingAgentWorkspace.setState({
+        activeThreadId: "thread_beta",
+        threadSnapshotStatus: "ready",
+        threadSnapshot: betaApprovalSameIdThreadSnapshotFixture(),
+      });
+    });
+
+    await screen.findByRole("button", { name: /approve run beta tests/i });
+    expect(screen.queryByText("Approval could not be sent. Try again.")).toBeNull();
   });
 
   it("clears selected thread details when the refreshed summary no longer includes the thread", async () => {

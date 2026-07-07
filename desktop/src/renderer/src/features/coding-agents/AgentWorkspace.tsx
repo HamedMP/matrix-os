@@ -11,7 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
 import { useConnection } from "../../stores/connection";
-import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { codingAgentApprovalActionKey, useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useTabs } from "../../stores/tabs";
 
 const STATUS_COLOR: Record<string, string> = {
@@ -491,12 +491,13 @@ function ThreadSnapshotPanel({
 
 function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
   const copy = describeThreadEvent(event);
-  const pendingApprovalIds = useCodingAgentWorkspace((s) => s.pendingApprovalIds);
+  const pendingApprovalKeys = useCodingAgentWorkspace((s) => s.pendingApprovalKeys);
   const approvalActionErrors = useCodingAgentWorkspace((s) => s.approvalActionErrors);
   const submitApprovalDecision = useCodingAgentWorkspace((s) => s.submitApprovalDecision);
   const approval = event.type === "approval.requested" ? event.approval : null;
-  const approvalPending = approval ? pendingApprovalIds.includes(approval.approvalId) : false;
-  const approvalActionError = approval ? approvalActionErrors[approval.approvalId] : undefined;
+  const approvalKey = approval ? codingAgentApprovalActionKey(approval.threadId, approval.approvalId) : null;
+  const approvalPending = approvalKey ? pendingApprovalKeys.includes(approvalKey) : false;
+  const approvalActionError = approvalKey ? approvalActionErrors[approvalKey] : undefined;
   return (
     <div
       className="grid gap-1 rounded-md border px-3 py-2"
