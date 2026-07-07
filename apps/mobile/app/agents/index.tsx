@@ -341,24 +341,31 @@ export default function AgentsScreen() {
 
       <Section title="Active Threads" count={summary.activeThreads.items.length}>
         {summary.activeThreads.items.length === 0 ? <EmptyText>No active threads.</EmptyText> : null}
-        {summary.activeThreads.items.map((thread) => (
-          <Pressable
-            key={thread.id}
-            accessibilityRole="button"
-            accessibilityLabel={`Open thread ${thread.title}`}
-            onPress={() => router.push(`/agents/${thread.id}` as any)}
-            style={styles.row}
-          >
-            <View style={styles.rowIcon}>
-              <Ionicons name="git-branch-outline" size={18} color={theme.colors.moss} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{thread.title}</Text>
-              <Text style={styles.rowSubtitle}>{thread.providerId}</Text>
-            </View>
-            <Text style={styles.rowMeta}>{thread.status.replace(/_/g, " ")}</Text>
-          </Pressable>
-        ))}
+        {summary.activeThreads.items.map((thread) => {
+          const attentionLabel = threadAttentionLabel(thread.attention);
+
+          return (
+            <Pressable
+              key={thread.id}
+              accessibilityRole="button"
+              accessibilityLabel={attentionLabel
+                ? `Open thread ${thread.title}, ${attentionLabel}`
+                : `Open thread ${thread.title}`}
+              onPress={() => router.push(`/agents/${thread.id}` as any)}
+              style={styles.row}
+            >
+              <View style={styles.rowIcon}>
+                <Ionicons name="git-branch-outline" size={18} color={theme.colors.moss} />
+              </View>
+              <View style={styles.rowText}>
+                <Text style={styles.rowTitle}>{thread.title}</Text>
+                <Text style={styles.rowSubtitle}>{thread.providerId}</Text>
+                {attentionLabel ? <Text style={styles.attentionBadge}>{attentionLabel}</Text> : null}
+              </View>
+              <Text style={styles.rowMeta}>{thread.status.replace(/_/g, " ")}</Text>
+            </Pressable>
+          );
+        })}
       </Section>
 
       <Section title="Terminals" count={summary.terminalSessions.items.length}>
@@ -391,6 +398,17 @@ export default function AgentsScreen() {
 
 function reviewStatusLabel(status: ReviewSummary["status"]): string {
   return status.replace(/_/g, " ");
+}
+
+function threadAttentionLabel(attention?: string): string | null {
+  switch (attention) {
+    case "approval_required":
+      return "Approval needed";
+    case "input_required":
+      return "Input needed";
+    default:
+      return null;
+  }
 }
 
 function ReviewSection({
@@ -801,6 +819,19 @@ const styles = StyleSheet.create((theme, rt) => ({
   },
   reviewHighActive: {
     color: theme.colors.destructive,
+  },
+  attentionBadge: {
+    alignSelf: "flex-start",
+    marginTop: theme.spacing.xs,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 3,
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 11,
+    color: theme.colors.moss,
   },
   reviewError: {
     borderRadius: 14,

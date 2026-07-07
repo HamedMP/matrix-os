@@ -110,6 +110,39 @@ function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {
   };
 }
 
+function attentionSummaryFixture() {
+  const summary = summaryFixture();
+  return {
+    ...summary,
+    activeThreads: {
+      ...summary.activeThreads,
+      items: [
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_approval",
+          title: "Approve deployment",
+          status: "waiting_for_approval",
+          attention: "approval_required",
+        },
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_input",
+          title: "Clarify test target",
+          status: "waiting_for_input",
+          attention: "input_required",
+        },
+        {
+          ...summary.activeThreads.items[0],
+          id: "thread_failed",
+          title: "Repair failing run",
+          status: "failed",
+          attention: "failed",
+        },
+      ],
+    },
+  };
+}
+
 function reviewsFixture() {
   return {
     items: [
@@ -320,6 +353,34 @@ describe("AgentsScreen", () => {
     });
 
     expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_mobile");
+  });
+
+  it("renders reachable in-app attention badges for active coding-agent threads", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: attentionSummaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(await screen.findByText("Approve deployment")).toBeTruthy();
+    expect(screen.getByText("Approval needed")).toBeTruthy();
+    expect(screen.getByText("Input needed")).toBeTruthy();
+    expect(screen.getByLabelText("Open thread Approve deployment, Approval needed")).toBeTruthy();
+    expect(screen.getByLabelText("Open thread Clarify test target, Input needed")).toBeTruthy();
+    expect(screen.getByLabelText("Open thread Repair failing run")).toBeTruthy();
+    expect(screen.queryByText("Run failed")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|secret|stack trace/i)).toBeNull();
   });
 
   it("renders read-only review summaries", async () => {
