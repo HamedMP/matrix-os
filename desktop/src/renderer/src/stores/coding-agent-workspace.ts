@@ -40,6 +40,8 @@ interface CodingAgentWorkspaceState {
   approvalActionStatus: ActionStatus;
   pendingApprovalId: string | null;
   approvalActionError: string | null;
+  pendingApprovalIds: string[];
+  approvalActionErrors: Record<string, string>;
   activeThreadId: string | null;
   refresh: () => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
@@ -89,6 +91,11 @@ function nextActionRequestId(): string {
   return `req_desktop_${Date.now().toString(36)}_${actionRequestSeq}`;
 }
 
+function withoutRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const { [key]: _removed, ...rest } = record;
+  return rest;
+}
+
 export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set) => ({
   status: "idle",
   summary: null,
@@ -108,6 +115,8 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   approvalActionStatus: "idle",
   pendingApprovalId: null,
   approvalActionError: null,
+  pendingApprovalIds: [],
+  approvalActionErrors: {},
   activeThreadId: null,
 
   refresh: async () => {
@@ -248,14 +257,16 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   },
 
   submitApprovalDecision: async ({ threadId, approvalId, decision, correlationId }) => {
-    const { approvalActionStatus } = useCodingAgentWorkspace.getState();
-    if (approvalActionStatus === "submitting") return;
+    const { pendingApprovalIds } = useCodingAgentWorkspace.getState();
+    if (pendingApprovalIds.includes(approvalId)) return;
 
-    set({
+    set((state) => ({
       approvalActionStatus: "submitting",
       pendingApprovalId: approvalId,
       approvalActionError: null,
-    });
+      pendingApprovalIds: [...state.pendingApprovalIds, approvalId],
+      approvalActionErrors: withoutRecordKey(state.approvalActionErrors, approvalId),
+    }));
     try {
       const snapshot = await invoke("runtime:submit-approval-decision", {
         threadId,
@@ -266,6 +277,8 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       });
       set((state) => {
         const currentSummary = state.summary;
+        const nextPendingApprovalIds = state.pendingApprovalIds.filter((id) => id !== approvalId);
+        const visibleThreadStillSelected = state.activeThreadId === snapshot.thread.id;
         const summary = currentSummary
           ? {
               ...currentSummary,
@@ -278,22 +291,35 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
             }
           : currentSummary;
         return {
-          approvalActionStatus: "idle",
-          pendingApprovalId: null,
+          approvalActionStatus: nextPendingApprovalIds.length > 0 ? "submitting" : "idle",
+          pendingApprovalId: nextPendingApprovalIds.at(-1) ?? null,
           approvalActionError: null,
-          activeThreadId: snapshot.thread.id,
-          threadSnapshotStatus: "ready",
-          threadSnapshot: snapshot,
-          threadSnapshotError: null,
+          pendingApprovalIds: nextPendingApprovalIds,
+          approvalActionErrors: withoutRecordKey(state.approvalActionErrors, approvalId),
           summary,
+          ...(visibleThreadStillSelected
+            ? {
+                threadSnapshotStatus: "ready" as const,
+                threadSnapshot: snapshot,
+                threadSnapshotError: null,
+              }
+            : {}),
         };
       });
     } catch {
       console.warn("[coding-agents] approval decision failed");
-      set({
-        approvalActionStatus: "idle",
-        pendingApprovalId: null,
-        approvalActionError: "Approval could not be sent. Try again.",
+      set((state) => {
+        const nextPendingApprovalIds = state.pendingApprovalIds.filter((id) => id !== approvalId);
+        return {
+          approvalActionStatus: nextPendingApprovalIds.length > 0 ? "submitting" : "idle",
+          pendingApprovalId: nextPendingApprovalIds.at(-1) ?? null,
+          approvalActionError: "Approval could not be sent. Try again.",
+          pendingApprovalIds: nextPendingApprovalIds,
+          approvalActionErrors: {
+            ...state.approvalActionErrors,
+            [approvalId]: "Approval could not be sent. Try again.",
+          },
+        };
       });
     }
   },

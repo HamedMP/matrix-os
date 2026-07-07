@@ -491,12 +491,12 @@ function ThreadSnapshotPanel({
 
 function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
   const copy = describeThreadEvent(event);
-  const approvalActionStatus = useCodingAgentWorkspace((s) => s.approvalActionStatus);
-  const pendingApprovalId = useCodingAgentWorkspace((s) => s.pendingApprovalId);
-  const approvalActionError = useCodingAgentWorkspace((s) => s.approvalActionError);
+  const pendingApprovalIds = useCodingAgentWorkspace((s) => s.pendingApprovalIds);
+  const approvalActionErrors = useCodingAgentWorkspace((s) => s.approvalActionErrors);
   const submitApprovalDecision = useCodingAgentWorkspace((s) => s.submitApprovalDecision);
   const approval = event.type === "approval.requested" ? event.approval : null;
-  const approvalPending = approvalActionStatus === "submitting" && pendingApprovalId === approval?.approvalId;
+  const approvalPending = approval ? pendingApprovalIds.includes(approval.approvalId) : false;
+  const approvalActionError = approval ? approvalActionErrors[approval.approvalId] : undefined;
   return (
     <div
       className="grid gap-1 rounded-md border px-3 py-2"
@@ -520,7 +520,7 @@ function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
               key={decision}
               aria-label={`${approvalDecisionLabel(decision)} ${approval.title}`}
               variant={approvalDecisionVariant(decision)}
-              disabled={approvalActionStatus === "submitting"}
+              disabled={approvalPending}
               onClick={() => void submitApprovalDecision({
                 threadId: approval.threadId,
                 approvalId: approval.approvalId,
