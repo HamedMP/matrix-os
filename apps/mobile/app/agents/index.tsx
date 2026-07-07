@@ -462,10 +462,6 @@ export default function AgentsScreen() {
               pathname: "/agents/preview",
               params: {
                 id: preview.id,
-                label: preview.label,
-                status: preview.status,
-                ...(preview.origin ? { origin: preview.origin } : {}),
-                ...(preview.updatedAt ? { updatedAt: preview.updatedAt } : {}),
               },
             });
           }}

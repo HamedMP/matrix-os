@@ -1,19 +1,20 @@
-import { useMemo } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PreviewSessionSummarySchema, type PreviewSessionSummary } from "@matrix-os/contracts";
 import AppRuntimeFrame from "@/components/AppRuntimeFrame";
+import { useGateway } from "@/app/_layout";
 
 type PreviewRouteParams = {
   id?: string | string[];
-  label?: string | string[];
-  status?: string | string[];
-  origin?: string | string[];
-  updatedAt?: string | string[];
 };
 type LaunchablePreview = PreviewSessionSummary & { origin: string };
+type PreviewRouteState =
+  | { status: "loading"; preview: null; error: null }
+  | { status: "ready"; preview: LaunchablePreview; error: null }
+  | { status: "error"; preview: null; error: "Preview unavailable" };
 
 function firstParam(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
@@ -29,15 +30,16 @@ function isHttpsUrl(value: string | undefined): value is string {
   }
 }
 
-function parsePreviewParams(params: PreviewRouteParams): LaunchablePreview | null {
-  const parsed = PreviewSessionSummarySchema.safeParse({
-    id: firstParam(params.id),
-    label: firstParam(params.label),
-    status: firstParam(params.status),
-    origin: firstParam(params.origin),
-    updatedAt: firstParam(params.updatedAt),
-  });
+function findLaunchablePreview(
+  previews: PreviewSessionSummary[],
+  previewId: string,
+): LaunchablePreview | null {
+  const preview = previews.find((candidate) => candidate.id === previewId) ?? null;
+  if (!preview) return null;
+  const parsed = PreviewSessionSummarySchema.safeParse(preview);
   if (!parsed.success) return null;
+  if (parsed.data.status !== "running") return null;
+  if (!parsed.data.updatedAt) return null;
   if (!isHttpsUrl(parsed.data.origin)) return null;
   return { ...parsed.data, origin: parsed.data.origin };
 }
@@ -45,10 +47,77 @@ function parsePreviewParams(params: PreviewRouteParams): LaunchablePreview | nul
 export default function AgentPreviewRoute() {
   const router = useRouter();
   const { theme } = useUnistyles();
+  const { client } = useGateway();
   const params = useLocalSearchParams<PreviewRouteParams>();
-  const preview = useMemo(() => parsePreviewParams(params), [params]);
+  const requestGeneration = useRef(0);
+  const previewId = useMemo(() => {
+    const value = firstParam(params.id);
+    const parsed = PreviewSessionSummarySchema.shape.id.safeParse(value);
+    return parsed.success ? parsed.data : null;
+  }, [params.id]);
+  const [state, setState] = useState<PreviewRouteState>({
+    status: "loading",
+    preview: null,
+    error: null,
+  });
 
-  if (!preview) {
+  const loadPreview = useCallback(async (cancelled: () => boolean = () => false) => {
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
+    await Promise.resolve();
+    if (cancelled() || generation !== requestGeneration.current) return;
+    if (!client || !previewId) {
+      setState({ status: "error", preview: null, error: "Preview unavailable" });
+      return;
+    }
+    setState({ status: "loading", preview: null, error: null });
+    let result;
+    try {
+      result = await client.getCodingAgentRuntimeSummary();
+    } catch {
+      console.warn("[agents-preview] preview summary refresh failed");
+      if (!cancelled() && generation === requestGeneration.current) {
+        setState({ status: "error", preview: null, error: "Preview unavailable" });
+      }
+      return;
+    }
+    if (cancelled() || generation !== requestGeneration.current) return;
+    if (!result.ok) {
+      setState({ status: "error", preview: null, error: "Preview unavailable" });
+      return;
+    }
+    const preview = findLaunchablePreview(result.summary.previewSessions?.items ?? [], previewId);
+    if (!preview) {
+      setState({ status: "error", preview: null, error: "Preview unavailable" });
+      return;
+    }
+    setState({ status: "ready", preview, error: null });
+  }, [client, previewId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void loadPreview(() => cancelled);
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [loadPreview]);
+
+  if (state.status === "loading") {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ title: "Preview" }} />
+        <View style={styles.centered}>
+          <ActivityIndicator color={theme.colors.moss} />
+          <Text style={styles.title}>Loading preview...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (state.status === "error") {
     return (
       <View style={styles.container}>
         <Stack.Screen options={{ title: "Preview" }} />
@@ -56,7 +125,7 @@ export default function AgentPreviewRoute() {
           <View style={styles.iconBox}>
             <Ionicons name="warning-outline" size={28} color={theme.colors.moss} />
           </View>
-          <Text style={styles.title}>Preview unavailable</Text>
+          <Text style={styles.title}>{state.error}</Text>
           <Text style={styles.body}>Return to the agent workspace and refresh previews.</Text>
           <Pressable
             accessibilityRole="button"
@@ -74,6 +143,7 @@ export default function AgentPreviewRoute() {
     );
   }
 
+  const { preview } = state;
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: preview.label }} />

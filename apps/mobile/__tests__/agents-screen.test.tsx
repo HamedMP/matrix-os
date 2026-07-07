@@ -559,10 +559,6 @@ describe("AgentsScreen", () => {
       pathname: "/agents/preview",
       params: {
         id: "prev_mobile_secure",
-        label: "Secure mobile preview",
-        origin: "https://preview.matrix-os.test",
-        status: "running",
-        updatedAt: "2026-07-06T00:05:00.000Z",
       },
     });
   });
