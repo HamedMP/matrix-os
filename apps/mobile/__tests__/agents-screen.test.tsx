@@ -873,6 +873,7 @@ describe("AgentsScreen", () => {
       review: secondReview,
       updatedAt: "2026-07-06T00:05:00.000Z",
     };
+
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
         ok: true,
@@ -924,6 +925,63 @@ describe("AgentsScreen", () => {
 
     expect(screen.queryByText("Commit prepared")).toBeNull();
     expect(screen.queryByText(/Source commit could not be prepared/i)).toBeNull();
+  });
+
+  it("creates a source-control pull request for reviewed files through the mobile gateway client", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture({ sourceControl: true }),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotFixture(),
+      }),
+      createCodingAgentSourcePullRequest: jest.fn().mockResolvedValue({
+        ok: true,
+        pullRequest: {
+          status: "created",
+          number: 808,
+          url: "https://github.com/HamedMP/matrix-os/pull/808",
+          headBranch: "feature/review-fix",
+          baseBranch: "main",
+          safeMessage: "Pull request is ready for review.",
+        },
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Create pull request for review PR #759"));
+    });
+
+    expect(client.createCodingAgentSourcePullRequest).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: "matrix-os",
+      worktreeId: "wt_mobile_1",
+    }));
+    const pullRequestCall = client.createCodingAgentSourcePullRequest.mock.calls[0]?.[0];
+    expect(pullRequestCall).toEqual(expect.objectContaining({
+      title: "fix: apply review updates for PR #759",
+      body: "Review updates are ready.",
+      clientRequestId: expect.stringMatching(/^req_mobile_/),
+    }));
+    expect(JSON.stringify(pullRequestCall)).not.toMatch(/token|bearer|secret/i);
+    expect(await screen.findByText("Pull request ready")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
   it("ignores stale mobile save completions after another worktree opens the same path", async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createCodingAgentSourcePullRequest,
   fetchCodingAgentFileContent,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
@@ -87,6 +88,17 @@ function sourceCommitBody() {
     branch: "feature/review-fix",
     changedFileCount: 1,
     safeMessage: "Changes were committed.",
+  };
+}
+
+function sourcePullRequestBody() {
+  return {
+    status: "created",
+    number: 808,
+    url: "https://github.com/HamedMP/matrix-os/pull/808",
+    headBranch: "feature/review-fix",
+    baseBranch: "main",
+    safeMessage: "Pull request is ready for review.",
   };
 }
 
@@ -449,6 +461,40 @@ describe("coding agent desktop runtime client", () => {
     expect(JSON.stringify(commit)).not.toMatch(/token|bearer|secret|\/home\/matrix/i);
   });
 
+  it("creates a source-control pull request with bearer auth and validates safe output", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(sourcePullRequestBody()), { status: 201 }));
+
+    const pullRequest = await createCodingAgentSourcePullRequest(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/source-control/pull-requests",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          title: "fix: apply review updates for PR #758",
+          body: "Review updates are ready.",
+          clientRequestId: "req_desktop_create_pr",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(pullRequest.url).toBe(sourcePullRequestBody().url);
+    expect(JSON.stringify(pullRequest)).not.toMatch(/token|bearer|secret|\/home\/matrix/i);
+  });
+
   it("rejects unsafe or malformed review snapshot responses with a generic error", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...snapshotBody(),
@@ -536,5 +582,27 @@ describe("coding agent desktop runtime client", () => {
       paths: ["../system/config.json"],
       clientRequestId: "req_desktop_prepare_commit",
     }, fetchFn)).rejects.toThrow("source commit unavailable");
+  });
+
+  it("rejects unsafe source-control pull request requests and responses with generic errors", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...sourcePullRequestBody(),
+      url: "file:///home/matrix/private/secret",
+    }), { status: 201 }));
+
+    await expect(createCodingAgentSourcePullRequest(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
+    }, fetchFn)).rejects.toThrow("pull request unavailable");
+    await expect(createCodingAgentSourcePullRequest(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
+    }, fetchFn)).rejects.toThrow("pull request unavailable");
   });
 });

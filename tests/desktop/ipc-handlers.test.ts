@@ -42,6 +42,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     fetchFileContent: vi.fn(),
     saveFileContent: vi.fn(),
     prepareSourceCommit: vi.fn(),
+    createSourcePullRequest: vi.fn(),
     fetchThreadSnapshot: vi.fn(),
     submitApprovalDecision: vi.fn(),
     submitInputAnswer: vi.fn(),
@@ -431,6 +432,56 @@ describe("registerIpcHandlers", () => {
       message: "fix: update reviewed files",
       paths: ["packages/gateway/src/coding-agents/routes.ts"],
       clientRequestId: "req_desktop_prepare_commit",
+    })).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("creates a source-control pull request through a strict trusted-core IPC channel", async () => {
+    const pullRequest = {
+      status: "created",
+      number: 808,
+      url: "https://github.com/HamedMP/matrix-os/pull/808",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    };
+    const createSourcePullRequest = vi.fn().mockResolvedValue(pullRequest);
+    const harness = makeHarness({ createSourcePullRequest } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:create-source-pull-request", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
+    })).resolves.toEqual(pullRequest);
+    expect(createSourcePullRequest).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
+    });
+  });
+
+  it("maps source-control pull request failures to a generic IPC error", async () => {
+    const createSourcePullRequest = vi
+      .fn()
+      .mockRejectedValue(new Error("gh failed in /home/matrix/home/projects/private token"));
+    const harness = makeHarness({ createSourcePullRequest } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:create-source-pull-request", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
+    })).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:create-source-pull-request", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
     })).rejects.not.toThrow("/home/matrix");
   });
 

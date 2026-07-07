@@ -7,6 +7,8 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
   type ApprovalDecisionRequest,
@@ -18,6 +20,8 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
+  type SourceControlCreatePullRequestRequest,
+  type SourceControlCreatePullRequestResponse,
   type SourceControlPrepareCommitRequest,
   type SourceControlPrepareCommitResponse,
   type UserInputAnswerRequest,
@@ -399,6 +403,44 @@ export async function prepareCodingAgentSourceCommit(
   const parsed = SourceControlPrepareCommitResponseSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("source commit unavailable");
+  }
+  return parsed.data;
+}
+
+export async function createCodingAgentSourcePullRequest(
+  auth: AuthService,
+  request: SourceControlCreatePullRequestRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<SourceControlCreatePullRequestResponse> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("pull request unavailable");
+  }
+
+  const parsedRequest = SourceControlCreatePullRequestRequestSchema.safeParse(request);
+  if (!parsedRequest.success) {
+    throw new Error("pull request unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/source-control/pull-requests", auth.getGatewayOrigin());
+  const res = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(parsedRequest.data),
+    signal: AbortSignal.timeout(SOURCE_CONTROL_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("pull request unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = SourceControlCreatePullRequestResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("pull request unavailable");
   }
   return parsed.data;
 }

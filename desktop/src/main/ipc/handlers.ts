@@ -6,7 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
-import type { CreateAgentThreadRequest, FileReadRequest, FileReadResponse, FileWriteRequest, FileWriteResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
+import type { CreateAgentThreadRequest, FileReadRequest, FileReadResponse, FileWriteRequest, FileWriteResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 
@@ -36,6 +36,9 @@ export interface HandlerContext {
   prepareSourceCommit: (
     request: SourceControlPrepareCommitRequest,
   ) => Promise<SourceControlPrepareCommitResponse>;
+  createSourcePullRequest: (
+    request: SourceControlCreatePullRequestRequest,
+  ) => Promise<SourceControlCreatePullRequestResponse>;
   fetchThreadSnapshot: (
     options: { threadId: string },
   ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
@@ -109,6 +112,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:get-file-content", (request) => ctx.fetchFileContent(request));
   handle("runtime:save-file-content", (request) => ctx.saveFileContent(request));
   handle("runtime:prepare-source-commit", (request) => ctx.prepareSourceCommit(request));
+  handle("runtime:create-source-pull-request", (request) => ctx.createSourcePullRequest(request));
   handle("runtime:get-thread-snapshot", (request) => ctx.fetchThreadSnapshot(request));
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));

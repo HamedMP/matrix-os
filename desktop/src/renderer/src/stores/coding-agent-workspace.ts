@@ -9,6 +9,8 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
+  type SourceControlCreatePullRequestRequest,
+  type SourceControlCreatePullRequestResponse,
   type SourceControlPrepareCommitRequest,
   type SourceControlPrepareCommitResponse,
   type UserInputAnswerRequest,
@@ -21,6 +23,7 @@ type ReviewStatus = "idle" | "loading" | "ready" | "error";
 type FileReadStatus = "idle" | "loading" | "ready" | "error";
 type FileWriteStatus = "idle" | "saving" | "saved" | "error";
 type SourceCommitStatus = "idle" | "preparing" | "prepared" | "error";
+type SourcePullRequestStatus = "idle" | "creating" | "ready" | "error";
 type CreateStatus = "idle" | "submitting";
 type ActionStatus = "idle" | "submitting";
 type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
@@ -51,6 +54,9 @@ interface CodingAgentWorkspaceState {
   sourceCommitStatus: SourceCommitStatus;
   sourceCommit: SourceControlPrepareCommitResponse | null;
   sourceCommitError: string | null;
+  sourcePullRequestStatus: SourcePullRequestStatus;
+  sourcePullRequest: SourceControlCreatePullRequestResponse | null;
+  sourcePullRequestError: string | null;
   selectedFilePath: string | null;
   selectedFileReference: FileReference | null;
   threadSnapshotStatus: ReviewStatus;
@@ -74,6 +80,7 @@ interface CodingAgentWorkspaceState {
   loadFileContent: (request: FileReadRequest) => Promise<void>;
   saveFileContent: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => Promise<void>;
   prepareSourceCommit: (request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">) => Promise<void>;
+  createSourcePullRequest: (request: Omit<SourceControlCreatePullRequestRequest, "clientRequestId">) => Promise<void>;
   loadThreadSnapshot: (threadId: string) => Promise<void>;
   submitApprovalDecision: (input: {
     threadId: string;
@@ -120,6 +127,9 @@ function clearFileReadState() {
     sourceCommitStatus: "idle" as const,
     sourceCommit: null,
     sourceCommitError: null,
+    sourcePullRequestStatus: "idle" as const,
+    sourcePullRequest: null,
+    sourcePullRequestError: null,
     selectedFilePath: null,
     selectedFileReference: null,
   };
@@ -242,6 +252,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   sourceCommitStatus: "idle",
   sourceCommit: null,
   sourceCommitError: null,
+  sourcePullRequestStatus: "idle",
+  sourcePullRequest: null,
+  sourcePullRequestError: null,
   selectedFilePath: null,
   selectedFileReference: null,
   threadSnapshotStatus: "idle",
@@ -502,6 +515,59 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
           sourceCommitStatus: "error",
           sourceCommit: null,
           sourceCommitError: "Source commit could not be prepared. Refresh and try again.",
+        };
+      });
+    }
+  },
+
+  createSourcePullRequest: async (request) => {
+    const { sourcePullRequestStatus } = useCodingAgentWorkspace.getState();
+    if (sourcePullRequestStatus === "creating") return;
+
+    set({
+      sourcePullRequestStatus: "creating",
+      sourcePullRequest: null,
+      sourcePullRequestError: null,
+    });
+    try {
+      const response = await invoke("runtime:create-source-pull-request", {
+        ...request,
+        clientRequestId: nextActionRequestId(),
+      });
+      set((state) => {
+        const selectedReview = state.reviewSnapshot?.review;
+        if (
+          !selectedReview
+          || selectedReview.projectId !== request.projectId
+          || selectedReview.worktreeId !== request.worktreeId
+        ) {
+          return {
+            sourcePullRequestStatus: "idle",
+            sourcePullRequest: null,
+            sourcePullRequestError: null,
+          };
+        }
+        return {
+          sourcePullRequestStatus: "ready",
+          sourcePullRequest: response,
+          sourcePullRequestError: null,
+        };
+      });
+    } catch {
+      console.warn("[coding-agents] source pull request create failed");
+      set((state) => {
+        const selectedReview = state.reviewSnapshot?.review;
+        if (
+          !selectedReview
+          || selectedReview.projectId !== request.projectId
+          || selectedReview.worktreeId !== request.worktreeId
+        ) {
+          return state;
+        }
+        return {
+          sourcePullRequestStatus: "error",
+          sourcePullRequest: null,
+          sourcePullRequestError: "Pull request could not be created. Refresh and try again.",
         };
       });
     }

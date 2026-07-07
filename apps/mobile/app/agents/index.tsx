@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInp
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { FileReadRequest, FileReadResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
+import type { FileReadRequest, FileReadResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -46,6 +46,12 @@ type SourceCommitState =
   | { status: "prepared"; error: null }
   | { status: "error"; error: "Source commit could not be prepared. Refresh and try again." };
 
+type SourcePullRequestState =
+  | { status: "idle"; error: null }
+  | { status: "creating"; error: null }
+  | { status: "ready"; error: null }
+  | { status: "error"; error: "Pull request could not be created. Refresh and try again." };
+
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
@@ -80,6 +86,7 @@ const INITIAL_FILE_CONTENT_STATE: FileContentState = {
 
 const INITIAL_FILE_SAVE_STATE: FileSaveState = { status: "idle", error: null };
 const INITIAL_SOURCE_COMMIT_STATE: SourceCommitState = { status: "idle", error: null };
+const INITIAL_SOURCE_PULL_REQUEST_STATE: SourcePullRequestState = { status: "idle", error: null };
 
 const SECRET_LIKE_FINDING_TEXT =
   /(gh[psuor]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9_]{20,}|ya29[A-Za-z0-9._-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:A3T|AKIA|ASIA)[A-Z0-9]{16}|bearer\s+[A-Za-z0-9._-]{12,}|sk(?:_live|_test)?[_-][A-Za-z0-9_-]{16,})/i;
@@ -204,6 +211,7 @@ export default function AgentsScreen() {
   const [fileContentState, setFileContentState] = useState<FileContentState>(INITIAL_FILE_CONTENT_STATE);
   const [fileSaveState, setFileSaveState] = useState<FileSaveState>(INITIAL_FILE_SAVE_STATE);
   const [sourceCommitState, setSourceCommitState] = useState<SourceCommitState>(INITIAL_SOURCE_COMMIT_STATE);
+  const [sourcePullRequestState, setSourcePullRequestState] = useState<SourcePullRequestState>(INITIAL_SOURCE_PULL_REQUEST_STATE);
   const [refreshing, setRefreshing] = useState(false);
   const requestGeneration = useRef(0);
   const reviewSnapshotGeneration = useRef(0);
@@ -219,6 +227,7 @@ export default function AgentsScreen() {
     setFileContentState(INITIAL_FILE_CONTENT_STATE);
     setFileSaveState(INITIAL_FILE_SAVE_STATE);
     setSourceCommitState(INITIAL_SOURCE_COMMIT_STATE);
+    setSourcePullRequestState(INITIAL_SOURCE_PULL_REQUEST_STATE);
   }, []);
 
   const clearReviewSnapshot = useCallback(() => {
@@ -387,6 +396,36 @@ export default function AgentsScreen() {
     }
     setSourceCommitState({ status: "prepared", error: null });
   }, [client, reviewSnapshotState, sourceCommitState.status]);
+
+  const createSourcePullRequest = useCallback(async (
+    request: Omit<SourceControlCreatePullRequestRequest, "clientRequestId">,
+  ) => {
+    if (!client || sourcePullRequestState.status === "creating") return;
+    setSourcePullRequestState({ status: "creating", error: null });
+    const result = await client.createCodingAgentSourcePullRequest({
+      ...request,
+      clientRequestId: nextSourceCommitRequestId(),
+    });
+    if (!result.ok) {
+      setSourcePullRequestState({
+        status: "error",
+        error: "Pull request could not be created. Refresh and try again.",
+      });
+      return;
+    }
+    const currentReview = selectedReviewIdRef.current;
+    const selectedReview = reviewSnapshotState.status === "ready" ? reviewSnapshotState.snapshot.review : null;
+    if (
+      !currentReview
+      || !selectedReview
+      || selectedReview.projectId !== request.projectId
+      || selectedReview.worktreeId !== request.worktreeId
+    ) {
+      setSourcePullRequestState(INITIAL_SOURCE_PULL_REQUEST_STATE);
+      return;
+    }
+    setSourcePullRequestState({ status: "ready", error: null });
+  }, [client, reviewSnapshotState, sourcePullRequestState.status]);
 
   const loadSummary = useCallback(async () => {
     const generation = requestGeneration.current + 1;
@@ -617,11 +656,13 @@ export default function AgentsScreen() {
           fileContentState={fileContentState}
           fileSaveState={fileSaveState}
           sourceCommitState={sourceCommitState}
+          sourcePullRequestState={sourcePullRequestState}
           onSelectReview={selectReview}
           onOpenFile={loadFileContent}
           onSaveFile={saveFileContent}
           canPrepareCommit={canPrepareCommit}
           onPrepareCommit={prepareSourceCommit}
+          onCreatePullRequest={createSourcePullRequest}
         />
       ) : null}
     </ScrollView>
@@ -703,11 +744,13 @@ function ReviewSection({
   fileContentState,
   fileSaveState,
   sourceCommitState,
+  sourcePullRequestState,
   onSelectReview,
   onOpenFile,
   onSaveFile,
   canPrepareCommit,
   onPrepareCommit,
+  onCreatePullRequest,
 }: {
   canCreate: boolean;
   canReadFiles: boolean;
@@ -716,11 +759,13 @@ function ReviewSection({
   fileContentState: FileContentState;
   fileSaveState: FileSaveState;
   sourceCommitState: SourceCommitState;
+  sourcePullRequestState: SourcePullRequestState;
   onSelectReview: (reviewId: string) => void;
   onOpenFile: (request: FileReadRequest) => void;
   onSaveFile: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
   canPrepareCommit: boolean;
   onPrepareCommit: (request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">) => void;
+  onCreatePullRequest: (request: Omit<SourceControlCreatePullRequestRequest, "clientRequestId">) => void;
 }) {
   const { theme } = useUnistyles();
   const items = state.reviews?.items ?? [];
@@ -764,10 +809,12 @@ function ReviewSection({
         fileContentState={fileContentState}
         fileSaveState={fileSaveState}
         sourceCommitState={sourceCommitState}
+        sourcePullRequestState={sourcePullRequestState}
         onOpenFile={onOpenFile}
         onSaveFile={onSaveFile}
         canPrepareCommit={canPrepareCommit}
         onPrepareCommit={onPrepareCommit}
+        onCreatePullRequest={onCreatePullRequest}
       />
     </Section>
   );
@@ -780,10 +827,12 @@ function ReviewSnapshotPanel({
   fileContentState,
   fileSaveState,
   sourceCommitState,
+  sourcePullRequestState,
   onOpenFile,
   onSaveFile,
   canPrepareCommit,
   onPrepareCommit,
+  onCreatePullRequest,
 }: {
   canCreate: boolean;
   canReadFiles: boolean;
@@ -791,10 +840,12 @@ function ReviewSnapshotPanel({
   fileContentState: FileContentState;
   fileSaveState: FileSaveState;
   sourceCommitState: SourceCommitState;
+  sourcePullRequestState: SourcePullRequestState;
   onOpenFile: (request: FileReadRequest) => void;
   onSaveFile: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => void;
   canPrepareCommit: boolean;
   onPrepareCommit: (request: Omit<SourceControlPrepareCommitRequest, "clientRequestId">) => void;
+  onCreatePullRequest: (request: Omit<SourceControlCreatePullRequestRequest, "clientRequestId">) => void;
 }) {
   const { theme } = useUnistyles();
   const router = useRouter();
@@ -814,6 +865,7 @@ function ReviewSnapshotPanel({
     : null;
   const prepareCommitPaths = state.snapshot.files.items.map((file) => file.path).slice(0, 100);
   const prepareCommitDisabled = sourceCommitState.status === "preparing" || prepareCommitPaths.length === 0;
+  const createPullRequestDisabled = sourcePullRequestState.status === "creating";
 
   return (
     <View style={styles.reviewDetailPanel}>
@@ -831,6 +883,12 @@ function ReviewSnapshotPanel({
           ) : null}
           {sourceCommitState.status === "error" ? (
             <Text style={styles.reviewError}>{sourceCommitState.error}</Text>
+          ) : null}
+          {sourcePullRequestState.status === "ready" ? (
+            <Text style={styles.fileContentSaved}>Pull request ready</Text>
+          ) : null}
+          {sourcePullRequestState.status === "error" ? (
+            <Text style={styles.reviewError}>{sourcePullRequestState.error}</Text>
           ) : null}
           <Pressable
             accessibilityRole="button"
@@ -850,6 +908,25 @@ function ReviewSnapshotPanel({
           >
             <Ionicons name="git-branch-outline" size={15} color={theme.colors.background} />
             <Text style={styles.reviewFileOpenText}>{sourceCommitState.status === "preparing" ? "Preparing" : "Prepare commit"}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Create pull request for review PR #${state.snapshot.review.pullRequestNumber}`}
+            accessibilityState={{ disabled: createPullRequestDisabled }}
+            disabled={createPullRequestDisabled}
+            onPress={() => onCreatePullRequest({
+              projectId: state.snapshot.review.projectId,
+              worktreeId: state.snapshot.review.worktreeId,
+              title: `fix: apply review updates for PR #${state.snapshot.review.pullRequestNumber}`,
+              body: "Review updates are ready.",
+            })}
+            style={[
+              styles.reviewFileOpenButton,
+              createPullRequestDisabled ? styles.fileContentSaveButtonDisabled : null,
+            ]}
+          >
+            <Ionicons name="git-pull-request-outline" size={15} color={theme.colors.background} />
+            <Text style={styles.reviewFileOpenText}>{sourcePullRequestState.status === "creating" ? "Creating" : "Create PR"}</Text>
           </Pressable>
         </View>
       ) : null}

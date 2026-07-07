@@ -16,6 +16,8 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
   ThreadIdSchema,
@@ -138,6 +140,10 @@ export const INVOKE_CHANNELS = {
   "runtime:prepare-source-commit": {
     request: SourceControlPrepareCommitRequestSchema,
     response: SourceControlPrepareCommitResponseSchema,
+  },
+  "runtime:create-source-pull-request": {
+    request: SourceControlCreatePullRequestRequestSchema,
+    response: SourceControlCreatePullRequestResponseSchema,
   },
   "runtime:get-thread-snapshot": {
     request: z.object({ threadId: ThreadIdSchema }).strict(),

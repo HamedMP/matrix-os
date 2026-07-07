@@ -5,6 +5,7 @@ import { createCredentialStore } from "./auth/credential-store";
 import { installGatewayCors, installHeaderInjection } from "./auth/header-injection";
 import { EmbedService } from "./embeds/embed-service";
 import {
+  createCodingAgentSourcePullRequest,
   createCodingAgentThread,
   fetchCodingAgentFileContent,
   fetchCodingAgentThreadSnapshot,
@@ -244,6 +245,7 @@ if (!gotLock) {
         fetchFileContent: (request) => fetchCodingAgentFileContent(auth, request),
         saveFileContent: (request) => saveCodingAgentFileContent(auth, request),
         prepareSourceCommit: (request) => prepareCodingAgentSourceCommit(auth, request),
+        createSourcePullRequest: (request) => createCodingAgentSourcePullRequest(auth, request),
         fetchThreadSnapshot: (options) => fetchCodingAgentThreadSnapshot(auth, options),
         submitApprovalDecision: ({ threadId, approvalId, decision, clientRequestId, correlationId }) =>
           submitCodingAgentApprovalDecision(auth, {
