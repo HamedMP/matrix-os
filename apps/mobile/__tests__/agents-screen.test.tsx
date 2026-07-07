@@ -6,9 +6,11 @@ jest.mock("@/lib/feature-flags", () => ({
   CODING_AGENTS_MOBILE_WORKSPACE: true,
 }));
 
+const mockRouterPush = jest.fn();
+
 jest.mock("expo-router", () => ({
   useRouter: () => ({
-    push: jest.fn(),
+    push: mockRouterPush,
   }),
 }));
 
@@ -34,7 +36,7 @@ function gatewayContext(overrides: Partial<GatewayContextValue>): GatewayContext
   };
 }
 
-function summaryFixture() {
+function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -50,6 +52,10 @@ function summaryFixture() {
         id: "codingAgentsReview",
         enabled: true,
       },
+      ...(threadCreate ? [{
+        id: "codingAgentsThreadCreate",
+        enabled: true,
+      }] : []),
     ],
     providers: [
       {
@@ -373,6 +379,58 @@ describe("AgentsScreen", () => {
 
     expect(hunk.props.accessibilityState?.selected).toBe(true);
     expect(screen.queryByText(/export const|function create|raw diff/i)).toBeNull();
+  });
+
+  it("opens the mobile composer with bounded selected review hunk context", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture({ threadCreate: true }),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotWithHunks(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Select hunk 2 in packages/gateway/src/coding-agents/routes.ts"));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Ask agent about selected hunk"));
+    });
+
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: "/agents/new",
+      params: expect.objectContaining({
+        reviewId: "rev_mobile_1",
+        projectId: "matrix-os",
+        pullRequestNumber: "759",
+        round: "2",
+        maxRounds: "3",
+        filePath: "packages/gateway/src/coding-agents/routes.ts",
+        hunkId: "hunk_rev_mobile_1_0_1",
+        hunkIndex: "1",
+        oldStart: "88",
+        oldLines: "1",
+        newStart: "93",
+        newLines: "2",
+      }),
+    });
   });
 
   it("clears selected hunk state when a selected review snapshot refreshes", async () => {

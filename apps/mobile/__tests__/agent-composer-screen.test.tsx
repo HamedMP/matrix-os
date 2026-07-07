@@ -7,8 +7,10 @@ jest.mock("@/lib/feature-flags", () => ({
 }));
 
 const mockRouterPush = jest.fn();
+let mockSearchParams: Record<string, string | string[] | undefined> = {};
 
 jest.mock("expo-router", () => ({
+  useLocalSearchParams: () => mockSearchParams,
   useRouter: () => ({
     push: mockRouterPush,
     back: jest.fn(),
@@ -92,9 +94,27 @@ function summaryFixture() {
   };
 }
 
+function reviewHunkRouteParams(): Record<string, string> {
+  return {
+    reviewId: "rev_mobile_1",
+    projectId: "matrix-os",
+    pullRequestNumber: "759",
+    round: "2",
+    maxRounds: "3",
+    filePath: "packages/gateway/src/coding-agents/routes.ts",
+    hunkId: "hunk_rev_mobile_1_0_1",
+    hunkIndex: "1",
+    oldStart: "88",
+    oldLines: "1",
+    newStart: "93",
+    newLines: "2",
+  };
+}
+
 describe("AgentComposerScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSearchParams = {};
   });
 
   it("requires a prompt before creating a run", async () => {
@@ -165,6 +185,96 @@ describe("AgentComposerScreen", () => {
         pathname: "/agents/[threadId]",
         params: { threadId: "thread_mobile_create" },
       });
+    });
+  });
+
+  it("seeds and submits a selected review hunk follow-up from route params", async () => {
+    mockSearchParams = reviewHunkRouteParams();
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      createCodingAgentThread: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: {
+          thread: {
+            id: "thread_mobile_review_followup",
+            providerId: "codex",
+            title: "Follow up on review hunk",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
+        },
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentComposerScreen />);
+
+    const prompt = await screen.findByLabelText("Agent run prompt");
+    expect(prompt.props.value).toContain("PR #759");
+    expect(prompt.props.value).toContain("packages/gateway/src/coding-agents/routes.ts");
+    expect(prompt.props.value).toContain("@@ -88,1 +93,2 @@");
+    expect(prompt.props.value).not.toMatch(/export const|function create|raw diff/i);
+
+    fireEvent.press(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => {
+      expect(client.createCodingAgentThread).toHaveBeenCalledWith(expect.objectContaining({
+        providerId: "codex",
+        projectId: "matrix-os",
+        prompt: expect.stringContaining("Please follow up on this review hunk."),
+        attachments: [
+          expect.objectContaining({
+            id: "review:rev_mobile_1:hunk:hunk_rev_mobile_1_0_1",
+            kind: "structured_ref",
+            label: "Review hunk 2",
+            path: "packages/gateway/src/coding-agents/routes.ts",
+          }),
+        ],
+      }));
+      expect(mockRouterPush).toHaveBeenCalledWith({
+        pathname: "/agents/[threadId]",
+        params: { threadId: "thread_mobile_review_followup" },
+      });
+    });
+  });
+
+  it("applies review hunk route params that arrive after the initial draft", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      createCodingAgentThread: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const view = render(<AgentComposerScreen />);
+
+    const prompt = await screen.findByLabelText("Agent run prompt");
+    expect(prompt.props.value).toBe("");
+
+    mockSearchParams = reviewHunkRouteParams();
+    view.rerender(<AgentComposerScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Agent run prompt").props.value).toContain("PR #759");
+      expect(screen.getByLabelText("Agent run prompt").props.value).toContain("@@ -88,1 +93,2 @@");
     });
   });
 
