@@ -56,7 +56,7 @@ const THREAD_MUTATION_BODY_LIMIT = 128 * 1024;
 const THREAD_ABORT_BODY_LIMIT = 1024;
 const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
 const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
-const FILE_WRITE_BODY_LIMIT = 96 * 1024;
+const FILE_WRITE_BODY_LIMIT = 512 * 1024;
 
 const AbortThreadBodySchema = z.object({
   clientRequestId: RequestIdSchema,

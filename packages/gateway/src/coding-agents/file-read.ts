@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { link, lstat, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import {
   FileReadRequestSchema,
@@ -319,7 +319,7 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileWriteError("file_not_found");
       }
 
-      return withFileWriteLock(writeLocks, `${rootReal}:${normalizePath(request.path)}`, async () => {
+      return withFileWriteLock(writeLocks, `${rootReal}:${safeTarget}`, async () => {
         let stats: Awaited<ReturnType<typeof lstat>> | null;
         try {
           stats = await lstat(safeTarget);
@@ -341,10 +341,17 @@ export function createCodingAgentFileStore(options: {
         if (stats && !stats.isFile()) {
           throw new CodingAgentFileWriteError("not_file");
         }
+        if (stats && request.baseEtag !== null && Number(stats.size) > readLimitBytes) {
+          throw new CodingAgentFileWriteError("file_conflict");
+        }
 
         const tempPath = resolve(parentReal, `.matrix-agent-write-${request.clientRequestId}-${randomUUID()}.tmp`);
         try {
-          await writeFile(tempPath, contentBuffer, { flag: "wx", mode: 0o600 });
+          const tempMode = stats ? Number(stats.mode) & 0o7777 : 0o600;
+          await writeFile(tempPath, contentBuffer, { flag: "wx", mode: tempMode });
+          if (stats) {
+            await chmod(tempPath, tempMode);
+          }
 
           if (request.baseEtag === null) {
             if (stats) {

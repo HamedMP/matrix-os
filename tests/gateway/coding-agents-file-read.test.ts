@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -282,6 +282,119 @@ describe("coding agent file read route", () => {
     }
   });
 
+  it("serializes matching base etag updates through symlinked directories by canonical target", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      await writeFile(join(harness.worktreeRoot, "src", "index.ts"), "export const answer = 42;\n");
+      await symlink(join(harness.worktreeRoot, "src"), join(harness.worktreeRoot, "alias"));
+      const readRes = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&worktreeId=${worktreeId}&path=src%2Findex.ts`,
+      );
+      const readBody = await readRes.json();
+      const writeBody = (path: string, content: string, clientRequestId: string) => JSON.stringify({
+        projectId,
+        worktreeId,
+        path,
+        content,
+        encoding: "utf8",
+        baseEtag: readBody.metadata.etag,
+        clientRequestId,
+      });
+
+      const [direct, alias] = await Promise.all([
+        harness.app.request("/api/coding-agents/files/write", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: writeBody("src/index.ts", "export const answer = 43;\n", "req_write_direct_path"),
+        }),
+        harness.app.request("/api/coding-agents/files/write", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: writeBody("alias/index.ts", "export const answer = 44;\n", "req_write_alias_path"),
+        }),
+      ]);
+      const statuses = [direct.status, alias.status].sort((a, b) => a - b);
+
+      expect(statuses).toEqual([200, 409]);
+      expect(["export const answer = 43;\n", "export const answer = 44;\n"]).toContain(
+        await readFile(join(harness.worktreeRoot, "src", "index.ts"), "utf8"),
+      );
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves existing executable file mode when saving content", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      const scriptPath = join(harness.worktreeRoot, "src", "script.sh");
+      await writeFile(scriptPath, "#!/usr/bin/env bash\necho old\n");
+      await chmod(scriptPath, 0o755);
+      const readRes = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&worktreeId=${worktreeId}&path=src%2Fscript.sh`,
+      );
+      const readBody = await readRes.json();
+
+      const res = await harness.app.request("/api/coding-agents/files/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          path: "src/script.sh",
+          content: "#!/usr/bin/env bash\necho new\n",
+          encoding: "utf8",
+          baseEtag: readBody.metadata.etag,
+          clientRequestId: "req_write_executable",
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      expect((await stat(scriptPath)).mode & 0o777).toBe(0o755);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects updates based on truncated snapshots before replacing the file", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      readLimitBytes: 12,
+    });
+    try {
+      const filePath = join(harness.worktreeRoot, "src", "large.txt");
+      await writeFile(filePath, "0123456789abcdef");
+      const readRes = await harness.app.request(
+        `/api/coding-agents/files/read?projectId=${projectId}&worktreeId=${worktreeId}&path=src%2Flarge.txt`,
+      );
+      const readBody = await readRes.json();
+      expect(readBody.truncated).toBe(true);
+
+      const res = await harness.app.request("/api/coding-agents/files/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          path: "src/large.txt",
+          content: "0123456789ab",
+          encoding: "utf8",
+          baseEtag: readBody.metadata.etag,
+          clientRequestId: "req_write_truncated_base",
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      expect(await readFile(filePath, "utf8")).toBe("0123456789abcdef");
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("treats identical retries as idempotent but rejects stale retries after newer content", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],
@@ -473,7 +586,7 @@ describe("coding agent file read route", () => {
           projectId,
           worktreeId,
           path: "src/large.txt",
-          content: "x".repeat(110_000),
+          content: "x".repeat(600_000),
           encoding: "utf8",
           baseEtag: null,
           clientRequestId: "req_write_body_limit",
@@ -481,6 +594,33 @@ describe("coding agent file read route", () => {
       });
 
       expect(res.status).toBe(413);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a contract-valid 64 KiB write even when JSON escaping expands the request body", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      const content = "\"".repeat(64 * 1024);
+      const res = await harness.app.request("/api/coding-agents/files/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          path: "src/quoted.txt",
+          content,
+          encoding: "utf8",
+          baseEtag: null,
+          clientRequestId: "req_write_escaped_limit",
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      expect(await readFile(join(harness.worktreeRoot, "src", "quoted.txt"), "utf8")).toBe(content);
     } finally {
       await rm(harness.homePath, { recursive: true, force: true });
     }

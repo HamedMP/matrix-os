@@ -57,7 +57,7 @@ Implemented routes:
 | `/api/coding-agents/reviews` | `GET` | Implemented | Authenticated read-only review summary list. Returns bounded `ReviewSummarySchema` items only. |
 | `/api/coding-agents/reviews/:reviewId` | `GET` | Implemented | Authenticated read-only review snapshot. Returns bounded `ReviewSnapshotSchema` with partial findings-derived file metadata and bounded hunk diff lines when available; no full file contents. |
 | `/api/coding-agents/files/read` | `GET` | Implemented | Authenticated read-only owner-worktree text snapshot. Validates `projectId`, `worktreeId`, and `path`, rejects traversal/symlinks, caps content at 64 KiB, and returns `FileReadResponseSchema`. |
-| `/api/coding-agents/files/write` | `POST` | Implemented | Authenticated owner-worktree UTF-8 write. Validates `FileWriteRequestSchema`, applies a 96 KiB body limit, rejects traversal/symlinks, caps content at 64 KiB, requires matching `baseEtag` for updates or `baseEtag: null` for creates, and returns `FileWriteResponseSchema` or safe conflict errors. |
+| `/api/coding-agents/files/write` | `POST` | Implemented | Authenticated owner-worktree UTF-8 write. Validates `FileWriteRequestSchema`, applies a 512 KiB JSON body limit for escaped 64 KiB content, rejects traversal/symlinks, caps content at 64 KiB, preserves existing file mode on replace, rejects updates from truncated snapshots, requires matching `baseEtag` for updates or `baseEtag: null` for creates, and returns `FileWriteResponseSchema` or safe conflict errors. |
 
 Security and ownership:
 
