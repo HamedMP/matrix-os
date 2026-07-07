@@ -117,6 +117,12 @@ describe("shell CLI command", () => {
     ]);
   });
 
+  it("declares --no-rich-paste on shell attach and new --attach paths", () => {
+    expect(shellCommand.subCommands!.attach.args).toHaveProperty("noRichPaste");
+    expect(shellCommand.subCommands!.connect.args).toHaveProperty("noRichPaste");
+    expect(shellCommand.subCommands!.new.args).toHaveProperty("noRichPaste");
+  });
+
   it("keeps aliases as distinct command objects with canonical names", () => {
     expect(shellCommand.subCommands!.connect).not.toBe(shellCommand.subCommands!.attach);
     expect(shellCommand.subCommands!.connect.meta?.name).toBe("connect");

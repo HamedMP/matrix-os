@@ -37,6 +37,14 @@ const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_C
 const MAX_TERMINAL_INPUT = 65_536;
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
+const SUPPORTED_TERMINAL_PASTE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+]);
 const TERMINAL_SCROLLBACK_LINES = 10_000;
 const TERMINAL_SCROLL_SENSITIVITY = 1;
 const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
@@ -61,6 +69,42 @@ function shouldDisableWebglRenderer(suppressNativeKeyboard: boolean): boolean {
     || (userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1);
   const isSafari = /Safari\//.test(userAgent) && !/(Chrome|CriOS|FxiOS|EdgiOS)\//.test(userAgent);
   return isAppleMobile && isSafari;
+}
+
+function terminalPasteMimeType(file: File): string | null {
+  const typed = file.type.trim().toLowerCase();
+  if (SUPPORTED_TERMINAL_PASTE_MIME_TYPES.has(typed)) {
+    return typed;
+  }
+  const dot = file.name.lastIndexOf(".");
+  if (dot < 0) {
+    return null;
+  }
+  return TERMINAL_PASTE_MIME_BY_EXTENSION.get(file.name.slice(dot).toLowerCase()) ?? null;
+}
+
+function isSupportedTerminalPasteFile(file: File | null | undefined): file is File {
+  return Boolean(file && terminalPasteMimeType(file));
+}
+
+function filesFromTerminalFilePayload(payload: DataTransfer | ClipboardEvent["clipboardData"] | null): File[] {
+  if (!payload) {
+    return [];
+  }
+  const files: File[] = [];
+  const items = Array.from(payload.items ?? []);
+  for (const item of items) {
+    if (item.kind === "file") {
+      const file = item.getAsFile();
+      if (isSupportedTerminalPasteFile(file)) {
+        files.push(file);
+      }
+    }
+  }
+  if (files.length > 0) {
+    return files;
+  }
+  return Array.from(payload.files ?? []).filter(isSupportedTerminalPasteFile);
 }
 
 function scrollTerminalViewportToBottom(term: Terminal | null): void {
@@ -523,6 +567,102 @@ export function TerminalPane({
       sessionIdRef.current = initialSessionId;
     }
   }, [initialSessionId]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const sendBracketedPaste = (terminalPath: string) => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: "input",
+          data: `${BRACKETED_PASTE_OPEN}${terminalPath}${BRACKETED_PASTE_CLOSE}`,
+        }));
+      }
+    };
+
+    const uploadAndPasteFiles = async (files: File[]) => {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) {
+        return;
+      }
+      const terminalPaths: string[] = [];
+      for (const file of files) {
+        const mimeType = terminalPasteMimeType(file);
+        if (!mimeType) {
+          continue;
+        }
+        try {
+          const url = new URL(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/paste-assets`);
+          url.searchParams.set("cwd", cwd || "projects");
+          const res = await fetch(url.toString(), {
+            method: "POST",
+            headers: {
+              "Content-Type": mimeType,
+              "X-Matrix-Filename": file.name,
+            },
+            body: file,
+          });
+          if (!res.ok) {
+            console.warn(`Terminal paste upload failed: ${res.status}`);
+            continue;
+          }
+          const payload = await res.json() as { terminalPath?: unknown };
+          if (typeof payload.terminalPath === "string") {
+            terminalPaths.push(payload.terminalPath);
+          }
+        } catch (err: unknown) {
+          console.warn("Terminal paste upload failed:", err instanceof Error ? err.message : err);
+        }
+      }
+      if (terminalPaths.length > 0) {
+        sendBracketedPaste(terminalPaths.join(" "));
+      }
+    };
+
+    const captureImagePayload = (event: ClipboardEvent | DragEvent): File[] => {
+      const files = "clipboardData" in event
+        ? filesFromTerminalFilePayload(event.clipboardData)
+        : filesFromTerminalFilePayload(event.dataTransfer);
+      if (files.length === 0) {
+        return [];
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if ("stopImmediatePropagation" in event) {
+        event.stopImmediatePropagation();
+      }
+      return files;
+    };
+
+    const onPaste = (event: ClipboardEvent) => {
+      const files = captureImagePayload(event);
+      if (files.length > 0) {
+        void uploadAndPasteFiles(files);
+      }
+    };
+    const onDrag = (event: DragEvent) => {
+      captureImagePayload(event);
+    };
+    const onDrop = (event: DragEvent) => {
+      const files = captureImagePayload(event);
+      if (files.length > 0) {
+        void uploadAndPasteFiles(files);
+      }
+    };
+
+    container.addEventListener("paste", onPaste, { capture: true });
+    container.addEventListener("dragenter", onDrag, { capture: true });
+    container.addEventListener("dragover", onDrag, { capture: true });
+    container.addEventListener("drop", onDrop, { capture: true });
+    return () => {
+      container.removeEventListener("paste", onPaste, { capture: true });
+      container.removeEventListener("dragenter", onDrag, { capture: true });
+      container.removeEventListener("dragover", onDrag, { capture: true });
+      container.removeEventListener("drop", onDrop, { capture: true });
+    };
+  }, [cwd]);
 
   // Bridge for the mobile accessory key bar. TerminalApp dispatches a custom
   // window event with the target paneId; we forward to this pane's PTY if it

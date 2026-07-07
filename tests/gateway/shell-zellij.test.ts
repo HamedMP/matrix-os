@@ -253,6 +253,24 @@ describe("zellij adapter", () => {
     expect(pty.resize).toHaveBeenCalledWith(140, 50);
   });
 
+  it("sends one-shot input through a transient attach PTY", async () => {
+    const pty = ptyProcess();
+    const spawnPty = vi.fn(() => pty);
+    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
+
+    const sent = adapter.sendInput("main", "pwd\r");
+
+    expect(spawnPty).toHaveBeenCalledWith(
+      "zellij",
+      ["attach", "main"],
+      expect.objectContaining({ name: "xterm-256color", cols: 120, rows: 40 }),
+    );
+    expect(pty.writes).toEqual(["pwd\r"]);
+    expect(pty.kill).not.toHaveBeenCalled();
+    await sent;
+    expect(pty.kill).toHaveBeenCalledTimes(1);
+  });
+
   it("creates sessions in the requested cwd using a retained PTY", async () => {
     const pty = ptyProcess();
     const execFile = vi.fn();

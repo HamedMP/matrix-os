@@ -125,6 +125,12 @@ function attachOptionsFromArgs(args: Record<string, unknown>) {
   if (args.noMouse === true) {
     options.mouse = false;
   }
+  if (args.noRichPaste === true) {
+    options.noRichPaste = true;
+  }
+  if (typeof args.cwd === "string") {
+    options.cwd = args.cwd;
+  }
   if (typeof args.WebSocketImpl === "function") {
     options.WebSocketImpl = args.WebSocketImpl as ShellAttachOptions["WebSocketImpl"];
   }
@@ -194,6 +200,7 @@ function attachCommand(name: string, description: string) {
       layout: { type: "string", required: false },
       cmd: { type: "string", required: false },
       noMouse: { type: "boolean", required: false, default: false },
+      noRichPaste: { type: "boolean", required: false, default: false },
       fromSeq: { type: "string", required: false },
       ...commonArgs,
     },
@@ -259,6 +266,7 @@ export const shellCommand = defineCommand({
         cmd: { type: "string", required: false },
         attach: { type: "boolean", required: false, default: false },
         noMouse: { type: "boolean", required: false, default: false },
+        noRichPaste: { type: "boolean", required: false, default: false },
         ...commonArgs,
       },
       run: async ({ args }) => {
