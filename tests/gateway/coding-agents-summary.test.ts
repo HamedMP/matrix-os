@@ -572,11 +572,13 @@ describe("coding agent runtime summary", () => {
       getReview: async () => ({
         ok: true,
         review: reviewRecord({
+          ownerId: testPrincipal.userId,
           rounds: [successfulFindingsRound()],
         }),
       }),
       listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
     } as ReviewLoopStore, {
+      ownerId: testPrincipal.userId,
       homePath: "/home/matrix/home",
       findingsReader: reader,
     });
@@ -612,7 +614,31 @@ describe("coding agent runtime summary", () => {
       }),
       listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
     } as ReviewLoopStore, {
-      ownerId: "owner_user",
+      ownerId: testPrincipal.userId,
+      homePath: "/home/matrix/home",
+      findingsReader: async () => ({
+        ok: true,
+        parserStatus: "success",
+        findingsCount: 0,
+        severityCounts: { high: 0, medium: 0, low: 0 },
+        findings: [],
+      }),
+    });
+
+    await expect(store.getReviewSnapshot!(testPrincipal, "rev_1")).rejects.toMatchObject({
+      code: "review_not_found",
+    });
+  });
+
+  it("returns safe not-found for unowned review snapshots", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      getReview: async () => ({
+        ok: true,
+        review: reviewRecord({ rounds: [successfulFindingsRound()] }),
+      }),
+      listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+    } as ReviewLoopStore, {
+      ownerId: testPrincipal.userId,
       homePath: "/home/matrix/home",
       findingsReader: async () => ({
         ok: true,
@@ -646,11 +672,12 @@ describe("coding agent runtime summary", () => {
       getReview: async () => ({
         ok: true,
         review: reviewRecord({
+          ownerId: testPrincipal.userId,
           rounds: [successfulFindingsRound({ findingsPath: "/home/matrix/private/review-findings.md" })],
         }),
       }),
       listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
-    } as ReviewLoopStore, { homePath: "/home/matrix/home", findingsReader: reader });
+    } as ReviewLoopStore, { ownerId: testPrincipal.userId, homePath: "/home/matrix/home", findingsReader: reader });
 
     const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
 
@@ -663,10 +690,11 @@ describe("coding agent runtime summary", () => {
     const store = createCodingAgentReviewSummaryStore({
       getReview: async () => ({
         ok: true,
-        review: reviewRecord({ rounds: [successfulFindingsRound()] }),
+        review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
       }),
       listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
     } as ReviewLoopStore, {
+      ownerId: testPrincipal.userId,
       homePath: "/home/matrix/home",
       findingsReader: async () => ({
         ok: true,
@@ -686,6 +714,38 @@ describe("coding agent runtime summary", () => {
     const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
 
     expect(snapshot.files.items).toHaveLength(100);
+    expect(snapshot.files.hasMore).toBe(true);
+  });
+
+  it("reports snapshot overflow when one file exceeds the per-file finding cap", async () => {
+    const store = createCodingAgentReviewSummaryStore({
+      getReview: async () => ({
+        ok: true,
+        review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+      }),
+      listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+    } as ReviewLoopStore, {
+      ownerId: testPrincipal.userId,
+      homePath: "/home/matrix/home",
+      findingsReader: async () => ({
+        ok: true,
+        parserStatus: "success",
+        findingsCount: 101,
+        severityCounts: { high: 101, medium: 0, low: 0 },
+        findings: Array.from({ length: 101 }, (_, index) => ({
+          id: `HIGH-${index}`,
+          severity: "high" as const,
+          file: "packages/example/shared.ts",
+          line: index + 1,
+          summary: "Bounded finding.",
+        })),
+      }),
+    });
+
+    const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+
+    expect(snapshot.files.items).toHaveLength(1);
+    expect(snapshot.files.items[0]?.findings).toHaveLength(100);
     expect(snapshot.files.hasMore).toBe(true);
   });
 

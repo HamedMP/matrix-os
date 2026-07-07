@@ -118,7 +118,7 @@ function latestSuccessfulFindingsRound(review: ReviewLoopRecord) {
 
 function reviewOwnerMatchesPrincipal(review: ReviewLoopRecord, principal: RequestPrincipal, ownerIds: readonly string[]): boolean {
   if (!canReadReviewSummaries(principal, ownerIds)) return false;
-  if (!review.ownerId) return true;
+  if (!review.ownerId) return false;
   return ownerIds.includes(review.ownerId);
 }
 
@@ -142,7 +142,10 @@ function snapshotFilesFromFindings(review: ReviewLoopRecord, findings: ParsedFin
       continue;
     }
     const current = files.get(finding.file) ?? [];
-    if (current.length >= REVIEW_SNAPSHOT_FINDINGS_PER_FILE_LIMIT) continue;
+    if (current.length >= REVIEW_SNAPSHOT_FINDINGS_PER_FILE_LIMIT) {
+      hasMore = true;
+      continue;
+    }
     current.push(finding);
     files.set(finding.file, current);
   }
