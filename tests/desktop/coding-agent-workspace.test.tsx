@@ -168,6 +168,13 @@ function previewSummaryFixture() {
           status: "running",
           updatedAt: "2026-07-06T00:03:00.000Z",
         },
+        {
+          id: "prev_secure",
+          label: "Secure app",
+          status: "running",
+          origin: "https://preview.matrix-os.test",
+          updatedAt: "2026-07-06T00:05:00.000Z",
+        },
       ],
       hasMore: false,
       limit: 50,
@@ -713,6 +720,34 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Internal service")).toBeTruthy();
     expect(screen.getAllByText("running").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(/internal\.service|token=secret|\/home\/matrix/i)).toBeNull();
+  });
+
+  it("opens a desktop preview inspector and only external-opens https origins", async () => {
+    window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(previewSummaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "shell:open-external") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Inspect preview Local web app" }));
+    expect(screen.getByText("Preview details")).toBeTruthy();
+    expect(screen.getByText("Local web app")).toBeTruthy();
+    expect(screen.getByText("Open in browser").closest("button")?.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Inspect preview Secure app" }));
+    const openButton = screen.getByRole("button", { name: "Open preview Secure app in browser" });
+    expect(openButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(openButton);
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
+      url: "https://preview.matrix-os.test",
+    });
+    expect(window.operator.invoke).not.toHaveBeenCalledWith("shell:open-external", {
+      url: "http://localhost:3000",
+    });
   });
 
   it("keeps selected attention-only thread details when refreshed summary still includes the attention thread", async () => {
