@@ -125,18 +125,27 @@ function reviewSnapshotFixture() {
         {
           path: "packages/gateway/src/coding-agents/routes.ts",
           status: "modified",
-          additions: 0,
-          deletions: 0,
+          additions: 12,
+          deletions: 4,
           partial: true,
           hunks: [
             {
               id: "hunk_rev_desktop_1_0_0",
               oldStart: 42,
-              oldLines: 1,
-              newStart: 42,
-              newLines: 1,
+              oldLines: 3,
+              newStart: 45,
+              newLines: 5,
               heading: "Finding HIGH-1",
               partial: true,
+            },
+            {
+              id: "hunk_rev_desktop_1_0_1",
+              oldStart: 88,
+              oldLines: 1,
+              newStart: 93,
+              newLines: 2,
+              heading: "@@ -88 +93 @@",
+              partial: false,
             },
           ],
           findings: [
@@ -233,6 +242,124 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Validate ownership before returning snapshots.")).toBeTruthy();
     expect(screen.getByText("Diff content is not available yet. Showing bounded review findings.")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("renders selectable review hunk metadata without raw diff contents", async () => {
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+
+    expect(await screen.findByText("packages/gateway/src/coding-agents/routes.ts")).toBeTruthy();
+    expect(screen.getByText("+12")).toBeTruthy();
+    expect(screen.getByText("-4")).toBeTruthy();
+    expect(screen.getByText("@@ -42,3 +45,5 @@")).toBeTruthy();
+    expect(screen.getByText("@@ -88,1 +93,2 @@")).toBeTruthy();
+    expect(screen.getByText("Partial hunk")).toBeTruthy();
+
+    const hunk = screen.getByRole("button", { name: /Select hunk 2 in packages\/gateway\/src\/coding-agents\/routes\.ts/i });
+    fireEvent.click(hunk);
+    expect(hunk.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText(/export const|function create|raw diff/i)).toBeNull();
+  });
+
+  it("keeps hunk selection scoped to the file when hunk ids collide", async () => {
+    const collisionSnapshot = {
+      ...reviewSnapshotFixture(),
+      files: {
+        ...reviewSnapshotFixture().files,
+        items: [
+          {
+            ...reviewSnapshotFixture().files.items[0],
+            path: "packages/alpha/src/review-target.ts",
+            hunks: [
+              {
+                ...reviewSnapshotFixture().files.items[0]!.hunks[0],
+                id: "hunk_collision_0",
+              },
+            ],
+          },
+          {
+            ...reviewSnapshotFixture().files.items[0],
+            path: "packages/beta/src/review-target.ts",
+            hunks: [
+              {
+                ...reviewSnapshotFixture().files.items[0]!.hunks[0],
+                id: "hunk_collision_0",
+              },
+            ],
+            findings: [],
+          },
+        ],
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(collisionSnapshot);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+
+    const firstHunk = await screen.findByRole("button", { name: /Select hunk 1 in packages\/alpha\/src\/review-target\.ts/i });
+    const secondHunk = screen.getByRole("button", { name: /Select hunk 1 in packages\/beta\/src\/review-target\.ts/i });
+    fireEvent.click(secondHunk);
+
+    expect(firstHunk.getAttribute("aria-pressed")).toBe("false");
+    expect(secondHunk.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps hunk selection scoped to duplicate rendered file rows", async () => {
+    const collisionSnapshot = {
+      ...reviewSnapshotFixture(),
+      files: {
+        ...reviewSnapshotFixture().files,
+        items: [
+          {
+            ...reviewSnapshotFixture().files.items[0],
+            hunks: [
+              {
+                ...reviewSnapshotFixture().files.items[0]!.hunks[0],
+                id: "hunk_collision_0",
+              },
+            ],
+          },
+          {
+            ...reviewSnapshotFixture().files.items[0],
+            hunks: [
+              {
+                ...reviewSnapshotFixture().files.items[0]!.hunks[0],
+                id: "hunk_collision_0",
+              },
+            ],
+            findings: [],
+          },
+        ],
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(collisionSnapshot);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+
+    const hunkButtons = await screen.findAllByRole("button", {
+      name: /Select hunk 1 in packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    });
+    fireEvent.click(hunkButtons[1]!);
+
+    expect(hunkButtons[0]!.getAttribute("aria-pressed")).toBe("false");
+    expect(hunkButtons[1]!.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("shows a generic safe review error without dropping the runtime summary", async () => {

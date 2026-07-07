@@ -329,6 +329,10 @@ function reviewStatusLabel(status: ReviewSummary["status"]): string {
   return status.replace(/_/g, " ");
 }
 
+function formatHunkRange(hunk: ReviewSnapshot["files"]["items"][number]["hunks"][number]): string {
+  return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+}
+
 function ReviewList() {
   const reviewsStatus = useCodingAgentWorkspace((s) => s.reviewsStatus);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
@@ -406,6 +410,12 @@ function ReviewSnapshotPanel({
   snapshot: ReviewSnapshot | null;
   error: string | null;
 }) {
+  const [selectedHunkKey, setSelectedHunkKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedHunkKey(null);
+  }, [snapshot?.review.id]);
+
   if (status === "idle") return null;
   if (status === "loading") {
     return (
@@ -444,9 +454,9 @@ function ReviewSnapshotPanel({
         </p>
       ) : null}
       <div className="grid gap-2">
-        {snapshot.files.items.map((file) => (
+        {snapshot.files.items.map((file, fileIndex) => (
           <div
-            key={file.path}
+            key={`${file.path}:${fileIndex}`}
             className="grid gap-2 rounded-md border px-3 py-2"
             style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
           >
@@ -474,6 +484,53 @@ function ReviewSnapshotPanel({
                 No findings in this file.
               </p>
             )}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="rounded border px-2 py-1" style={{ borderColor: "var(--border-subtle)", color: "var(--success)" }}>
+                +{file.additions}
+              </span>
+              <span className="rounded border px-2 py-1" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+                -{file.deletions}
+              </span>
+              {file.partial ? (
+                <span className="rounded border px-2 py-1" style={{ borderColor: "var(--border-subtle)", color: "var(--text-tertiary)" }}>
+                  Partial file
+                </span>
+              ) : null}
+            </div>
+            {file.hunks.length ? (
+              <div className="grid gap-1">
+                {file.hunks.map((hunk, hunkIndex) => {
+                  const hunkKey = `${fileIndex}\u0000${file.path}\u0000${hunk.id}\u0000${hunkIndex}`;
+                  const selected = selectedHunkKey === hunkKey;
+                  return (
+                    <button
+                      key={`${file.path}:${fileIndex}:${hunk.id}:${hunkIndex}`}
+                      type="button"
+                      aria-label={`Select hunk ${hunkIndex + 1} in ${file.path}`}
+                      aria-pressed={selected}
+                      className="no-drag grid gap-1 rounded-md border px-3 py-2 text-left transition-colors duration-100 hover:brightness-105"
+                      onClick={() => setSelectedHunkKey(hunkKey)}
+                      style={{
+                        borderColor: selected ? "var(--accent)" : "var(--border-subtle)",
+                        background: selected ? "var(--accent-muted)" : "transparent",
+                      }}
+                    >
+                      <span className="text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                        {`Hunk ${hunkIndex + 1}`}
+                      </span>
+                      <span className="font-mono text-xs" style={{ color: "var(--text-primary)" }}>
+                        {formatHunkRange(hunk)}
+                      </span>
+                      {hunk.partial ? (
+                        <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                          Partial hunk
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
