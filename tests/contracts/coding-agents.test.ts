@@ -8,6 +8,8 @@ import {
   CreateAgentThreadRequestSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   FileMetadataSchema,
@@ -357,6 +359,54 @@ describe("coding agent contracts", () => {
       encoding: "utf8",
       writtenBytes: 27,
     }).writtenBytes).toBe(27);
+
+    expect(SourceControlPrepareCommitRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files\n\nInclude the detailed review notes for src/index.ts.",
+      paths: ["src/index.ts"],
+      clientRequestId: "req_prepare_commit",
+    }).message).toContain("detailed review notes");
+    expect(SourceControlPrepareCommitRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      clientRequestId: "req_prepare_commit_all",
+    }).paths).toBeUndefined();
+    expect(() => SourceControlPrepareCommitRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix:\u0000 update reviewed files",
+      clientRequestId: "req_prepare_commit_unsafe",
+    })).toThrow();
+    expect(() => SourceControlPrepareCommitRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["../secret.txt"],
+      clientRequestId: "req_prepare_commit_bad_path",
+    })).toThrow();
+    expect(SourceControlPrepareCommitResponseSchema.parse({
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef01234567",
+      branch: "feature/var/review-fix",
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    }).branch).toBe("feature/var/review-fix");
+    expect(SourceControlPrepareCommitResponseSchema.parse({
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef012345670123456789abcdef01234567",
+      branch: "detached",
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    }).commitSha).toHaveLength(64);
+    expect(SourceControlPrepareCommitResponseSchema.parse({
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef01234567",
+      branch: `feature/${"a".repeat(220)}`,
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    }).branch).toHaveLength(228);
 
     expect(ReviewSummarySchema.parse({
       id: "rev_123",
