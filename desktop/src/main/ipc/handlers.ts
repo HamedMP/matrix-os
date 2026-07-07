@@ -6,7 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
-import type { CreateAgentThreadRequest, FileReadRequest, FileReadResponse, FileWriteRequest, FileWriteResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
+import type { CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 
@@ -31,6 +31,8 @@ export interface HandlerContext {
     options: { cursor?: string },
   ) => Promise<{ items: ReviewSummary[]; hasMore: boolean; limit: number; nextCursor?: string }>;
   fetchReviewSnapshot: (options: { reviewId: string }) => Promise<ReviewSnapshot>;
+  fetchFileBrowse: (request: FileBrowseRequest) => Promise<FileBrowseResponse>;
+  fetchFileSearch: (request: FileSearchRequest) => Promise<FileSearchResponse>;
   fetchFileContent: (request: FileReadRequest) => Promise<FileReadResponse>;
   saveFileContent: (request: FileWriteRequest) => Promise<FileWriteResponse>;
   prepareSourceCommit: (
@@ -109,6 +111,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:get-summary", () => ctx.fetchRuntimeSummary());
   handle("runtime:get-reviews", (request) => ctx.fetchReviewSummaries(request));
   handle("runtime:get-review-snapshot", (request) => ctx.fetchReviewSnapshot(request));
+  handle("runtime:browse-files", (request) => ctx.fetchFileBrowse(request));
+  handle("runtime:search-files", (request) => ctx.fetchFileSearch(request));
   handle("runtime:get-file-content", (request) => ctx.fetchFileContent(request));
   handle("runtime:save-file-content", (request) => ctx.saveFileContent(request));
   handle("runtime:prepare-source-commit", (request) => ctx.prepareSourceCommit(request));

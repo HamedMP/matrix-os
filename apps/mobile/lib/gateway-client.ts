@@ -10,8 +10,12 @@ import {
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   CursorSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   RequestIdSchema,
@@ -27,8 +31,12 @@ import {
   UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
   type AgentThreadEvent,
+  type FileBrowseRequest,
+  type FileBrowseResponse,
   type FileReadRequest,
   type FileReadResponse,
+  type FileSearchRequest,
+  type FileSearchResponse,
   type FileWriteRequest,
   type FileWriteResponse,
   type ReviewSnapshot,
@@ -136,6 +144,14 @@ export type CodingAgentReviewSnapshotResult =
 export type CodingAgentFileContentResult =
   | { ok: true; file: FileReadResponse }
   | { ok: false; error: "File content unavailable" };
+
+export type CodingAgentFileBrowseResult =
+  | { ok: true; browse: FileBrowseResponse }
+  | { ok: false; error: "File list unavailable" };
+
+export type CodingAgentFileSearchResult =
+  | { ok: true; search: FileSearchResponse }
+  | { ok: false; error: "File search unavailable" };
 
 export type CodingAgentFileSaveResult =
   | { ok: true; file: FileWriteResponse }
@@ -939,6 +955,77 @@ export class GatewayClient {
       const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
       console.warn(`[mobile] /api/coding-agents/files/read ${reason}`);
       return { ok: false, error: "File content unavailable" };
+    }
+  }
+
+  async browseCodingAgentFiles(
+    request: FileBrowseRequest,
+  ): Promise<CodingAgentFileBrowseResult> {
+    try {
+      const parsedRequest = FileBrowseRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File list unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+      });
+      if (parsedRequest.data.path) {
+        query.set("path", parsedRequest.data.path);
+      }
+      query.set("limit", String(parsedRequest.data.limit));
+      const res = await this.fetchGateway(`/api/coding-agents/files/browse?${query.toString()}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/files/browse unavailable", res.status);
+        return { ok: false, error: "File list unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileBrowseResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/files/browse returned invalid payload");
+        return { ok: false, error: "File list unavailable" };
+      }
+      return { ok: true, browse: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/files/browse ${reason}`);
+      return { ok: false, error: "File list unavailable" };
+    }
+  }
+
+  async searchCodingAgentFiles(
+    request: FileSearchRequest,
+  ): Promise<CodingAgentFileSearchResult> {
+    try {
+      const parsedRequest = FileSearchRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File search unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+      });
+      if (parsedRequest.data.path) {
+        query.set("path", parsedRequest.data.path);
+      }
+      query.set("query", parsedRequest.data.query);
+      query.set("limit", String(parsedRequest.data.limit));
+      const res = await this.fetchGateway(`/api/coding-agents/files/search?${query.toString()}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/files/search unavailable", res.status);
+        return { ok: false, error: "File search unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileSearchResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/files/search returned invalid payload");
+        return { ok: false, error: "File search unavailable" };
+      }
+      return { ok: true, search: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/files/search ${reason}`);
+      return { ok: false, error: "File search unavailable" };
     }
   }
 

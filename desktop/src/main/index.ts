@@ -7,7 +7,9 @@ import { EmbedService } from "./embeds/embed-service";
 import {
   createCodingAgentSourcePullRequest,
   createCodingAgentThread,
+  fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
+  fetchCodingAgentFileSearch,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   fetchCodingAgentReviewSummaries,
@@ -242,6 +244,8 @@ if (!gotLock) {
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
         fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
+        fetchFileBrowse: (request) => fetchCodingAgentFileBrowse(auth, request),
+        fetchFileSearch: (request) => fetchCodingAgentFileSearch(auth, request),
         fetchFileContent: (request) => fetchCodingAgentFileContent(auth, request),
         saveFileContent: (request) => saveCodingAgentFileContent(auth, request),
         prepareSourceCommit: (request) => prepareCodingAgentSourceCommit(auth, request),

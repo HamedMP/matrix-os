@@ -1,7 +1,11 @@
 import {
   AgentThreadSnapshotSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ReviewSnapshotSchema,
@@ -13,8 +17,12 @@ import {
   SourceControlPrepareCommitResponseSchema,
   type ApprovalDecisionRequest,
   type CreateAgentThreadRequest,
+  type FileBrowseRequest,
+  type FileBrowseResponse,
   type FileReadRequest,
   type FileReadResponse,
+  type FileSearchRequest,
+  type FileSearchResponse,
   type FileWriteRequest,
   type FileWriteResponse,
   type ReviewSnapshot,
@@ -33,6 +41,8 @@ import type { AuthService } from "../auth/auth-service";
 const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
+const FILE_BROWSE_TIMEOUT_MS = 10_000;
+const FILE_SEARCH_TIMEOUT_MS = 10_000;
 const FILE_READ_TIMEOUT_MS = 10_000;
 const FILE_WRITE_TIMEOUT_MS = 10_000;
 const SOURCE_CONTROL_TIMEOUT_MS = 10_000;
@@ -288,6 +298,91 @@ export async function fetchCodingAgentReviewSnapshot(
   const parsed = ReviewSnapshotSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("review state unavailable");
+  }
+  return parsed.data;
+}
+
+export async function fetchCodingAgentFileBrowse(
+  auth: AuthService,
+  request: FileBrowseRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<FileBrowseResponse> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("file list unavailable");
+  }
+
+  const parsedRequest = FileBrowseRequestSchema.safeParse(request);
+  if (!parsedRequest.success) {
+    throw new Error("file list unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/files/browse", auth.getGatewayOrigin());
+  url.searchParams.set("projectId", parsedRequest.data.projectId);
+  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  if (parsedRequest.data.path) {
+    url.searchParams.set("path", parsedRequest.data.path);
+  }
+  url.searchParams.set("limit", String(parsedRequest.data.limit));
+  const res = await fetchFn(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(FILE_BROWSE_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("file list unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = FileBrowseResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("file list unavailable");
+  }
+  return parsed.data;
+}
+
+export async function fetchCodingAgentFileSearch(
+  auth: AuthService,
+  request: FileSearchRequest,
+  fetchFn: FetchFn = fetch,
+): Promise<FileSearchResponse> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("file search unavailable");
+  }
+
+  const parsedRequest = FileSearchRequestSchema.safeParse(request);
+  if (!parsedRequest.success) {
+    throw new Error("file search unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/files/search", auth.getGatewayOrigin());
+  url.searchParams.set("projectId", parsedRequest.data.projectId);
+  url.searchParams.set("worktreeId", parsedRequest.data.worktreeId);
+  if (parsedRequest.data.path) {
+    url.searchParams.set("path", parsedRequest.data.path);
+  }
+  url.searchParams.set("query", parsedRequest.data.query);
+  url.searchParams.set("limit", String(parsedRequest.data.limit));
+  const res = await fetchFn(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(FILE_SEARCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("file search unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = FileSearchResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("file search unavailable");
   }
   return parsed.data;
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createCodingAgentSourcePullRequest,
+  fetchCodingAgentFileBrowse,
   fetchCodingAgentFileContent,
+  fetchCodingAgentFileSearch,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   prepareCodingAgentSourceCommit,
@@ -78,6 +80,50 @@ function fileReadBody() {
     encoding: "utf8",
     truncated: false,
     limitBytes: 65536,
+  };
+}
+
+function fileBrowseBody() {
+  return {
+    directory: {
+      path: "packages",
+      kind: "directory",
+      updatedAt: "2026-07-06T00:03:00.000Z",
+    },
+    entries: {
+      items: [
+        {
+          path: "packages/gateway",
+          kind: "directory",
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+        {
+          path: "packages/README.md",
+          kind: "file",
+          sizeBytes: 24,
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+  };
+}
+
+function fileSearchBody() {
+  return {
+    matches: {
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          kind: "file",
+          sizeBytes: 37,
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
   };
 }
 
@@ -171,6 +217,83 @@ describe("coding agent desktop runtime client", () => {
 
     await expect(fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.toThrow("thread state unavailable");
     await expect(fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.not.toThrow("secret");
+  });
+
+  it("fetches file browse entries with bearer auth and validates safe output", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(fileBrowseBody()), { status: 200 }));
+
+    const browse = await fetchCodingAgentFileBrowse(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/files/browse?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages&limit=20",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(browse.entries.items).toHaveLength(2);
+  });
+
+  it("fetches file search matches with bearer auth and validates safe output", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(fileSearchBody()), { status: 200 }));
+
+    const search = await fetchCodingAgentFileSearch(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      query: "routes",
+      limit: 20,
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/files/search?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages&query=routes&limit=20",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(search.matches.items[0]?.path).toBe("packages/gateway/src/coding-agents/routes.ts");
+  });
+
+  it("rejects malformed file browse and search responses with generic errors", async () => {
+    const browseFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...fileBrowseBody(),
+      entries: {
+        ...fileBrowseBody().entries,
+        items: [{ path: "/home/matrix/private/secret.ts", kind: "file" }],
+      },
+    }), { status: 200 }));
+    const searchFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      matches: {
+        items: [{ path: "/home/matrix/private/secret.ts", kind: "file" }],
+        hasMore: false,
+        limit: 20,
+      },
+    }), { status: 200 }));
+
+    await expect(fetchCodingAgentFileBrowse(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+    }, browseFetch)).rejects.toThrow("file list unavailable");
+    await expect(fetchCodingAgentFileSearch(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "routes",
+    }, searchFetch)).rejects.toThrow("file search unavailable");
   });
 
   it("submits approval decisions with bearer auth and validates the returned thread snapshot", async () => {
