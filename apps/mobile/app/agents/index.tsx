@@ -342,7 +342,13 @@ export default function AgentsScreen() {
       <Section title="Active Threads" count={summary.activeThreads.items.length}>
         {summary.activeThreads.items.length === 0 ? <EmptyText>No active threads.</EmptyText> : null}
         {summary.activeThreads.items.map((thread) => (
-          <View key={thread.id} style={styles.row}>
+          <Pressable
+            key={thread.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Open thread ${thread.title}`}
+            onPress={() => router.push(`/agents/${thread.id}` as any)}
+            style={styles.row}
+          >
             <View style={styles.rowIcon}>
               <Ionicons name="git-branch-outline" size={18} color={theme.colors.moss} />
             </View>
@@ -351,7 +357,7 @@ export default function AgentsScreen() {
               <Text style={styles.rowSubtitle}>{thread.providerId}</Text>
             </View>
             <Text style={styles.rowMeta}>{thread.status.replace(/_/g, " ")}</Text>
-          </View>
+          </Pressable>
         ))}
       </Section>
 

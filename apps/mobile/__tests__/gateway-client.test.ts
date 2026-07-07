@@ -286,6 +286,50 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("fetches coding agent thread snapshots with the existing auth header", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_mobile",
+        providerId: "codex",
+        title: "Repair mobile route",
+        status: "running",
+        attention: "none",
+        terminalSessionId: "matrix-abc1234",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:01:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            eventId: "evt_mobile_1",
+            threadId: "thread_mobile",
+            type: "thread.status",
+            status: "running",
+            occurredAt: "2026-07-06T00:01:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentThreadSnapshot({ threadId: "thread_mobile" })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/coding-agents/threads/thread_mobile", expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "Content-Type": "application/json",
+      }),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
   it("creates coding agent threads with the existing auth header", async () => {
     const snapshot = {
       thread: {

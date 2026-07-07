@@ -427,6 +427,8 @@ export const AgentThreadSnapshotSchema = z.object({
   events: boundedListSchema(AgentThreadEventSchema, 200),
 }).strict();
 
+export type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
+
 export const TerminalStatusSchema = z.enum(["starting", "running", "idle", "exited", "stale", "unavailable"]);
 
 export const TerminalSessionSummarySchema = z.object({

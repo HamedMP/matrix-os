@@ -10,6 +10,7 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  ThreadIdSchema,
   type CreateAgentThreadRequest,
   type ReviewSnapshot,
   type RuntimeSummary,
@@ -86,6 +87,10 @@ export type CodingAgentRuntimeSummaryResult =
 export type CodingAgentThreadCreateResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
   | { ok: false; error: "Agent run could not be started. Try again." };
+
+export type CodingAgentThreadSnapshotResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Thread state unavailable" };
 
 const CodingAgentReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
 
@@ -567,6 +572,32 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/coding-agents/threads unavailable");
       return { ok: false, error: "Agent run could not be started. Try again." };
+    }
+  }
+
+  async getCodingAgentThreadSnapshot(
+    options: { threadId: string },
+  ): Promise<CodingAgentThreadSnapshotResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      if (!parsedThreadId.success) {
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      const res = await this.fetchGateway(`/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable", res.status);
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId returned invalid payload");
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable");
+      return { ok: false, error: "Thread state unavailable" };
     }
   }
 

@@ -296,6 +296,32 @@ describe("AgentsScreen", () => {
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
   });
 
+  it("opens a mobile thread detail route from active threads", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("Repair mobile route");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open thread Repair mobile route"));
+    });
+
+    expect(mockRouterPush).toHaveBeenCalledWith("/agents/thread_mobile");
+  });
+
   it("renders read-only review summaries", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
