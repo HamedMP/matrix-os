@@ -70,6 +70,20 @@ function fileReadPayload() {
   };
 }
 
+function fileWritePayload() {
+  return {
+    metadata: {
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      kind: "file",
+      sizeBytes: 38,
+      etag: "sha256_mobile_file_next",
+      updatedAt: "2026-07-06T00:04:00.000Z",
+    },
+    encoding: "utf8",
+    writtenBytes: 38,
+  };
+}
+
 describe("GatewayClient", () => {
   it("initializes with disconnected state", () => {
     const client = new GatewayClient("http://localhost:4000");
@@ -863,6 +877,84 @@ describe("GatewayClient", () => {
     })).resolves.toEqual({
       ok: false,
       error: "File content unavailable",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("saves coding agent file content with existing auth and safe validation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(fileWritePayload()));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.saveCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_mobile_file",
+      clientRequestId: "req_mobile_file_save",
+    })).resolves.toEqual({
+      ok: true,
+      file: fileWritePayload(),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/files/write",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          content: "export const safeRoute = false;\n",
+          encoding: "utf8",
+          baseEtag: "sha256_mobile_file",
+          clientRequestId: "req_mobile_file_save",
+        }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile file save error for invalid requests and gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...fileWritePayload(),
+      metadata: {
+        ...fileWritePayload().metadata,
+        path: "/home/matrix/private/secret.ts",
+      },
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.saveCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_mobile_file",
+      clientRequestId: "req_mobile_file_save",
+    })).resolves.toEqual({
+      ok: false,
+      error: "File could not be saved. Refresh and try again.",
+    });
+    await expect(client.saveCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_mobile_file",
+      clientRequestId: "req_mobile_file_save",
+    })).resolves.toEqual({
+      ok: false,
+      error: "File could not be saved. Refresh and try again.",
     });
 
     fetchMock.mockRestore();

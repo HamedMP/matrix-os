@@ -293,6 +293,20 @@ function fileReadFixture() {
   };
 }
 
+function fileWriteFixture() {
+  return {
+    metadata: {
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      kind: "file",
+      sizeBytes: 38,
+      etag: "sha256_mobile_file_next",
+      updatedAt: "2026-07-06T00:04:00.000Z",
+    },
+    encoding: "utf8",
+    writtenBytes: 38,
+  };
+}
+
 function reviewSnapshotWithFinding(summary: string) {
   const snapshot = reviewSnapshotFixture();
   return {
@@ -663,7 +677,71 @@ describe("AgentsScreen", () => {
       worktreeId: "wt_mobile_1",
       path: "packages/gateway/src/coding-agents/routes.ts",
     });
-    expect(await screen.findByText("export const safeRoute = true;")).toBeTruthy();
+    expect(await screen.findByDisplayValue("export const safeRoute = true;\n")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("saves edited file content through the mobile gateway client without exposing credentials", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture({ files: true }),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotFixture(),
+      }),
+      getCodingAgentFileContent: jest.fn().mockResolvedValue({
+        ok: true,
+        file: fileReadFixture(),
+      }),
+      saveCodingAgentFileContent: jest.fn().mockResolvedValue({
+        ok: true,
+        file: fileWriteFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open file packages/gateway/src/coding-agents/routes.ts"));
+    });
+    const editor = await screen.findByLabelText("Edit file packages/gateway/src/coding-agents/routes.ts");
+    await act(async () => {
+      fireEvent.changeText(editor, "export const safeRoute = false;\n");
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Save file packages/gateway/src/coding-agents/routes.ts"));
+    });
+
+    expect(client.saveCodingAgentFileContent).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: "matrix-os",
+      worktreeId: "wt_mobile_1",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_mobile_file",
+    }));
+    const saveCall = client.saveCodingAgentFileContent.mock.calls[0]?.[0];
+    expect(saveCall).toEqual(expect.objectContaining({
+      clientRequestId: expect.stringMatching(/^req_mobile_/),
+    }));
+    expect(JSON.stringify(saveCall)).not.toMatch(/token|bearer|secret/i);
+    expect(await screen.findByText("Saved")).toBeTruthy();
+    expect(screen.getByDisplayValue("export const safeRoute = false;\n")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 

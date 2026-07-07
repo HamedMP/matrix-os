@@ -12,6 +12,8 @@ import {
   CursorSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
   RequestIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -23,6 +25,8 @@ import {
   type AgentThreadEvent,
   type FileReadRequest,
   type FileReadResponse,
+  type FileWriteRequest,
+  type FileWriteResponse,
   type ReviewSnapshot,
   type RuntimeSummary,
   boundedListSchema,
@@ -124,6 +128,10 @@ export type CodingAgentReviewSnapshotResult =
 export type CodingAgentFileContentResult =
   | { ok: true; file: FileReadResponse }
   | { ok: false; error: "File content unavailable" };
+
+export type CodingAgentFileSaveResult =
+  | { ok: true; file: FileWriteResponse }
+  | { ok: false; error: "File could not be saved. Refresh and try again." };
 
 export type CodingAgentThreadStreamStatus = "connecting" | "open" | "closed" | "error";
 
@@ -915,6 +923,36 @@ export class GatewayClient {
       const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
       console.warn(`[mobile] /api/coding-agents/files/read ${reason}`);
       return { ok: false, error: "File content unavailable" };
+    }
+  }
+
+  async saveCodingAgentFileContent(
+    request: FileWriteRequest,
+  ): Promise<CodingAgentFileSaveResult> {
+    try {
+      const parsedRequest = FileWriteRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/files/write", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/files/write unavailable");
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = FileWriteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/files/write returned invalid payload");
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      return { ok: true, file: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/files/write ${reason}`);
+      return { ok: false, error: "File could not be saved. Refresh and try again." };
     }
   }
 
