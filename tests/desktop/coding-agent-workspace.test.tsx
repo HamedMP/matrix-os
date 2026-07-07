@@ -625,7 +625,10 @@ describe("AgentWorkspace", () => {
       fileReadStatus: "idle",
       fileRead: null,
       fileReadError: null,
+      fileWriteStatus: "idle",
+      fileWriteError: null,
       selectedFilePath: null,
+      selectedFileReference: null,
       threadSnapshotStatus: "idle",
       threadSnapshot: null,
       threadSnapshotError: null,
@@ -1347,6 +1350,86 @@ describe("AgentWorkspace", () => {
     expect((screen.getByLabelText("Edit file packages/gateway/src/coding-agents/routes.ts") as HTMLTextAreaElement).value)
       .toBe("export const safeRoute = false;\n");
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("ignores stale desktop save completions after another worktree opens the same path", async () => {
+    let resolveSave: ((value: {
+      metadata: {
+        path: string;
+        kind: "file";
+        sizeBytes: number;
+        etag: string;
+        updatedAt: string;
+      };
+      encoding: "utf8";
+      writtenBytes: number;
+    }) => void) | null = null;
+    const secondWorktreeFile = {
+      ...fileReadFixture(),
+      metadata: {
+        ...fileReadFixture().metadata,
+        etag: "sha256_desktop_file_second_worktree",
+      },
+      content: "export const safeRoute = 'second';\n",
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:save-file-content") {
+        return new Promise((resolve) => {
+          resolveSave = resolve;
+        });
+      }
+      if (channel === "runtime:get-file-content") return Promise.resolve(secondWorktreeFile);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    useCodingAgentWorkspace.setState({
+      selectedFilePath: "packages/gateway/src/coding-agents/routes.ts",
+      selectedFileReference: {
+        projectId: "matrix-os",
+        worktreeId: "wt_desktop_1",
+        path: "packages/gateway/src/coding-agents/routes.ts",
+      },
+      fileReadStatus: "ready",
+      fileRead: fileReadFixture(),
+      fileReadError: null,
+      fileWriteStatus: "idle",
+      fileWriteError: null,
+    });
+
+    const save = useCodingAgentWorkspace.getState().saveFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_desktop_1",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      baseEtag: "sha256_desktop_file",
+    });
+    await useCodingAgentWorkspace.getState().loadFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_desktop_2",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    });
+    resolveSave?.({
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 32,
+        etag: "sha256_desktop_file_saved",
+        updatedAt: "2026-07-06T00:05:00.000Z",
+      },
+      encoding: "utf8",
+      writtenBytes: 32,
+    });
+    await save;
+
+    const state = useCodingAgentWorkspace.getState();
+    expect(state.selectedFileReference).toEqual({
+      projectId: "matrix-os",
+      worktreeId: "wt_desktop_2",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    });
+    expect(state.fileRead?.metadata.etag).toBe("sha256_desktop_file_second_worktree");
+    expect(state.fileRead?.content).toBe("export const safeRoute = 'second';\n");
+    expect(state.fileWriteStatus).toBe("idle");
+    expect(state.fileWriteError).toBeNull();
   });
 
   it("renders selectable review hunk metadata without raw diff contents", async () => {

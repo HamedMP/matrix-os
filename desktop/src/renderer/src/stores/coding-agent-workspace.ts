@@ -21,6 +21,7 @@ type FileWriteStatus = "idle" | "saving" | "saved" | "error";
 type CreateStatus = "idle" | "submitting";
 type ActionStatus = "idle" | "submitting";
 type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
+type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
 type ReviewSummaryList = {
   items: ReviewSummary[];
   hasMore: boolean;
@@ -45,6 +46,7 @@ interface CodingAgentWorkspaceState {
   fileWriteStatus: FileWriteStatus;
   fileWriteError: string | null;
   selectedFilePath: string | null;
+  selectedFileReference: FileReference | null;
   threadSnapshotStatus: ReviewStatus;
   threadSnapshot: AgentThreadSnapshot | null;
   threadSnapshotError: string | null;
@@ -109,6 +111,7 @@ function clearFileReadState() {
     fileWriteStatus: "idle" as const,
     fileWriteError: null,
     selectedFilePath: null,
+    selectedFileReference: null,
   };
 }
 
@@ -134,6 +137,12 @@ function nextActionRequestId(): string {
 function withoutRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   const { [key]: _removed, ...rest } = record;
   return rest;
+}
+
+function fileReferenceMatches(reference: FileReference | null, request: FileReference): boolean {
+  return reference?.projectId === request.projectId
+    && reference.worktreeId === request.worktreeId
+    && reference.path === request.path;
 }
 
 function compareThreadEvents(left: AgentThreadSnapshotEvent, right: AgentThreadSnapshotEvent): number {
@@ -221,6 +230,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   fileWriteStatus: "idle",
   fileWriteError: null,
   selectedFilePath: null,
+  selectedFileReference: null,
   threadSnapshotStatus: "idle",
   threadSnapshot: null,
   threadSnapshotError: null,
@@ -353,8 +363,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     const seq = ++fileReadSeq;
     set((state) => ({
       selectedFilePath: request.path,
-      fileReadStatus: state.fileRead?.metadata.path === request.path ? "ready" : "loading",
-      fileRead: state.fileRead?.metadata.path === request.path ? state.fileRead : null,
+      selectedFileReference: request,
+      fileReadStatus: fileReferenceMatches(state.selectedFileReference, request) ? "ready" : "loading",
+      fileRead: fileReferenceMatches(state.selectedFileReference, request) ? state.fileRead : null,
       fileReadError: null,
       fileWriteStatus: "idle",
       fileWriteError: null,
@@ -364,6 +375,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       if (seq !== fileReadSeq) return;
       set({
         selectedFilePath: request.path,
+        selectedFileReference: request,
         fileReadStatus: "ready",
         fileRead: response,
         fileReadError: null,
@@ -375,6 +387,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       if (seq !== fileReadSeq) return;
       set({
         selectedFilePath: request.path,
+        selectedFileReference: request,
         fileReadStatus: "error",
         fileRead: null,
         fileReadError: "File content unavailable",
@@ -399,7 +412,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         clientRequestId: nextActionRequestId(),
       });
       set((state) => {
-        const stillSelected = state.selectedFilePath === request.path;
+        const stillSelected = fileReferenceMatches(state.selectedFileReference, request);
         return {
           fileReadStatus: stillSelected ? "ready" : state.fileReadStatus,
           fileRead: stillSelected
@@ -418,9 +431,12 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       });
     } catch {
       console.warn("[coding-agents] file content save failed");
-      set({
-        fileWriteStatus: "error",
-        fileWriteError: "File could not be saved. Refresh and try again.",
+      set((state) => {
+        if (!fileReferenceMatches(state.selectedFileReference, request)) return state;
+        return {
+          fileWriteStatus: "error",
+          fileWriteError: "File could not be saved. Refresh and try again.",
+        };
       });
     }
   },
