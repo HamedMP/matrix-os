@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
@@ -51,6 +51,31 @@ async function createFakeAttachGateway() {
       wss.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
+  };
+}
+
+function createInputWebSocket(sentInputs: string[]) {
+  return class InputWebSocket {
+    constructor(_url: string, _options?: unknown) {}
+    send(data: string) {
+      const message = JSON.parse(data);
+      if (message.type === "input") {
+        sentInputs.push(message.data);
+      }
+    }
+    close() {}
+    on(event: "open" | "message", listener: (...args: unknown[]) => void) {
+      if (event === "open") {
+        queueMicrotask(() => listener());
+      }
+      if (event === "message") {
+        queueMicrotask(() => listener(JSON.stringify({ type: "attached" })));
+      }
+      return this;
+    }
+    off() {
+      return this;
+    }
   };
 }
 
@@ -112,6 +137,9 @@ describe("shell CLI command", () => {
       "ls",
       "new",
       "pane",
+      "paste-clipboard",
+      "paste-file",
+      "paste-screenshot",
       "rm",
       "tab",
     ]);
@@ -138,7 +166,7 @@ describe("shell CLI command", () => {
 
     await shellCommand.run?.({ args: {} } as never);
 
-    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|paste-file|paste-clipboard|paste-screenshot|rm|tab|pane|layout"]);
   });
 
   it("prints usage for the bare shell command with valued root flags", async () => {
@@ -152,7 +180,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|paste-file|paste-clipboard|paste-screenshot|rm|tab|pane|layout"]);
   });
 
   it("prints usage when a root flag value matches a shell subcommand", async () => {
@@ -166,7 +194,7 @@ describe("shell CLI command", () => {
       args: {},
     } as never);
 
-    expect(logs).toEqual(["Usage: mos shell list|new|attach|rm|tab|pane|layout"]);
+    expect(logs).toEqual(["Usage: mos shell list|new|attach|paste-file|paste-clipboard|paste-screenshot|rm|tab|pane|layout"]);
   });
 
   it("does not print usage after subcommands run", async () => {
@@ -343,6 +371,146 @@ describe("shell CLI command", () => {
       { v: 1, ok: true, data: { name: "main", created: true } },
       { v: 1, ok: true, data: { ok: true } },
     ]);
+  });
+
+  it("caps paste-file terminal input to the shell input limit", async () => {
+    const root = process.env.HOME ?? await tempHome();
+    const localPath = join(root, "paste.txt");
+    await writeFile(localPath, "paste me");
+    const sentInputs: string[] = [];
+    const longRemotePath = `data/terminal-paste/${"x".repeat(70_000)}.txt`;
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes("/api/files/blob")) {
+        return new Response(JSON.stringify({ path: longRemotePath, size: 8 }));
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const InputWebSocket = createInputWebSocket(sentInputs);
+
+    await shellCommand.subCommands!["paste-file"].run!({
+      args: {
+        session: "main",
+        local: localPath,
+        remote: longRemotePath,
+        dev: true,
+        token: "tok",
+        force: true,
+        WebSocketImpl: InputWebSocket,
+      },
+    } as never);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(sentInputs).toHaveLength(1);
+    expect(sentInputs[0]!.length).toBeLessThanOrEqual(65_536);
+    expect(sentInputs[0]!.startsWith("\x1b[200~")).toBe(true);
+    expect(sentInputs[0]!.endsWith("\x1b[201~")).toBe(true);
+  });
+
+  it("pastes saved files as an agent-readable prompt by default", async () => {
+    const root = process.env.HOME ?? await tempHome();
+    const localPath = join(root, "screenshot.png");
+    await writeFile(localPath, "fake image");
+    const sentInputs: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      path: "data/terminal-paste/paste-1.png",
+      size: 10,
+    }))));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await shellCommand.subCommands!["paste-file"].run!({
+      args: {
+        session: "main",
+        local: localPath,
+        dev: true,
+        token: "tok",
+        WebSocketImpl: createInputWebSocket(sentInputs),
+      },
+    } as never);
+
+    expect(sentInputs).toEqual([
+      "\x1b[200~Screenshot attached at /home/matrix/home/data/terminal-paste/paste-1.png (also ~/data/terminal-paste/paste-1.png). Please inspect it.\x1b[201~",
+    ]);
+  });
+
+  it("supports path-only saved-file paste with enter submission", async () => {
+    const root = process.env.HOME ?? await tempHome();
+    const localPath = join(root, "notes.txt");
+    await writeFile(localPath, "notes");
+    const sentInputs: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      path: "data/terminal-paste/notes.txt",
+      size: 5,
+    }))));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await shellCommand.subCommands!["paste-file"].run!({
+      args: {
+        session: "main",
+        local: localPath,
+        dev: true,
+        token: "tok",
+        format: "path",
+        enter: true,
+        WebSocketImpl: createInputWebSocket(sentInputs),
+      },
+    } as never);
+
+    expect(sentInputs).toEqual(["\x1b[200~/home/matrix/home/data/terminal-paste/notes.txt\x1b[201~\r"]);
+  });
+
+  it("uploads clipboard images and pastes an agent prompt into the target shell", async () => {
+    const sentInputs: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      path: "data/terminal-paste/clipboard.png",
+      size: 12,
+    }))));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await shellCommand.subCommands!["paste-clipboard"].run!({
+      args: {
+        session: "main",
+        dev: true,
+        token: "tok",
+        message: "Please compare this screenshot with the current UI.",
+        readClipboardImage: async () => ({
+          bytes: Buffer.from("fake clipboard png"),
+          extension: "png",
+          basename: "clipboard.png",
+        }),
+        WebSocketImpl: createInputWebSocket(sentInputs),
+      },
+    } as never);
+
+    expect(sentInputs).toEqual([
+      "\x1b[200~Please compare this screenshot with the current UI.\n\nScreenshot attached at /home/matrix/home/data/terminal-paste/clipboard.png (also ~/data/terminal-paste/clipboard.png). Please inspect it.\x1b[201~",
+    ]);
+  });
+
+  it("captures screenshots and pastes an agent prompt into the target shell", async () => {
+    const root = process.env.HOME ?? await tempHome();
+    const screenshotPath = join(root, "captured.png");
+    await writeFile(screenshotPath, "fake captured png");
+    const sentInputs: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      path: "data/terminal-paste/captured.png",
+      size: 17,
+    }))));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await shellCommand.subCommands!["paste-screenshot"].run!({
+      args: {
+        session: "main",
+        dev: true,
+        token: "tok",
+        area: true,
+        captureScreenshot: async () => ({ path: screenshotPath, cleanup: async () => {} }),
+        WebSocketImpl: createInputWebSocket(sentInputs),
+      },
+    } as never);
+
+    expect(sentInputs[0]).toContain("Screenshot attached at /home/matrix/home/data/terminal-paste/captured.png");
   });
 
   it.each(["connect", "attach"])("keeps stdout JSON-only for shell %s --json", async (verb) => {

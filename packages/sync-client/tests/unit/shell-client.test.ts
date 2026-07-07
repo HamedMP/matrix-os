@@ -262,4 +262,28 @@ describe("createShellClient attachSession", () => {
     expect(input.setRawMode).toHaveBeenCalledWith(false);
     expect(input.pause).toHaveBeenCalled();
   });
+
+  it("sends one-shot input to an attached shell session", async () => {
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+
+    const sent = client.sendInput("main", "\x1b[200~~/data/terminal-paste/paste.png\x1b[201~", {
+      WebSocketImpl: FakeWebSocket as never,
+    });
+
+    expect(FakeWebSocket.last?.url).toContain("/ws/terminal/session");
+    expect(FakeWebSocket.last?.url).toContain("session=main");
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+
+    await expect(sent).resolves.toBeUndefined();
+    expect(FakeWebSocket.last?.sent).toEqual([
+      JSON.stringify({ type: "input", data: "\x1b[200~~/data/terminal-paste/paste.png\x1b[201~" }),
+      JSON.stringify({ type: "detach" }),
+    ]);
+    expect(FakeWebSocket.last?.closed).toBe(true);
+  });
+
 });
