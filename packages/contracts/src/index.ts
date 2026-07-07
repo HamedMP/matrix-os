@@ -530,6 +530,7 @@ export const ProjectSummarySchema = z.object({
 
 export const PreviewSessionSummarySchema = z.object({
   id: referenceId(128),
+  projectId: ProjectIdSchema.optional(),
   label: SafeDisplayStringSchema,
   status: z.enum(["starting", "running", "failed", "stopped", "unknown"]),
   origin: z.string().url().max(2048).optional(),

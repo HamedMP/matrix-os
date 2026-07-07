@@ -484,6 +484,7 @@ describe("coding agent contracts", () => {
 
     expect(PreviewSessionSummarySchema.parse({
       id: "preview_main",
+      projectId: "repo-main",
       label: "Development preview",
       status: "running",
       origin: `https://preview.example.com/${"a".repeat(700)}?token=${"b".repeat(700)}`,

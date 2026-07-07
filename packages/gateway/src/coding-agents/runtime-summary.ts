@@ -35,7 +35,11 @@ export interface CodingAgentTerminalSessionRegistry {
 }
 
 export interface CodingAgentRuntimeSummaryService {
-  getSummary(principal: RequestPrincipal): Promise<RuntimeSummary>;
+  getSummary(principal: RequestPrincipal, options?: CodingAgentRuntimeSummaryRequestOptions): Promise<RuntimeSummary>;
+}
+
+export interface CodingAgentRuntimeSummaryRequestOptions {
+  projectId?: string;
 }
 
 export interface CodingAgentThreadSummaryStore {
@@ -44,7 +48,10 @@ export interface CodingAgentThreadSummaryStore {
 }
 
 export interface CodingAgentPreviewSummaryStore {
-  listPreviewSessions(principal: RequestPrincipal): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }>;
+  listPreviewSessions(
+    principal: RequestPrincipal,
+    options?: CodingAgentRuntimeSummaryRequestOptions,
+  ): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }>;
 }
 
 export interface CodingAgentRuntimeSummaryOptions {
@@ -209,10 +216,11 @@ async function readAttentionThreads(
 async function readPreviewSessions(
   store: CodingAgentPreviewSummaryStore | undefined,
   principal: RequestPrincipal,
+  options: CodingAgentRuntimeSummaryRequestOptions,
 ): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }> {
   if (!store) return { items: [], hasMore: false, limit: PREVIEW_SUMMARY_LIMIT };
   try {
-    const sessions = await store.listPreviewSessions(principal);
+    const sessions = await store.listPreviewSessions(principal, options);
     const parsed: PreviewSessionSummary[] = [];
     for (const item of sessions.items.slice(0, PREVIEW_SUMMARY_LIMIT + 1)) {
       const result = PreviewSessionSummarySchema.safeParse(item);
@@ -263,7 +271,10 @@ export function createCodingAgentRuntimeSummaryService(
   const nowFn = options.now ?? (() => new Date());
 
   return {
-    async getSummary(principal: RequestPrincipal): Promise<RuntimeSummary> {
+    async getSummary(
+      principal: RequestPrincipal,
+      summaryOptions: CodingAgentRuntimeSummaryRequestOptions = {},
+    ): Promise<RuntimeSummary> {
       const now = nowFn();
       const terminalSessions = readTerminalSessions(
         options.terminalRegistry,
@@ -275,7 +286,7 @@ export function createCodingAgentRuntimeSummaryService(
       const providers = await readProviders(options.agentCredentials, principal);
       const activeThreads = await readActiveThreads(options.threads, principal);
       const attentionThreads = await readAttentionThreads(options.threads, principal);
-      const previewSessions = readPreviewSessions(options.previews, principal);
+      const previewSessions = readPreviewSessions(options.previews, principal, summaryOptions);
       const threadsEnabled = Boolean(options.threads);
       const workspaceEnabled = threadsEnabled && options.capabilities?.workspace === true;
       const approvalsEnabled = threadsEnabled && options.capabilities?.approvals === true;

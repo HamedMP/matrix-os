@@ -9,6 +9,7 @@ import {
   CursorSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  ProjectIdSchema,
   RequestIdSchema,
   ThreadIdSchema,
   SafeClientErrorSchema,
@@ -59,6 +60,11 @@ const AbortThreadBodySchema = z.object({
 
 const ThreadListSchema = boundedListSchema(AgentThreadSummarySchema, 50);
 const ReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
+const SummaryQuerySchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }).optional(),
+}).strict();
 
 function summaryUnavailable() {
   return SafeClientErrorSchema.parse({
@@ -147,11 +153,15 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   app.get("/summary", async (c) => {
     try {
       const principal = principalFor(c);
-      return c.json(await deps.service.getSummary(principal));
+      const query = SummaryQuerySchema.parse({ projectId: c.req.query("projectId") });
+      return c.json(await deps.service.getSummary(principal, query));
     } catch (err: unknown) {
       if (isRequestPrincipalError(err)) {
         const mapped = mapRequestPrincipalError(err);
         return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+      }
+      if (err instanceof z.ZodError) {
+        return c.json({ error: validationFailed() }, 400);
       }
       console.warn("[coding-agents] summary route failed:", err instanceof Error ? err.message : String(err));
       return c.json({ error: summaryUnavailable() }, 503);

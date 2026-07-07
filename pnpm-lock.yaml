@@ -894,6 +894,9 @@ importers:
       '@matrix-os/brand':
         specifier: workspace:*
         version: link:../packages/brand
+      '@matrix-os/contracts':
+        specifier: workspace:*
+        version: link:../packages/contracts
       '@matrix-os/observability':
         specifier: workspace:*
         version: link:../packages/observability

@@ -433,6 +433,7 @@ describe("coding agent runtime summary", () => {
       items: [
         {
           id: "prev_local",
+          projectId: "repo",
           label: "Local web app",
           status: "running",
           origin: "http://localhost:3000",
@@ -440,6 +441,7 @@ describe("coding agent runtime summary", () => {
         },
         {
           id: "prev_internal",
+          projectId: "repo",
           label: "Internal service",
           status: "running",
           updatedAt: new Date(now.getTime() - 1000).toISOString(),
@@ -553,6 +555,53 @@ describe("coding agent runtime summary", () => {
     expect(listPreviews).toHaveBeenCalledWith("repo", { limit: 50, cursor: "prev_old_49" });
   });
 
+  it("scopes preview summaries to the requested project before applying bounds", async () => {
+    const otherPreviews = Array.from({ length: 50 }, (_, index) => ({
+      id: `prev_other_${index}`,
+      projectSlug: "other",
+      label: `Other preview ${index}`,
+      url: "http://localhost:3000",
+      lastStatus: "ok" as const,
+      displayPreference: "panel" as const,
+      createdAt: new Date(now.getTime() + index * 1000).toISOString(),
+      updatedAt: new Date(now.getTime() + index * 1000).toISOString(),
+    }));
+    const repoPreview = {
+      id: "prev_repo",
+      projectSlug: "repo",
+      label: "Repo preview",
+      url: "http://localhost:4000",
+      lastStatus: "ok" as const,
+      displayPreference: "panel" as const,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    const listPreviews = vi.fn(async (projectSlug: string) => ({
+      ok: true as const,
+      previews: projectSlug === "repo" ? [repoPreview] : otherPreviews,
+      nextCursor: null,
+    }));
+    const store = createCodingAgentPreviewSummaryStore({
+      homePath: "/home/matrix/home",
+      previewManager: { listPreviews },
+      projectSlugs: async () => ["other", "repo"],
+      ownerId: testPrincipal.userId,
+    });
+
+    const summaries = await store.listPreviewSessions(testPrincipal, { projectId: "repo" });
+
+    expect(summaries.items).toEqual([
+      expect.objectContaining({
+        id: "prev_repo",
+        projectId: "repo",
+        label: "Repo preview",
+        origin: "http://localhost:4000",
+      }),
+    ]);
+    expect(listPreviews).toHaveBeenCalledTimes(1);
+    expect(listPreviews).toHaveBeenCalledWith("repo", { limit: 50 });
+  });
+
   it("keeps approvals disabled for workspace providers without approval decision bridging", async () => {
     const service = createCodingAgentRuntimeSummaryService({
       homePath: "/home/matrix/home",
@@ -590,6 +639,51 @@ describe("coding agent runtime summary", () => {
     expect(res.status).toBe(200);
     const body = RuntimeSummarySchema.parse(await res.json());
     expect(body.runtime.id).toBe("rt_primary");
+  });
+
+  it("passes a validated project scope into authenticated summary requests", async () => {
+    const getSummary = vi.fn(async () => RuntimeSummarySchema.parse({
+      runtime: { id: "rt_primary", label: "Primary Matrix computer", status: "available" },
+      capabilities: [{ id: "codingAgentsRuntimeSummary", enabled: true }],
+      providers: [],
+      projects: { items: [], hasMore: false, limit: 20 },
+      activeThreads: { items: [], hasMore: false, limit: 50 },
+      attentionThreads: { items: [], hasMore: false, limit: 50 },
+      terminalSessions: { items: [], hasMore: false, limit: 20 },
+      previewSessions: { items: [], hasMore: false, limit: 50 },
+      recentActivity: { items: [], hasMore: false, limit: 30 },
+      limits: {
+        maxPromptBytes: 24_000,
+        maxAttachmentCount: 8,
+        maxTerminalInputBytes: 65_536,
+        maxListItems: 50,
+      },
+      serverTime: now.toISOString(),
+    }));
+    const app = createCodingAgentRoutes({ service: { getSummary }, getPrincipal: () => testPrincipal });
+
+    const res = await app.request("/summary?projectId=repo");
+
+    expect(res.status).toBe(200);
+    expect(getSummary).toHaveBeenCalledWith(testPrincipal, { projectId: "repo" });
+  });
+
+  it("rejects invalid summary project scopes with a safe validation error", async () => {
+    const app = createCodingAgentRoutes({
+      service: { getSummary: vi.fn() },
+      getPrincipal: () => testPrincipal,
+    });
+
+    const res = await app.request("/summary?projectId=../private");
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: {
+        code: "validation_failed",
+        safeMessage: "Request could not be processed. Check the inputs and try again.",
+        retryable: false,
+      },
+    });
   });
 
   it("rejects unauthenticated summary requests", async () => {
