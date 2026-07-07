@@ -137,6 +137,30 @@ describe("AgentPreviewRoute", () => {
     expect(openURLMock).toHaveBeenCalledWith("https://preview.matrix-os.test");
   });
 
+  it("shows a generic message when the external preview handoff fails", async () => {
+    Object.assign(routeParams, {
+      id: "prev_mobile_secure",
+    });
+    openURLMock.mockRejectedValue(new Error("blocked intent for private host"));
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentPreviewRoute />);
+
+    fireEvent.press(await screen.findByLabelText("Open preview in browser"));
+
+    expect(await screen.findByText("Preview could not be opened. Try again.")).toBeTruthy();
+    expect(screen.queryByText("blocked intent for private host")).toBeNull();
+  });
+
   it("rejects non-HTTPS preview origins without rendering the raw origin", async () => {
     Object.assign(routeParams, {
       id: "prev_mobile_local",
