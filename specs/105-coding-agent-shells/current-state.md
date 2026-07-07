@@ -1,12 +1,12 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-desktop-review-diff-lines`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-mobile-review-diff-lines`
 **Updated**: 2026-07-07
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Mobile review details render changed-file counts and selectable hunk coordinate metadata. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop and mobile review details render changed-file counts, selectable hunk coordinate metadata, and gateway-bounded diff lines. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -230,7 +230,7 @@ Screen:
 - `apps/mobile/app/agents/[threadId].tsx`
 - Read-only phone-first dashboard with providers, active threads, and terminal sessions.
 - When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the authenticated gateway client and renders project, PR, round, status, and high-severity count.
-- Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, and safe finding summaries. The gateway snapshot can include bounded hunk lines, but mobile rendering of those lines is not wired in this slice.
+- Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, gateway-bounded hunk lines, and safe finding summaries.
 - Safe generic review error state if review summaries are unavailable; review failures do not drop the runtime summary dashboard.
 - Composer route for creating accepted coding-agent threads; thread route is a bounded placeholder until replay/review surfaces are wired.
 - Flag: `apps/mobile/lib/feature-flags.ts` with `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE === "1"`.
