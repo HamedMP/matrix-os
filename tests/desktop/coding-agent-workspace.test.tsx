@@ -149,6 +149,24 @@ function reviewSnapshotFixture() {
               newLines: 2,
               heading: "@@ -88 +93 @@",
               partial: false,
+              lines: [
+                {
+                  kind: "context",
+                  oldLine: 88,
+                  newLine: 93,
+                  content: "const request = parseReviewRequest(input);",
+                },
+                {
+                  kind: "remove",
+                  oldLine: 89,
+                  content: "return rawReviewDetails;",
+                },
+                {
+                  kind: "add",
+                  newLine: 94,
+                  content: "return safeReviewDetails;",
+                },
+              ],
             },
           ],
           findings: [
@@ -264,6 +282,26 @@ describe("AgentWorkspace", () => {
     fireEvent.click(hunk);
     expect(hunk.getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByText(/export const|function create|raw diff/i)).toBeNull();
+  });
+
+  it("renders gateway-bounded review diff lines with old and new line references", async () => {
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+
+    const contextLine = await screen.findByLabelText("Context line old 88 new 93");
+    const removedLine = screen.getByLabelText("Removed line old 89");
+    const addedLine = screen.getByLabelText("Added line new 94");
+
+    expect(contextLine.textContent).toContain("88");
+    expect(contextLine.textContent).toContain("93");
+    expect(contextLine.textContent).toContain("const request = parseReviewRequest(input);");
+    expect(removedLine.textContent).toContain("-");
+    expect(removedLine.textContent).toContain("return rawReviewDetails;");
+    expect(addedLine.textContent).toContain("+");
+    expect(addedLine.textContent).toContain("return safeReviewDetails;");
+    expect(addedLine.closest("button")).toBeNull();
   });
 
   it("seeds the desktop composer with structured review hunk follow-up context", async () => {
