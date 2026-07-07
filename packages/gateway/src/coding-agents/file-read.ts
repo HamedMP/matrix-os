@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, link, lstat, open, readdir, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, open, opendir, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import {
   FileBrowseRequestSchema,
@@ -90,6 +90,29 @@ function etagDigest(input: { size: number; mtimeMs: number; hash: ReturnType<typ
 
 function fsErrorCode(err: unknown): string {
   return typeof err === "object" && err !== null && "code" in err ? String(err.code) : "";
+}
+
+async function readDirectoryNamesBounded(path: string, maxEntries: number): Promise<{
+  names: string[];
+  truncated: boolean;
+}> {
+  const names: string[] = [];
+  const dir = await opendir(path);
+  try {
+    for await (const entry of dir) {
+      if (names.length >= maxEntries) {
+        return { names, truncated: true };
+      }
+      names.push(entry.name);
+    }
+    return { names, truncated: false };
+  } finally {
+    await dir.close().catch((err: unknown) => {
+      if (fsErrorCode(err) !== "ERR_DIR_CLOSED") {
+        console.warn("[coding-agents] directory close failed");
+      }
+    });
+  }
 }
 
 function pathForRequest(base: string, requestPath?: string): string {
@@ -287,7 +310,8 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_not_found");
       }
 
-      const names = await readdir(targetReal).catch((err: unknown) => {
+      const inspectBudget = Math.min(MAX_FILE_BROWSE_INSPECTED, Math.max(limit + 1, limit * 10));
+      const listing = await readDirectoryNamesBounded(targetReal, inspectBudget).catch((err: unknown) => {
         const code = fsErrorCode(err);
         if (["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
           throw new CodingAgentFileReadError("file_not_found");
@@ -296,15 +320,8 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_unavailable");
       });
       const entries: FileMetadata[] = [];
-      const inspectBudget = Math.min(MAX_FILE_BROWSE_INSPECTED, Math.max(limit + 1, limit * 10));
-      let inspectedEntries = 0;
-      let hasMore = false;
-      for (const name of names.sort((a, b) => a.localeCompare(b, "en"))) {
-        if (inspectedEntries >= inspectBudget) {
-          hasMore = true;
-          break;
-        }
-        inspectedEntries += 1;
+      let hasMore = listing.truncated;
+      for (const name of listing.names.sort((a, b) => a.localeCompare(b, "en"))) {
         const absolutePath = resolve(targetReal, name);
         const responsePath = pathForResponse(request.path, name);
         if (!responsePath || entries.length > limit) continue;
@@ -469,9 +486,12 @@ export function createCodingAgentFileStore(options: {
         const current = queue.shift();
         if (!current) break;
         visitedDirectories += 1;
-        let names: string[];
+        let listing: { names: string[]; truncated: boolean };
         try {
-          names = await readdir(current.absolutePath);
+          listing = await readDirectoryNamesBounded(
+            current.absolutePath,
+            Math.max(0, MAX_FILE_SEARCH_ENTRIES - visitedEntries),
+          );
         } catch (err: unknown) {
           const code = fsErrorCode(err);
           if (!["ENOENT", "ENOTDIR", "EACCES"].includes(code)) {
@@ -479,12 +499,11 @@ export function createCodingAgentFileStore(options: {
           }
           continue;
         }
-        for (const name of names.sort((a, b) => a.localeCompare(b, "en"))) {
-          if (visitedEntries >= MAX_FILE_SEARCH_ENTRIES) {
-            hasMore = true;
-            break;
-          }
-          visitedEntries += 1;
+        if (listing.truncated) {
+          hasMore = true;
+        }
+        visitedEntries += listing.names.length;
+        for (const name of listing.names.sort((a, b) => a.localeCompare(b, "en"))) {
           const absolutePath = resolve(current.absolutePath, name);
           const responsePath = pathForResponse(current.responsePath, name);
           if (!responsePath) continue;
@@ -525,7 +544,9 @@ export function createCodingAgentFileStore(options: {
 
       return FileSearchResponseSchema.parse({
         matches: {
-          items: matches.slice(0, limit),
+          items: matches
+            .sort((a, b) => a.path.localeCompare(b.path, "en"))
+            .slice(0, limit),
           hasMore,
           limit,
         },
