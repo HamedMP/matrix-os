@@ -132,6 +132,30 @@ describe("coding agent file read route", () => {
     }
   });
 
+  it("marks wide search results partial when the scan budget is exhausted", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      await mkdir(join(harness.worktreeRoot, "wide"), { recursive: true });
+      await Promise.all(Array.from({ length: 2_005 }, async (_, index) => {
+        await writeFile(join(harness.worktreeRoot, "wide", `entry-${String(index).padStart(4, "0")}.ts`), "export {};\n");
+      }));
+
+      const res = await harness.app.request(
+        `/api/coding-agents/files/search?projectId=${projectId}&worktreeId=${worktreeId}&query=missing&path=wide&limit=10`,
+      );
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.matches.items).toEqual([]);
+      expect(body.matches.hasMore).toBe(true);
+      expect(JSON.stringify(body)).not.toMatch(/\/tmp\/matrix-coding-agent-files|entry-2004/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("returns a bounded text snapshot from an owner worktree", async () => {
     const harness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],

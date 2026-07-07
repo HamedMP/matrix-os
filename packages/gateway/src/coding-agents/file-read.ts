@@ -27,7 +27,8 @@ const DEFAULT_FILE_WRITE_LIMIT_BYTES = 64 * 1024;
 const MAX_FILE_ETAG_BYTES = 100 * 1024 * 1024;
 const MAX_FILE_WRITE_LOCKS = 256;
 const MAX_FILE_LIST_LIMIT = 100;
-const MAX_FILE_SEARCH_VISITS = 2_000;
+const MAX_FILE_SEARCH_DIRECTORIES = 512;
+const MAX_FILE_SEARCH_ENTRIES = 2_000;
 const SKIPPED_SEARCH_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".expo"]);
 
 type FileReadErrorCode = "file_not_found" | "not_file" | "file_unavailable";
@@ -444,12 +445,18 @@ export function createCodingAgentFileStore(options: {
         absolutePath: startReal,
         responsePath: request.path,
       }];
-      let visited = 0;
+      let visitedDirectories = 0;
+      let visitedEntries = 0;
       let hasMore = false;
-      while (queue.length > 0 && visited < MAX_FILE_SEARCH_VISITS && matches.length <= limit) {
+      while (
+        queue.length > 0 &&
+        visitedDirectories < MAX_FILE_SEARCH_DIRECTORIES &&
+        visitedEntries < MAX_FILE_SEARCH_ENTRIES &&
+        matches.length <= limit
+      ) {
         const current = queue.shift();
         if (!current) break;
-        visited += 1;
+        visitedDirectories += 1;
         let names: string[];
         try {
           names = await readdir(current.absolutePath);
@@ -461,6 +468,11 @@ export function createCodingAgentFileStore(options: {
           continue;
         }
         for (const name of names.sort((a, b) => a.localeCompare(b, "en"))) {
+          if (visitedEntries >= MAX_FILE_SEARCH_ENTRIES) {
+            hasMore = true;
+            break;
+          }
+          visitedEntries += 1;
           const absolutePath = resolve(current.absolutePath, name);
           const responsePath = pathForResponse(current.responsePath, name);
           if (!responsePath) continue;
@@ -490,7 +502,12 @@ export function createCodingAgentFileStore(options: {
           if (matches.length > limit) break;
         }
       }
-      if (queue.length > 0 || visited >= MAX_FILE_SEARCH_VISITS || matches.length > limit) {
+      if (
+        queue.length > 0 ||
+        visitedDirectories >= MAX_FILE_SEARCH_DIRECTORIES ||
+        visitedEntries >= MAX_FILE_SEARCH_ENTRIES ||
+        matches.length > limit
+      ) {
         hasMore = true;
       }
 

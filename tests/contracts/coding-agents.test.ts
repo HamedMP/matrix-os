@@ -404,6 +404,11 @@ describe("coding agent contracts", () => {
       path: "src",
       limit: 20,
     }).query).toBe("index");
+    expect(FileSearchRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "bearer-token.test.ts",
+    }).query).toBe("bearer-token.test.ts");
     expect(() => FileSearchRequestSchema.parse({
       projectId: "matrix-os",
       worktreeId: "wt_abc123def456",

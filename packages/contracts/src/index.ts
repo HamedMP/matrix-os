@@ -723,7 +723,7 @@ export const FileSearchRequestSchema = z.object({
   }),
   worktreeId: WorktreeIdSchema,
   path: FilePathSchema.optional(),
-  query: boundedDisplayText(80, 256),
+  query: boundedText(80, 256),
   limit: FileListLimitSchema,
 }).strict();
 export const FileSearchResponseSchema = z.object({
