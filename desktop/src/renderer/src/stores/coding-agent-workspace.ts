@@ -1,5 +1,6 @@
 import {
   buildCreateAgentThreadRequestFromComposer,
+  type ApprovalDecisionRequest,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
   type ReviewSnapshot,
@@ -12,6 +13,7 @@ import { invoke } from "../lib/operator";
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
 type CreateStatus = "idle" | "submitting";
+type ActionStatus = "idle" | "submitting";
 type ReviewSummaryList = {
   items: ReviewSummary[];
   hasMore: boolean;
@@ -35,10 +37,19 @@ interface CodingAgentWorkspaceState {
   threadSnapshotError: string | null;
   createStatus: CreateStatus;
   createError: string | null;
+  approvalActionStatus: ActionStatus;
+  pendingApprovalId: string | null;
+  approvalActionError: string | null;
   activeThreadId: string | null;
   refresh: () => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
   loadThreadSnapshot: (threadId: string) => Promise<void>;
+  submitApprovalDecision: (input: {
+    threadId: string;
+    approvalId: string;
+    decision: ApprovalDecisionRequest["decision"];
+    correlationId: string;
+  }) => Promise<void>;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
 }
 
@@ -47,6 +58,7 @@ let reviewsSeq = 0;
 let reviewSnapshotSeq = 0;
 let threadSnapshotSeq = 0;
 let createRequestSeq = 0;
+let actionRequestSeq = 0;
 
 function clearReviewSelectionState() {
   reviewSnapshotSeq += 1;
@@ -72,6 +84,11 @@ function nextCreateRequestId(): string {
   return `req_desktop_${Date.now().toString(36)}_${createRequestSeq}`;
 }
 
+function nextActionRequestId(): string {
+  actionRequestSeq += 1;
+  return `req_desktop_${Date.now().toString(36)}_${actionRequestSeq}`;
+}
+
 export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set) => ({
   status: "idle",
   summary: null,
@@ -88,6 +105,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   threadSnapshotError: null,
   createStatus: "idle",
   createError: null,
+  approvalActionStatus: "idle",
+  pendingApprovalId: null,
+  approvalActionError: null,
   activeThreadId: null,
 
   refresh: async () => {
@@ -223,6 +243,57 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         threadSnapshotStatus: "error",
         threadSnapshot: null,
         threadSnapshotError: "Thread state unavailable",
+      });
+    }
+  },
+
+  submitApprovalDecision: async ({ threadId, approvalId, decision, correlationId }) => {
+    const { approvalActionStatus } = useCodingAgentWorkspace.getState();
+    if (approvalActionStatus === "submitting") return;
+
+    set({
+      approvalActionStatus: "submitting",
+      pendingApprovalId: approvalId,
+      approvalActionError: null,
+    });
+    try {
+      const snapshot = await invoke("runtime:submit-approval-decision", {
+        threadId,
+        approvalId,
+        decision,
+        correlationId,
+        clientRequestId: nextActionRequestId(),
+      });
+      set((state) => {
+        const currentSummary = state.summary;
+        const summary = currentSummary
+          ? {
+              ...currentSummary,
+              activeThreads: {
+                ...currentSummary.activeThreads,
+                items: currentSummary.activeThreads.items.map((thread) =>
+                  thread.id === snapshot.thread.id ? snapshot.thread : thread,
+                ),
+              },
+            }
+          : currentSummary;
+        return {
+          approvalActionStatus: "idle",
+          pendingApprovalId: null,
+          approvalActionError: null,
+          activeThreadId: snapshot.thread.id,
+          threadSnapshotStatus: "ready",
+          threadSnapshot: snapshot,
+          threadSnapshotError: null,
+          summary,
+        };
+      });
+    } catch {
+      console.warn("[coding-agents] approval decision failed");
+      set({
+        approvalActionStatus: "idle",
+        pendingApprovalId: null,
+        approvalActionError: "Approval could not be sent. Try again.",
       });
     }
   },

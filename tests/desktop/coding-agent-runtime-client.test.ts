@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
+  submitCodingAgentApprovalDecision,
 } from "../../desktop/src/main/coding-agents/runtime-summary-client";
 import type { AuthService } from "../../desktop/src/main/auth/auth-service";
 
@@ -128,6 +129,88 @@ describe("coding agent desktop runtime client", () => {
 
     await expect(fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.toThrow("thread state unavailable");
     await expect(fetchCodingAgentThreadSnapshot(auth(), { threadId: "thread_desktop_1" }, fetchFn)).rejects.not.toThrow("secret");
+  });
+
+  it("submits approval decisions with bearer auth and validates the returned thread snapshot", async () => {
+    const resolved = {
+      ...threadSnapshotBody(),
+      thread: {
+        ...threadSnapshotBody().thread,
+        status: "running",
+        attention: "none",
+        updatedAt: "2026-07-06T00:02:00.000Z",
+      },
+      events: {
+        ...threadSnapshotBody().events,
+        items: [
+          {
+            type: "approval.resolved",
+            eventId: "evt_approval_2",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+            approvalId: "appr_desktop_1",
+            decision: "approve",
+          },
+        ],
+      },
+    };
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(resolved), { status: 200 }));
+
+    const snapshot = await submitCodingAgentApprovalDecision(auth(), {
+      threadId: "thread_desktop_1",
+      approvalId: "appr_desktop_1",
+      request: {
+        decision: "approve",
+        correlationId: "corr_desktop_1",
+        clientRequestId: "req_desktop_1",
+      },
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/threads/thread_desktop_1/approvals/appr_desktop_1/decision",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          decision: "approve",
+          correlationId: "corr_desktop_1",
+          clientRequestId: "req_desktop_1",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(snapshot.thread.status).toBe("running");
+    expect(snapshot.events.items[0]?.type).toBe("approval.resolved");
+  });
+
+  it("rejects unsafe approval decision responses with a generic error", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...threadSnapshotBody(),
+      accessToken: "secret",
+    }), { status: 200 }));
+
+    await expect(submitCodingAgentApprovalDecision(auth(), {
+      threadId: "thread_desktop_1",
+      approvalId: "appr_desktop_1",
+      request: {
+        decision: "approve",
+        correlationId: "corr_desktop_1",
+        clientRequestId: "req_desktop_1",
+      },
+    }, fetchFn)).rejects.toThrow("approval unavailable");
+    await expect(submitCodingAgentApprovalDecision(auth(), {
+      threadId: "thread_desktop_1",
+      approvalId: "appr_desktop_1",
+      request: {
+        decision: "approve",
+        correlationId: "corr_desktop_1",
+        clientRequestId: "req_desktop_1",
+      },
+    }, fetchFn)).rejects.not.toThrow("secret");
   });
 
   it("fetches review snapshots with bearer auth and validates safe output", async () => {

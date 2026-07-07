@@ -4,6 +4,8 @@
 // (FR-081). The credential never appears in any schema.
 import { z } from "zod/v4";
 import {
+  ApprovalDecisionRequestSchema,
+  ApprovalIdSchema,
   AgentThreadSnapshotSchema,
   CreateAgentThreadRequestSchema,
   CursorSchema,
@@ -119,6 +121,16 @@ export const INVOKE_CHANNELS = {
   },
   "runtime:get-thread-snapshot": {
     request: z.object({ threadId: ThreadIdSchema }).strict(),
+    response: AgentThreadSnapshotSchema,
+  },
+  "runtime:submit-approval-decision": {
+    request: z
+      .object({
+        threadId: ThreadIdSchema,
+        approvalId: ApprovalIdSchema,
+      })
+      .extend(ApprovalDecisionRequestSchema.shape)
+      .strict(),
     response: AgentThreadSnapshotSchema,
   },
   "runtime:create-thread": {

@@ -231,6 +231,32 @@ function threadSnapshotFixture() {
   };
 }
 
+function approvalResolvedThreadSnapshotFixture() {
+  return {
+    ...threadSnapshotFixture(),
+    thread: {
+      ...threadSnapshotFixture().thread,
+      status: "running",
+      attention: "none",
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    },
+    events: {
+      ...threadSnapshotFixture().events,
+      items: [
+        ...threadSnapshotFixture().events.items,
+        {
+          type: "approval.resolved",
+          eventId: "evt_approval_desktop_2",
+          threadId: "thread_alpha",
+          occurredAt: "2026-07-06T00:05:00.000Z",
+          approvalId: "appr_desktop_1",
+          decision: "approve",
+        },
+      ],
+    },
+  };
+}
+
 describe("AgentWorkspace", () => {
   beforeEach(() => {
     useCodingAgentWorkspace.setState({
@@ -249,6 +275,9 @@ describe("AgentWorkspace", () => {
       threadSnapshotError: null,
       createStatus: "idle",
       createError: null,
+      approvalActionStatus: "idle",
+      pendingApprovalId: null,
+      approvalActionError: null,
       activeThreadId: null,
     });
     useConnection.setState({
@@ -308,6 +337,35 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Run the focused desktop tests.")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-thread-snapshot", { threadId: "thread_alpha" });
+  });
+
+  it("submits approval decisions through trusted IPC and refreshes the thread details", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    const resolvedSnapshot = approvalResolvedThreadSnapshotFixture();
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      if (channel === "runtime:submit-approval-decision") return Promise.resolve(resolvedSnapshot);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    const approve = await screen.findByRole("button", { name: /approve run tests/i });
+    fireEvent.click(approve);
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:submit-approval-decision", {
+        threadId: "thread_alpha",
+        approvalId: "appr_desktop_1",
+        decision: "approve",
+        correlationId: "corr_desktop_1",
+        clientRequestId: expect.stringMatching(/^req_desktop_/),
+      });
+    });
+    expect(await screen.findByText("Approval resolved")).toBeTruthy();
+    expect(screen.getByText("approve")).toBeTruthy();
   });
 
   it("clears selected thread details when the refreshed summary no longer includes the thread", async () => {

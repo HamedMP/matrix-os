@@ -10,6 +10,7 @@ import {
   fetchCodingAgentReviewSnapshot,
   fetchCodingAgentReviewSummaries,
   fetchCodingAgentRuntimeSummary,
+  submitCodingAgentApprovalDecision,
 } from "./coding-agents/runtime-summary-client";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
@@ -237,6 +238,12 @@ if (!gotLock) {
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
         fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
         fetchThreadSnapshot: (options) => fetchCodingAgentThreadSnapshot(auth, options),
+        submitApprovalDecision: ({ threadId, approvalId, decision, clientRequestId, correlationId }) =>
+          submitCodingAgentApprovalDecision(auth, {
+            threadId,
+            approvalId,
+            request: { decision, clientRequestId, correlationId },
+          }),
         createAgentThread: (request) => createCodingAgentThread(auth, request),
       });
 

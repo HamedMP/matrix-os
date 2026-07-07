@@ -14,6 +14,7 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:submit-approval-decision",
       "runtime:get-thread-snapshot",
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
@@ -114,6 +115,47 @@ describe("IPC contract", () => {
       ...valid,
       thread: { ...valid.thread, providerSecret: "secret" },
     }).success).toBe(false);
+  });
+
+  it("validates runtime:submit-approval-decision requests and responses", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:submit-approval-decision"].request;
+    const responseSchema = INVOKE_CHANNELS["runtime:submit-approval-decision"].response;
+    const request = {
+      threadId: "thread_desktop_1",
+      approvalId: "appr_desktop_1",
+      decision: "approve",
+      correlationId: "corr_desktop_1",
+      clientRequestId: "req_desktop_1",
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, providerToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, approvalId: "../secret" }).success).toBe(false);
+    expect(responseSchema.safeParse({
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:02:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "approval.resolved",
+            eventId: "evt_approval_2",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+            approvalId: "appr_desktop_1",
+            decision: "approve",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    }).success).toBe(true);
   });
 
   it("validates runtime:get-summary responses and rejects credential leakage shapes", () => {
