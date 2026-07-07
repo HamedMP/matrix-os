@@ -135,6 +135,39 @@ function attentionOnlySummaryFixture() {
   };
 }
 
+function previewSummaryFixture() {
+  const summary = summaryFixture();
+  return {
+    ...summary,
+    capabilities: [
+      ...summary.capabilities,
+      {
+        id: "codingAgentsPreview",
+        enabled: true,
+      },
+    ],
+    previewSessions: {
+      items: [
+        {
+          id: "prev_local",
+          label: "Local web app",
+          status: "running",
+          origin: "http://localhost:3000",
+          updatedAt: "2026-07-06T00:04:00.000Z",
+        },
+        {
+          id: "prev_internal",
+          label: "Internal service",
+          status: "running",
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    },
+  };
+}
+
 function reviewsFixture() {
   return {
     items: [
@@ -636,6 +669,23 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Approval needed")).toBeTruthy();
     expect(screen.getByText("Failed")).toBeTruthy();
     expect(screen.getByText("No active threads.")).toBeTruthy();
+  });
+
+  it("renders read-only preview summaries without unsafe origin details", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(previewSummaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    expect(await screen.findByText("Previews")).toBeTruthy();
+    expect(screen.getByText("Local web app")).toBeTruthy();
+    expect(screen.getByText("http://localhost:3000")).toBeTruthy();
+    expect(screen.getByText("Internal service")).toBeTruthy();
+    expect(screen.getAllByText("running").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/internal\.service|token=secret|\/home\/matrix/i)).toBeNull();
   });
 
   it("keeps selected attention-only thread details when refreshed summary still includes the attention thread", async () => {
