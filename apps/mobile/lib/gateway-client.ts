@@ -9,6 +9,8 @@ import {
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   CursorSchema,
+  FileReadRequestSchema,
+  FileReadResponseSchema,
   RequestIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -16,6 +18,8 @@ import {
   ThreadIdSchema,
   UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
+  type FileReadRequest,
+  type FileReadResponse,
   type ReviewSnapshot,
   type RuntimeSummary,
   boundedListSchema,
@@ -113,6 +117,10 @@ export type CodingAgentReviewsResult =
 export type CodingAgentReviewSnapshotResult =
   | { ok: true; snapshot: ReviewSnapshot }
   | { ok: false; error: "Review details unavailable" };
+
+export type CodingAgentFileContentResult =
+  | { ok: true; file: FileReadResponse }
+  | { ok: false; error: "File content unavailable" };
 
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
@@ -748,6 +756,38 @@ export class GatewayClient {
       const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
       console.warn(`[mobile] /api/coding-agents/reviews/:reviewId ${reason}`);
       return { ok: false, error: "Review details unavailable" };
+    }
+  }
+
+  async getCodingAgentFileContent(
+    request: FileReadRequest,
+  ): Promise<CodingAgentFileContentResult> {
+    try {
+      const parsedRequest = FileReadRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File content unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+        path: parsedRequest.data.path,
+      });
+      const res = await this.fetchGateway(`/api/coding-agents/files/read?${query.toString()}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/files/read unavailable", res.status);
+        return { ok: false, error: "File content unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileReadResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/files/read returned invalid payload");
+        return { ok: false, error: "File content unavailable" };
+      }
+      return { ok: true, file: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/files/read ${reason}`);
+      return { ok: false, error: "File content unavailable" };
     }
   }
 

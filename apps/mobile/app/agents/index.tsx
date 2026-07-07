@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } 
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { FileReadRequest, FileReadResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -28,6 +28,12 @@ type ReviewSnapshotState =
   | { status: "ready"; selectedReviewId: string; snapshot: ReviewSnapshot; error: null }
   | { status: "error"; selectedReviewId: string; snapshot: null; error: "Review details unavailable" };
 
+type FileContentState =
+  | { status: "idle"; selectedPath: null; file: null; error: null }
+  | { status: "loading"; selectedPath: string; file: null; error: null }
+  | { status: "ready"; selectedPath: string; file: FileReadResponse; error: null }
+  | { status: "error"; selectedPath: string; file: null; error: "File content unavailable" };
+
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
 
@@ -48,6 +54,13 @@ const INITIAL_REVIEW_SNAPSHOT_STATE: ReviewSnapshotState = {
   status: "idle",
   selectedReviewId: null,
   snapshot: null,
+  error: null,
+};
+
+const INITIAL_FILE_CONTENT_STATE: FileContentState = {
+  status: "idle",
+  selectedPath: null,
+  file: null,
   error: null,
 };
 
@@ -154,18 +167,27 @@ export default function AgentsScreen() {
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
   const [reviewState, setReviewState] = useState<ReviewState>(INITIAL_REVIEW_STATE);
   const [reviewSnapshotState, setReviewSnapshotState] = useState<ReviewSnapshotState>(INITIAL_REVIEW_SNAPSHOT_STATE);
+  const [fileContentState, setFileContentState] = useState<FileContentState>(INITIAL_FILE_CONTENT_STATE);
   const [refreshing, setRefreshing] = useState(false);
   const requestGeneration = useRef(0);
   const reviewSnapshotGeneration = useRef(0);
+  const fileContentGeneration = useRef(0);
   const selectedReviewIdRef = useRef<string | null>(null);
+
+  const clearFileContent = useCallback(() => {
+    fileContentGeneration.current += 1;
+    setFileContentState(INITIAL_FILE_CONTENT_STATE);
+  }, []);
 
   const clearReviewSnapshot = useCallback(() => {
     reviewSnapshotGeneration.current += 1;
     selectedReviewIdRef.current = null;
+    clearFileContent();
     setReviewSnapshotState(INITIAL_REVIEW_SNAPSHOT_STATE);
-  }, []);
+  }, [clearFileContent]);
 
   const loadReviewSnapshot = useCallback(async (reviewId: string) => {
+    clearFileContent();
     if (!client) {
       selectedReviewIdRef.current = reviewId;
       setReviewSnapshotState({
@@ -203,6 +225,43 @@ export default function AgentsScreen() {
       selectedReviewId: reviewId,
       snapshot: null,
       error: "Review details unavailable",
+    });
+  }, [clearFileContent, client]);
+
+  const loadFileContent = useCallback(async (request: FileReadRequest) => {
+    if (!client) {
+      setFileContentState({
+        status: "error",
+        selectedPath: request.path,
+        file: null,
+        error: "File content unavailable",
+      });
+      return;
+    }
+    const generation = fileContentGeneration.current + 1;
+    fileContentGeneration.current = generation;
+    setFileContentState({
+      status: "loading",
+      selectedPath: request.path,
+      file: null,
+      error: null,
+    });
+    const result = await client.getCodingAgentFileContent(request);
+    if (generation !== fileContentGeneration.current) return;
+    if (result.ok) {
+      setFileContentState({
+        status: "ready",
+        selectedPath: request.path,
+        file: result.file,
+        error: null,
+      });
+      return;
+    }
+    setFileContentState({
+      status: "error",
+      selectedPath: request.path,
+      file: null,
+      error: "File content unavailable",
     });
   }, [client]);
 
@@ -418,9 +477,12 @@ export default function AgentsScreen() {
       {capabilityEnabled(summary, "codingAgentsReview") ? (
         <ReviewSection
           canCreate={canCreate}
+          canReadFiles={capabilityEnabled(summary, "codingAgentsFiles")}
           state={reviewState}
           snapshotState={reviewSnapshotState}
+          fileContentState={fileContentState}
           onSelectReview={selectReview}
+          onOpenFile={loadFileContent}
         />
       ) : null}
     </ScrollView>
@@ -481,14 +543,20 @@ function attentionThreadLabel(attention?: string): string | null {
 
 function ReviewSection({
   canCreate,
+  canReadFiles,
   state,
   snapshotState,
+  fileContentState,
   onSelectReview,
+  onOpenFile,
 }: {
   canCreate: boolean;
+  canReadFiles: boolean;
   state: ReviewState;
   snapshotState: ReviewSnapshotState;
+  fileContentState: FileContentState;
   onSelectReview: (reviewId: string) => void;
+  onOpenFile: (request: FileReadRequest) => void;
 }) {
   const { theme } = useUnistyles();
   const items = state.reviews?.items ?? [];
@@ -525,12 +593,30 @@ function ReviewSection({
           </View>
         </Pressable>
       ))}
-      <ReviewSnapshotPanel canCreate={canCreate} state={snapshotState} />
+      <ReviewSnapshotPanel
+        canCreate={canCreate}
+        canReadFiles={canReadFiles}
+        state={snapshotState}
+        fileContentState={fileContentState}
+        onOpenFile={onOpenFile}
+      />
     </Section>
   );
 }
 
-function ReviewSnapshotPanel({ canCreate, state }: { canCreate: boolean; state: ReviewSnapshotState }) {
+function ReviewSnapshotPanel({
+  canCreate,
+  canReadFiles,
+  state,
+  fileContentState,
+  onOpenFile,
+}: {
+  canCreate: boolean;
+  canReadFiles: boolean;
+  state: ReviewSnapshotState;
+  fileContentState: FileContentState;
+  onOpenFile: (request: FileReadRequest) => void;
+}) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const [selectedHunk, setSelectedHunk] = useState<SelectedReviewHunk | null>(null);
@@ -569,6 +655,11 @@ function ReviewSnapshotPanel({ canCreate, state }: { canCreate: boolean; state: 
           snapshotKey={snapshotKey}
           selectedHunk={activeSelectedHunk}
           onSelectHunk={setSelectedHunk}
+          canReadFiles={canReadFiles}
+          reviewProjectId={state.snapshot.review.projectId}
+          reviewWorktreeId={state.snapshot.review.worktreeId}
+          fileContentState={fileContentState}
+          onOpenFile={onOpenFile}
         />
       ))}
       {canCreate && activeSelectedHunk ? (
@@ -609,6 +700,11 @@ function ReviewSnapshotFileRow({
   snapshotKey,
   selectedHunk,
   onSelectHunk,
+  canReadFiles,
+  reviewProjectId,
+  reviewWorktreeId,
+  fileContentState,
+  onOpenFile,
 }: {
   file: ReviewSnapshot["files"]["items"][number];
   fileIndex: number;
@@ -616,6 +712,11 @@ function ReviewSnapshotFileRow({
   snapshotKey: string;
   selectedHunk: SelectedReviewHunk | null;
   onSelectHunk: (hunk: SelectedReviewHunk) => void;
+  canReadFiles: boolean;
+  reviewProjectId: string;
+  reviewWorktreeId: string;
+  fileContentState: FileContentState;
+  onOpenFile: (request: FileReadRequest) => void;
 }) {
   const { theme } = useUnistyles();
   const displayPath = safeSnapshotText(file.path, HIDDEN_FILE_PATH);
@@ -641,6 +742,24 @@ function ReviewSnapshotFileRow({
         <Text style={styles.reviewDeletionBadge}>{`-${file.deletions}`}</Text>
         {file.partial ? <Text style={styles.reviewPartialBadge}>Partial file</Text> : null}
       </View>
+      {canReadFiles ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open file ${displayPath}`}
+          onPress={() => onOpenFile({
+            projectId: reviewProjectId,
+            worktreeId: reviewWorktreeId,
+            path: file.path,
+          })}
+          style={styles.reviewFileOpenButton}
+        >
+          <Ionicons name="document-text-outline" size={15} color={theme.colors.background} />
+          <Text style={styles.reviewFileOpenText}>Open file</Text>
+        </Pressable>
+      ) : null}
+      {fileContentState.selectedPath === file.path ? (
+        <FileContentPanel state={fileContentState} />
+      ) : null}
       {file.findings?.length ? (
         file.findings.map((finding, findingIndex) => (
           <Text
@@ -697,6 +816,28 @@ function ReviewSnapshotFileRow({
           })}
         </View>
       ) : null}
+    </View>
+  );
+}
+
+function FileContentPanel({ state }: { state: FileContentState }) {
+  if (state.status === "loading") {
+    return <Text style={styles.reviewDetailNotice}>Loading file...</Text>;
+  }
+  if (state.status === "error") {
+    return <Text style={styles.reviewError}>{state.error}</Text>;
+  }
+  if (state.status !== "ready") return null;
+
+  return (
+    <View style={styles.fileContentPanel}>
+      <View style={styles.fileContentHeader}>
+        <Text style={styles.fileContentMeta}>{`${state.file.metadata.sizeBytes} bytes`}</Text>
+        {state.file.truncated ? <Text style={styles.fileContentTruncated}>Truncated</Text> : null}
+      </View>
+      <Text selectable style={styles.fileContentText}>
+        {state.file.content}
+      </Text>
     </View>
   );
 }
@@ -988,6 +1129,57 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansMedium,
     fontSize: 11,
     color: theme.colors.mutedForeground,
+  },
+  reviewFileOpenButton: {
+    alignSelf: "flex-start",
+    minHeight: 34,
+    borderRadius: 17,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.md,
+    backgroundColor: theme.colors.forest,
+  },
+  reviewFileOpenText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.background,
+  },
+  fileContentPanel: {
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    overflow: "hidden",
+  },
+  fileContentHeader: {
+    minHeight: 34,
+    borderBottomWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing.sm,
+  },
+  fileContentMeta: {
+    flex: 1,
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.mutedForeground,
+  },
+  fileContentTruncated: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 11,
+    color: theme.colors.moss,
+  },
+  fileContentText: {
+    padding: theme.spacing.sm,
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.foreground,
   },
   reviewHunks: {
     gap: theme.spacing.xs,
