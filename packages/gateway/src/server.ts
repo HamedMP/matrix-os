@@ -2,51 +2,47 @@ import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
   mkdir as mkdirAsync,
-  readFile as readFileAsync,
-  stat as statAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
-import { dirname, extname, join, normalize, resolve, relative } from "node:path";
-import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { randomBytes, randomUUID } from "node:crypto";
+import { dirname, join, normalize, resolve } from "node:path";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext, type SpawnFn } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { SessionRegistry, ClientMessageSchema, UUID_REGEX, type SessionHandle, type PtyServerMessage, type SessionInfo } from "./session-registry.js";
+import { SessionRegistry, ClientMessageSchema, type SessionHandle, type PtyServerMessage } from "./session-registry.js";
+import { logTerminalDebug } from "./terminal-debug.js";
+import { registerTerminalSessionRoutes } from "./terminal-session-routes.js";
 import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
+import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
 import { ConversationRunRegistry, type ConversationRunMessage } from "./conversation-run-registry.js";
+import {
+  clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
+  drainReconnectableAbortEntries,
+  replaceReconnectableAbortEntry,
+  scheduleReconnectAbortTimersForDisconnectedClient,
+  type ReconnectableAbortEntry,
+} from "./conversation-reconnect-aborts.js";
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
-import {
-  isDeniedFileApiPath,
-  resolveExistingFileApiPath,
-  resolveWithinHome,
-  resolveWritableFileApiPath,
-} from "./path-security.js";
-import { listDirectory } from "./files-tree.js";
-import { getMissingFileFallback } from "./file-fallbacks.js";
-import { getMimeType } from "./file-utils.js";
-import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "./file-ops.js";
-import { createFileBlobRoutes } from "./file-blob-routes.js";
-import { fileSearch } from "./file-search.js";
-import { fileDelete, trashList, trashRestore, trashEmpty } from "./trash.js";
-import { listProjects } from "./projects.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
-import { createSymphonyRunner, SymphonyConfigLoadError } from "./symphony-runner.js";
+import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
+import { createRateLimiter } from "./security/rate-limiter.js";
 import { timingSafeStringEquals } from "./security/timing-safe.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
 import { createTelegramStream } from "./channels/telegram-stream.js";
@@ -128,23 +124,6 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
-import {
-  createAppDispatcher,
-  appSessionMiddleware,
-  resolveAppBySlug,
-  loadManifest,
-  computeDistributionStatus,
-  sandboxCapabilities,
-  computeRuntimeState,
-  deriveAppSessionKey,
-  signAppSession,
-  buildSetCookie,
-  AckStore,
-  MobileAppSessionTokenStore,
-  SAFE_SLUG,
-  ProcessManager,
-  PortPool,
-} from "./app-runtime/index.js";
 import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { createQueryEngine, type FilterValue, type QueryEngine } from "./app-db-query.js";
@@ -171,6 +150,7 @@ import {
   type LoadedPlugin,
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { createHermesRoutes, validateHermesDashboardUrl } from "./routes/hermes.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
@@ -203,6 +183,18 @@ import {
   MainWsClientMessageSchema,
   type MainWsClientMessage,
 } from "./ws-message-schema.js";
+import type { GatewayConfig, ServerMessage } from "./server/types.js";
+import {
+  kernelEventToServerMessage,
+  send,
+  sendClientAck,
+} from "./server/main-ws-messages.js";
+import {
+  resolveInitialSymphonyPort,
+  symphonyUpstreamOriginForPort,
+} from "./server/symphony-origin.js";
+import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
+import { registerFileRoutes } from "./server/file-routes.js";
 import {
   metricsRegistry,
   httpRequestsTotal,
@@ -212,6 +204,7 @@ import {
 } from "./metrics.js";
 import {
   createShellRoutes,
+  SHELL_SESSION_CREATE_RATE_LIMIT,
   LayoutStore,
   ScrollbackStore,
   ShellPreferencesStore,
@@ -229,6 +222,21 @@ import {
   writeClientErrorReport,
 } from "./client-error-log.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
+
+export {
+  buildAllowedOrigins,
+  createAllowedOriginController,
+} from "./allowed-origins.js";
+export {
+  registerTerminalSessionRoutes,
+  TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
+  type TerminalSessionRouteRegistry,
+} from "./terminal-session-routes.js";
+export type { GatewayConfig, ServerMessage } from "./server/types.js";
+export {
+  readInitialSymphonyPort,
+  resolveInitialSymphonyPort,
+} from "./server/symphony-origin.js";
 
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 
@@ -255,223 +263,17 @@ const ApiMessageBodySchema = z.object({
   }).optional(),
 });
 
-const TERMINAL_DEBUG_ENABLED = process.env.TERMINAL_DEBUG !== "0";
-
-function logTerminalDebug(event: string, details: Record<string, unknown> = {}): void {
-  if (!TERMINAL_DEBUG_ENABLED) {
-    return;
-  }
-  console.info("[terminal-debug][gateway]", event, details);
-}
-
-export const TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES = 1024;
-
-export type TerminalSessionRouteRegistry = Pick<SessionRegistry, "list" | "getSession" | "destroy">;
-
-export function registerTerminalSessionRoutes(
-  app: Hono,
-  options: { homePath: string; sessionRegistry: TerminalSessionRouteRegistry },
-): void {
-  const { homePath, sessionRegistry } = options;
-  const terminalSessionDeleteBodyLimit = bodyLimit({
-    maxSize: TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
-  });
-
-  app.get("/api/terminal/pty-sessions", (c) => {
-    const publicSessions = sessionRegistry.list().map((session: SessionInfo) => {
-      const displayCwd = relative(homePath, session.cwd) || "~";
-      return {
-        sessionId: session.sessionId,
-        cwd: displayCwd,
-        state: session.state,
-        exitCode: session.exitCode,
-        createdAt: session.createdAt,
-        lastAttachedAt: session.lastAttachedAt,
-        attachedClients: session.attachedClients,
-      };
-    });
-    return c.json(publicSessions);
-  });
-
-  app.delete("/api/terminal/pty-sessions/:id", terminalSessionDeleteBodyLimit, (c) => {
-    const id = c.req.param("id");
-    logTerminalDebug("rest-destroy-request", { sessionId: id });
-    if (!UUID_REGEX.test(id)) return c.json({ error: "Invalid session ID" }, 400);
-    const session = sessionRegistry.getSession(id);
-    if (!session) return c.json({ ok: true }, 200);
-    sessionRegistry.destroy(id);
-    return c.json({ ok: true });
-  });
-}
-
 export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
   await mkdirAsync(dirname(persistPath), { recursive: true });
   await writeFileAsync(persistPath, "[]\n");
 }
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
-const HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
-
-export interface GatewayConfig {
-  homePath: string;
-  port?: number;
-  model?: string;
-  maxTurns?: number;
-  spawnFn?: SpawnFn;
-  syncReport?: { added: string[]; updated: string[]; skipped: string[] };
-}
-
-export type ServerMessage =
-  | { type: "kernel:init"; sessionId: string; requestId?: string }
-  | { type: "kernel:text"; text: string; requestId?: string }
-  | { type: "kernel:tool_start"; tool: string; requestId?: string }
-  | { type: "kernel:tool_end"; input?: Record<string, unknown>; requestId?: string }
-  | { type: "kernel:result"; data: unknown; requestId?: string }
-  | { type: "kernel:error"; message: string; requestId?: string }
-  | { type: "kernel:aborted"; requestId?: string }
-  | { type: "file:change"; path: string; event: string }
-  | { type: "task:created"; task: { id: string; type: string; status: string; input: string } }
-  | { type: "task:updated"; taskId: string; status: string }
-  | { type: "provision:start"; appCount: number }
-  | { type: "provision:complete"; total: number; succeeded: number; failed: number }
-  | { type: "session:switched"; sessionId: string }
-  | { type: "approval:request"; id: string; toolName: string; args: unknown; timeout: number }
-  | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
-  | { type: "data:change"; app: string; key: string }
-  | { type: "integration:connected"; service: string; accountLabel: string }
-  | { type: "integration:disconnected"; service: string; id: string }
-  | { type: "integration:expired"; service: string; id: string; accountLabel: string }
-  | { type: "pong" }
-  | { type: "sync:change"; files: Array<{ path: string; hash: string; size: number; action: string }>; peerId: string; manifestVersion: number }
-  | { type: "sync:conflict"; path: string; localHash: string; remoteHash: string; remotePeerId: string; conflictPath: string }
-  | { type: "sync:peer-join"; peerId: string; hostname: string; platform: string }
-  | { type: "sync:peer-leave"; peerId: string }
-  | { type: "sync:share-invite"; shareId: string; ownerHandle: string; path: string; role: string }
-  | { type: "sync:access-revoked"; shareId: string; ownerHandle: string; path: string };
-
-function kernelEventToServerMessage(event: KernelEvent, requestId?: string): ServerMessage {
-  switch (event.type) {
-    case "init":
-      return { type: "kernel:init", sessionId: event.sessionId, requestId };
-    case "text":
-      return { type: "kernel:text", text: event.text, requestId };
-    case "tool_start":
-      return { type: "kernel:tool_start", tool: event.tool, requestId };
-    case "tool_end":
-      return { type: "kernel:tool_end", input: event.input, requestId };
-    case "result":
-      return { type: "kernel:result", data: event.data, requestId };
-    case "aborted":
-      return { type: "kernel:aborted", requestId };
-  }
-}
-
-function send(ws: WSContext, msg: ServerMessage) {
-  ws.send(JSON.stringify(msg));
-}
-
 const CONVERSATION_REPLAY_BATCH_SIZE = 100;
+const CONVERSATION_RECONNECT_GRACE_MS = 30_000;
+const MAX_RECONNECTABLE_ABORT_CONTROLLERS = 100;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 const MAX_MAIN_WS_CLIENTS = 100;
-
-export function buildAllowedOrigins(options: {
-  shellOrigin?: string;
-  proxyOrigin?: string;
-  symphonyPort?: number;
-  symphonyPorts?: number[];
-}): string[] {
-  const symphonyPorts = Array.from(new Set([
-    options.symphonyPort,
-    ...(options.symphonyPorts ?? []),
-  ].filter((port): port is number => typeof port === "number")));
-  return Array.from(new Set(
-    [
-      options.shellOrigin,
-      options.proxyOrigin,
-      "http://localhost:3000",
-      "http://localhost:4001",
-      "http://localhost:4766",
-      "http://127.0.0.1:4766",
-      ...symphonyPorts.flatMap((port) => [
-        `http://localhost:${port}`,
-        `http://127.0.0.1:${port}`,
-      ]),
-    ].filter((origin): origin is string => Boolean(origin)),
-  ));
-}
-
-export function createAllowedOriginController(options: {
-  shellOrigin?: string;
-  proxyOrigin?: string;
-  symphonyPort?: number;
-}) {
-  const baseOptions = {
-    shellOrigin: options.shellOrigin,
-    proxyOrigin: options.proxyOrigin,
-  };
-  let symphonyPorts = options.symphonyPort ? [options.symphonyPort] : [];
-  let allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
-
-  return {
-    resolve(origin: string | undefined): string | undefined {
-      if (!origin) return undefined;
-      return allowedOrigins.includes(origin) ? origin : undefined;
-    },
-    updateSymphonyPort(port: number, additionalPorts: number[] = []): void {
-      symphonyPorts = Array.from(new Set([port, ...additionalPorts]));
-      allowedOrigins = buildAllowedOrigins({ ...baseOptions, symphonyPorts });
-    },
-  };
-}
-
-type SymphonyRunner = ReturnType<typeof createSymphonyRunner>;
-
-export async function readInitialSymphonyPort(runner: Pick<SymphonyRunner, "getConfig">): Promise<number | undefined> {
-  try {
-    return (await runner.getConfig()).port;
-  } catch (err: unknown) {
-    if (err instanceof SymphonyConfigLoadError) {
-      console.warn("[gateway] Ignoring invalid Symphony config while seeding CORS origins");
-      return undefined;
-    }
-    throw err;
-  }
-}
-
-function parseSymphonyPort(value: string | undefined): number | undefined {
-  if (!value || !/^(?:0|[1-9]\d*)$/.test(value)) return undefined;
-  const port = Number(value);
-  return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : undefined;
-}
-
-function parseLoopbackOriginPort(value: string | undefined): number | undefined {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) {
-      return undefined;
-    }
-    return parseSymphonyPort(url.port);
-  } catch (err: unknown) {
-    if (!(err instanceof TypeError)) {
-      console.warn("[gateway] Ignoring invalid Symphony upstream origin:", err);
-    }
-    return undefined;
-  }
-}
-
-export async function resolveInitialSymphonyPort(
-  runner: Pick<SymphonyRunner, "getConfig">,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<number | undefined> {
-  return parseLoopbackOriginPort(env.SYMPHONY_UPSTREAM_ORIGIN) ??
-    parseSymphonyPort(env.SYMPHONY_PORT) ??
-    await readInitialSymphonyPort(runner);
-}
-
-function symphonyUpstreamOriginForPort(port: number | undefined): string | undefined {
-  return port ? `http://127.0.0.1:${port}` : undefined;
-}
 
 export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
@@ -515,7 +317,6 @@ export async function createGateway(config: GatewayConfig) {
   const zellijShellRegistry = new ZellijShellRegistry({
     homePath,
     adapter: zellijAdapter,
-    maxSessions: 10,
     scrollbackStore: shellScrollbackStore,
     preferencesStore: shellPreferencesStore,
   });
@@ -576,6 +377,7 @@ export async function createGateway(config: GatewayConfig) {
   const watcher: Watcher = createWatcher(homePath);
   const conversations: ConversationStore = createConversationStore(homePath);
   const conversationRuns = new ConversationRunRegistry();
+  const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
   const clients = new Set<WSContext>();
   const readinessRepository = new InMemoryReadinessRepository();
   const toolPackRepository = new InMemoryToolPackRepository();
@@ -1070,10 +872,6 @@ export async function createGateway(config: GatewayConfig) {
     if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
       logBestEffortFailure(context, err);
     }
-  }
-
-  function toStatusCode(status: number): ContentfulStatusCode {
-    return status as ContentfulStatusCode;
   }
 
   async function proxyIntegrationRequest(
@@ -1652,8 +1450,22 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
+  // Dev-only escape hatch. Apps render in a null-origin sandboxed srcdoc iframe,
+  // so their /apps/{slug}/assets/* sub-resources are cross-site from origin
+  // "null" and a SameSite=Strict app-session cookie can never be delivered over
+  // plain-HTTP localhost — assets 401 and surface as CORS errors, so no app
+  // loads. When MATRIX_DEV_APP_AUTH_BYPASS=1, reflect the "null" origin and skip
+  // the app-session gate so apps load locally. NEVER set this in production
+  // (only docker-compose.dev.yml sets it).
+  const APP_AUTH_DEV_BYPASS = process.env.MATRIX_DEV_APP_AUTH_BYPASS === "1";
+  if (APP_AUTH_DEV_BYPASS) {
+    console.warn(
+      "[gateway] MATRIX_DEV_APP_AUTH_BYPASS=1 — null-origin CORS + app-session auth relaxed for LOCAL DEV ONLY. Never enable in production.",
+    );
+  }
   app.use("*", cors({
     origin: (origin) => {
+      if (APP_AUTH_DEV_BYPASS && origin === "null") return "null";
       return allowedOriginController.resolve(origin);
     },
   }));
@@ -1669,6 +1481,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
+  const shellSessionCreateRateLimiter = createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const shellRouteDeps = {
     registry: zellijShellRegistry,
     preferences: shellPreferencesStore,
@@ -1677,6 +1490,7 @@ export async function createGateway(config: GatewayConfig) {
     shellBackend: zellijAdapter,
     shellThemeConfig: zellijAdapter,
     commandRunner: createShellCommandRunner({ homePath }),
+    sessionCreateRateLimiter: shellSessionCreateRateLimiter,
   };
   const systemActivityCandidates = new CleanupCandidateRegistry();
   const systemActivityHistory = new ActivityHistoryStore({ homePath });
@@ -1742,251 +1556,11 @@ export async function createGateway(config: GatewayConfig) {
     console.log("[platform-db] Integration routes proxied via platform internal API");
   }
 
-  // --- App Runtime (spec 063) ---
-  // Ack-token store: bounded LRU (cap 32, 5min TTL)
-  const ackStore = new AckStore();
-  const mobileSessionTokens = new MobileAppSessionTokenStore({
-    ttlMs: 60_000,
-    maxEntries: 256,
-  });
-
-  // GET /api/apps/:slug/manifest — bearer-authed manifest + runtime state + distribution status
-  app.get("/api/apps/:slug/manifest", async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const resolved = await resolveAppBySlug(appsDir, slug);
-    if (!resolved.ok) return c.json({ error: "internal" }, 500);
-    const appDir = resolved.entry.appDir;
-    const runtimeState = await computeRuntimeState(result.manifest, appDir);
-    const distributionStatus = computeDistributionStatus(
-      result.manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    return c.json({ manifest: result.manifest, runtimeState, distributionStatus });
-  });
-
-  const appSessionBodyLimit = bodyLimit({ maxSize: 4096 });
-
-  // POST /api/apps/:slug/ack — bearer-authed, issues ack token for gated installs
-  app.post("/api/apps/:slug/ack", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "installable") {
-      return c.json({ error: "ack_not_applicable" }, 400);
-    }
-    // gated: mint ack token
-    const { ack, expiresAt } = ackStore.mint(slug, "gateway-owner");
-    return c.json({ ack, expiresAt });
-  });
-
-  // POST /api/apps/:slug/session — bearer-authed, issues signed session cookie
-  app.post("/api/apps/:slug/session", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    // Re-compute distributionStatus server-side (ignore any client hint)
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "gated") {
-      // Require valid ack token
-      let body: { ack?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err) {
-        // Hono throws SyntaxError / BodyLimitError when the body is missing
-        // or malformed. Either case reduces to "no ack supplied" below; we
-        // only swallow parse-shape errors and re-throw anything else.
-        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
-          throw err;
-        }
-      }
-      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
-        return c.json({ error: "install_gated" }, 409);
-      }
-    }
-    // Sign session cookie (uses process-scoped master secret computed above;
-    // never reads MATRIX_AUTH_TOKEN directly so empty/short env values can't
-    // produce a predictable HKDF key).
-    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
-    const nowSec = Math.floor(Date.now() / 1000);
-    const maxAge = 600; // 10 minutes
-    const payload = {
-      v: 1 as const,
-      slug,
-      principal: "gateway-owner" as const,
-      scope: "personal" as const,
-      iat: nowSec,
-      exp: nowSec + maxAge,
-    };
-    const token = signAppSession(key, payload);
-    const cookie = buildSetCookie(slug, token, {
-      maxAge,
-      secure: c.req.url.startsWith("https"),
-    });
-    return c.json({ expiresAt: payload.exp * 1000 }, 200, {
-      "Set-Cookie": cookie,
-    });
-  });
-
-  // POST /api/apps/:slug/session-token — mobile-safe one-shot session bootstrap.
-  app.post("/api/apps/:slug/session-token", appSessionBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "gated") {
-      let body: { ack?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err) {
-        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
-          throw err;
-        }
-      }
-      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
-        return c.json({ error: "install_gated" }, 409);
-      }
-    }
-    const routingHandle = process.env.MATRIX_HANDLE;
-    const { token, expiresAt } = mobileSessionTokens.mint(slug, Date.now(), {
-      routingKey: routingHandle && HANDLE_PATTERN.test(routingHandle) ? routingHandle : undefined,
-    });
-    return c.json({
-      token,
-      expiresAt,
-      launchUrl: `/apps/${slug}/?session=${encodeURIComponent(token)}`,
-    });
-  });
-
-  app.use("/apps/:slug/*", async (c, next) => {
-    const slug = c.req.param("slug");
-    if (!slug || !SAFE_SLUG.test(slug)) {
-      return c.json({ error: "invalid slug" }, 400);
-    }
-    const url = new URL(c.req.url);
-    const token = url.searchParams.get("session");
-    if (!token) {
-      await next();
-      return;
-    }
-    if (!mobileSessionTokens.consume(slug, token)) {
-      return c.html("<!doctype html><title>Session expired</title><p>Session expired.</p>", 401, {
-        "Cache-Control": "no-store",
-        "Content-Type": "text/html; charset=utf-8",
-      });
-    }
-
-    const key = deriveAppSessionKey(appSessionMasterSecret, slug);
-    const nowSec = Math.floor(Date.now() / 1000);
-    const maxAge = 600;
-    const payload = {
-      v: 1 as const,
-      slug,
-      principal: "gateway-owner" as const,
-      scope: "personal" as const,
-      iat: nowSec,
-      exp: nowSec + maxAge,
-    };
-    const cookie = buildSetCookie(slug, signAppSession(key, payload), {
-      maxAge,
-      secure: c.req.url.startsWith("https"),
-    });
-    url.searchParams.delete("session");
-    const nextSearch = url.searchParams.toString();
-    const location = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;
-    return new Response(null, {
-      status: 302,
-      headers: {
-        "Cache-Control": "no-store",
-        "Location": location,
-        "Set-Cookie": cookie,
-      },
-    });
-  });
-
-  // Mount app-session middleware on /apps/:slug/* (verifies signed cookie)
-  app.use(
-    "/apps/:slug/*",
-    appSessionMiddleware((slug) =>
-      deriveAppSessionKey(appSessionMasterSecret, slug),
-    ),
-  );
-
-  // Create process manager for node-runtime apps
-  const portPool = new PortPool({ min: 40000, max: 49999, cap: 100 });
-  const processManager = new ProcessManager({
-    homeDir: homePath,
-    portPool,
-    maxProcesses: 10,
-    reaperIntervalMs: 30_000,
-  });
-
-  // Mount app dispatcher on /apps/:slug (static + vite + node branches)
-  const appDispatcher = createAppDispatcher(homePath, {
-    processManager,
+  const processManager = registerAppRuntimeRoutes(app, {
+    homePath,
+    appSessionMasterSecret,
+    devAppAuthBypass: APP_AUTH_DEV_BYPASS,
     publicHost: process.env.PUBLIC_HOST ?? "localhost",
-    // App-runtime failure telemetry: stable error class names only, never
-    // raw error messages or filesystem paths.
     onAppError: ({ errorKind, appSlug }) => {
       void posthogErrorTracker.captureEvent("gateway_app_runtime", {
         distinctId: ownerTelemetryDistinctId,
@@ -1999,7 +1573,6 @@ export async function createGateway(config: GatewayConfig) {
       });
     },
   });
-  app.route("/apps/:slug", appDispatcher);
 
   app.use("*", async (c, next) => {
     const start = performance.now();
@@ -2054,6 +1627,10 @@ export async function createGateway(config: GatewayConfig) {
       // stop the agent. Cleaned up after result / error / aborted so the
       // map doesn't grow.
       const abortControllers = new Map<string, AbortController>();
+
+      const clearReconnectAbortTimersForSession = (sessionId: string | undefined) => {
+        clearReconnectAbortTimers(reconnectableAbortControllers, sessionId);
+      };
 
       const clearConversationRunAttachment = () => {
         conversationReplayVersion++;
@@ -2117,7 +1694,11 @@ export async function createGateway(config: GatewayConfig) {
             active_clients: clients.size,
           });
           approvalBridge = createApprovalBridge({
-            send: (msg) => send(ws, msg),
+            send: (msg) => {
+              const replayableMessage = stampApprovalRequestForReplay(activeSessionId, msg);
+              send(ws, replayableMessage);
+              publishConversationRunMessage(activeSessionId, replayableMessage);
+            },
             timeout: approvalPolicy.timeout,
           });
 
@@ -2160,6 +1741,8 @@ export async function createGateway(config: GatewayConfig) {
           if (parsed.type === "switch_session") {
             activeSessionId = parsed.sessionId;
             clearConversationRunAttachment();
+            clearReconnectAbortTimersForSession(parsed.sessionId);
+            sendClientAck(ws, parsed, "accepted", false);
             const pendingLiveMessages: ConversationRunMessage[] = [];
             let replayComplete = false;
             const attachment = conversationRuns.attachWithBufferedSnapshot(
@@ -2192,8 +1775,13 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
 
-          if (parsed.type === "approval_response" && approvalBridge) {
-            approvalBridge.handleResponse({ id: parsed.id, approved: parsed.approved });
+          if (parsed.type === "approval_response") {
+            if (approvalBridge) {
+              approvalBridge.handleResponse({ id: parsed.id, approved: parsed.approved });
+              sendClientAck(ws, parsed, "accepted", false);
+            } else {
+              sendClientAck(ws, parsed, "rejected", true);
+            }
             return;
           }
 
@@ -2212,11 +1800,15 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           if (parsed.type === "abort") {
-            const controller = abortControllers.get(parsed.requestId);
+            const controller = abortControllers.get(parsed.requestId)
+              ?? reconnectableAbortControllers.get(parsed.requestId)?.controller;
             if (controller) {
               controller.abort();
+              sendClientAck(ws, parsed, "accepted", false);
               // Map cleanup happens in the dispatcher's terminal-event
               // path (kernel:aborted -> delete). No need to delete here.
+            } else {
+              sendClientAck(ws, parsed, "rejected", false);
             }
             return;
           }
@@ -2238,15 +1830,39 @@ export async function createGateway(config: GatewayConfig) {
             const abortController = requestId ? new AbortController() : undefined;
             if (requestId && abortController) {
               abortControllers.set(requestId, abortController);
+              replaceReconnectableAbortEntry(reconnectableAbortControllers, requestId, {
+                controller: abortController,
+                sessionId: parsed.sessionId,
+                abortTimer: null,
+              }, {
+                maxEntries: MAX_RECONNECTABLE_ABORT_CONTROLLERS,
+              });
             }
+            sendClientAck(ws, parsed, "accepted", false);
+            let runEventSeq = 0;
+            const replayRequestId = requestId ?? `legacy-${randomUUID()}`;
+            const withReplayId = (msg: ServerMessage): ServerMessage => {
+              if (!msg.type.startsWith("kernel:")) return msg;
+              const replaySessionId = msg.type === "kernel:init"
+                ? msg.sessionId
+                : activeSessionId ?? parsed.sessionId ?? "pending";
+              return {
+                ...msg,
+                eventId: `${replaySessionId}:${replayRequestId}:${runEventSeq++}`,
+              } as ServerMessage;
+            };
 
             dispatcher
               .dispatch(parsed.text, parsed.sessionId, (event) => {
-                const msg = kernelEventToServerMessage(event, requestId);
+                const msg = withReplayId(kernelEventToServerMessage(event, requestId));
                 send(ws, msg);
 
                 if (msg.type === "kernel:init") {
                   activeSessionId = msg.sessionId;
+                  if (requestId) {
+                    const reconnectable = reconnectableAbortControllers.get(requestId);
+                    if (reconnectable) reconnectable.sessionId = msg.sessionId;
+                  }
                   conversationRuns.begin(msg.sessionId);
                   publishConversationRunMessage(msg.sessionId, msg);
                   conversations.begin(msg.sessionId);
@@ -2295,23 +1911,29 @@ export async function createGateway(config: GatewayConfig) {
                   shell_surface: "gateway_ws",
                   request_id_present: Boolean(requestId),
                 });
-                if (activeSessionId) {
-                  publishConversationRunMessage(activeSessionId, {
-                    type: "kernel:error",
-                    message: CLIENT_KERNEL_ERROR_MESSAGE,
-                    requestId,
-                  });
+                const failureReplay = buildDispatchFailureReplayMessage({
+                  activeSessionId,
+                  requestId,
+                  clientMessage: CLIENT_KERNEL_ERROR_MESSAGE,
+                  stamp: (message) => withReplayId(message) as typeof message,
+                });
+                if (activeSessionId && failureReplay.runMessage) {
+                  publishConversationRunMessage(
+                    activeSessionId,
+                    failureReplay.runMessage as ConversationRunMessage,
+                  );
                   finalizeWithSummary(activeSessionId);
                   conversationRuns.complete(activeSessionId);
                 }
-                send(ws, {
-                  type: "kernel:error",
-                  message: CLIENT_KERNEL_ERROR_MESSAGE,
-                  requestId,
-                });
+                send(ws, failureReplay.liveMessage);
               })
               .finally(() => {
-                if (requestId) abortControllers.delete(requestId);
+                if (requestId) {
+                  abortControllers.delete(requestId);
+                  const reconnectable = reconnectableAbortControllers.get(requestId);
+                  if (reconnectable?.abortTimer) clearTimeout(reconnectable.abortTimer);
+                  reconnectableAbortControllers.delete(requestId);
+                }
               });
           }
         },
@@ -2320,11 +1942,17 @@ export async function createGateway(config: GatewayConfig) {
           clearConversationRunAttachment();
           syncPeerLifecycle?.close();
           syncPeerSocket = null;
-          // Abort any in-flight runs for this client so the kernel doesn't
-          // keep burning tokens after the WS closes.
-          for (const controller of abortControllers.values()) {
-            controller.abort();
-          }
+          // Abort inactive in-flight runs so the kernel doesn't keep burning
+          // tokens forever, while still allowing short browser reconnects to
+          // replay and reattach runs that still have an active subscriber.
+          scheduleReconnectAbortTimersForDisconnectedClient(
+            reconnectableAbortControllers,
+            {
+              graceMs: CONVERSATION_RECONNECT_GRACE_MS,
+              hasActiveSessionConnection: (sessionId) =>
+                conversationRuns.hasActiveSubscribers(sessionId),
+            },
+          );
           abortControllers.clear();
           if (clients.delete(ws)) {
             wsConnectionsActive.dec();
@@ -2853,53 +2481,8 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  app.get("/api/files/tree", async (c) => {
-    const pathParam = c.req.query("path") ?? "";
-    const result = await listDirectory(homePath, pathParam);
-    if (!result) {
-      return c.json({ error: "Invalid path" }, 400);
-    }
-    return c.json(result);
-  });
+  registerFileRoutes(app, { homePath });
 
-  app.get("/api/files/list", async (c) => {
-    const pathParam = c.req.query("path") ?? "";
-    const result = await listDirectory(homePath, pathParam);
-    if (!result) {
-      return c.json({ error: "Invalid path" }, 400);
-    }
-    return c.json({ path: pathParam, entries: result });
-  });
-
-  app.get("/api/files/stat", async (c) => {
-    const pathParam = c.req.query("path");
-    if (!pathParam) return c.json({ error: "path required" }, 400);
-    const result = await fileStat(homePath, pathParam);
-    if (!result) return c.json({ error: "Not found" }, 404);
-    return c.json(result);
-  });
-
-  app.get("/api/files/search", async (c) => {
-    const q = c.req.query("q");
-    if (!q) return c.json({ error: "q required" }, 400);
-    if (q.length > 500) return c.json({ error: "q too long" }, 400);
-    const rawLimit = c.req.query("limit");
-    let limit: number | undefined;
-    if (rawLimit) {
-      limit = parseInt(rawLimit, 10);
-      if (isNaN(limit) || limit < 1 || limit > 500) return c.json({ error: "limit must be 1-500" }, 400);
-    }
-    const result = await fileSearch(homePath, {
-      q,
-      path: c.req.query("path"),
-      content: c.req.query("content") === "true",
-      limit,
-    });
-    return c.json(result);
-  });
-  app.route("/api/files", createFileBlobRoutes({ homePath }));
-
-  const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
   const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -2927,84 +2510,6 @@ export async function createGateway(config: GatewayConfig) {
   if (workspaceStartupRecovery.status === "degraded") {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
   }
-
-  async function parseJson<T>(c: Parameters<MiddlewareHandler>[0]): Promise<T | null> {
-    try {
-      return await c.req.json<T>();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return null;
-      }
-      console.error("[gateway] Unexpected request JSON parse failure:", err);
-      throw err;
-    }
-  }
-
-  app.post("/api/files/mkdir", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileMkdir(homePath, body.path);
-    return c.json(result, result.ok ? 200 : 400);
-  });
-
-  app.post("/api/files/touch", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string; content?: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileTouch(homePath, body.path, body.content);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/duplicate", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDuplicate(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/rename", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ from: string; to: string }>(c);
-    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileRename(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/copy", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ from: string; to: string }>(c);
-    if (!body?.from || !body?.to) return c.json({ error: "from and to required" }, 400);
-    const result = await fileCopy(homePath, body.from, body.to);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/delete", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ path: string }>(c);
-    if (!body?.path) return c.json({ error: "path required" }, 400);
-    const result = await fileDelete(homePath, body.path);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.get("/api/files/trash", async (c) => {
-    const result = await trashList(homePath);
-    return c.json(result);
-  });
-
-  app.post("/api/files/trash/restore", fileBodyLimit, async (c) => {
-    const body = await parseJson<{ trashPath: string }>(c);
-    if (!body?.trashPath) return c.json({ error: "trashPath required" }, 400);
-    const result = await trashRestore(homePath, body.trashPath);
-    return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
-  });
-
-  app.post("/api/files/trash/empty", fileBodyLimit, async (c) => {
-    const result = await trashEmpty(homePath);
-    return c.json(result);
-  });
-
-  app.get("/api/projects", async (c) => {
-    const rootParam = (c.req.query("root") ?? "projects").trim();
-    const result = await listProjects(homePath, rootParam);
-    if (!result.ok) return c.json({ error: result.error }, result.status as ContentfulStatusCode);
-    return c.json({ root: result.root, projects: result.projects });
-  });
 
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
@@ -3074,115 +2579,6 @@ export async function createGateway(config: GatewayConfig) {
     }
 
     return c.json({ events });
-  });
-
-  function resolveServedFilePath(filePath: string): string | null {
-    const lexicalPath = resolveWithinHome(homePath, filePath);
-    if (!lexicalPath || isDeniedFileApiPath(homePath, filePath)) {
-      return null;
-    }
-
-    if (existsSync(lexicalPath)) {
-      return resolveExistingFileApiPath(homePath, filePath);
-    }
-
-    if (!filePath.endsWith("/manifest.json")) {
-      return lexicalPath;
-    }
-
-    const dirPath = dirname(lexicalPath);
-    const fallbackCandidates = [join(dirPath, "module.json"), join(dirPath, "matrix.json")];
-    for (const candidate of fallbackCandidates) {
-      if (existsSync(candidate)) {
-        const relativeCandidate = relative(homePath, candidate);
-        return resolveExistingFileApiPath(homePath, relativeCandidate);
-      }
-    }
-
-    return lexicalPath;
-  }
-
-  app.on("HEAD", "/files/*", (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveServedFilePath(filePath);
-    if (!fullPath) return c.text("Forbidden", 403);
-    if (!existsSync(fullPath)) {
-      const fallback = getMissingFileFallback(filePath);
-      if (fallback) return c.body(null, 200, { "content-type": fallback.contentType });
-      return c.text("Not found", 404);
-    }
-    if (statSync(fullPath).isDirectory()) return c.text("Is a directory", 400);
-    return c.body(null, 200);
-  });
-
-  app.get("/files/*", (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveServedFilePath(filePath);
-
-    if (!fullPath) {
-      return c.text("Forbidden", 403);
-    }
-
-    if (!existsSync(fullPath)) {
-      const fallback = getMissingFileFallback(filePath);
-      if (fallback) return c.body(fallback.body, 200, { "content-type": fallback.contentType });
-      return c.text("Not found", 404);
-    }
-
-    if (statSync(fullPath).isDirectory()) {
-      return c.text("Is a directory", 400);
-    }
-
-    const ext = filePath.split(".").pop() ?? "";
-
-    const textMimeTypes: Record<string, string> = {
-      html: "text/html",
-      json: "application/json",
-      js: "application/javascript",
-      css: "text/css",
-      md: "text/markdown",
-      txt: "text/plain",
-    };
-
-    const imageMimeTypes: Record<string, string> = {
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      gif: "image/gif",
-      webp: "image/webp",
-      svg: "image/svg+xml",
-    };
-
-    if (imageMimeTypes[ext]) {
-      const stat = statSync(fullPath);
-      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
-      if (c.req.header("if-none-match") === etag) {
-        return c.body(null, 304);
-      }
-      const buffer = readFileSync(fullPath);
-      return c.body(buffer, 200, {
-        "Content-Type": imageMimeTypes[ext],
-        "Cache-Control": "public, max-age=86400, immutable",
-        "CDN-Cache-Control": "public, max-age=86400",
-        "ETag": etag,
-      });
-    }
-
-    const content = readFileSync(fullPath, "utf-8");
-    return c.body(content, 200, {
-      "Content-Type": textMimeTypes[ext] ?? "text/plain",
-    });
-  });
-
-  app.put("/files/*", fileBodyLimit, async (c) => {
-    const filePath = c.req.path.replace("/files/", "");
-    const fullPath = resolveWritableFileApiPath(homePath, filePath);
-    if (!fullPath) return c.text("Invalid path", 403);
-    const content = await c.req.text();
-    const dir = dirname(fullPath);
-    await mkdirAsync(dir, { recursive: true });
-    await writeFileAsync(fullPath, content, "utf-8");
-    return c.json({ ok: true });
   });
 
   // Structured query API (Postgres-backed)
@@ -4179,6 +3575,15 @@ export async function createGateway(config: GatewayConfig) {
   const settingsRoutes = createSettingsRoutes({ homePath, channelManager });
   app.route("/api/settings", settingsRoutes);
 
+  // Spec 101: Hermes dashboard proxy (loopback only, auth-gated)
+  try {
+    validateHermesDashboardUrl(process.env.HERMES_DASHBOARD_URL ?? "http://127.0.0.1:9119");
+  } catch (err) {
+    console.error("[hermes-proxy] startup validation failed:", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+  app.route("/api/hermes", createHermesRoutes());
+
   if (messagingRepository) {
     app.route("/api/messages", createMessagingRoutes({
       repository: messagingRepository,
@@ -4458,6 +3863,7 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
+      drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();

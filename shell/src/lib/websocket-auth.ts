@@ -1,4 +1,5 @@
 import { getGatewayUrl, getGatewayWs } from "./gateway";
+import { isSelfHostedDocument } from "./self-host-mode";
 
 const WS_AUTH_PATH = "/api/auth/ws-token";
 const WS_TOKEN_REFRESH_SKEW_MS = 30_000;
@@ -10,6 +11,13 @@ let inflightTokenRequest: Promise<string | null> | null = null;
 interface WsTokenResponse {
   token?: unknown;
   expiresAt?: unknown;
+}
+
+export class WebSocketCredentialUnavailableError extends Error {
+  constructor() {
+    super("WebSocket credential unavailable");
+    this.name = "WebSocketCredentialUnavailableError";
+  }
 }
 
 function getCachedToken(now = Date.now()): string | null {
@@ -57,6 +65,7 @@ export async function getWebSocketAuthToken(): Promise<string | null> {
 export async function buildAuthenticatedWebSocketUrl(
   path: string,
   query?: Record<string, string | undefined>,
+  options?: { requireToken?: boolean },
 ): Promise<string> {
   const gatewayUrl = new URL(getGatewayWs());
   gatewayUrl.pathname = path;
@@ -68,7 +77,14 @@ export async function buildAuthenticatedWebSocketUrl(
     }
   }
 
+  if (isSelfHostedDocument()) {
+    return gatewayUrl.toString();
+  }
+
   const token = await getWebSocketAuthToken();
+  if (!token && options?.requireToken) {
+    throw new WebSocketCredentialUnavailableError();
+  }
   if (token) {
     gatewayUrl.searchParams.set("token", token);
   }

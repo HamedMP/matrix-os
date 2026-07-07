@@ -1,5 +1,6 @@
-import { View, Text, StyleSheet } from "react-native";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
+import { View, Text } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { colors } from "@/lib/theme";
 
 interface ChannelBadgeProps {
   name: string;
@@ -27,29 +28,29 @@ export function ChannelBadge({ name, status }: ChannelBadgeProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
   },
   name: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     textTransform: "capitalize",
   },
   statusRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    gap: theme.spacing.sm,
   },
   dot: {
     width: 8,
@@ -57,8 +58,8 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   label: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 12,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
-});
+}));

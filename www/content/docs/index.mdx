@@ -1,6 +1,6 @@
 ---
-title: Matrix OS Documentation
-description: Start using Matrix OS, then go deeper into the developer platform.
+title: Matrix OS
+description: Your cloud coding computer for developers who run AI coding agents.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
@@ -8,130 +8,68 @@ import { Callout } from 'fumadocs-ui/components/callout';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { DocsCloudComputer } from '@/components/docs-cloud-computer';
 
-<div className="not-prose mb-8 grid gap-4 rounded-2xl border border-fd-border bg-fd-card p-4 shadow-sm md:grid-cols-[1.15fr_0.85fr]">
-  <div className="rounded-xl bg-[var(--forest)] p-5 text-white">
-    <p className="text-xs font-semibold uppercase text-white/70">Developer-first cloud computer</p>
-    <p className="mt-4 max-w-xl text-2xl font-semibold leading-tight">
-      Matrix gives every builder a persistent AI workstation they can reach from the web, CLI, and agents.
-    </p>
-  </div>
-  <div className="grid gap-3">
-    <a className="rounded-xl border border-fd-border bg-fd-muted/70 p-4 transition hover:border-[var(--ember)]/40 hover:bg-white" href="/docs/users/quickstart">
-      <p className="text-xs font-semibold uppercase text-[var(--ember)]">For users</p>
-      <p className="mt-2 text-base font-semibold leading-tight">Sign up, provision a Matrix computer, install the CLI, and start cloud coding.</p>
-    </a>
-    <a className="rounded-xl border border-fd-border bg-white p-4 transition hover:border-[var(--forest)]/30 hover:bg-fd-muted/60" href="/docs/developer">
-      <p className="text-xs font-semibold uppercase text-[var(--moss)]">For contributors</p>
-      <p className="mt-2 text-base font-semibold leading-tight">Understand the platform, skills, runtime, releases, tests, and review pipeline.</p>
-    </a>
-  </div>
+<div className="not-prose mb-8 rounded-2xl border border-fd-border bg-fd-card p-5 shadow-sm">
+  <p className="text-xs font-semibold uppercase tracking-wide text-fd-muted-foreground">Cloud coding computer</p>
+  <p className="mt-3 max-w-2xl text-2xl font-semibold leading-tight">Matrix OS is a persistent cloud computer with an AI kernel — for developers who run AI coding agents.</p>
+  <p className="mt-3 max-w-xl text-sm text-fd-muted-foreground">Sessions keep running after your laptop closes. Reach your computer from the web shell, CLI, mobile, or desktop.</p>
 </div>
 
-Matrix OS is a cloud operating system for AI-native work. You get a personal Matrix computer, connect your tools, open the web shell, and run coding agents in a persistent environment that keeps working after your laptop closes.
+Matrix OS is a real computer hosted in the cloud. It has a terminal, a file system, persistent shell sessions, and an always-on AI kernel. You clone repos, run tests, launch coding agents, and leave long-running work running — then pick it up from any device.
 
-The first ICP for Matrix is developers. Matrix is built for full-stack work from anywhere: terminal sessions, GitHub auth, codebases, coding agents, previews, skills, files, and app data all live in your Matrix workspace.
-
-<Callout type="info" title="A computer with an AI kernel">
-  Matrix is not a dashboard. It is a personal cloud computer where the AI can use the shell, files, apps, integrations, and skills with your permission.
+<Callout type="info" title="A computer, not a dashboard">
+  Matrix is not a chat window bolted onto a cloud service. The AI is the kernel: it has access to the shell, files, integrations, and skills, and it keeps working after you close the browser.
 </Callout>
 
 <DocsCloudComputer />
 
-<Cards>
-  <Card title="User Quickstart" href="/docs/users/quickstart">
-    Sign up, choose power and region, provision your Matrix computer, and land in the shell.
-  </Card>
-  <Card title="CLI" href="/docs/users/cli">
-    Install the Matrix CLI, connect from your local terminal, and run remote shell sessions.
-  </Card>
-  <Card title="Shell And Agents" href="/docs/users/shell">
-    Use app.matrix-os.com, authenticate GitHub, clone a repo, and launch Claude, Codex, Pi, OpenCode, or Hermes.
-  </Card>
-  <Card title="Contributor Platform" href="/docs/developer">
-    Read the architecture, dev VPS, skills, testing, releases, and contribution references.
-  </Card>
-</Cards>
-
-## Quick Start Path
+## How it works
 
 <Steps>
   <Step>
-    ### Create your account and choose capacity
+    ### Provision your Matrix computer
 
-    Sign up at `app.matrix-os.com`, choose your Matrix power level and region, complete billing, and wait for your Matrix computer to provision.
+    Sign up at `app.matrix-os.com`, choose your power level and region, complete billing, and wait for your computer to provision. Takes a few minutes.
   </Step>
   <Step>
     ### Open the web shell
 
-    Land in the Matrix shell. Open Terminal, authenticate GitHub with `gh auth login`, and clone the repo you want to work on.
+    The web shell at `app.matrix-os.com` is your primary interface. Open Terminal, authenticate GitHub with `gh auth login`, clone your repo, and start working.
   </Step>
   <Step>
-    ### Install the CLI
+    ### Connect from your laptop
 
-    Use the `matrix` CLI to connect from your laptop, attach to persistent sessions, and run coding agents on your Matrix computer.
+    Install the `matrix` CLI and run `matrix login`. Attach to persistent sessions, sync files, and run coding agents — all against the same cloud computer.
   </Step>
   <Step>
-    ### Launch an agent
+    ### Launch a coding agent
 
-    Start Claude, Codex, Pi, OpenCode, or Hermes in a named session. Keep the work running in Matrix while you move between devices.
+    Start Claude, Codex, Pi, or OpenCode in a named session. The agent runs on the Matrix computer and keeps going after you detach. Pick it up later from the web, mobile, or desktop app.
   </Step>
 </Steps>
 
-## What Matrix Is Good For
+## Where to go next
 
 <Cards>
-  <Card title="Cloud Coding" href="/docs/users/coding-agents">
-    Run full-stack projects, previews, tests, review loops, and agents on the Matrix computer instead of your laptop.
+  <Card title="Quickstart" href="/docs/quickstart">
+    Sign up, provision your Matrix computer, authenticate GitHub, and clone your first repo.
   </Card>
-  <Card title="Work From Anywhere" href="/docs/users/shell">
-    Use the web UI, local CLI, and upcoming Mac/iOS apps against the same persistent sessions and files.
+  <Card title="CLI" href="/docs/cli">
+    Install the Matrix CLI, log in, attach to remote sessions, and sync files from your laptop.
   </Card>
-  <Card title="Skills For Agents" href="/docs/users/matrix-skills">
-    Matrix skills are preloaded for Claude, Codex, Hermes, and the Matrix kernel so each agent knows how to build in the platform.
+  <Card title="Coding Agents" href="/docs/coding-agents">
+    Install Claude, Codex, Pi, or OpenCode on your Matrix computer and run them in persistent sessions.
   </Card>
-  <Card title="Settings And Billing" href="/docs/users/settings-billing">
-    Manage power, region, billing, runtime settings, integrations, and connected developer tools.
+  <Card title="Hermes" href="/docs/hermes">
+    The always-on Matrix chat agent. Runs in the background, responds across web, mobile, and messaging channels.
   </Card>
 </Cards>
 
-## How Matrix Is Different
+## What Matrix is
 
-<Cards>
-  <Card title="AI Is The Kernel">
-    Matrix does not bolt chat onto an app. The AI is the main way the system decides what to do, which app to use, what to build, and how to keep context.
-  </Card>
-  <Card title="Your Workspace Is Yours">
-    Your files live in your Matrix home, and app/workspace data lives in your Matrix database. The platform handles routing, auth, integrations, and recovery.
-  </Card>
-  <Card title="Apps Are Real Apps">
-    Matrix builds usable Vite + React apps, not disposable mockups. Apps can have screens, state, tables, and data that persists.
-  </Card>
-  <Card title="One OS, Many Surfaces">
-    The web workspace is the main shell, but the same AI and state can work through messaging channels, social features, and developer tools.
-  </Card>
-</Cards>
+**Persistent sessions.** Your terminal sessions keep running on your Matrix computer. Disconnect and reconnect from anywhere — long builds, agent runs, and test suites keep going.
 
-## Next Steps
+**One computer, four surfaces.** The web shell (`app.matrix-os.com`), the `matrix` CLI, the mobile app, and the desktop app all connect to the same machine and the same sessions. No re-cloning, no re-authenticating.
 
-<Cards>
-  <Card
-    title="For Users"
-    description="Developer-focused setup, CLI, shell, agents, Matrix skills, Hermes, and settings."
-    href="/docs/users"
-  />
-  <Card
-    title="For Contributors"
-    description="Architecture, dev VPS, internal skills, testing, release, and review references."
-    href="/docs/developer"
-  />
-  <Card
-    title="Whitepaper"
-    description="Read the Web 4 architecture and product vision."
-    href="/whitepaper"
-  />
-  <Card
-    title="Discord"
-    description="Join early Matrix OS builders and get setup help."
-    href="https://discord.gg/cSBBQWtPwV"
-  />
-</Cards>
+**AI at the kernel level.** Hermes is always on. Coding agents — Claude, Codex, Pi, OpenCode — install as tools on your Matrix computer and run in named sessions. The AI kernel has access to the shell, files, apps, and integrations with your permission.
+
+**Your files are yours.** Your home directory, repos, and workspace data live on your Matrix computer. The platform handles routing, auth, and recovery.

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  HOSTED_SHELL_SESSION_REFRESH_FALLBACK_MS,
+  HOSTED_SHELL_SESSION_REFRESH_SKEW_MS,
   REQUIRED_COOKIES,
+  computeHostedShellSessionRefreshDelay,
   handoffWithRetry,
   isStaleClerkCookie,
   parseSetCookieHeaders,
@@ -187,6 +190,37 @@ describe("isStaleClerkCookie", () => {
       false,
     );
     expect(isStaleClerkCookie({ name: "matrix_native_app_session" })).toBe(false);
+  });
+});
+
+describe("computeHostedShellSessionRefreshDelay", () => {
+  it("schedules refresh ten minutes before the matrix app session expires", () => {
+    const now = Date.parse("2026-06-25T10:00:00.000Z");
+    const expires = now + 60 * 60 * 1000;
+    expect(
+      computeHostedShellSessionRefreshDelay([
+        { name: "matrix_native_app_session", expires },
+        { name: "matrix_app_session", expires },
+      ], now),
+    ).toBe(60 * 60 * 1000 - HOSTED_SHELL_SESSION_REFRESH_SKEW_MS);
+  });
+
+  it("refreshes immediately when the app session is already inside the skew window", () => {
+    const now = Date.parse("2026-06-25T10:00:00.000Z");
+    expect(
+      computeHostedShellSessionRefreshDelay([
+        { name: "matrix_app_session", expires: now + 2 * 60 * 1000 },
+      ], now),
+    ).toBe(0);
+  });
+
+  it("falls back to a periodic refresh when cookie expiry metadata is unavailable", () => {
+    expect(
+      computeHostedShellSessionRefreshDelay([
+        { name: "matrix_app_session" },
+        { name: "matrix_native_app_session", expires: Date.now() + 60_000 },
+      ]),
+    ).toBe(HOSTED_SHELL_SESSION_REFRESH_FALLBACK_MS);
   });
 });
 

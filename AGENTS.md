@@ -42,8 +42,10 @@ Key principles:
 - **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Kysely/Postgres only**: never add alternative embedded databases or ORMs for new persistence
+- **Landing-adjacent UI uses `@matrix-os/brand`**: auth, onboarding, billing, provisioning, and related shell/www surfaces should consume tokens/primitives from `packages/brand/` instead of ad-hoc hex values or forked brand helpers
 - **Kernel prompt**: keep under 7K tokens
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
+- **Large files are refactor debt**: aim for <500 LOC for composition entrypoints, containers, hooks, helpers, and focused tests. Treat 500-1000 LOC as a review smell that needs one clear responsibility; do not add behavior to 1000+ LOC files without an extraction plan, and split 2000+ LOC files before adding behavior. See `docs/dev/large-file-refactoring.md`.
 - After major features: run `/update-docs` to sync all documentation
 
 ## Mandatory Code Patterns
@@ -141,8 +143,10 @@ Without Flox: install Node 24+, pnpm 10, bun manually, then `pnpm install`. Full
 | `packages/gateway/` | Hono HTTP/WS gateway, channel adapters, cron |
 | `packages/platform/` | Multi-tenant orchestrator (Clerk auth, per-user VPS provisioning and routing) |
 | `packages/proxy/` | Shared API proxy, usage tracking |
+| `packages/brand/` | Shared brand tokens/primitives consumed by `www` and shell auth/onboarding/billing UI |
 | `packages/ui/` | Shared UI components |
 | `shell/` | Next.js 16 desktop shell frontend |
+| `apps/mobile/` | Expo/React Native mobile shell |
 | `www/` | matrix-os.com website (Vercel) |
 | `home/` | File system template (copied to `~/matrixos/` on first boot) |
 | `specs/` | Architecture and feature specs |
@@ -156,14 +160,18 @@ bun run test:watch        # Vitest watch mode
 bun run test:integration  # integration tests (needs ANTHROPIC_API_KEY, uses haiku)
 bun run test:coverage     # coverage report
 bun run test:e2e          # end-to-end tests
+bun run build:shell:production  # canonical production shell build (release-parity auth/shell build)
+bun run build:desktop     # Electron desktop production build
 
 bun run dev               # local dev: gateway + proxy + shell
 bun run dev:gateway       # gateway only
 bun run dev:shell         # shell only
+bun run dev:mobile-shell  # browser shell forced into the mobile launcher/runtime
 bun run dev:proxy         # proxy only
 bun run dev:platform      # platform only
 bun run dev:www           # matrix-os.com website only
 bun run dev:kernel        # kernel package only
+bun run dev:desktop       # Electron desktop shell
 
 bun run docker            # Legacy/local Docker dev only; not production customer runtime
 bun run docker:full       # + proxy, platform, conduit
@@ -178,6 +186,7 @@ bun run docker:build      # full rebuild (no cache)
 
 **IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
+**Native mobile shell**: Expo Go is not a supported runtime. Use the Expo dev client: rebuild/install with `pnpm --filter matrix-os-mobile exec expo run:ios --device <device-udid-or-name>` after native/plugin changes, then run Metro with `pnpm --filter matrix-os-mobile exec expo start --dev-client --host lan --clear`. Full prerequisites, Clerk redirect setup, and terminal validation live in `docs/dev/mobile-shell.md`.
 
 ## Release Procedure
 
@@ -188,7 +197,9 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Main channel**: pushes to `main` run `.github/workflows/host-bundle-release.yml`, build a host bundle, register it in platform DB, and promote `dev` by default.
 - **Tags**: `v*` tags build immutable release versions and promote `canary` by default. Promote `stable` only after live verification.
 - **Manual release**: workflow dispatch can choose `dev`, `canary`, `beta`, or `stable`, plus severity/changelog. Security severity may auto-deploy.
-- **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell bundle. EU PostHog uses `https://eu.i.posthog.com`.
+- **Build-time env**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN`/`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, and `NEXT_PUBLIC_POSTHOG_API_HOST` are baked into the shell/www bundles. `NEXT_PUBLIC_POSTHOG_API_HOST` should stay the relative `/relay` same-origin proxy for client traffic; use `POSTHOG_HOST=https://eu.posthog.com` as the private API host for source-map uploads or PostHog API scripts.
+- **PostHog alerts bootstrap**: `bun run observability:posthog-alerts` idempotently provisions the "Matrix OS Errors" dashboard plus the baseline exception/provisioning/billing/onboarding insights. Requires `POSTHOG_PERSONAL_API_KEY` and `POSTHOG_PROJECT_ID`; optional `POSTHOG_API_HOST` defaults to `https://eu.posthog.com`. Issue/spike alerts are still configured manually in the PostHog UI because there is no stable public API for them.
+- **Incremental bundle metadata ships with every host bundle**: `./scripts/build-host-bundle.sh` now emits `dist/host-bundle/incremental-manifest.json` plus `dist/host-bundle/objects/sha256/*`, and `./scripts/publish-release.sh` / platform release registration must publish them alongside the full tarball. Platform serves `/system-bundles/<version>/incremental-manifest.json` and `/system-bundles/objects/sha256/<sha256>`, but `requiresFullBundle` remains `true` until the VPS-side delta installer is explicitly enabled.
 - **User data invariant**: updates may replace `/opt/matrix/app` only. Never overwrite owner data under `$MATRIX_HOME` (`/home/matrix/home`), especially `system/desktop.json`, `system/theme.json`, `system/wallpapers/`, `system/icons/`, identity/profile/session/state files, logs, memory, or conversations. Template sync may add/upgrade OS-owned files, but protected user paths must be skipped.
 - **Local emergency build**: `set -a; source .env; set +a; HOST_BUNDLE_VERSION=<version> HOST_BUNDLE_CHANNEL=<channel> MATRIX_BUILD_SHA=$(git rev-parse HEAD) MATRIX_BUILD_REF=main ./scripts/build-host-bundle.sh`.
 - **Publish**: `./scripts/publish-release.sh <version> --channel <channel>` uploads `system-bundles/<version>/matrix-host-bundle.tar.gz` and `.sha256`, then registers release metadata through `/system-bundles/releases`.
@@ -196,11 +207,37 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Verify**: for every VPS, check `/opt/matrix/app/BUNDLE_VERSION`, `/opt/matrix/release.json`, `matrix-gateway`, `matrix-shell`, `matrix-sync-agent`, and local health.
 - **Feature test VMs**: for risky shell/onboarding/platform changes, prefer a disposable test VPS over the user's primary computer. Use the same Clerk login, switch via `https://app.matrix-os.com/runtime` or explicit `https://app.matrix-os.com/vm/<handle>`, deploy exact bundle versions, and ask the user whether to delete the test VM after validation to avoid extra Hetzner charges.
 - **R2 cleanup**: old `system-bundles/*` versions may be deleted after the new version is published, deployed, and verified. Keep the currently promoted/live version and its `.sha256`; do not delete objects still referenced by active channel pointers or rollback plans.
+- **Optional developer tools provision out of band**: the post-payment Default installs step stores selected `codex`, `claude-code`, `opencode`, and `pi` tool IDs for provisioning, then first boot runs `matrix-developer-tools.service` to install them asynchronously. Failures should show up under `/var/lib/matrix-developer-tools/` (`*.log`, `failed-tools`, `installed-tools`) and retry via systemd; they must not block core Matrix readiness.
+
+## Customer Support Notes
+
+- **Public repo boundary**: support docs in this repository must stay public-safe. Document product behavior, invariants, validation steps, and escalation boundaries; do not include customer identifiers, IPs, access tokens, hostnames tied to private incidents, billing IDs, or copy-paste commands that expose secrets. Keep private operator runbooks in the private support system or secret manager.
+- **Machine resizing exists as a platform-internal support primitive**: `POST /vps/:machineId/resize` is protected by platform auth and is intended for support or platform automation, not direct customer UI use. It performs an in-place Hetzner `change_type` flow with graceful shutdown first, `upgrade_disk: false`, guarded `running -> resizing -> running` state, and stale resize reconciliation.
+- **Resize compatibility is constrained by Hetzner disk rules**: local root disks cannot shrink. Treat same-or-larger local disk x86 moves as eligible; reject smaller-disk downgrades before shutting down the customer VPS. For current plan shapes, `cpx22 -> cpx32/cpx52` and `cpx32 -> cpx52` are valid, while `cpx32 -> cpx22` and `cpx52 -> cpx32/cpx22` are not safe unless a separate migration/storage architecture proves the root data fits.
+- **Customer-facing plan changes are separate**: billing/Stripe may change a user's plan entitlement, but existing VPS resizing should remain support/platform-controlled until preflight compatibility checks and UX copy explicitly handle unsupported downgrades.
+
+## Desktop Release Workflow
+
+- **Desktop OTA channels include `dev`**: treat `dev`, `canary`, `beta`, and `stable` as first-class update channels. Unsigned prerelease packaging must omit empty mac signing env vars rather than exporting blank values.
+- **mac artifact verification must be exact-name, not glob-based**: compute the version/artifact base once, then verify `Matrix-OS-${version}-mac-${arch}.{dmg,zip}` plus both `.blockmap` files and fail on unexpected extra mac artifacts.
+- **mac CI must smoke-test the produced DMG**: mount the generated DMG with `hdiutil`, copy `Matrix OS.app` out with `ditto`, and verify the executable before upload/publish.
+- **Prerelease mac manifests may be arch-only**: when a channel build does not emit `<channel>-mac.yml`, merge `arm64-mac.yml` + `x64-mac.yml` as the fallback manifest pair instead of failing the publish.
+- **`desktop/electron-builder.yml` should not hardcode mac `arch:` arrays**: the workflow matrix `--arch` flag is the source of truth for which architecture each mac job builds.
+- **Packaged desktop CSP must be main-process injected and gateway-scoped**: do not reintroduce a static renderer HTML CSP meta tag or broad `connect-src https: wss:` allowances. The packaged renderer policy must be injected from Electron with the resolved Matrix gateway origin.
+- **Desktop auth callback is `matrixos://auth?status=approved`**: keep `matrix-os://device-auth` only as a legacy compatibility path, register both URL schemes, keep deep-link handling in the main process, and preserve cold-start deep-link handoff until a window exists. Only trusted native desktop clients (`matrix-os-desktop`, `matrix-os-macos`) may receive signed native redirects, and the legacy scheme must stay narrowed to `matrix-os://device-auth` with no query params. The deep link is only a focus signal; auth still completes via polling.
 
 ## Shell Gotchas
 
 - **Canvas mode is the primary shell experience**: users may only see Canvas in the sidebar. Build and verify new shell features in Canvas first, then Desktop. Desktop compatibility still matters, but Canvas is the main product surface.
+- **Do not borrow Developer chrome during desktop-mode hydration**: persisted `mode` can be restored before `_hydrated` flips true, so resolve launcher/dock chrome from the active mode rather than a pre-hydration Developer fallback. Otherwise Canvas users briefly lose Canvas-only controls like the launcher.
 - **Wire built-ins in every renderer**: built-in app paths like `__workspace__`, `__terminal__`, `__file-browser__`, `__preview-window__`, and `__chat__` must be handled in both `Desktop.tsx` and `canvas/CanvasWindow.tsx`. Never let `__...` paths fall through to `AppViewer`, because that turns them into `/files/__...` 404s.
+- **Terminal launches must use the canonical built-in path**: route setup/manual/project terminal opens through `__terminal__`. Do not invent alternate built-in paths such as `__terminal__:setup`, because only the registered Terminal surface participates in shared launch/restore behavior across renderers.
+- **Terminal agent installs must stay visible and use the runtime node prefix**: the Terminal `+` menu checks `/api/agents`; when an agent is missing it should open a new tab that runs a direct `npm install -g --prefix "$MATRIX_NODE_PREFIX"` command with `MATRIX_NODE_PREFIX` defaulting to `/opt/matrix/runtime/node`. Do not hide these installs in the background or switch the UI back to `matrix-install-tool-pack`.
+- **Terminal theme scope is split**: Terminal chrome theme (`appThemeId`) is terminal-local UI state, while shell color theme persists through the global terminal preferences endpoint backed by `system/shell-preferences/terminal-global.json`. Do not wire the Terminal theme menu to the global Matrix OS shell theme or back into per-session preference files.
+- **Transient shell overlays must share one notification host**: use the shared `ShellNotificationStack` / `ShellNotificationPortal` path for connection status, runtime identity, onboarding errors, VocalPanel errors, and similar top-right shell toasts. Do not mount competing fixed stacks at the same viewport anchor.
+- **Shell z-index order is centralized**: reuse shared `SHELL_Z_INDEX` values and keep ordinary app-window z-order compacted below Settings. Do not scatter ad-hoc Tailwind `z-[...]` classes that can drift above Settings, hard gates, or the shell notification stack.
+- **Canonical shell sessions live in `/api/terminal/sessions` across shells**: the web Terminal, macOS Terminal tab, and desktop Command Palette should all use the same named shell-session model instead of separate workspace-local session lists.
+- **Shell session creation is rate-limited, not count-capped**: browser zellij sessions no longer enforce a hard live-session ceiling. If creation starts failing, inspect the shared creation rate limiter across `/api/terminal` and legacy `/api` mounts before reintroducing a `maxSessions` cap.
 - **Canvas and Desktop share state**: window/app paths, layout persistence, dock pins, app icons, and restore/focus behavior must work in both modes. Add tests around shared helpers when possible, and manually check Canvas mode first for user-visible shell changes.
 - **Never mutate state in reducers**: `reduceChat` etc. must create new objects via spread, not mutate in-place. Shallow copies share refs; mutating causes streaming text duplication.
 - **Never use `meta.icon` as an iframe/app image URL**: shell icons resolve through `/icons/{slug}.png`, which falls back to shipped `.svg`/`.png` files in `home/system/icons/`; every manifest icon must have a matching shipped asset.
@@ -209,10 +246,14 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Never cache-bust with `?t=Date.now()`**: use ETag-based `?v={etag}` only when file changes
 - **Reset `imgFailed` when `iconUrl` changes**: track prev URL with `useRef`, reset on differ
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently
+- **PostHog client traffic must stay first-party**: shell and `www` should send analytics through the same-origin `/relay` rewrite, not `/ingest`, `neo.matrix-os.com`, or direct `*.posthog.com` client hosts. Keep legacy `/ingest` rewrites only for already-shipped cached bundles.
+- **Shell replay kill switch is runtime-sensitive**: `POSTHOG_DISABLE_REPLAY=1` plus a `matrix-shell` restart disables shell replay without a rebuild; `NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY` is build-time only. Keep `ph-no-capture` on terminal, chat, and file-browser surfaces, and do not enable shell console-log recording.
 - **Production is VPS-native only**: user-facing Matrix OS runs on one VPS per user with host systemd services. Do not use Docker image rebuilds, `docker compose`, or rolling container restarts as the production rollout path for customer runtime.
 - **No per-handle subdomains**: users reach their runtime through session-based routing on `app.matrix-os.com` (Clerk JWT -> customer VPS) or explicit `app.matrix-os.com/vm/<handle>` paths. `<handle>.matrix-os.com` URLs are not supported -- never generate, route, or assume them (`neo.matrix-os.com` is the PostHog proxy Worker, not a user). See `docs/dev/vps-deployment.md`.
 - **Pre-VPS billing/auth/settings shell changes need platform/app-shell deployment**: before a user has an active VPS, routes like `/auth/device`, `/sign-in`, `/sign-up`, `/runtime`, and the billing-locked Settings/Billing UI are served by the platform-owned `app.matrix-os.com` shell surface, not by a customer VPS host bundle. When changing `shell/` or `packages/platform/` code that affects CLI device signup, Clerk auth, runtime selection, checkout, billing plan/region selection, provisioning, or account/sign-out controls visible before VPS creation, merge the PR and redeploy the platform/app-shell service that serves `app.matrix-os.com`; then verify the no-VPS flow directly. If the agent is not running on the Godfather/control VPS or lacks platform deploy credentials, it must tell the user to run that platform/app-shell deployment there and explain that a host-bundle publish will not update this pre-VPS screen. Do not stop after publishing a host bundle unless the user already has a provisioned Matrix computer.
+- **Pre-VPS auth fallback assets must be platform-self-contained**: signed-out or no-VPS auth pages render before any customer runtime or shell asset route exists. Keep default-install cards, agent logos, and similar auth-fallback visuals inline or platform-served; do not depend on customer VPS or shell asset URLs there.
 - **Customer VPS shell/gateway changes need host-bundle rebuild + publish**: per-user VPSes do not use the Docker user image. Run `set -a; source .env; set +a; ./scripts/build-host-bundle.sh`, publish `dist/host-bundle/matrix-host-bundle.tar.gz` and `.sha256` to `system-bundles/$CUSTOMER_VPS_IMAGE_VERSION/`, then refresh existing VPSes in place and restart `matrix-gateway.service`, `matrix-shell.service`, and `matrix-code.service`.
+- **Hermes state is owner-local under `MATRIX_HOME`**: customer VPSes now canonicalize Hermes data at `/home/matrix/home/.hermes` via `HERMES_HOME`; legacy `/home/matrix/.hermes` is only a compatibility symlink. When changing `distro/customer-vps/host-bin/matrix-owner-env` or service launchers, preserve `matrix_reconcile_owner_home`, pass the reconcile owner/group through migrations, and guard new owner-env helpers with `declare -F` so older bundles degrade gracefully instead of crashing.
 - **Pipedream stays platform-owned**: never put `PIPEDREAM_*` secrets on customer VPSes. VPS gateways need `PLATFORM_INTERNAL_URL` plus their existing `UPGRADE_TOKEN`/`MATRIX_HANDLE` so `/api/integrations*` proxies to platform-owned routes.
 - **Never publish a shell bundle with the example Clerk key**: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is baked at host-bundle build time. If production logs show `clerk.example.com`, the served shell bundle was built with the placeholder key and must be rebuilt and redeployed.
 - **Canvas panning must be target-gated**: wheel/pointer pan handlers should only accept events from the canvas surface/zoom overlay, not bubbled events from selected app windows. Add regression tests for scrolling inside an active app window.
@@ -254,13 +295,24 @@ react-doctor scans a **project directory that has a React `package.json`** (e.g.
 minimal React `package.json` and running react-doctor there. See
 https://github.com/millionco/react-doctor. CI runs this on the project dirs of changed React files.
 
+**Production shell build gate**: when a PR changes `shell/`, shell-facing `packages/platform/`, or CI wiring for the auth shell, run `bun run build:shell:production`. This is the canonical production build command, matches release tooling, and `CI Results` now blocks on the `Shell Production Build` job.
+
+**Focused test reruns**: if `bun run test -- <path>` or `pnpm run test -- <path>` ignores the file filter and fans out into a broad repo run, fall back to `pnpm exec vitest run <path>` (or `pnpm exec vitest <path>` for watch mode) after the usual prerequisite builds are up to date.
+
+**Agent CLI matrix changes need cross-surface sync**: if you add, remove, or rename a supported coding agent, keep `packages/platform/src/developer-tools.ts`, `shell/src/components/terminal/terminal-agent-options.ts`, `shell/src/components/terminal/TerminalApp.tsx`, `distro/customer-vps/host-bin/matrix-install-tool-pack`, `tests/platform/agent-install-matrix.ts`, `.github/workflows/agent-install-smoke.yml`, and the user docs aligned. The scheduled smoke path currently exercises `npm,pnpm,bun,yarn`.
+
 **Screenshot evidence (mandatory for frontend-facing changes)**: every PR that changes
 user-visible UI, visual styling, layout, frontend copy, app surfaces, or screenshots must include
 a current screenshot or short screen recording of the changed state. Prefer capturing it directly
 from the coding-agent environment with Playwright/browser tooling after running the relevant
 stack. If the agent cannot run the surface locally, it must ask the developer to run the stack and
-provide the screenshot before treating the frontend work as review-ready. Do not rely on verbal
-descriptions for visual changes when a screenshot is practical.
+provide the screenshot before treating the frontend work as review-ready. For auth-gated shell UI,
+a bypassed local shell run such as `E2E_TEST_BYPASS=1 NEXT_PUBLIC_E2E_TEST_BYPASS=1 ...` can help
+capture routes like `http://localhost:3002/?launch=__terminal__`, but missing current Canvas/Desktop/mobile
+evidence still blocks review-readiness. Do not rely on verbal descriptions for visual changes when
+a screenshot is practical.
+
+**Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.
 
 ### Three Review Passes
 
@@ -326,13 +378,19 @@ Apps run inside a **sandboxed `srcdoc` iframe with `origin: null`** and CSP `con
 - Use the injected `window.MatrixOS` bridge for everything: `db.*` (Postgres), `readData`/`writeData` (KV), `service`/`integrations`, and `proxyFetch(url)` for allowlisted external GETs.
 - `AppViewer` loads runtime apps **only** via the bridged `srcDoc`; do not reintroduce a plain `src=/apps/{slug}/` load (it runs un-bridged and breaks data access).
 
+## Deferred Work (TODO)
+
+- **Hidden shell Settings sections (paid-beta scope)**: the **Agent, Channels, Skills, Security, Cron, and Plugins** Settings pages are hidden from the shell Settings nav via `HIDDEN_SECTION_IDS` in `shell/src/components/Settings.tsx`. Only **Appearance, Integrations, Billing, System** are exposed for now. The section components and their render branches are intentionally left intact — re-enable a page by removing its id from `HIDDEN_SECTION_IDS`. **TODO before unhiding**: finish/redesign each surface (content, copy, empty states, error handling) and add coverage. Track per-section follow-ups in the backlog.
+
 ## Reference Docs
 
 Read these on demand, not every session:
 
+- `ARCHITECTURE.md` and root `DOMAIN.md` (if present) -- when changing package ownership, cross-package imports, or domain boundaries; if a package/context has its own `ARCHITECTURE.md` / `DOMAIN.md`, read the nearest relevant docs before moving code
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
 - `docs/dev/stacked-prs.md` -- when splitting a feature into Graphite stacked PRs
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
+- `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
 - `docs/dev/docker-development.md` -- when working on Docker setup or debugging container issues
 - `docs/dev/vps-deployment.md` -- when deploying to production or managing the VPS
@@ -394,6 +452,7 @@ matrix shell connect -c setup
 
 - `matrix run -it` starts a zellij-backed Matrix shell session and attaches the local terminal over `/ws/terminal`; use named sessions such as `setup` when multiple humans/agents may need to reattach the same VPS context.
 - `matrix login` may stay open while the browser completes signup, trial checkout, and provisioning; approve the CLI in that same browser tab once the instance is ready. For local dev, `matrix login --profile local` or `matrix login --dev` skips the device flow and writes the local dev stub token.
+- Keep auth flows separate: use browser/device approval for `matrix login`, then run `gh auth login` inside the Matrix terminal session for GitHub browser auth. Do not ask users to upload local private SSH keys into Matrix; Matrix-managed SSH keys live on the VPS.
 - Prefer `matrix shell connect` over `matrix shell attach`. `matrix shell connect -c <session>` is the create-if-missing path.
 - If `matrix run -it`, `matrix shell new`, or `matrix shell attach` fails with `zellij_failed`, run `matrix shell ls` and connect to an existing session instead of retrying the same create path.
 

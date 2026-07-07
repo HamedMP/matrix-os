@@ -104,6 +104,17 @@ export function buildClearNativeAppSessionCookie(): string {
   ].join('; ');
 }
 
+export function buildClearShellRouteCookie(): string {
+  return [
+    `${SHELL_ROUTE_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'Secure',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ].join('; ');
+}
+
 export function buildClearBrowserCookie(name: string, domain?: string): string {
   return [
     `${name}=`,
@@ -142,6 +153,7 @@ export function appendSignOutClearCookies(c: Context): void {
   const domain = matrixCookieDomainForHost(c.req.header('host'));
   c.header('Set-Cookie', buildClearAppSessionCookie(), { append: true });
   c.header('Set-Cookie', buildClearNativeAppSessionCookie(), { append: true });
+  c.header('Set-Cookie', buildClearShellRouteCookie(), { append: true });
   for (const name of clerkCookieClearNames(cookieHeader)) {
     c.header('Set-Cookie', buildClearBrowserCookie(name), { append: true });
     if (domain) {

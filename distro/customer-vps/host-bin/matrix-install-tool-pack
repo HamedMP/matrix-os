@@ -9,6 +9,8 @@ if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
   matrix_export_owner_env
 fi
+MATRIX_RUNTIME_HOME_WAS_SET="${MATRIX_RUNTIME_HOME+x}"
+MATRIX_HOME_WAS_SET="${MATRIX_HOME+x}"
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 MATRIX_APP_DIR="${MATRIX_APP_DIR:-/opt/matrix/app}"
 MATRIX_RUNTIME_DIR="${MATRIX_RUNTIME_DIR:-/opt/matrix/runtime}"
@@ -25,9 +27,27 @@ log() {
   printf 'matrix-install-tool-pack: %s\n' "$*"
 }
 
+resolve_runtime_user() {
+  if id -u "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
+    return
+  fi
+
+  local current_user current_group
+  current_user="$(id -u -n)"
+  current_group="$(id -g -n)"
+  log "runtime user ${MATRIX_RUNTIME_USER} not found; using current user ${current_user}"
+  MATRIX_RUNTIME_USER="$current_user"
+  MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$current_group}"
+  if [ -z "$MATRIX_RUNTIME_HOME_WAS_SET" ] && [ -z "$MATRIX_HOME_WAS_SET" ]; then
+    MATRIX_RUNTIME_HOME="${HOME:-$MATRIX_RUNTIME_HOME}"
+  fi
+}
+
+resolve_runtime_user
+
 usage() {
   cat >&2 <<'EOF'
-Usage: matrix-install-tool-pack <coding-agents|code-server|hermes|linux-tools|all>
+Usage: matrix-install-tool-pack <claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all>
 EOF
 }
 
@@ -66,20 +86,60 @@ run_as_matrix() {
     "$@"
 }
 
-runtime_chmod() {
+run_as_root() {
   if [ "$(id -u)" = "0" ]; then
-    chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
-    find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} +
+    "$@"
     return
   fi
-  sudo chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
-  sudo find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} +
+  sudo "$@"
+}
+
+run_npm_install() {
+  local timeout_bin
+  timeout_bin="$(command -v timeout 2>/dev/null || true)"
+  if [ -n "$timeout_bin" ]; then
+    run_as_matrix "$timeout_bin" 900 "$NODE_PREFIX/bin/npm" "$@"
+    return
+  fi
+  run_as_matrix "$NODE_PREFIX/bin/npm" "$@"
+}
+
+node_prefix_chmod() {
+  "$@" chmod -R g+rwX "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin"
+  if ! "$@" find "$NODE_PREFIX/lib/node_modules" "$NODE_PREFIX/bin" -type d -exec chmod g+s {} + 2>/dev/null; then
+    log "warning: unable to apply setgid bit to node prefix directories"
+  fi
+}
+
+runtime_chmod() {
+  if [ "$(id -u)" = "0" ]; then
+    node_prefix_chmod
+    return
+  fi
+  if [ -w "$NODE_PREFIX/lib/node_modules" ] && [ -w "$NODE_PREFIX/bin" ]; then
+    node_prefix_chmod
+    return
+  fi
+  node_prefix_chmod sudo
 }
 
 with_pack_lock() {
   local pack="$1"
   shift
   local lock_path="/tmp/matrix-tool-pack-${pack}.lock"
+  if ! command -v flock >/dev/null 2>&1; then
+    local lock_dir="${lock_path}.d"
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+      log "${pack} install is already running"
+      return 75
+    fi
+    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT RETURN
+    "$@"
+    local status=$?
+    rmdir "$lock_dir" 2>/dev/null || true
+    trap - EXIT RETURN
+    return "$status"
+  fi
   exec 9>"$lock_path"
   if ! flock -n 9; then
     log "${pack} install is already running"
@@ -94,23 +154,73 @@ sync_agent_skills() {
   fi
 }
 
-install_coding_agents() {
-  log "installing coding agent CLIs"
-  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --prefix "$NODE_PREFIX" \
-    @anthropic-ai/claude-code@latest \
-    @openai/codex@latest \
-    "opencode-ai@${OPENCODE_AI_VERSION}"
-  # Upstream Pi docs recommend --ignore-scripts; the package exposes pi via
-  # bin -> dist/cli.js and does not use postinstall for binary acquisition.
-  run_as_matrix timeout 900 "$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX" \
-    "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
+finish_agent_install() {
   runtime_chmod
   sync_agent_skills
+}
+
+install_claude_code_package() {
+  run_npm_install install -g --prefix "$NODE_PREFIX" \
+    @anthropic-ai/claude-code@latest
+}
+
+install_claude_code() {
+  log "installing Claude Code CLI"
+  install_claude_code_package
+  finish_agent_install
+  log "Claude Code CLI installed"
+}
+
+install_codex_package() {
+  run_npm_install install -g --prefix "$NODE_PREFIX" \
+    @openai/codex@latest
+}
+
+install_codex() {
+  log "installing Codex CLI"
+  install_codex_package
+  finish_agent_install
+  log "Codex CLI installed"
+}
+
+install_opencode_package() {
+  run_npm_install install -g --prefix "$NODE_PREFIX" \
+    "opencode-ai@${OPENCODE_AI_VERSION}"
+}
+
+install_opencode() {
+  log "installing OpenCode CLI"
+  install_opencode_package
+  finish_agent_install
+  log "OpenCode CLI installed"
+}
+
+install_pi_package() {
+  # Upstream Pi docs recommend --ignore-scripts; the package exposes pi via
+  # bin -> dist/cli.js and does not use postinstall for binary acquisition.
+  run_npm_install install -g --ignore-scripts --prefix "$NODE_PREFIX" \
+    "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"
+}
+
+install_pi() {
+  log "installing Pi CLI"
+  install_pi_package
+  finish_agent_install
+  log "Pi CLI installed"
+}
+
+install_coding_agents() {
+  log "installing coding agent CLIs"
+  install_claude_code_package
+  install_codex_package
+  install_opencode_package
+  install_pi_package
+  finish_agent_install
   log "coding agent CLIs installed"
 }
 
 install_code_server() {
-  if command -v code-server >/dev/null 2>&1; then
+  if [ -x "$MATRIX_RUNTIME_DIR/code-server/bin/code-server" ]; then
     log "code-server is already installed"
     return
   fi
@@ -122,10 +232,10 @@ install_code_server() {
     --connect-timeout 10 --max-time 180 \
     "$CODE_SERVER_URL" -o "$tmp_dir/$CODE_SERVER_ARCHIVE"
   tar -xzf "$tmp_dir/$CODE_SERVER_ARCHIVE" -C "$tmp_dir"
-  sudo rm -rf "$MATRIX_RUNTIME_DIR/code-server"
-  sudo mv "$tmp_dir/$CODE_SERVER_DIST" "$MATRIX_RUNTIME_DIR/code-server"
-  sudo chown -R root:matrix "$MATRIX_RUNTIME_DIR/code-server"
-  sudo chmod -R g+rwX "$MATRIX_RUNTIME_DIR/code-server"
+  run_as_root rm -rf "$MATRIX_RUNTIME_DIR/code-server"
+  run_as_root mv "$tmp_dir/$CODE_SERVER_DIST" "$MATRIX_RUNTIME_DIR/code-server"
+  run_as_root chown -R root:matrix "$MATRIX_RUNTIME_DIR/code-server"
+  run_as_root chmod -R g+rwX "$MATRIX_RUNTIME_DIR/code-server"
   cat > "$NODE_PREFIX/bin/code-server" <<'EOS'
 #!/usr/bin/env sh
 exec /opt/matrix/runtime/code-server/bin/code-server "$@"
@@ -162,6 +272,10 @@ install_linux_tools() {
 
 pack="${1:-}"
 case "$pack" in
+  claude-code) with_pack_lock "$pack" install_claude_code ;;
+  codex) with_pack_lock "$pack" install_codex ;;
+  opencode) with_pack_lock "$pack" install_opencode ;;
+  pi) with_pack_lock "$pack" install_pi ;;
   coding-agents) with_pack_lock "$pack" install_coding_agents ;;
   code-server) with_pack_lock "$pack" install_code_server ;;
   hermes) with_pack_lock "$pack" install_hermes ;;

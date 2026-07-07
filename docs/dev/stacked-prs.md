@@ -17,6 +17,11 @@ Prefer stacked PRs when a feature crosses review boundaries such as:
 Keep each PR under the normal review target: ideally under 1000 additions and
 20 files, never over 3000 additions or 50 files without splitting.
 
+For refactors of large source files, follow `docs/dev/large-file-refactoring.md`:
+put guardrails in the base layer, keep mechanical extraction separate from
+behavior changes, and aim for small composition files rather than moving code
+around only to satisfy line-count targets.
+
 ## Setup
 
 Install and authenticate the Graphite CLI, then initialize it once in the repo:

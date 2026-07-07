@@ -1,0 +1,255 @@
+import React, {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from "react";
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import { colors } from "@/lib/theme";
+
+/**
+ * Imperative handle for pushing server output into the embedded xterm.js
+ * emulator. The WebView owns the screen grid, so RN never has to model ANSI.
+ */
+export interface TerminalSurfaceHandle {
+  write: (data: string) => void;
+  clear: () => void;
+  focus: () => void;
+  blur: () => void;
+  scrollLines: (lines: number) => void;
+  scrollToBottom: () => void;
+}
+
+interface TerminalSurfaceProps {
+  fontScale: number;
+  /** Raw keystrokes typed directly into the emulator (hardware keyboard / tap). */
+  onInput: (data: string) => void;
+  /** Reports the fitted grid size whenever the surface lays out or resizes. */
+  onResize: (cols: number, rows: number) => void;
+}
+
+const T = colors.terminal;
+
+// xterm.js + fit addon from jsdelivr. The terminal targets a remote VPS shell,
+// so the device is online whenever this surface is useful; the CDN load is not
+// an extra offline dependency beyond the WebSocket itself.
+const XTERM_VERSION = "5.5.0";
+const FIT_VERSION = "0.10.0";
+
+function buildHtml(fontScale: number): string {
+  const fontSize = Math.round(13 * fontScale);
+  // Dark botanical console — a proper terminal surface that reads as "code"
+  // against the light shell chrome around it.
+  const theme = {
+    background: T.bg,
+    foreground: T.fg,
+    cursor: T.cursor,
+    cursorAccent: T.bg,
+    selectionBackground: T.selection,
+    black: T.black,
+    red: T.red,
+    green: T.green,
+    yellow: T.yellow,
+    blue: T.blue,
+    magenta: T.magenta,
+    cyan: T.cyan,
+    white: T.white,
+    brightBlack: T.brightBlack,
+    brightRed: T.brightRed,
+    brightGreen: T.brightGreen,
+    brightYellow: T.brightYellow,
+    brightBlue: T.brightBlue,
+    brightMagenta: T.brightMagenta,
+    brightCyan: T.brightCyan,
+    brightWhite: T.brightWhite,
+  };
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@${XTERM_VERSION}/css/xterm.css" integrity="sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP" crossorigin="anonymous" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: ${theme.background};
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #term { height: 100%; width: 100%; padding: 8px 10px; box-sizing: border-box; position: relative; }
+  .xterm .xterm-viewport {
+    background: ${theme.background} !important;
+    overflow-y: scroll !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
+  .xterm-viewport::-webkit-scrollbar { width: 0; height: 0; }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@${XTERM_VERSION}/lib/xterm.js" integrity="sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@${FIT_VERSION}/lib/addon-fit.js" integrity="sha384-iF+jqbuti4XlB64clWgFWYEscb+UnSRv3VgVikGYZu+otNFnSHr7y7NcKfBnGizn" crossorigin="anonymous"></script>
+<script>
+  (function () {
+    function post(msg) {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(msg));
+    }
+    function boot() {
+      if (!window.Terminal || !window.FitAddon) { setTimeout(boot, 30); return; }
+      var term = new window.Terminal({
+        fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+        fontSize: ${fontSize},
+        lineHeight: 1.15,
+        cursorBlink: true,
+        scrollback: 12000,
+        convertEol: false,
+        theme: ${JSON.stringify(theme)},
+      });
+      var fit = new window.FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.open(document.getElementById("term"));
+      window.__term = term;
+      window.__matrixTerminal = {
+        focus: function () { term.focus(); },
+        blur: function () {
+          try { term.blur(); } catch (e) {}
+          try {
+            var textarea = document.querySelector(".xterm-helper-textarea");
+            if (textarea && textarea.blur) textarea.blur();
+            var active = document.activeElement;
+            if (active && active.blur) active.blur();
+            document.body.setAttribute("tabindex", "-1");
+            document.body.focus({ preventScroll: true });
+          } catch (e) {}
+        },
+        scrollLines: function (lines) {
+          try { term.scrollLines(lines); } catch (e) {}
+        },
+        scrollToBottom: function () {
+          try { term.scrollToBottom(); } catch (e) {}
+        }
+      };
+
+      function doFit() {
+        try { fit.fit(); post({ type: "resize", cols: term.cols, rows: term.rows }); } catch (e) {}
+      }
+      doFit();
+      window.addEventListener("resize", doFit);
+      term.onData(function (data) { post({ type: "input", data: data }); });
+
+      post({ type: "ready", cols: term.cols, rows: term.rows });
+    }
+    boot();
+  })();
+</script>
+</body>
+</html>`;
+}
+
+export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurfaceProps>(
+  function TerminalSurface({ fontScale, onInput, onResize }, ref) {
+    const webRef = useRef<WebView | null>(null);
+    const readyRef = useRef(false);
+    const pendingRef = useRef<string[]>([]);
+    // Rebuild the document only when the font size bucket changes (keeps the
+    // emulator stable while typing).
+    const html = useMemo(() => buildHtml(fontScale), [fontScale]);
+
+    const inject = useCallback((js: string) => {
+      webRef.current?.injectJavaScript(`${js};true;`);
+    }, []);
+
+    const scrollLines = useCallback((lines: number) => {
+      if (!Number.isFinite(lines) || lines === 0) return;
+      inject(`window.__matrixTerminal && window.__matrixTerminal.scrollLines(${Math.trunc(lines)})`);
+    }, [inject]);
+
+    const flush = useCallback(() => {
+      if (!readyRef.current || pendingRef.current.length === 0) return;
+      const buffered = pendingRef.current.join("");
+      pendingRef.current = [];
+      inject(`window.__term && window.__term.write(${JSON.stringify(buffered)})`);
+    }, [inject]);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        write: (data: string) => {
+          pendingRef.current.push(data);
+          flush();
+        },
+        clear: () => {
+          pendingRef.current = [];
+          inject("window.__term && window.__term.clear()");
+        },
+        focus: () => inject("window.__matrixTerminal && window.__matrixTerminal.focus()"),
+        blur: () => inject("window.__matrixTerminal && window.__matrixTerminal.blur()"),
+        scrollLines,
+        scrollToBottom: () => inject("window.__matrixTerminal && window.__matrixTerminal.scrollToBottom()"),
+      }),
+      [flush, inject, scrollLines],
+    );
+
+    const handleMessage = useCallback(
+      (event: WebViewMessageEvent) => {
+        let msg: { type?: string; data?: string; cols?: number; rows?: number };
+        try {
+          msg = JSON.parse(event.nativeEvent.data) as typeof msg;
+        } catch {
+          return;
+        }
+        if (msg.type === "ready") {
+          readyRef.current = true;
+          if (typeof msg.cols === "number" && typeof msg.rows === "number") {
+            onResize(msg.cols, msg.rows);
+          }
+          flush();
+          return;
+        }
+        if (msg.type === "input" && typeof msg.data === "string") {
+          onInput(msg.data);
+          return;
+        }
+        if (msg.type === "resize" && typeof msg.cols === "number" && typeof msg.rows === "number") {
+          onResize(msg.cols, msg.rows);
+        }
+      },
+      [flush, onInput, onResize],
+    );
+
+    return (
+      <View style={styles.container}>
+        <WebView
+          key="terminal-webview-accessory-enabled"
+          ref={webRef}
+          originWhitelist={["*"]}
+          source={{ html }}
+          onMessage={handleMessage}
+          // Terminal owns scrolling; the RN side should not bounce.
+          scrollEnabled
+          overScrollMode="never"
+          bounces={false}
+          hideKeyboardAccessoryView={false}
+          keyboardDisplayRequiresUserAction={false}
+          androidLayerType="hardware"
+          setBuiltInZoomControls={false}
+          style={styles.web}
+          containerStyle={styles.web}
+        />
+      </View>
+    );
+  },
+);
+
+const styles = StyleSheet.create((theme) => ({
+  container: { flex: 1, backgroundColor: theme.terminal.bg, overflow: "hidden" },
+  web: { flex: 1, backgroundColor: theme.terminal.bg },
+}));

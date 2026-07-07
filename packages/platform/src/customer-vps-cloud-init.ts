@@ -6,6 +6,7 @@ export interface CustomerHostConfig {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  developerTools: string;
   imageVersion: string;
   updateChannel: string;
   hostBundleUrl: string;
@@ -23,6 +24,7 @@ export interface CustomerHostConfig {
   posthogToken: string;
   posthogProjectToken: string;
   posthogHost: string;
+  posthogPublicHost: string;
   posthogApiHost: string;
 }
 

@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { source } from "@/lib/source";
+import { getBlogPostUrl, getBlogPosts } from "@/lib/blog";
 import { solutionPages } from "./solutions/data";
 
 const BASE_URL = "https://matrix-os.com";
@@ -29,6 +30,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: new Date(),
       changeFrequency: "monthly",
       priority: 0.9,
+    },
+    {
+      url: `${BASE_URL}/blog`,
+      lastModified: new Date(),
+      changeFrequency: "weekly",
+      priority: 0.75,
     },
     {
       url: `${BASE_URL}/team`,
@@ -70,5 +77,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.75,
   }));
 
-  return [...staticPages, ...solutionSitemapPages, ...docPages];
+  const blogPages: MetadataRoute.Sitemap = getBlogPosts().map((post) => ({
+    url: `${BASE_URL}${getBlogPostUrl(post)}`,
+    lastModified: new Date(post.updatedAt ?? post.publishedAt),
+    changeFrequency: "monthly" as const,
+    priority: 0.65,
+  }));
+
+  return [...staticPages, ...solutionSitemapPages, ...blogPages, ...docPages];
 }

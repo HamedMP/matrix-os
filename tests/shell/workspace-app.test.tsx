@@ -94,6 +94,7 @@ describe("WorkspaceApp", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    delete document.documentElement.dataset.matrixSelfHosted;
   });
 
   it("renders project/task cockpit panels with bounded task virtualization and IDE links", async () => {
@@ -176,6 +177,19 @@ describe("WorkspaceApp", () => {
     expect(screen.getByTestId("workspace-task-grid").className).toContain("grid-cols-1");
     expect(screen.getByTestId("workspace-task-grid").className).toContain("md:grid-cols-2");
     expect(screen.getByTestId("workspace-task-grid").className).toContain("xl:grid-cols-3");
+  });
+
+  it("points IDE links at same-origin code-server in self-host mode", async () => {
+    document.documentElement.dataset.matrixSelfHosted = "1";
+
+    render(<WorkspaceApp initialProjectSlug="repo" />);
+
+    await waitFor(() => expect(screen.getAllByText("Repo").length).toBeGreaterThan(0));
+
+    const ideLink = screen.getByText("Open IDE").closest("a");
+    expect(ideLink?.getAttribute("href")).toBe(
+      "/code/?folder=%2Fhome%2Fmatrixos%2Fhome%2Fprojects%2Frepo",
+    );
   });
 
   it("creates a project from the Workspace sidebar", async () => {

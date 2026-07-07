@@ -145,27 +145,29 @@ Every app manifest must set `"icon": "<slug>"`, and the matching file must exist
 New app logos should match the shipped Matrix OS icon family: light premium iOS/macOS skeuomorphic
 app icon artwork, refined Apple-like product rendering, bright warm off-white or pale pastel
 background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows,
-and one large tactile 3D object or symbol that clearly represents the app. Do not include text,
+and one large tactile 3D object or symbol that clearly represents the app. Keep the family aligned
+with Matrix OS forest, cream, ember, and deep accents. Do not include text,
 logos, watermarks, transparent backgrounds, black/dark dock backgrounds, empty padding, or a
 separate visible icon frame; the Matrix shell owns the final corner radius.
 
 ### Theme Integration — Matrix OS Design System
-ALWAYS use the Matrix OS brand palette. Load fonts and use gradient backgrounds:
-```css
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+ALWAYS inherit the Matrix OS shell theme first. The shell injects `--matrix-*` variables into app
+iframes; literal colors are fallbacks only. Do not load remote font stylesheets from generated apps.
+Use explicit app branding only when requested or when the app's domain requires it.
 
+```css
 :root {
-  --bg: #FAFAF5;
-  --fg: #32352E;
-  --primary: #434E3F;
-  --primary-fg: #FAFAF5;
-  --accent: #D06F25;
-  --accent-fg: #fff;
-  --secondary: #E0E1CA;
-  --muted: #F0EDE4;
-  --muted-fg: #7A7768;
-  --card: #fff;
-  --border: #D6D3C8;
+  --bg: var(--matrix-bg, #FAFAF9);
+  --fg: var(--matrix-fg, #32352E);
+  --primary: var(--matrix-primary, #434E3F);
+  --primary-fg: var(--matrix-primary-fg, #FAFAF5);
+  --accent: var(--matrix-accent, #D06F25);
+  --accent-fg: var(--matrix-accent-fg, #FAFAF5);
+  --secondary: var(--matrix-secondary, #F1F0E3);
+  --muted: var(--matrix-muted, #E1E1D0);
+  --muted-fg: var(--matrix-muted-fg, #747668);
+  --card: var(--matrix-card, #FCFCF8);
+  --border: var(--matrix-border, #D8D6C7);
   --sand-light: #F7F1E7;
   --sand-mid: #F3EAE0;
   --sand-warm: #D6AB8B;
@@ -176,11 +178,11 @@ ALWAYS use the Matrix OS brand palette. Load fonts and use gradient backgrounds:
 body {
   background: linear-gradient(170deg, var(--sand-light) 0%, var(--sand-mid) 30%, #F7F3ED 60%, var(--sand-light) 100%);
   color: var(--fg);
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
 }
 
-h1, h2 { font-family: 'Orbitron', system-ui, sans-serif; }
-h3, h4, h5, h6 { font-family: 'Inter', system-ui, sans-serif; font-weight: 600; }
+h1, h2 { font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif); }
+h3, h4, h5, h6 { font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif); font-weight: 600; }
 
 button {
   background: var(--primary);
@@ -188,7 +190,7 @@ button {
   border: none;
   padding: 10px 24px;
   border-radius: 50px;
-  font-family: 'Inter';
+  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
@@ -200,7 +202,7 @@ input, textarea, select {
   border: 1.5px solid var(--border);
   padding: 12px 20px;
   border-radius: 50px;
-  font-family: 'Inter';
+  font-family: var(--matrix-font-sans, Inter, system-ui, sans-serif);
 }
 ```
 
@@ -273,26 +275,14 @@ Apps can call connected external services through the bridge API. The user conne
 
 ### Check Connected Services
 ```javascript
-// GET /api/bridge/service → {services: [{service, account_label, account_email, status}]}
-const res = await fetch("/api/bridge/service");
-const { services } = await res.json();
+const services = await window.MatrixOS.integrations();
 const gmail = services.find(s => s.service === "gmail" && s.status === "active");
 if (!gmail) { /* show "Connect Gmail in Settings" */ }
 ```
 
 ### Call a Service Action
 ```javascript
-// POST /api/bridge/service with {service, action, params}
-const res = await fetch("/api/bridge/service", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    service: "gmail",
-    action: "list_messages",
-    params: { maxResults: 20 }
-  })
-});
-const { data } = await res.json();
+const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxResults: 20 });
 // data.messages = [{id, threadId}, ...]
 ```
 
@@ -304,15 +294,17 @@ const { data } = await res.json();
 - **slack**: `send_message`, `list_channels`, `list_messages`, `search`
 - **discord**: `send_message`, `list_servers`, `list_channels`, `list_messages`
 
-### MatrixOS Bridge (alternative, injected after load)
-If `window.MatrixOS` is available (injected by the shell after iframe load):
+### MatrixOS Bridge
+Apps run as sandboxed `srcdoc` iframes. Direct `fetch()` calls to `/api/bridge/*` are blocked by
+the shell CORS/CSP boundary, so always use the injected bridge:
+
 - `MatrixOS.integrations()` → same as GET /api/bridge/service
 - `MatrixOS.service(service, action, params)` → same as POST /api/bridge/service
 
-**Always use the fetch() approach as primary** — MatrixOS bridge may not be available immediately on page load.
-
 ### IMPORTANT: Integration apps do NOT need storage tables
-Apps that display data from external services (Gmail, Calendar, etc.) should fetch data live from the bridge API. Do NOT declare `storage.tables` to cache service data locally -- that's wasteful and stale. Just call `/api/bridge/service` on load and display results directly.
+Apps that display data from external services (Gmail, Calendar, etc.) should fetch data live through
+`window.MatrixOS.service`. Do NOT declare `storage.tables` to cache service data locally -- that's
+wasteful and stale.
 
 ## Best Practices
 - Default to `~/apps/<slug>/matrix.json` + `index.html` for apps

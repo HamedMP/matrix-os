@@ -64,7 +64,7 @@ export function DocsSidebarFooter() {
           <ExternalLink className='size-3.5 shrink-0' />
         </a>
         <Link
-          href='/docs/users/matrix-skills'
+          href='/docs/matrix-skills'
           className='flex items-center gap-2 rounded-lg px-2 py-1.5 text-fd-muted-foreground transition hover:bg-white/70 hover:text-fd-foreground dark:hover:bg-[var(--sage)]/10 dark:hover:text-fd-foreground'
         >
           <Sparkles className='size-4 shrink-0' />

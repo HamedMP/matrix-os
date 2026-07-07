@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useEffectEvent, useReducer, useRef } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AppRuntimeFrame from "@/components/AppRuntimeFrame";
+import { WindowHeader, WindowHeaderAction } from "@/components/WindowHeader";
 import { useGateway } from "../_layout";
 import { getAppSlug, getRuntimeSlug, slugFromParam, type MatrixAppEntry } from "@/lib/apps";
-import { colors, fonts, radius, spacing } from "@/lib/theme";
 
 const SESSION_REFRESH_SKEW_MS = 60_000;
 const SESSION_REFRESH_MIN_INTERVAL_MS = 30_000;
@@ -58,10 +60,13 @@ function runtimeReducer(state: RuntimeState, action: RuntimeAction): RuntimeStat
 
 export default function RuntimeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { theme } = useUnistyles();
   const params = useLocalSearchParams<{ slug?: string | string[] }>();
   const slug = slugFromParam(params.slug);
   const { client } = useGateway();
   const [state, dispatch] = useReducer(runtimeReducer, initialRuntimeState);
+  const [maximized, setMaximized] = useState(false);
   const { app, launchUrl, loading, sessionReady, sessionExpiresAt } = state;
   const shortSessionRefreshCountRef = useRef(0);
 
@@ -126,46 +131,35 @@ export default function RuntimeScreen() {
 
   const appUrl = sessionReady ? launchUrl : null;
   const title = app?.name ?? slug;
+  const goHome = useCallback(() => {
+    router.dismissTo("/(tabs)/apps" as any);
+  }, [router]);
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          title,
-          headerLeft: () => (
-            <Pressable
-              onPress={() => router.replace("/(tabs)/apps" as any)}
-              style={({ pressed }) => ({
-                minWidth: 34,
-                minHeight: 34,
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: pressed ? 0.65 : 1,
-              })}
-            >
-              <Ionicons name="home-outline" size={22} color={colors.light.foreground} />
-            </Pressable>
-          ),
-          headerRight: () => (
-            <Pressable
-              onPress={() => router.push({ pathname: "/apps/[...slug]", params: { slug: slug.split("/") } } as any)}
-              style={({ pressed }) => ({
-                minWidth: 34,
-                minHeight: 34,
-                alignItems: "center",
-                justifyContent: "center",
-                opacity: pressed ? 0.65 : 1,
-              })}
-            >
-              <Ionicons name="information-circle-outline" size={22} color={colors.light.foreground} />
-            </Pressable>
-          ),
-        }}
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <WindowHeader
+        paddingTop={insets.top + 8}
+        title={title}
+        subtitle={app?.category ?? "Matrix app"}
+        subtitleMono={false}
+        onBack={goHome}
+        backIcon="home-outline"
+        backLabel="Home"
+        maximized={maximized}
+        onToggleMaximized={() => setMaximized((prev) => !prev)}
+        actions={
+          <WindowHeaderAction
+            icon="information-circle-outline"
+            label="App info"
+            onPress={() => router.push({ pathname: "/apps/[...slug]", params: { slug: slug.split("/") } } as any)}
+          />
+        }
       />
-      <View style={{ flex: 1, backgroundColor: colors.light.background }}>
+      <View style={{ flex: 1 }}>
         {loading ? (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <ActivityIndicator color={colors.light.primary} />
+            <ActivityIndicator color={theme.colors.primary} />
           </View>
         ) : appUrl ? (
           <AppRuntimeFrame
@@ -173,20 +167,20 @@ export default function RuntimeScreen() {
             title={title}
           />
         ) : (
-          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl }}>
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: theme.spacing.xl }}>
             <View style={styles.warningIconBox}>
-              <Ionicons name="warning-outline" size={34} color={colors.light.primary} />
+              <Ionicons name="warning-outline" size={34} color={theme.colors.primary} />
             </View>
-            <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 17, color: colors.light.foreground }}>
+            <Text style={{ fontFamily: theme.fonts.sansSemiBold, fontSize: 17, color: theme.colors.foreground }}>
               {app ? "App session unavailable" : "App unavailable"}
             </Text>
             <Text
               style={{
-                marginTop: spacing.sm,
-                fontFamily: fonts.sans,
+                marginTop: theme.spacing.sm,
+                fontFamily: theme.fonts.sans,
                 fontSize: 14,
                 lineHeight: 20,
-                color: colors.light.mutedForeground,
+                color: theme.colors.mutedForeground,
                 textAlign: "center",
               }}
             >
@@ -195,55 +189,55 @@ export default function RuntimeScreen() {
             <Pressable
               onPress={fetchApp}
               style={({ pressed }) => ({
-                marginTop: spacing.lg,
-                borderRadius: radius.lg,
+                marginTop: theme.spacing.lg,
+                borderRadius: theme.radius.lg,
                 borderCurve: "continuous",
-                backgroundColor: colors.light.primary,
-                paddingHorizontal: spacing.xl,
-                paddingVertical: spacing.md,
+                backgroundColor: theme.colors.primary,
+                paddingHorizontal: theme.spacing.xl,
+                paddingVertical: theme.spacing.md,
                 opacity: pressed ? 0.82 : 1,
               })}
             >
-              <Text style={{ fontFamily: fonts.sansSemiBold, color: colors.light.primaryForeground }}>
+              <Text style={{ fontFamily: theme.fonts.sansSemiBold, color: theme.colors.primaryForeground }}>
                 Retry
               </Text>
             </Pressable>
             <Pressable
-              onPress={() => router.replace("/(tabs)/apps" as any)}
+              onPress={goHome}
               style={({ pressed }) => ({
-                marginTop: spacing.sm,
-                borderRadius: radius.lg,
+                marginTop: theme.spacing.sm,
+                borderRadius: theme.radius.lg,
                 borderCurve: "continuous",
                 borderWidth: 1,
-                borderColor: colors.light.border,
-                backgroundColor: colors.light.card,
-                paddingHorizontal: spacing.xl,
-                paddingVertical: spacing.md,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.card,
+                paddingHorizontal: theme.spacing.xl,
+                paddingVertical: theme.spacing.md,
                 opacity: pressed ? 0.82 : 1,
               })}
             >
-              <Text style={{ fontFamily: fonts.sansSemiBold, color: colors.light.foreground }}>
+              <Text style={{ fontFamily: theme.fonts.sansSemiBold, color: theme.colors.foreground }}>
                 Apps
               </Text>
             </Pressable>
           </View>
         )}
       </View>
-    </>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   warningIconBox: {
     width: 72,
     height: 72,
     borderRadius: 18,
     borderCurve: "continuous",
-    backgroundColor: colors.light.card,
+    backgroundColor: theme.colors.card,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: spacing.lg,
+    marginBottom: theme.spacing.lg,
   },
-});
+}));

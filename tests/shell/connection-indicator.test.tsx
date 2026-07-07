@@ -3,7 +3,7 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useConnectionHealth } from "../../shell/src/hooks/useConnectionHealth.js";
+import { resetConnectionHealthState, setConnectionHealthState } from "../../shell/src/hooks/useConnectionHealth.js";
 import { ConnectionIndicator } from "../../shell/src/components/ConnectionIndicator.js";
 import { resolveConnectionCopy } from "../../shell/src/components/connection-indicator-copy.js";
 
@@ -37,7 +37,7 @@ describe("ConnectionIndicator", () => {
     vi.unstubAllGlobals();
     mocks.manualReconnect.mockReset();
     act(() => {
-      useConnectionHealth.setState({ state: "initializing" });
+      resetConnectionHealthState();
     });
   });
 
@@ -46,7 +46,7 @@ describe("ConnectionIndicator", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     act(() => {
-      useConnectionHealth.setState({ state: "initializing" });
+      setConnectionHealthState("initializing");
     });
 
     render(<ConnectionIndicator />);
@@ -62,7 +62,7 @@ describe("ConnectionIndicator", () => {
   it("shows the warning if initial connection exceeds the grace period", async () => {
     vi.useFakeTimers();
     act(() => {
-      useConnectionHealth.setState({ state: "initializing" });
+      setConnectionHealthState("initializing");
     });
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("gateway down"))));
 
@@ -77,9 +77,67 @@ describe("ConnectionIndicator", () => {
     expect(screen.getByText("Checking connection")).toBeTruthy();
   });
 
+  it("keeps short post-connect reconnect blips invisible", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    act(() => {
+      setConnectionHealthState("connected");
+    });
+
+    render(<ConnectionIndicator />);
+
+    act(() => {
+      setConnectionHealthState("reconnecting");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_999);
+    });
+
+    expect(screen.queryByRole("status", { name: /matrix connection status/i })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    act(() => {
+      setConnectionHealthState("connected");
+    });
+
+    expect(screen.queryByRole("status", { name: /matrix connection status/i })).toBeNull();
+  });
+
+  it("surfaces sustained post-connect reconnects after the quiet window", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.reject(new Error("gateway down")));
+    vi.stubGlobal("fetch", fetchMock);
+    act(() => {
+      setConnectionHealthState("connected");
+    });
+
+    render(<ConnectionIndicator />);
+
+    act(() => {
+      setConnectionHealthState("reconnecting");
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_999);
+    });
+
+    expect(screen.queryByRole("status", { name: /matrix connection status/i })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("status", { name: /matrix connection status/i })).toBeTruthy();
+    expect(screen.getByText("Matrix is reconnecting")).toBeTruthy();
+    expect(screen.getByText(/keeping your workspace open/i)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
   it("describes gateway-online reconnects instead of a generic reconnecting label", async () => {
     act(() => {
-      useConnectionHealth.setState({ state: "reconnecting" });
+      setConnectionHealthState("reconnecting");
     });
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -104,7 +162,7 @@ describe("ConnectionIndicator", () => {
 
   it("shows the runtime version even when the gateway omits a release channel", async () => {
     act(() => {
-      useConnectionHealth.setState({ state: "reconnecting" });
+      setConnectionHealthState("reconnecting");
     });
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -124,7 +182,7 @@ describe("ConnectionIndicator", () => {
 
   it("shows an update/restart state when the gateway is unavailable", async () => {
     act(() => {
-      useConnectionHealth.setState({ state: "reconnecting" });
+      setConnectionHealthState("reconnecting");
     });
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("gateway down"))));
 
@@ -143,7 +201,7 @@ describe("ConnectionIndicator", () => {
 
   it("lets users manually retry a disconnected live socket", async () => {
     act(() => {
-      useConnectionHealth.setState({ state: "disconnected" });
+      setConnectionHealthState("disconnected");
     });
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("gateway down"))));
 

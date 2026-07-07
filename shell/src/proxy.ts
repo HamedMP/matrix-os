@@ -16,6 +16,7 @@ const authToken = process.env.MATRIX_AUTH_TOKEN;
 const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
 const platformUpgradeToken = process.env.UPGRADE_TOKEN;
 const configuredSignInUrl = process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL;
+const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
 
 interface ProxyRequestLike {
   headers: Headers;
@@ -125,6 +126,24 @@ export function proxy(
   // built app with production semantics. Use the explicit bypass flag alone so
   // screenshot runs can skip auth without depending on NODE_ENV.
   if (process.env.E2E_TEST_BYPASS === "1") {
+    if (isGatewayProxy(request)) {
+      return rewriteGatewayRequest(request);
+    }
+    return NextResponse.next();
+  }
+  // Standalone installs are protected at the local reverse proxy layer
+  // (nginx Basic Auth by default). The shell still injects the internal gateway
+  // bearer for same-origin API/file/WebSocket requests.
+  if (selfHostedMode) {
+    if (
+      request.headers.has(MATRIX_NATIVE_APP_SESSION_HEADER) ||
+      request.headers.has(MATRIX_PLATFORM_SESSION_HEADER)
+    ) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+    if (isGatewayProxy(request)) {
+      return rewriteGatewayRequest(request);
+    }
     return NextResponse.next();
   }
   // Platform already verified the Clerk session. Handle this before invoking

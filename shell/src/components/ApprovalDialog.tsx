@@ -39,10 +39,17 @@ export function ApprovalDialog() {
   const { subscribe, send } = useSocket();
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const deadlineRef = useRef(0);
+  const seenApprovalReplayKeysRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     return subscribe((msg: ServerMessage) => {
       if (msg.type === "approval:request") {
+        if (!seenApprovalReplayKeysRef.current) {
+          seenApprovalReplayKeysRef.current = new Set();
+        }
+        const replayKey = msg.eventId ?? msg.id;
+        if (seenApprovalReplayKeysRef.current.has(replayKey)) return;
+        seenApprovalReplayKeysRef.current.add(replayKey);
         setRequest({
           id: msg.id,
           toolName: msg.toolName,
@@ -74,7 +81,7 @@ export function ApprovalDialog() {
 
   const respond = (approved: boolean) => {
     if (!request) return;
-    send({ type: "approval_response", id: request.id, approved } as any);
+    send({ type: "approval_response", id: request.id, approved });
     setRequest(null);
   };
 

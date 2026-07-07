@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Desktop } from "../../shell/src/components/Desktop.js";
 import type { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import type { useDesktopConfigStore } from "../../shell/src/stores/desktop-config.js";
 import type { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
+import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: () => undefined,
@@ -107,6 +108,14 @@ function jsonResponse(body: unknown) {
   }));
 }
 
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 type DesktopComponentType = typeof Desktop;
 type DesktopModeStore = typeof useDesktopMode;
 type DesktopConfigStore = typeof useDesktopConfigStore;
@@ -185,14 +194,95 @@ describe("Desktop launcher dock button by mode", () => {
     expect(await screen.findByTestId("dock-tasks")).toBeTruthy();
   });
 
-  it("hides the launcher in developer mode", async () => {
+  it("keeps the launcher visible in developer mode", async () => {
     resetShellMode("dev", true);
 
     render(<DesktopComponent />);
 
     await waitFor(() => {
-      expect(screen.queryByTestId("dock-tasks")).toBeNull();
+      expect(screen.getByTestId("dock-tasks")).toBeTruthy();
       expect(screen.getByTestId("dock-settings")).toBeTruthy();
+    });
+  });
+
+  it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    saveShellSnapshot(scope, {
+      bootstrap: {
+        layout: { windows: [] },
+        modules: [],
+        apps: [{ name: "Cached Notes", path: "/files/apps/notes/index.html", icon: "notes", slug: "notes" }],
+        icons: { notes: { url: "/icons/notes.png", etag: "\"abc\"", versionedUrl: "/icons/notes.png?v=abc" } },
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) return new Promise(() => undefined);
+      return jsonResponse({});
+    }));
+    resetShellMode("dev", true);
+
+    render(<DesktopComponent cacheScope={scope} />);
+
+    await waitFor(() => {
+      expect(windowManagerStore.getState().apps.some((app) => app.path === "apps/notes/index.html")).toBe(true);
+    });
+  });
+
+  it("ignores stale bootstrap responses after cache scope changes", async () => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
+    expect(scope).not.toBeNull();
+    const firstBootstrap = deferredResponse();
+    const secondBootstrap = deferredResponse();
+    const pendingBootstrap = [firstBootstrap, secondBootstrap];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/shell/bootstrap")) {
+        const next = pendingBootstrap.shift();
+        if (!next) return jsonResponse({ layout: { windows: [] }, apps: [], modules: [] });
+        return next.promise;
+      }
+      return jsonResponse({});
+    }));
+    resetShellMode("dev", true);
+
+    const { rerender } = render(<DesktopComponent />);
+    await waitFor(() => {
+      expect(pendingBootstrap).toHaveLength(1);
+    });
+
+    rerender(<DesktopComponent cacheScope={scope} />);
+    await waitFor(() => {
+      expect(pendingBootstrap).toHaveLength(0);
+    });
+
+    await act(async () => {
+      secondBootstrap.resolve(new Response(JSON.stringify({
+        layout: { windows: [] },
+        apps: [{ name: "Fresh Notes", path: "/files/apps/fresh/index.html", icon: "fresh", slug: "fresh" }],
+        modules: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+
+    await waitFor(() => {
+      expect(windowManagerStore.getState().apps.some((app) => app.path === "apps/fresh/index.html")).toBe(true);
+    });
+
+    await act(async () => {
+      firstBootstrap.resolve(new Response(JSON.stringify({
+        layout: { windows: [] },
+        apps: [{ name: "Stale Notes", path: "/files/apps/stale/index.html", icon: "stale", slug: "stale" }],
+        modules: [],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+
+    await waitFor(() => {
+      const appPaths = windowManagerStore.getState().apps.map((app) => app.path);
+      expect(appPaths).toContain("apps/fresh/index.html");
+      expect(appPaths).not.toContain("apps/stale/index.html");
     });
   });
 });

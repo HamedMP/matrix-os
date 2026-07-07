@@ -146,13 +146,27 @@ describe("installGatewayCors", () => {
     expect(scriptDirective(csp)).toBe("script-src 'self'");
   });
 
-  it("allows Vite React Refresh inline preamble only for localhost development renderers", () => {
-    const localhostCsp = buildRendererCsp(GATEWAY, "http://127.0.0.1:5173");
-    const otherLoopbackCsp = buildRendererCsp(GATEWAY, "http://127.0.0.1:9000");
-    const remoteCsp = buildRendererCsp(GATEWAY, "https://preview.example.com");
+  it("allows Vite React Refresh inline preamble for localhost development renderers with explicit ports", () => {
+    const localhostCsp = buildRendererCsp(GATEWAY, "http://localhost:3000");
+    const loopbackCsp = buildRendererCsp(GATEWAY, "http://127.0.0.1:5173");
+    const ipv6LoopbackCsp = buildRendererCsp(GATEWAY, "http://[::1]:5173");
 
     expect(scriptDirective(localhostCsp)).toBe("script-src 'self' 'unsafe-inline'");
-    expect(scriptDirective(otherLoopbackCsp)).toBe("script-src 'self'");
+    expect(scriptDirective(loopbackCsp)).toBe("script-src 'self' 'unsafe-inline'");
+    expect(scriptDirective(ipv6LoopbackCsp)).toBe("script-src 'self' 'unsafe-inline'");
+  });
+
+  it("keeps non-dev renderer scripts strict", () => {
+    const productionCsp = buildRendererCsp(GATEWAY, "https://app.matrix-os.com");
+    const packagedCsp = buildRendererCsp(GATEWAY, "null");
+    const remoteHttpCsp = buildRendererCsp(GATEWAY, "http://192.0.2.10:5173");
+    const portlessLocalhostCsp = buildRendererCsp(GATEWAY, "http://localhost");
+    const remoteCsp = buildRendererCsp(GATEWAY, "https://preview.example.com");
+
+    expect(scriptDirective(productionCsp)).toBe("script-src 'self'");
+    expect(scriptDirective(packagedCsp)).toBe("script-src 'self'");
+    expect(scriptDirective(remoteHttpCsp)).toBe("script-src 'self'");
+    expect(scriptDirective(portlessLocalhostCsp)).toBe("script-src 'self'");
     expect(scriptDirective(remoteCsp)).toBe("script-src 'self'");
   });
 });

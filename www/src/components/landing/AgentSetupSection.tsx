@@ -63,7 +63,7 @@ export function AgentSetupSection() {
                   <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
                 </a>
                 <Link
-                  href="/docs/users/quickstart"
+                  href="/docs/quickstart"
                   className="group inline-flex items-center gap-1.5 text-[0.9375rem] font-medium transition-opacity hover:opacity-70"
                   style={{ color: c.forest }}
                 >

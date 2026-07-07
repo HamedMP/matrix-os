@@ -607,7 +607,7 @@ describe("PostHog error tracking", () => {
     expect(shellPostHogClient).not.toContain("__loaded");
 
     const wwwPostHogClient = await readFile("www/src/lib/posthog-client.ts", "utf8");
-    expect(wwwPostHogClient).toContain("ensurePostHogInitialized(config)");
+    expect(wwwPostHogClient).toContain("ensurePostHogInitialized(posthog, config)");
     expect(wwwPostHogClient).toContain("posthog.init(currentConfig.token");
     expect(wwwPostHogClient).toContain("buildPostHogCookieConsentInitOptions");
     expect(wwwPostHogClient).not.toContain("__loaded");
@@ -706,9 +706,11 @@ describe("PostHog error tracking", () => {
     expect(landingPage).toContain("<SiteHeader />");
     expect(siteHeader).toContain('data-ph-event="marketing_cta_clicked"');
     expect(ctaPrimitives).toContain('"data-ph-event": "marketing_cta_clicked"');
-    expect(landingTelemetry).toContain('"marketing_landing_viewed"');
+    expect(landingTelemetry).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_LANDING_VIEWED");
+    expect(landingTelemetry).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_SIGNUP_CLICKED");
     expect(landingTelemetry).toContain("[data-ph-event]");
-    expect(landingBilling).toContain('"marketing_billing_viewed"');
+    expect(landingBilling).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_VIEWED");
+    expect(landingBilling).toContain("MATRIX_TELEMETRY_EVENTS.MARKETING_BILLING_PLAN_CLICKED");
     expect(landingBilling).toContain('"marketing_billing_cta_clicked"');
     expect(landingBilling).toContain('"stripe_static_plans"');
   });
@@ -817,12 +819,12 @@ describe("PostHog error tracking", () => {
   });
 
   it("allows only explicit public PostHog telemetry aliases to provisioned containers", async () => {
-    const platformMain = await readFile("packages/platform/src/main.ts", "utf8");
+    const platformStartupEnv = await readFile("packages/platform/src/platform-startup-env.ts", "utf8");
 
-    expect(platformMain).toContain("TENANT_PUBLIC_TELEMETRY_ENV_KEYS");
-    expect(platformMain).toContain("'POSTHOG_TOKEN'");
-    expect(platformMain).toContain("'POSTHOG_PROJECT_TOKEN'");
-    expect(platformMain).not.toContain("'CLERK_SECRET_KEY'");
+    expect(platformStartupEnv).toContain("TENANT_PUBLIC_TELEMETRY_ENV_KEYS");
+    expect(platformStartupEnv).toContain("'POSTHOG_TOKEN'");
+    expect(platformStartupEnv).toContain("'POSTHOG_PROJECT_TOKEN'");
+    expect(platformStartupEnv).not.toContain("'CLERK_SECRET_KEY'");
   });
 
   it("bakes public PostHog env into full-image compose shell builds", async () => {
@@ -877,7 +879,11 @@ describe("PostHog error tracking", () => {
 
     for (const file of consumerPackages) {
       const packageJson = JSON.parse(await readFile(file, "utf8")) as { scripts: Record<string, string> };
-      expect(packageJson.scripts.build, file).toContain("@matrix-os/observability' build &&");
+      const buildScript = packageJson.scripts.build;
+      const observabilityBuildIndex = buildScript.indexOf("--filter '@matrix-os/observability'");
+      const consumerBuildIndex = buildScript.indexOf("&&");
+      expect(observabilityBuildIndex, file).toBeGreaterThanOrEqual(0);
+      expect(consumerBuildIndex, file).toBeGreaterThan(observabilityBuildIndex);
     }
 
     const rootPackage = JSON.parse(await readFile("package.json", "utf8")) as {
@@ -899,11 +905,12 @@ describe("PostHog error tracking", () => {
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {
-    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, proxyMain, wwwServer] = await Promise.all([
+    const [gatewaySocial, gatewayServer, platformSocialApi, platformMain, platformStartup, proxyMain, wwwServer] = await Promise.all([
       readFile("packages/gateway/src/social.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
       readFile("packages/platform/src/social-api.ts", "utf8"),
       readFile("packages/platform/src/main.ts", "utf8"),
+      readFile("packages/platform/src/platform-startup.ts", "utf8"),
       readFile("packages/proxy/src/main.ts", "utf8"),
       readFile("www/src/lib/posthog-server.ts", "utf8"),
     ]);
@@ -911,7 +918,7 @@ describe("PostHog error tracking", () => {
     expect(gatewaySocial).toContain("shutdownPostHog");
     expect(gatewayServer).toContain("await socialRoutes?.shutdownPostHog()");
     expect(platformSocialApi).toContain("shutdownPostHog");
-    expect(platformMain).toContain("await app.shutdownPostHog()");
+    expect(platformStartup).toContain("await app.shutdownPostHog()");
     expect(platformMain).toContain("await Promise.allSettled(posthogShutdowns.map((shutdownPostHog) => shutdownPostHog()))");
     expect(platformMain).not.toContain("for (let i = posthogShutdowns.length - 1");
     expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");

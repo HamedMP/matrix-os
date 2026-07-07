@@ -49,6 +49,7 @@ describe('platform/customer-vps-cloud-init', () => {
     clerkUserId: 'user_123',
     handle: 'alice',
     runtimeSlot: 'staging',
+    developerTools: 'codex claude-code opencode pi',
     imageVersion: 'stable',
     updateChannel: 'stable',
     hostBundleUrl: 'https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
@@ -66,7 +67,8 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogToken: 'phc_public',
     posthogProjectToken: 'phc_project',
     posthogHost: 'https://eu.i.posthog.com',
-    posthogApiHost: '/ingest',
+    posthogPublicHost: 'https://eu.posthog.com',
+    posthogApiHost: '/relay',
   };
 
   function runMatrixctlExistsWithFakeAws(exitCode: number, stderr: string) {
@@ -213,8 +215,8 @@ exit 99
     expect(rendered).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
     expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
     expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
-    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
-    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.posthog.com');
+    expect(rendered).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/relay');
   });
 
   it('renders valid YAML for the production customer cloud-init', () => {
@@ -255,35 +257,82 @@ exit 99
   it('starts Matrix services before optional Hermes install work', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const codeServerBlock = cloudInit.slice(
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-sync-agent.service'),
+    );
 
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-hermes.service');
     expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-hermes');
     expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
+    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-code-server.service');
+    expect(codeServerBlock).toContain('Description=Install Matrix OS code-server runtime');
+    expect(codeServerBlock).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeServerBlock).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
+      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
+    );
+    expect(cloudInit).not.toContain(
       'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
     );
+    expect(cloudInit).toContain('systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2');
     expect(cloudInit.indexOf('systemctl start matrix-restore.service matrix-gateway.service')).toBeLessThan(
       cloudInit.indexOf('systemctl start --no-block matrix-hermes.service'),
     );
+    expect(cloudInit.indexOf('systemctl start --no-block matrix-hermes.service')).toBeLessThan(
+      cloudInit.indexOf('systemctl start --no-block matrix-hermes-dashboard.service'),
+    );
     expect(cloudInit).not.toContain('\n    /opt/matrix/bin/matrix-install-hermes\n');
+  });
+
+  it('stages and enables the Hermes dashboard loopback service', () => {
+    const root = process.cwd();
+    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
+    const buildScript = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const wrapper = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-hermes-dashboard'), 'utf8');
+    const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-hermes-dashboard.service'), 'utf8');
+
+    expect(wrapper).toContain('source /opt/matrix/env/host.env');
+    expect(wrapper).toContain('source /opt/matrix/bin/matrix-owner-env');
+    expect(wrapper).toContain('HERMES_BIN=');
+    expect(wrapper).toContain('dashboard --host 127.0.0.1 --port 9119');
+    expect(wrapper).toContain('exit 0');
+
+    expect(unit).toContain('Description=Matrix OS Hermes dashboard API (loopback)');
+    expect(unit).toContain('After=matrix-hermes.service network-online.target');
+    expect(unit).toContain('Wants=network-online.target');
+    expect(unit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-hermes-dashboard');
+    expect(unit).toContain('User=matrix');
+    expect(unit).toContain('Group=matrix');
+    expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-hermes-dashboard');
+    expect(unit).toContain('Restart=on-failure');
+
+    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-hermes-dashboard.service');
+    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-hermes-dashboard');
+
+    expect(buildScript).toContain('"$STAGE_DIR/bin/matrix-hermes-dashboard"');
   });
 
   it('loads the production customer VPS cloud-init template', async () => {
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
     expect(cloudInit).toContain('systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
     expect(cloudInit).toContain('messaging runtimes not installed; units installed but not enabled');
-    expect(cloudInit).toContain('for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
+    expect(cloudInit).toContain('for optional_bin in matrix-hermes-dashboard matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do');
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
@@ -345,18 +394,38 @@ exit 99
     expect(buildScript).toContain('scripts/sync-matrix-agent-skills.sh');
     expect(buildScript).toContain('cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"');
     expect(toolPackInstaller).toContain('install_coding_agents()');
+    expect(toolPackInstaller).toContain('finish_agent_install()');
     expect(toolPackInstaller).toContain('install_code_server()');
     expect(toolPackInstaller).toContain('@anthropic-ai/claude-code@latest');
     expect(toolPackInstaller).toContain('@openai/codex@latest');
     expect(toolPackInstaller).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
     expect(toolPackInstaller).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
     expect(toolPackInstaller).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
-    expect(toolPackInstaller).toContain('"$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX"');
+    expect(toolPackInstaller).toContain('run_npm_install()');
+    expect(toolPackInstaller).toContain('resolve_runtime_user()');
+    expect(toolPackInstaller).toContain('runtime user ${MATRIX_RUNTIME_USER} not found; using current user ${current_user}');
+    expect(toolPackInstaller).toContain('run_as_matrix "$timeout_bin" 900 "$NODE_PREFIX/bin/npm" "$@"');
+    expect(toolPackInstaller).toContain('run_npm_install install -g --ignore-scripts --prefix "$NODE_PREFIX"');
     expect(toolPackInstaller).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
+    expect(toolPackInstaller).toContain('node_prefix_chmod()');
+    expect(toolPackInstaller).toContain('if ! command -v flock >/dev/null 2>&1; then');
+    expect(toolPackInstaller).toContain('install_claude_code_package()');
+    expect(toolPackInstaller).toContain('install_codex_package()');
+    expect(toolPackInstaller).toContain('install_opencode_package()');
+    expect(toolPackInstaller).toContain('install_pi_package()');
+    expect(toolPackInstaller).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
+    expect(toolPackInstaller).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
+    expect(toolPackInstaller).toContain('claude-code) with_pack_lock "$pack" install_claude_code ;;');
+    expect(toolPackInstaller).toContain('codex) with_pack_lock "$pack" install_codex ;;');
+    expect(toolPackInstaller).toContain('opencode) with_pack_lock "$pack" install_opencode ;;');
+    expect(toolPackInstaller).toContain('pi) with_pack_lock "$pack" install_pi ;;');
     expect(toolPackInstaller).toContain('CODE_SERVER_VERSION="${HOST_BUNDLE_CODE_SERVER_VERSION:-4.116.0}"');
     expect(toolPackInstaller).toContain('CODE_SERVER_URL="https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/${CODE_SERVER_ARCHIVE}"');
     expect(toolPackInstaller).toContain('runtime/code-server');
     expect(toolPackInstaller).toContain('/opt/matrix/runtime/code-server/bin/code-server "$@"');
+    expect(cloudInit).toContain("MATRIX_DEVELOPER_TOOLS='{{developerTools}}'");
+    expect(cloudInit).toContain('matrix-developer-tools.service');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-developer-tools.service');
     expect(cloudInit).toContain('path: /etc/profile.d/matrix-runtime.sh');
     expect(cloudInit).toContain('export MATRIX_HOME="${MATRIX_HOME:-/home/matrix/home}"');
     expect(cloudInit).toContain('export HOME="$MATRIX_HOME"');
@@ -447,12 +516,32 @@ exit 99
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const code = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-code'), 'utf8');
+    const codeUnitBlock = cloudInit.slice(
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-code.service'),
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
+    );
+    const codeServerBlock = cloudInit.slice(
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
+      cloudInit.indexOf('path: /etc/systemd/system/matrix-sync-agent.service'),
+    );
 
-    expect(cloudInit).toContain('Description=Matrix OS customer code editor');
-    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-code');
-    expect(cloudInit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
-    expect(cloudInit).toContain('ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeUnitBlock).toContain('Description=Matrix OS customer code editor');
+    expect(codeUnitBlock).toContain('After=matrix-restore.service');
+    expect(codeUnitBlock).not.toContain('After=matrix-restore.service matrix-code-server.service');
+    expect(codeUnitBlock).not.toContain('Wants=matrix-code-server.service');
+    expect(codeUnitBlock).toContain('ExecStart=/opt/matrix/bin/matrix-code');
+    expect(codeUnitBlock).toContain('TimeoutStartSec=1800');
+    expect(codeUnitBlock).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
+    expect(codeUnitBlock).not.toContain('ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeServerBlock).toContain('Description=Install Matrix OS code-server runtime');
+    expect(codeServerBlock).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(codeServerBlock).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(code).toContain('MATRIX_CODE_PROXY_TOKEN');
+    expect(code).toContain('matrix-code: code-server is missing; attempting install');
+    expect(code).toContain('sudo -n /opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(code).toContain('matrix-code: code-server install already running; waiting');
+    expect(code).toContain('for _ in $(seq 1 180); do');
     expect(code).toContain('code-server');
     expect(code).toContain('crypto.timingSafeEqual');
   });
@@ -578,7 +667,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

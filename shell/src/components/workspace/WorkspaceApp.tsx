@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { BotIcon, CodeIcon, GitBranchIcon, PanelRightOpenIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { getGatewayUrl } from "@/lib/gateway";
+import { getCodeEditorUrl } from "@/lib/feature-flags";
 
 const GATEWAY_URL = getGatewayUrl();
 const FETCH_TIMEOUT_MS = 10_000;
@@ -402,7 +403,7 @@ export function WorkspaceApp({ initialProjectSlug }: WorkspaceAppProps) {
       .some((value) => value.toLowerCase().includes(normalizedSessionSearch));
   });
   const ideFolder = selectedProject?.localPath ?? (activeSlug ? `/home/matrixos/home/projects/${activeSlug}` : "/home/matrixos/home");
-  const ideHref = `https://code.matrix-os.com/?folder=${encodeURIComponent(ideFolder)}`;
+  const ideHref = getCodeEditorUrl(ideFolder);
 
   return (
     <div

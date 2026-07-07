@@ -1,33 +1,29 @@
 import type { Metadata } from "next";
-import { ClerkProvider, SignIn } from "@clerk/nextjs";
-import { AuthLayout } from "@/components/auth/AuthLayout";
-import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
-import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
-import { PostHogIdentify } from "@/components/PostHogIdentify";
+import { redirect } from "next/navigation";
+
+type LoginAliasPageProps = {
+  params: Promise<{
+    login?: string[];
+  }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
 
 export const metadata: Metadata = {
   title: "Log in",
   description: "Sign in to your Matrix OS account and continue to your cloud computer.",
 };
 
-export default function LoginPage() {
-  return (
-    <ClerkProvider>
-      <AuthLayout
-        featureContent={
-          <FeatureShowcase
-            heading="Welcome back"
-            subheading="Sign in to your Matrix account, then continue to your cloud computer when it is provisioned."
-          />
-        }
-        formContent={
-          <SignIn
-            fallbackRedirectUrl="/dashboard"
-            appearance={matrixClerkAppearance}
-          />
-        }
-      />
-      <PostHogIdentify />
-    </ClerkProvider>
-  );
+export default async function LoginPage({ params, searchParams }: LoginAliasPageProps) {
+  const segments = (await params).login ?? [];
+  const suffix = segments.length > 0 ? `/${segments.map(encodeURIComponent).join("/")}` : "";
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (Array.isArray(value)) {
+      for (const item of value) query.append(key, item);
+    } else if (value !== undefined) {
+      query.set(key, value);
+    }
+  }
+  const queryString = query.toString();
+  redirect(`/sign-in${suffix}${queryString ? `?${queryString}` : ""}`);
 }

@@ -14,6 +14,14 @@ function deviceReturnTargetFromRedirectPath(redirectTarget: string): string {
   }
 }
 
+export function buildBillingSetupTarget(appShellOrigin: string, redirectTarget: string): string {
+  const url = new URL('/', appShellOrigin);
+  url.searchParams.set('billing', 'setup');
+  const deviceReturnTarget = deviceReturnTargetFromRedirectPath(redirectTarget);
+  if (deviceReturnTarget) url.searchParams.set('device_return', deviceReturnTarget);
+  return url.toString();
+}
+
 export function escapeHtmlAttr(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -39,11 +47,13 @@ export function getAuthPage(
   mode: 'sign-in' | 'sign-up',
   scriptNonce: string,
   redirectTarget: string,
+  appShellOrigin: string,
 ) {
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
   const deviceReturnTargetJson = escapeInlineScriptJson(deviceReturnTargetFromRedirectPath(redirectTarget));
   const signOutTargetJson = escapeInlineScriptJson(mode === 'sign-up' ? '/sign-up' : '/sign-in');
+  const billingSetupTargetJson = escapeInlineScriptJson(buildBillingSetupTarget(appShellOrigin, redirectTarget));
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
   const modeDetail = mode === 'sign-up'
     ? 'Start with a free account. The 3-day hosted Matrix trial begins only when you provision your cloud computer.'
@@ -182,6 +192,10 @@ export function getAuthPage(
       padding: 32px;
       backdrop-filter: blur(14px);
     }
+    .auth-card.default-installs-card {
+      max-width: 860px;
+      align-items: stretch;
+    }
     #auth { width: 100%; min-height: 400px; display: flex; align-items: center; justify-content: center; }
     .loading { color: #7A7768; font-size: 14px; }
     .session-state {
@@ -225,11 +239,191 @@ export function getAuthPage(
       background: #D06F25;
       color: #fffdf6;
     }
+    .default-installs-state {
+      gap: 16px;
+      max-width: 100%;
+    }
+    .install-hero {
+      border: 1px solid rgba(67,78,63,0.15);
+      border-radius: 22px;
+      background: #fbf7ed;
+      box-shadow: 0 24px 80px rgba(50,53,46,0.12);
+      padding: 20px 22px;
+    }
+    .install-kicker {
+      margin: 0 0 8px;
+      color: rgba(67,78,63,0.6);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+    .install-title {
+      margin: 0;
+      color: #32352E;
+      font-size: 30px;
+      line-height: 1.08;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+    .install-detail {
+      margin: 10px 0 0;
+      max-width: 560px;
+      color: rgba(67,78,63,0.7);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .developer-tools-panel {
+      border: 1px solid rgba(67,78,63,0.12);
+      border-radius: 22px;
+      background: rgba(255,255,255,0.86);
+      padding: 14px;
+    }
+    .developer-tools-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+      padding: 0 4px;
+    }
+    .developer-tools-header h3 {
+      margin: 0;
+      color: #32352E;
+      font-size: 14px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+    .developer-tools-header p {
+      margin: 0;
+      color: rgba(67,78,63,0.45);
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: right;
+    }
+    .developer-tool-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .developer-tool-option {
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid rgba(67,78,63,0.1);
+      border-radius: 14px;
+      background: #fff;
+      color: #32352E;
+      cursor: pointer;
+      padding: 10px 12px;
+      transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+    }
+    .developer-tool-option.selected {
+      border-color: #D06F25;
+      background: #fff7ec;
+      box-shadow: 0 10px 24px rgba(83,68,48,0.10);
+    }
+    .developer-tool-copy {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .developer-tool-logo {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      flex: none;
+      border: 1px solid rgba(67,78,63,0.1);
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(50,53,46,0.12);
+      color: #32352E;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .developer-tool-logo svg {
+      width: 20px;
+      height: 20px;
+      display: block;
+      fill: currentColor;
+    }
+    .developer-tool-logo svg[viewBox="0 0 800 800"] {
+      width: 22px;
+      height: 22px;
+    }
+    .developer-tool-name {
+      overflow: hidden;
+      color: #32352E;
+      font-size: 14px;
+      font-weight: 650;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .developer-tool-option input {
+      width: 16px;
+      height: 16px;
+      flex: none;
+      accent-color: #D06F25;
+    }
+    .default-installs-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .default-installs-footer p {
+      margin: 0;
+      color: rgba(67,78,63,0.55);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .default-installs-actions {
+      display: flex;
+      flex: none;
+      align-items: center;
+      gap: 10px;
+    }
+    .default-installs-actions button {
+      min-height: 44px;
+      border: 1px solid #C9C4B8;
+      border-radius: 14px;
+      background: rgba(250,250,245,0.76);
+      color: #32352E;
+      cursor: pointer;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 650;
+      padding: 0 18px;
+    }
+    .default-installs-actions button.primary {
+      border-color: #434E3F;
+      background: #434E3F;
+      color: #fffdf6;
+      box-shadow: 0 14px 30px rgba(63,74,58,0.18);
+    }
     @media (max-width: 860px) {
       .page { grid-template-columns: 1fr; }
       .story { min-height: 42vh; border-right: 0; border-bottom: 1px solid #D6D3C8; padding: 40px 24px; }
       .auth-panel { padding: 28px 20px 44px; }
       .auth-card { max-width: 440px; padding: 24px; }
+      .auth-card.default-installs-card { max-width: 860px; }
+      .developer-tools-header { align-items: flex-start; flex-direction: column; gap: 4px; }
+      .developer-tools-header p { text-align: left; }
+      .developer-tool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .default-installs-footer { align-items: stretch; flex-direction: column; }
+      .default-installs-actions { justify-content: flex-end; }
+    }
+    @media (max-width: 520px) {
+      .install-title { font-size: 26px; }
+      .developer-tool-grid { grid-template-columns: 1fr; }
+      .default-installs-actions { flex-direction: column; }
+      .default-installs-actions button { width: 100%; }
     }
   </style>
 </head>
@@ -267,10 +461,18 @@ export function getAuthPage(
     var redirectTarget = ${redirectTargetJson};
     var deviceReturnTarget = ${deviceReturnTargetJson};
     var signOutTarget = ${signOutTargetJson};
+    var billingSetupTarget = ${billingSetupTargetJson};
     var SIGN_OUT_TIMEOUT_MS = ${BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS};
     var requestedRuntime = new URLSearchParams(redirectTarget.split('?')[1] || '').get('runtime');
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
     var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
+    var defaultDeveloperTools = ['codex', 'claude-code', 'opencode', 'pi'];
+    var developerToolLogos = {
+      codex: '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>OpenAI</title><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>',
+      'claude-code': '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Anthropic</title><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>',
+      opencode: '<svg role="img" aria-labelledby="opencode-title" viewBox="0 0 300 300" fill="none" xmlns="http://www.w3.org/2000/svg"><title id="opencode-title">OpenCode</title><g transform="translate(30 0)"><path d="M180 240H60V120H180V240Z" fill="#F7F3EF"/><path d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="#181616"/></g></svg>',
+      pi: '<svg role="img" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg"><title>Pi</title><rect width="800" height="800" rx="120" fill="#09090b"/><path fill="#fff" fill-rule="evenodd" d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"/><path fill="#fff" d="M517.36 400 H634.72 V634.72 H517.36 Z"/></svg>'
+    };
     function hasTrustedCheckoutReturn() {
       try {
         var rawAttemptAt = window.sessionStorage.getItem(checkoutAttemptStorageKey);
@@ -344,6 +546,7 @@ export function getAuthPage(
     }
     function renderSessionState(title, detail, primaryLabel, primaryHandler) {
       var el = document.getElementById('auth');
+      setDefaultInstallsCard(false);
       el.innerHTML = '';
 
       var state = document.createElement('div');
@@ -395,6 +598,7 @@ export function getAuthPage(
     }
     function showLoadingState(message) {
       var el = document.getElementById('auth');
+      setDefaultInstallsCard(false);
       el.innerHTML = '';
       var loading = document.createElement('span');
       loading.className = 'loading';
@@ -410,12 +614,133 @@ export function getAuthPage(
       );
     }
     function showNoRuntimeState() {
-      renderSessionState(
-        'No Matrix computer is attached',
-        'This account is signed in, but Matrix could not find an attached cloud computer yet.',
-        'Provision Matrix computer',
-        startProvisioningFromClerkSession
-      );
+      showDefaultInstallsState();
+    }
+    function showDefaultInstallsState() {
+      var el = document.getElementById('auth');
+      setDefaultInstallsCard(true);
+      el.innerHTML = '';
+      var selectedTools = defaultDeveloperTools.slice();
+
+      var state = document.createElement('div');
+      state.className = 'session-state default-installs-state';
+
+      var hero = document.createElement('section');
+      hero.className = 'install-hero';
+      var kicker = document.createElement('p');
+      kicker.className = 'install-kicker';
+      kicker.textContent = 'Default installs';
+      hero.appendChild(kicker);
+      var heading = document.createElement('h2');
+      heading.className = 'install-title';
+      heading.textContent = 'Choose what Matrix installs first';
+      hero.appendChild(heading);
+
+      var detailText = document.createElement('p');
+      detailText.className = 'install-detail';
+      detailText.textContent = 'Choose command-line agents to preinstall on this VPS.';
+      hero.appendChild(detailText);
+      state.appendChild(hero);
+
+      var toolsPanel = document.createElement('section');
+      toolsPanel.className = 'developer-tools-panel';
+      var toolsHeader = document.createElement('div');
+      toolsHeader.className = 'developer-tools-header';
+      var toolsHeading = document.createElement('h3');
+      toolsHeading.textContent = 'Developer tools';
+      toolsHeader.appendChild(toolsHeading);
+      var toolsDetail = document.createElement('p');
+      toolsDetail.textContent = 'Choose command-line agents to preinstall on this VPS.';
+      toolsHeader.appendChild(toolsDetail);
+      toolsPanel.appendChild(toolsHeader);
+
+      var toolList = document.createElement('div');
+      toolList.className = 'developer-tool-grid';
+      defaultDeveloperTools.forEach(function(tool) {
+        var label = document.createElement('label');
+        label.className = 'developer-tool-option selected';
+        var copy = document.createElement('span');
+        copy.className = 'developer-tool-copy';
+        var logo = document.createElement('span');
+        logo.className = 'developer-tool-logo';
+        logo.setAttribute('aria-hidden', 'true');
+        logo.innerHTML = developerToolLogos[tool] || '';
+        var text = document.createElement('span');
+        text.className = 'developer-tool-name';
+        text.textContent = tool === 'claude-code' ? 'Claude Code' : tool === 'opencode' ? 'OpenCode' : tool === 'codex' ? 'Codex' : 'Pi';
+        copy.appendChild(logo);
+        copy.appendChild(text);
+        var input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = true;
+        input.setAttribute('aria-label', text.textContent);
+        input.addEventListener('change', function() {
+          if (input.checked) {
+            if (selectedTools.indexOf(tool) === -1) selectedTools.push(tool);
+            label.classList.add('selected');
+          } else {
+            selectedTools = selectedTools.filter(function(selected) { return selected !== tool; });
+            label.classList.remove('selected');
+          }
+        });
+        label.appendChild(copy);
+        label.appendChild(input);
+        toolList.appendChild(label);
+      });
+      toolsPanel.appendChild(toolList);
+      state.appendChild(toolsPanel);
+
+      var footer = document.createElement('div');
+      footer.className = 'default-installs-footer';
+      var footerText = document.createElement('p');
+      footerText.textContent = 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';
+      footer.appendChild(footerText);
+      var actions = document.createElement('div');
+      actions.className = 'default-installs-actions';
+      var buildButton = document.createElement('button');
+      buildButton.type = 'button';
+      buildButton.className = 'primary';
+      buildButton.textContent = 'Build VPS';
+      buildButton.addEventListener('click', function() {
+        startProvisioningFromClerkSession(selectedTools);
+      });
+      actions.appendChild(buildButton);
+
+      var signOutButton = document.createElement('button');
+      signOutButton.type = 'button';
+      signOutButton.textContent = 'Sign out';
+      signOutButton.addEventListener('click', function() {
+        signOutButton.disabled = true;
+        signOutButton.textContent = 'Signing out...';
+        fetch('/api/auth/app-session', {
+          method: 'DELETE',
+          credentials: 'same-origin'
+        })
+          .catch(function(err) {
+            console.error('[matrix] App session clear failed', err instanceof Error ? err.message : String(err));
+          })
+          .then(function() {
+            return clerkSignOutWithTimeout();
+          })
+          .then(function() {
+            window.location.replace(signOutTarget);
+          })
+          .catch(redirectAfterSignOutIssue);
+      });
+      actions.appendChild(signOutButton);
+      footer.appendChild(actions);
+      state.appendChild(footer);
+      el.appendChild(state);
+    }
+    function setDefaultInstallsCard(active) {
+      var el = document.getElementById('auth');
+      var card = el ? el.closest('.auth-card') : null;
+      if (!card) return;
+      if (active) {
+        card.classList.add('default-installs-card');
+      } else {
+        card.classList.remove('default-installs-card');
+      }
     }
     function showBillingRequiredState() {
       showLoadingState('Opening Billing settings...');
@@ -459,10 +784,9 @@ export function getAuthPage(
       );
     }
     function billingSetupPath() {
-      var url = new URL('/', window.location.origin);
-      url.searchParams.set('billing', 'setup');
-      if (deviceReturnTarget) url.searchParams.set('device_return', deviceReturnTarget);
-      return url.pathname + url.search;
+      var url = new URL(billingSetupTarget);
+      if (url.origin === window.location.origin) return url.pathname + url.search;
+      return url.toString();
     }
     function openBillingSettingsFromClerkSession() {
       var target = billingSetupPath();
@@ -479,74 +803,6 @@ export function getAuthPage(
       clearBillingSetupRetryCount();
       window.location.replace(target);
     }
-    function showCheckoutUnavailableState() {
-      renderSessionState(
-        'Checkout unavailable',
-        'Billing checkout is temporarily unavailable. Try again shortly.',
-        'Try again',
-        startBillingCheckoutFromClerkSession
-      );
-    }
-    function rememberBillingCheckoutAttempt() {
-      try {
-        window.sessionStorage.setItem(checkoutAttemptStorageKey, String(Date.now()));
-      } catch (err) {
-        console.warn('[matrix] Unable to write checkout attempt state', err instanceof Error ? err.message : String(err));
-      }
-    }
-    function startBillingCheckoutFromClerkSession() {
-      showLoadingState('Opening secure checkout...');
-      if (!window.Clerk.session) {
-        showSignedInRecoveryState();
-        return;
-      }
-      window.Clerk.session.getToken()
-        .then(function(token) {
-          if (!token) {
-            showSignedInRecoveryState();
-            return null;
-          }
-          var controller = new AbortController();
-          var timeoutId = window.setTimeout(function() { controller.abort(); }, 10000);
-          var checkoutBody = {
-            planSlug: 'matrix_builder',
-            interval: 'monthly',
-            regionSlug: 'region_fsn1'
-          };
-          if (deviceReturnTarget) checkoutBody.returnPath = redirectTarget;
-          return fetch('/billing/checkout', {
-            method: 'POST',
-            headers: {
-              Authorization: 'Bearer ' + token,
-              'Content-Type': 'application/json',
-              Accept: 'application/json'
-            },
-            body: JSON.stringify(checkoutBody),
-            credentials: 'same-origin',
-            signal: controller.signal
-          }).finally(function() {
-            window.clearTimeout(timeoutId);
-          });
-        })
-        .then(function(res) {
-          if (!res) return null;
-          return res.json().catch(function(err) {
-            console.warn('[matrix] Unable to parse checkout response', err instanceof Error ? err.message : String(err));
-            return null;
-          }).then(function(body) {
-            if (!res.ok || !body || typeof body.url !== 'string') {
-              showCheckoutUnavailableState();
-              return;
-            }
-            rememberBillingCheckoutAttempt();
-            window.location.assign(body.url);
-          });
-        })
-        .catch(function(err) {
-          console.error('[matrix] Billing checkout failed', err instanceof Error ? err.message : String(err));
-          showCheckoutUnavailableState();
-        });
-    }
     function pollProvisioningSession() {
       provisioningPolls += 1;
       if (provisioningPolls > maxProvisioningPolls) {
@@ -558,7 +814,7 @@ export function getAuthPage(
       }
       window.setTimeout(continueWithClerkSession, 8000);
     }
-    function retryProvisioningAfterBillingDelay() {
+    function retryProvisioningAfterBillingDelay(developerTools) {
       billingConfirmationPolls += 1;
       if (billingConfirmationPolls > maxBillingConfirmationPolls) {
         provisionStarted = false;
@@ -568,10 +824,11 @@ export function getAuthPage(
       }
       provisionStarted = false;
       showLoadingState('Confirming billing...');
-      window.setTimeout(startProvisioningFromClerkSession, 8000);
+      window.setTimeout(function() { startProvisioningFromClerkSession(developerTools); }, 8000);
     }
-    function startProvisioningFromClerkSession() {
+    function startProvisioningFromClerkSession(selectedDeveloperTools) {
       if (provisionStarted) return;
+      var developerTools = Array.isArray(selectedDeveloperTools) ? selectedDeveloperTools : defaultDeveloperTools;
       provisionStarted = true;
       showLoadingState('Starting your Matrix computer...');
       if (!window.Clerk.session) {
@@ -595,6 +852,7 @@ export function getAuthPage(
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
+              developerTools: developerTools,
               runtime: requestedRuntime || undefined
             }),
             credentials: 'same-origin',
@@ -614,7 +872,7 @@ export function getAuthPage(
           }
           if (res.status === 402) {
             if (checkoutJustCompleted) {
-              retryProvisioningAfterBillingDelay();
+              retryProvisioningAfterBillingDelay(developerTools);
               return null;
             }
             provisionStarted = false;
@@ -680,7 +938,7 @@ export function getAuthPage(
               return null;
             }
             if (checkoutJustCompleted) {
-              startProvisioningFromClerkSession();
+              showDefaultInstallsState();
               return null;
             }
             showNoRuntimeState();

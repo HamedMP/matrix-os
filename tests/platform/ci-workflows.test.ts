@@ -21,15 +21,33 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, patterns, react-doctor, sync-client, unit, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, unit, docs-contract, e2e]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
+    expect(workflow).toContain('needs.shell-production-build.result');
     expect(workflow).toContain('needs.patterns.result');
     expect(workflow).toContain('needs.react-doctor.result');
     expect(workflow).toContain('needs.sync-client.result');
     expect(workflow).toContain('needs.unit.result');
+    expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.e2e.result');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT"');
     expect(workflow).toContain('Branch protection should require this aggregate job');
+  });
+
+  it('runs lightweight docs contract tests for docs-only CI changes', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+    const readme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
+
+    expect(workflow).toContain('docs-contract:');
+    expect(workflow).toContain('name: Docs Contract Tests');
+    expect(workflow).toContain('docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}');
+    expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
+    expect(workflow).toContain('pnpm exec vitest run tests/www/self-host-docs.test.ts');
+    expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');
+    expect(readme).toContain('- `Docs Contract Tests`');
+    expect(readme).toContain('Docs-only changes still run targeted docs contract tests');
   });
 
   it('documents workflow ownership and required checks', () => {
@@ -42,6 +60,7 @@ describe('CI workflows', () => {
     expect(readme).toContain('Host Bundle Release');
     expect(readme).toContain('host bundle release tests are blocking');
     expect(readme).toContain('React Doctor');
+    expect(readme).toContain('Docs Contract Tests');
     expect(readme).toContain('Screenshot workflow removed');
   });
 
@@ -53,8 +72,14 @@ describe('CI workflows', () => {
     expect(workflow).toContain('name: Download Docker image artifact');
     expect(workflow).toContain('uses: actions/download-artifact@v7');
     expect(workflow).not.toContain('uses: actions/download-artifact@v8');
-    expect(workflow).toContain('docker save matrix-os-dev:ci | gzip -1 > /tmp/matrix-os-dev-ci.tar.gz');
+    expect(workflow).toContain('outputs: type=docker,dest=/tmp/matrix-os-dev-ci.tar');
+    expect(workflow).toContain('gzip -1 < /tmp/matrix-os-dev-ci.tar > /tmp/matrix-os-dev-ci.tar.gz');
+    expect(workflow).toContain('rm /tmp/matrix-os-dev-ci.tar');
+    expect(workflow).toContain('test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000');
+    expect(workflow).toContain('gzip -t /tmp/matrix-os-dev-ci.tar.gz');
+    expect(workflow).toContain('gzip -t /tmp/docker-image/matrix-os-dev-ci.tar.gz');
     expect(workflow).toContain('gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load');
+    expect(workflow).not.toContain('docker save matrix-os-dev:ci | gzip -1');
 
     const dockerBuildActionUses = workflow.match(/uses: docker\/build-push-action@v7/g) ?? [];
     expect(dockerBuildActionUses).toHaveLength(1);
@@ -235,6 +260,27 @@ describe('CI workflows', () => {
     expect(workflow).toContain('--header "x-forwarded-host: ${app_domain_host}"');
     expect(workflow).toContain('--header "x-matrix-edge-secret: ${edge_router_secret}"');
     expect(workflow).not.toContain('--max-time 10 "$CANDIDATE_URL/sign-in"');
+  });
+
+  it('builds browser PostHog clients against the same-origin relay and UI host', () => {
+    const root = process.cwd();
+    const browserBuildWorkflows = [
+      readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'),
+      readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'),
+      readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8'),
+    ];
+    const platformWorkflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    for (const workflow of browserBuildWorkflows) {
+      expect(workflow).toMatch(/NEXT_PUBLIC_POSTHOG_API_HOST:[^\n]*['"]?\/relay['"]?/);
+      expect(workflow).toMatch(/NEXT_PUBLIC_POSTHOG_HOST:[^\n]*https:\/\/eu\.posthog\.com/);
+      expect(workflow).not.toMatch(/NEXT_PUBLIC_POSTHOG_(?:HOST|API_HOST):[^\n]*https:\/\/eu\.i\.posthog\.com/);
+    }
+
+    expect(platformWorkflow).toContain("POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}");
+    expect(platformWorkflow).toContain("POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}");
+    expect(platformWorkflow).toContain('_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST');
+    expect(platformWorkflow).toContain('_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST');
   });
 
   it('redeploys the platform when the Cloud Run workflow itself changes', () => {

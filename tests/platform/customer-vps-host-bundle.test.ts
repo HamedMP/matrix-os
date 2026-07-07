@@ -95,6 +95,7 @@ describe('customer VPS host bundle', () => {
     expect(script).not.toContain('tar -xzf "$DIST_DIR/$CODE_SERVER_ARCHIVE"');
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
     expect(installer).toContain('install_coding_agents()');
+    expect(installer).toContain('finish_agent_install()');
     expect(installer).toContain('install_code_server()');
     expect(installer).toContain('install_hermes()');
     expect(installer).toContain('@anthropic-ai/claude-code@latest');
@@ -102,11 +103,32 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('OPENCODE_AI_VERSION="${OPENCODE_AI_VERSION:-latest}"');
     expect(installer).toContain('PI_CODING_AGENT_VERSION="${PI_CODING_AGENT_VERSION:-latest}"');
     expect(installer).toContain('"opencode-ai@${OPENCODE_AI_VERSION}"');
-    expect(installer).toContain('"$NODE_PREFIX/bin/npm" install -g --ignore-scripts --prefix "$NODE_PREFIX"');
+    expect(installer).toContain('run_npm_install()');
+    expect(installer).toContain('run_as_root()');
+    expect(installer).toContain('[ -x "$MATRIX_RUNTIME_DIR/code-server/bin/code-server" ]');
+    expect(installer).not.toContain('command -v code-server >/dev/null 2>&1');
+    expect(installer).toContain('run_as_root rm -rf "$MATRIX_RUNTIME_DIR/code-server"');
+    expect(installer).toContain('run_as_root mv "$tmp_dir/$CODE_SERVER_DIST" "$MATRIX_RUNTIME_DIR/code-server"');
+    expect(installer).not.toContain('sudo rm -rf "$MATRIX_RUNTIME_DIR/code-server"');
+    expect(installer).toContain('resolve_runtime_user()');
+    expect(installer).toContain('runtime user ${MATRIX_RUNTIME_USER} not found; using current user ${current_user}');
+    expect(installer).toContain('run_as_matrix "$timeout_bin" 900 "$NODE_PREFIX/bin/npm" "$@"');
+    expect(installer).toContain('run_npm_install install -g --ignore-scripts --prefix "$NODE_PREFIX"');
     expect(installer).toContain('"@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"');
+    expect(installer).toContain('node_prefix_chmod()');
+    expect(installer).toContain('if ! command -v flock >/dev/null 2>&1; then');
+    expect(installer).toContain('install_claude_code_package()');
+    expect(installer).toContain('install_codex_package()');
+    expect(installer).toContain('install_opencode_package()');
+    expect(installer).toContain('install_pi_package()');
+    expect(installer).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
     expect(installer).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors');
     expect(installer).toContain('sync-matrix-agent-skills.sh');
-    expect(installer).toContain('coding-agents|code-server|hermes|linux-tools|all');
+    expect(installer).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
+    expect(installer).toContain('claude-code) with_pack_lock "$pack" install_claude_code ;;');
+    expect(installer).toContain('codex) with_pack_lock "$pack" install_codex ;;');
+    expect(installer).toContain('opencode) with_pack_lock "$pack" install_opencode ;;');
+    expect(installer).toContain('pi) with_pack_lock "$pack" install_pi ;;');
     expect(installer).toContain('return 75');
     expect(installer).not.toContain('exit 0');
     expect(installer).toContain('systemctl start matrix-linux-tools.service');
@@ -137,6 +159,37 @@ describe('customer VPS host bundle', () => {
       expect(launcher).toContain('if declare -F matrix_reconcile_owner_home >/dev/null 2>&1; then');
       expect(launcher).toContain('matrix_reconcile_owner_home "${MATRIX_RUNTIME_USER:-matrix}" "${MATRIX_RUNTIME_GROUP:-${MATRIX_RUNTIME_USER:-matrix}}"');
     }
+  });
+
+  it('packages an asynchronous developer tools first-boot service', () => {
+    const root = process.cwd();
+    const unit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-developer-tools.service'), 'utf8');
+    const codeServerUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code-server.service'), 'utf8');
+    const codeUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code.service'), 'utf8');
+    const installer = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-install-developer-tools'), 'utf8');
+
+    expect(unit).toContain('Description=Matrix OS optional developer tools');
+    expect(unit).toContain('After=network-online.target matrix-restore.service');
+    expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
+    expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-install-developer-tools');
+    expect(unit).toContain('Restart=on-failure');
+    expect(installer).toContain('is_tool_installed()');
+    expect(installer).toContain('grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "/opt/matrix/runtime/node/bin/${bin_name}" ]');
+    expect(installer).toContain('optional developer tool ${tool} already installed; skipping');
+    expect(installer).toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS-codex claude-code opencode pi}"');
+    expect(installer).not.toContain('TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"');
+    expect(codeServerUnit).toContain('Description=Install Matrix OS code-server runtime');
+    expect(codeServerUnit).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeServerUnit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(codeServerUnit).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
+    expect(codeUnit).toContain('Description=Matrix OS customer code editor');
+    expect(codeUnit).toContain('After=matrix-restore.service');
+    expect(codeUnit).not.toContain('After=matrix-restore.service matrix-code-server.service');
+    expect(codeUnit).not.toContain('Wants=matrix-code-server.service');
+    expect(codeUnit).toContain('ExecStart=/opt/matrix/bin/matrix-code');
+    expect(codeUnit).toContain('TimeoutStartSec=1800');
+    expect(codeUnit).toContain('ConditionPathExists=/opt/matrix/bin/matrix-code');
+    expect(codeUnit).not.toContain('ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server');
   });
 
   it('owner env canonicalizes Hermes home and migrates legacy Hermes data', () => {
@@ -219,6 +272,77 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('bundled home sync upgrades pre-manifest system-owned first-party app files', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-bundled-home-sync-system-app-'));
+    const appDir = join(tempDir, 'app');
+    const homeDir = join(tempDir, 'home');
+    const bundledResourceManager = join(appDir, 'home', 'apps', 'resource-manager', 'src');
+    const homeResourceManager = join(homeDir, 'apps', 'resource-manager', 'src');
+
+    try {
+      mkdirSync(bundledResourceManager, { recursive: true });
+      mkdirSync(homeResourceManager, { recursive: true });
+      mkdirSync(join(appDir, 'home', 'apps', 'resource-manager'), { recursive: true });
+      mkdirSync(join(homeDir, 'apps', 'resource-manager'), { recursive: true });
+
+      const bundledManifest = JSON.stringify({
+        name: 'Resource Manager',
+        slug: 'resource-manager',
+        author: 'system',
+        listingTrust: 'first_party',
+      }, null, 2);
+      const oldSystemManifest = JSON.stringify({
+        name: 'Resource Manager',
+        slug: 'resource-manager',
+        author: 'system',
+        listingTrust: 'first_party',
+      }, null, 2);
+      writeFileSync(join(appDir, 'home', '.template-manifest.json'), JSON.stringify({
+        'apps/resource-manager/matrix.json': sha256(bundledManifest),
+        'apps/resource-manager/src/App.tsx': sha256('new bridged app'),
+      }, null, 2));
+      writeFileSync(join(homeDir, '.template-manifest.json'), '{}');
+      writeFileSync(join(appDir, 'home', 'apps', 'resource-manager', 'matrix.json'), bundledManifest);
+      writeFileSync(join(appDir, 'home', 'apps', 'resource-manager', 'src', 'App.tsx'), 'new bridged app');
+      writeFileSync(join(homeDir, 'apps', 'resource-manager', 'matrix.json'), oldSystemManifest);
+      writeFileSync(join(homeDir, 'apps', 'resource-manager', 'src', 'App.tsx'), 'old mock app');
+
+      const result = spawnSync('bash', [join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets')], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          APP_DIR: appDir,
+          MATRIX_HOME: homeDir,
+        },
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(readFileSync(join(homeDir, 'apps', 'resource-manager', 'src', 'App.tsx'), 'utf8')).toBe('new bridged app');
+      expect(JSON.parse(readFileSync(join(homeDir, '.template-manifest.json'), 'utf8'))).toMatchObject({
+        'apps/resource-manager/matrix.json': sha256(bundledManifest),
+        'apps/resource-manager/src/App.tsx': sha256('new bridged app'),
+      });
+      expect(readFileSync(join(homeDir, 'system', 'logs', 'template-sync.log'), 'utf8')).toContain(
+        'Updated: apps/resource-manager/src/App.tsx',
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bundled home sync caches first-party app ownership by slug', () => {
+    const script = readFileSync(
+      join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets'),
+      'utf8',
+    );
+
+    expect(script).toContain('systemOwnedFirstPartyAppCache');
+    expect(script).toContain('systemOwnedFirstPartyAppCache.has(slug)');
+    expect(script).toContain('systemOwnedFirstPartyAppCache.set(slug');
   });
 
   it('bundled home sync recovers from a corrupt installed manifest', () => {
@@ -654,6 +778,12 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('rm -f "$temp_file"');
     expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-code-server.service');
+    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
+    expect(syncAgent).toContain('Code-server runtime service enabled');
+    expect(syncAgent).toContain('sudo systemctl enable matrix-code.service');
+    expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code.service || true');
+    expect(syncAgent).toContain('Code editor service enabled');
     expect(syncAgent).toContain('Messaging runtimes missing; units installed but not enabled');
     expect(syncAgent).toContain('sudo systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service');
   });

@@ -1,3 +1,9 @@
+// Unistyles ships a Nitro native module that jest cannot load; its official mock
+// stubs the native specs and exposes a JS StyleSheet. Load it first, then run the
+// real StyleSheet.configure() so the mock registry has our themes/breakpoints.
+require("react-native-unistyles/mocks");
+require("./lib/unistyles");
+
 jest.mock("react-native-reanimated", () => {
   const { View } = require("react-native");
   const mockReact = require("react");

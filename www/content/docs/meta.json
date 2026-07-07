@@ -1,3 +1,17 @@
 {
-  "pages": ["index", "users", "developer", "messages", "desktop"]
+  "pages": [
+    "index",
+    "quickstart",
+    "self-host",
+    "cli",
+    "shell",
+    "coding-agents",
+    "hermes",
+    "matrix-skills",
+    "mobile",
+    "messages",
+    "desktop",
+    "settings-billing",
+    "glossary"
+  ]
 }

@@ -1,10 +1,12 @@
 import { z } from 'zod/v4';
+import { DeveloperToolsSchema } from './developer-tools.js';
 
 export const CustomerVpsStatusSchema = z.enum([
   'provisioning',
   'running',
   'failed',
   'recovering',
+  'resizing',
   'deleted',
 ]);
 
@@ -30,6 +32,7 @@ export const ProvisionRequestSchema = z.object({
   handle: SafeHandleSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   serverType: HetznerServerTypeSchema.optional(),
+  developerTools: DeveloperToolsSchema.optional(),
 });
 
 export const RegisterRequestSchema = z.object({
@@ -44,6 +47,10 @@ export const RecoverRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
   runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
   allowEmpty: z.boolean().optional().default(false),
+});
+
+export const ResizeMachineRequestSchema = z.object({
+  serverType: HetznerServerTypeSchema,
 });
 
 export const MachineIdParamSchema = z.object({
@@ -61,4 +68,5 @@ export const DeployRequestSchema = z.object({
 export type ProvisionRequest = z.infer<typeof ProvisionRequestSchema>;
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 export type RecoverRequest = z.infer<typeof RecoverRequestSchema>;
+export type ResizeMachineRequest = z.infer<typeof ResizeMachineRequestSchema>;
 export type DeployRequest = z.infer<typeof DeployRequestSchema>;

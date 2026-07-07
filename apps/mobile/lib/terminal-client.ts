@@ -41,10 +41,19 @@ export class MobileTerminalClient {
     return this.gateway.deleteTerminalSession(sessionId);
   }
 
+  /** Create a new shell session and return its name (to then attach by name). */
+  async createSession(): Promise<string | null> {
+    return this.gateway.createTerminalSession();
+  }
+
   async connect(options: MobileTerminalConnectOptions): Promise<MobileTerminalConnection | null> {
+    // Shell-sessions: the session name is required and is passed in the WS query
+    // (no attach frame). Attaching by name is what makes a session continuable
+    // across shell, desktop and mobile.
+    if (!options.sessionId) return null;
     const token = await this.gateway.getWsToken();
     this.gateway.setWebSocketToken(token);
-    const ws = this.gateway.openTerminalWebSocket(token);
+    const ws = this.gateway.openTerminalWebSocket(token, options.sessionId, options.fromSeq);
     const connection = new MobileTerminalConnection(ws, options);
     connection.attach();
     return connection;
@@ -52,28 +61,21 @@ export class MobileTerminalClient {
 }
 
 export class MobileTerminalConnection {
-  private readonly attachFrame: TerminalClientFrame;
   private attached = false;
 
   constructor(
     private readonly ws: WebSocket,
     private readonly options: MobileTerminalConnectOptions,
-  ) {
-    this.attachFrame = compactFrame({
-      type: "attach",
-      sessionId: options.sessionId,
-      cwd: options.cwd,
-      fromSeq: options.fromSeq,
-    });
-  }
+  ) {}
 
   attach(): void {
     this.options.onStatus?.("connecting");
 
+    // The session name is supplied in the WS query, so no attach frame is sent;
+    // we just announce our viewport size once the socket opens.
     this.ws.onopen = () => {
       this.attached = true;
       this.options.onStatus?.("open");
-      this.sendFrame(this.attachFrame);
       if (this.options.cols && this.options.rows) {
         this.resize(this.options.cols, this.options.rows);
       }
@@ -112,7 +114,9 @@ export class MobileTerminalConnection {
   }
 
   destroy(): boolean {
-    const sent = this.sendFrame({ type: "destroy" });
+    // Session deletion happens via the REST DELETE endpoint; over the shell WS we
+    // simply detach this client (the endpoint has no "destroy" frame).
+    const sent = this.sendFrame({ type: "detach" });
     this.close();
     return sent;
   }
@@ -149,12 +153,6 @@ function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
   } catch {
     return null;
   }
-}
-
-function compactFrame<T extends Record<string, unknown>>(frame: T): T {
-  return Object.fromEntries(
-    Object.entries(frame).filter(([, value]) => value !== undefined),
-  ) as T;
 }
 
 function clampInteger(value: number, min: number, max: number): number {

@@ -1,8 +1,9 @@
 import { useState, useCallback } from "react";
-import { View, Text, Pressable, Modal, ScrollView, ActivityIndicator, StyleSheet } from "react-native";
+import { View, Text, Pressable, Modal, ScrollView, ActivityIndicator } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
+import { colors } from "@/lib/theme";
 import type { Task } from "./TaskCard";
 
 interface TaskDetailProps {
@@ -18,6 +19,7 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; label: string }>
 };
 
 export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
+  const { theme } = useUnistyles();
   const statusInfo = STATUS_COLORS[task.status] ?? STATUS_COLORS.pending;
   const [updating, setUpdating] = useState(false);
   const isCompleted = task.status === "completed";
@@ -58,7 +60,7 @@ export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
             onPress={onClose}
             style={({ pressed }) => [styles.closeButton, pressed && styles.closeButtonPressed]}
           >
-            <Ionicons name="close" size={18} color={colors.light.mutedForeground} />
+            <Ionicons name="close" size={18} color={theme.colors.mutedForeground} />
             <Text style={styles.closeText}>Close</Text>
           </Pressable>
         </View>
@@ -115,13 +117,13 @@ export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
               ]}
             >
               {updating ? (
-                <ActivityIndicator size="small" color={colors.light.primaryForeground} />
+                <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
               ) : (
                 <>
                   <Ionicons
                     name={isCompleted ? "refresh-outline" : "checkmark-circle-outline"}
                     size={18}
-                    color={isCompleted ? colors.light.foreground : colors.light.primaryForeground}
+                    color={isCompleted ? theme.colors.foreground : theme.colors.primaryForeground}
                   />
                   <Text
                     style={[
@@ -141,140 +143,140 @@ export function TaskDetail({ task, onClose, onStatusChange }: TaskDetailProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: colors.light.background,
+    backgroundColor: theme.colors.background,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.light.border,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
+    borderBottomColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.lg,
   },
   headerTitle: {
-    fontFamily: fonts.sansBold,
+    fontFamily: theme.fonts.sansBold,
     fontSize: 18,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   closeButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    borderRadius: radius.sm,
+    borderRadius: theme.radius.sm,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.muted,
-    paddingHorizontal: spacing.md,
+    backgroundColor: theme.colors.muted,
+    paddingHorizontal: theme.spacing.md,
     paddingVertical: 6,
   },
   closeButtonPressed: {
     opacity: 0.7,
   },
   closeText: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 13,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   scrollContent: {
-    padding: spacing.xl,
+    padding: theme.spacing.xl,
   },
   statusBadge: {
     alignSelf: "flex-start",
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.md,
+    borderRadius: theme.radius.full,
+    paddingHorizontal: theme.spacing.md,
     paddingVertical: 4,
-    marginBottom: spacing.lg,
+    marginBottom: theme.spacing.lg,
   },
   statusText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 13,
   },
   taskTitle: {
-    fontFamily: fonts.sansBold,
+    fontFamily: theme.fonts.sansBold,
     fontSize: 20,
-    color: colors.light.foreground,
-    marginBottom: spacing.xl,
+    color: theme.colors.foreground,
+    marginBottom: theme.spacing.xl,
     lineHeight: 28,
   },
   detailsList: {
-    borderRadius: radius.lg,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
     overflow: "hidden",
   },
   detailRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
   },
   detailLabel: {
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 14,
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   detailValue: {
-    fontFamily: fonts.mono,
+    fontFamily: theme.fonts.mono,
     fontSize: 13,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   separator: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.light.border,
-    marginHorizontal: spacing.lg,
+    backgroundColor: theme.colors.border,
+    marginHorizontal: theme.spacing.lg,
   },
   dragHandle: {
     width: 36,
     height: 5,
     borderRadius: 3,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.border,
+    backgroundColor: theme.colors.border,
     alignSelf: "center",
-    marginTop: spacing.sm,
-    marginBottom: spacing.xs,
+    marginTop: theme.spacing.sm,
+    marginBottom: theme.spacing.xs,
   },
   actionBar: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.light.border,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.lg,
-    paddingBottom: spacing["2xl"],
+    borderTopColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.xl,
+    paddingVertical: theme.spacing.lg,
+    paddingBottom: theme.spacing["2xl"],
   },
   actionButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: spacing.sm,
-    borderRadius: radius.lg,
+    gap: theme.spacing.sm,
+    borderRadius: theme.radius.lg,
     borderCurve: "continuous" as const,
-    paddingVertical: spacing.md,
+    paddingVertical: theme.spacing.md,
   },
   actionComplete: {
-    backgroundColor: colors.light.primary,
+    backgroundColor: theme.colors.primary,
   },
   actionReopen: {
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
   actionPressed: {
     opacity: 0.85,
     transform: [{ scale: 0.98 }],
   },
   actionText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 15,
   },
   actionTextComplete: {
-    color: colors.light.primaryForeground,
+    color: theme.colors.primaryForeground,
   },
   actionTextReopen: {
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
-});
+}));

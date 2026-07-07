@@ -15,9 +15,10 @@ interface PaneGridProps {
   shouldDestroyPane?: (paneId: string) => boolean;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
+  canvasZoom?: number;
 }
 
-export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false }: PaneGridProps) {
+export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: PaneGridProps) {
   return (
     <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
       <PaneNodeRenderer
@@ -30,6 +31,7 @@ export function PaneGrid({ paneTree, theme, focusedPaneId, onFocusPane, onSessio
         shouldDestroyPane={shouldDestroyPane}
         allowRemoteResize={allowRemoteResize}
         suppressNativeKeyboard={suppressNativeKeyboard}
+        canvasZoom={canvasZoom}
       />
     </div>
   );
@@ -45,9 +47,10 @@ interface PaneNodeRendererProps {
   shouldDestroyPane?: (paneId: string) => boolean;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
+  canvasZoom?: number;
 }
 
-function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false }: PaneNodeRendererProps) {
+function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: PaneNodeRendererProps) {
   if (node.type === "pane") {
     const focused = focusedPaneId === node.id;
     return (
@@ -70,12 +73,14 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
           sessionId={node.sessionId}
           claudeMode={node.claudeMode === true}
           startupCommand={node.startupCommand}
+          compatMode={node.compatMode}
           onFocus={onFocusPane}
           onSessionAttached={onSessionAttached}
           shouldCacheOnUnmount={shouldCachePane}
           shouldDestroyOnUnmount={shouldDestroyPane}
           allowRemoteResize={allowRemoteResize}
           suppressNativeKeyboard={suppressNativeKeyboard}
+          canvasZoom={canvasZoom}
         />
       </div>
     );
@@ -95,6 +100,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, onFocusPane, onSessionAt
       shouldDestroyPane={shouldDestroyPane}
       allowRemoteResize={allowRemoteResize}
       suppressNativeKeyboard={suppressNativeKeyboard}
+      canvasZoom={canvasZoom}
     />
   );
 }
@@ -112,9 +118,10 @@ interface SplitContainerProps {
   shouldDestroyPane?: (paneId: string) => boolean;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
+  canvasZoom?: number;
 }
 
-function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false }: SplitContainerProps) {
+function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1 }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // react-doctor-disable-next-line react-doctor/no-derived-useState -- local drag buffer, not a mirror of `ratio`: it is seeded from the prop, then diverges live as the user drags the split divider (setCurrentRatio in onMouseMove). It must NOT stay in sync with `ratio` or the divider would snap back mid-drag; it holds uncommitted pointer-driven layout state.
   const [currentRatio, setCurrentRatio] = useState(ratio);
@@ -168,6 +175,7 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           shouldDestroyPane={shouldDestroyPane}
           allowRemoteResize={allowRemoteResize}
           suppressNativeKeyboard={suppressNativeKeyboard}
+          canvasZoom={canvasZoom}
         />
       </div>
       {/* react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational pointer-only resize affordance: the 4px gutter starts a mouse/pointer drag to repan the split. It carries no control semantics, has no keyboard equivalent (panes auto-fit on resize), and adding an interactive role would require a non-trivial keyboard-resize behavior change out of scope for this pass. */}
@@ -187,6 +195,7 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, o
           shouldDestroyPane={shouldDestroyPane}
           allowRemoteResize={allowRemoteResize}
           suppressNativeKeyboard={suppressNativeKeyboard}
+          canvasZoom={canvasZoom}
         />
       </div>
     </div>

@@ -1,6 +1,5 @@
 "use client";
 
-import posthog from "posthog-js";
 import {
   buildPostHogCookieConsentInitOptions,
   getPostHogClientConfig,
@@ -8,7 +7,8 @@ import {
 } from "@matrix-os/observability/client";
 
 type ClientProperties = Record<string, string | number | boolean | undefined>;
-type PostHogInitOptions = Parameters<typeof posthog.init>[1];
+type PostHogClient = typeof import("posthog-js").default;
+type PostHogInitOptions = Parameters<PostHogClient["init"]>[1];
 
 // Replay kill switch. NEXT_PUBLIC_* is inlined at build time, so the build
 // flag alone needs a rebuild to change. The layout additionally exposes the
@@ -29,25 +29,35 @@ const config = getPostHogClientConfig({
   NEXT_PUBLIC_POSTHOG_API_HOST: process.env.NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay",
 });
 let initialized = false;
+let posthogClientPromise: Promise<PostHogClient> | null = null;
+
+function loadPostHogClient(): Promise<PostHogClient> {
+  posthogClientPromise ??= import("posthog-js").then((module) => module.default);
+  return posthogClientPromise;
+}
 
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
   if (!config) return;
-  try {
-    ensurePostHogInitialized(config);
-    posthog.captureException(error, sanitizeProperties(properties));
-  } catch (err: unknown) {
-    console.warn("[posthog] Failed to capture client exception:", err instanceof Error ? err.name : typeof err);
-  }
+  void loadPostHogClient()
+    .then((posthog) => {
+      ensurePostHogInitialized(posthog, config);
+      posthog.captureException(error, sanitizeProperties(properties));
+    })
+    .catch((err: unknown) => {
+      console.warn("[posthog] Failed to capture client exception:", err instanceof Error ? err.name : typeof err);
+    });
 }
 
 export function capturePostHogEvent(event: string, properties: ClientProperties = {}) {
   if (!config) return;
-  try {
-    ensurePostHogInitialized(config);
-    posthog.capture(event, sanitizeProperties(properties));
-  } catch (err: unknown) {
-    console.warn("[posthog] Failed to capture client event:", err instanceof Error ? err.name : typeof err);
-  }
+  void loadPostHogClient()
+    .then((posthog) => {
+      ensurePostHogInitialized(posthog, config);
+      posthog.capture(event, sanitizeProperties(properties));
+    })
+    .catch((err: unknown) => {
+      console.warn("[posthog] Failed to capture client event:", err instanceof Error ? err.name : typeof err);
+    });
 }
 
 export function identifyPostHogUser(
@@ -56,33 +66,50 @@ export function identifyPostHogUser(
   currentConfig: typeof config = config,
 ) {
   if (!currentConfig || !distinctId) return;
-  try {
-    ensurePostHogInitialized(currentConfig);
-    posthog.identify(distinctId, sanitizeProperties(properties));
-  } catch (err: unknown) {
-    console.warn("[posthog] Failed to identify user:", err instanceof Error ? err.name : typeof err);
-  }
+  void loadPostHogClient()
+    .then((posthog) => {
+      ensurePostHogInitialized(posthog, currentConfig);
+      posthog.identify(distinctId, sanitizeProperties(properties));
+    })
+    .catch((err: unknown) => {
+      console.warn("[posthog] Failed to identify user:", err instanceof Error ? err.name : typeof err);
+    });
 }
 
 export function resetPostHogIdentity(currentConfig: typeof config = config) {
   if (!currentConfig || !initialized) return;
-  try {
-    // Only reset provably identified sessions; resetting an anonymous session
-    // would rotate its distinct id on every signed-out page load. If the
-    // identity check is unavailable, skip the reset rather than risk it.
-    const withIdentity = posthog as typeof posthog & { _isIdentified?: () => boolean };
-    if (typeof withIdentity._isIdentified !== "function" || !withIdentity._isIdentified()) return;
-    posthog.reset();
-  } catch (err: unknown) {
-    console.warn("[posthog] Failed to reset identity:", err instanceof Error ? err.name : typeof err);
-  }
+  void loadPostHogClient()
+    .then((posthog) => {
+      // Only reset provably identified sessions; resetting an anonymous session
+      // would rotate its distinct id on every signed-out page load. If the
+      // identity check is unavailable, skip the reset rather than risk it.
+      const withIdentity = posthog as PostHogClient & { _isIdentified?: () => boolean };
+      if (typeof withIdentity._isIdentified !== "function" || !withIdentity._isIdentified()) return;
+      posthog.reset();
+    })
+    .catch((err: unknown) => {
+      console.warn("[posthog] Failed to reset identity:", err instanceof Error ? err.name : typeof err);
+    });
 }
 
-function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
-  initializeWwwPostHog(getPostHogVisitorCountry(), currentConfig);
+function ensurePostHogInitialized(posthog: PostHogClient, currentConfig: NonNullable<typeof config>) {
+  initializeLoadedPostHog(posthog, getPostHogVisitorCountry(), currentConfig);
 }
 
 export function initializeWwwPostHog(
+  visitorCountry?: string | null,
+  currentConfig: typeof config = config,
+) {
+  if (!currentConfig || initialized) return Promise.resolve();
+  return loadPostHogClient()
+    .then((posthog) => initializeLoadedPostHog(posthog, visitorCountry, currentConfig))
+    .catch((err: unknown) => {
+      console.warn("[posthog] Failed to initialize client:", err instanceof Error ? err.name : typeof err);
+    });
+}
+
+function initializeLoadedPostHog(
+  posthog: PostHogClient,
   visitorCountry?: string | null,
   currentConfig: typeof config = config,
 ) {
@@ -92,8 +119,8 @@ export function initializeWwwPostHog(
     ...(apiHost ? { api_host: apiHost } : {}),
     ui_host: currentConfig.uiHost,
     defaults: "2026-01-30",
-    autocapture: false,
-    capture_pageview: false,
+    autocapture: true,
+    capture_pageview: "history_change",
     capture_exceptions: true,
     // Masked session replay: every input is masked by default so signup and
     // billing failures can be replayed without capturing what users typed.

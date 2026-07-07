@@ -1,9 +1,17 @@
 import { encodeAppSlugPath } from "@/lib/app-slugs";
 import {
-  isSafeSessionId,
-  parseTerminalSessions,
+  isSafeShellSessionName,
+  parseShellSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
+
+function randomShellSuffix(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c && typeof c.randomUUID === "function") {
+    return c.randomUUID().replace(/-/g, "").slice(0, 7);
+  }
+  return Math.random().toString(36).slice(2, 9).padEnd(7, "0").slice(0, 7);
+}
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
@@ -78,7 +86,9 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
 const SECURE_TOKEN_TRANSPORT_ERROR =
-  "Gateway tokens require HTTPS/WSS unless connecting to localhost.";
+  "Matrix OS Cloud requires HTTPS/WSS.";
+const CLEARTEXT_HOST_ERROR =
+  "Self-hosted gateways with saved credentials require HTTPS/WSS unless they are local.";
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -115,6 +125,20 @@ export class GatewayClient {
     return this.baseUrl.replace(/^ws/, "http");
   }
 
+  /**
+   * Current auth credential for asset GETs the fetch wrapper can't reach,
+   * e.g. <Image> loads of authenticated `/icons/*` URLs. Refreshes via the
+   * token provider so callers get a non-expired token.
+   */
+  async getAuthToken(): Promise<string | undefined> {
+    return this.refreshAuthToken();
+  }
+
+  async getAuthorizationHeader(): Promise<string | undefined> {
+    const token = await this.refreshAuthToken();
+    return formatAuthorizationHeader(token);
+  }
+
   get wsUrl(): string {
     const url = this.baseUrl.replace(/^http/, "ws");
     return `${url}/ws`;
@@ -122,7 +146,8 @@ export class GatewayClient {
 
   get terminalWsUrl(): string {
     const url = this.baseUrl.replace(/^http/, "ws");
-    return `${url}/ws/terminal`;
+    // Shell-sessions endpoint: attach by session name passed in the query.
+    return `${url}/ws/terminal/session`;
   }
 
   setWebSocketToken(token: string | null, expiresAt?: number): void {
@@ -169,6 +194,7 @@ export class GatewayClient {
     this.setState("connecting");
 
     const upgradeToken = this.wsToken;
+    const authorization = formatAuthorizationHeader(this.token);
     const wsUrl = upgradeToken
       ? `${this.wsUrl}?token=${encodeURIComponent(upgradeToken)}`
       : this.wsUrl;
@@ -177,8 +203,8 @@ export class GatewayClient {
     this.ws = new WebSocketWithOptions(
       wsUrl,
       [],
-      this.token
-        ? { headers: { Authorization: `Bearer ${this.token}` } }
+      authorization
+        ? { headers: { Authorization: authorization } }
         : undefined,
     );
 
@@ -283,8 +309,9 @@ export class GatewayClient {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+    const authorization = formatAuthorizationHeader(token);
+    if (authorization) {
+      headers["Authorization"] = authorization;
     }
     return headers;
   }
@@ -302,25 +329,30 @@ export class GatewayClient {
 
   async webViewHeaders(): Promise<Record<string, string> | undefined> {
     const token = await this.refreshAuthToken();
-    if (!token) return undefined;
+    const authorization = formatAuthorizationHeader(token);
+    if (!authorization) return undefined;
     return {
-      Authorization: `Bearer ${token}`,
+      Authorization: authorization,
     };
   }
 
-  openTerminalWebSocket(token?: string | null): WebSocket {
+  openTerminalWebSocket(token?: string | null, sessionName?: string, fromSeq?: number): WebSocket {
     if (token || this.token) {
       assertSecureTokenTransport(this.baseUrl);
     }
-    const wsUrl = token
-      ? `${this.terminalWsUrl}?token=${encodeURIComponent(token)}`
-      : this.terminalWsUrl;
+    const params = new URLSearchParams();
+    if (sessionName) params.set("session", sessionName);
+    if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
+    if (token) params.set("token", token);
+    const query = params.toString();
+    const wsUrl = query ? `${this.terminalWsUrl}?${query}` : this.terminalWsUrl;
     const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
+    const authorization = formatAuthorizationHeader(this.token);
     return new WebSocketWithOptions(
       wsUrl,
       [],
-      this.token
-        ? { headers: { Authorization: `Bearer ${this.token}` } }
+      authorization
+        ? { headers: { Authorization: authorization } }
         : undefined,
     );
   }
@@ -450,21 +482,46 @@ export class GatewayClient {
     try {
       const res = await this.fetchGateway("/api/terminal/sessions");
       if (!res.ok) {
-        console.warn("[mobile] /api/terminal/sessions unavailable", res.status);
+        const body = await res.text().catch(() => "");
+        console.warn("[mobile] /api/terminal/sessions unavailable", res.status, body.slice(0, 160));
         return [];
       }
-      return parseTerminalSessions(await res.json());
-    } catch {
-      console.warn("[mobile] /api/terminal/sessions unavailable");
+      const body = (await res.json()) as { sessions?: unknown };
+      return parseShellSessions(body?.sessions ?? body);
+    } catch (err: unknown) {
+      console.warn("[mobile] /api/terminal/sessions unavailable", err instanceof Error ? err.message : String(err));
       return [];
     }
   }
 
-  async deleteTerminalSession(sessionId: string): Promise<boolean> {
-    if (!isSafeSessionId(sessionId)) return false;
+  /** Create a new shell session and return its zellij name, or null on failure. */
+  async createTerminalSession(): Promise<string | null> {
+    const name = `matrix-${randomShellSuffix()}`;
+    try {
+      const res = await this.fetchGateway("/api/terminal/sessions", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.warn("[mobile] terminal session create failed", res.status, body.slice(0, 160));
+        return null;
+      }
+      const body = (await res.json().catch(() => null)) as { name?: unknown } | null;
+      const created = typeof body?.name === "string" ? body.name : name;
+      return isSafeShellSessionName(created) ? created : null;
+    } catch {
+      console.warn("[mobile] terminal session create unavailable");
+      return null;
+    }
+  }
+
+  async deleteTerminalSession(name: string): Promise<boolean> {
+    if (!isSafeShellSessionName(name)) return false;
     try {
       const res = await this.fetchGateway(
-        `/api/terminal/sessions/${encodeURIComponent(sessionId)}`,
+        `/api/terminal/sessions/${encodeURIComponent(name)}?force=1`,
         { method: "DELETE" },
       );
       if (res.ok || res.status === 404) return true;
@@ -556,6 +613,12 @@ function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
   return controller.signal;
 }
 
+function formatAuthorizationHeader(token: string | undefined): string | undefined {
+  if (!token) return undefined;
+  if (/^(Basic|Bearer)\s+/i.test(token)) return token;
+  return `Bearer ${token}`;
+}
+
 export function assertSecureTokenTransport(baseUrl: string): void {
   let parsed: URL;
   try {
@@ -568,26 +631,40 @@ export function assertSecureTokenTransport(baseUrl: string): void {
     return;
   }
 
-  if ((parsed.protocol === "http:" || parsed.protocol === "ws:") && isLoopbackHost(parsed.hostname)) {
+  if (
+    (parsed.protocol === "http:" || parsed.protocol === "ws:")
+    && isCleartextSelfHostedHost(parsed.hostname)
+  ) {
     return;
+  }
+
+  if (parsed.protocol === "http:" || parsed.protocol === "ws:") {
+    throw new Error(isMatrixCloudHost(parsed.hostname) ? SECURE_TOKEN_TRANSPORT_ERROR : CLEARTEXT_HOST_ERROR);
   }
 
   throw new Error(SECURE_TOKEN_TRANSPORT_ERROR);
 }
 
-function isLoopbackHost(hostname: string): boolean {
+function isMatrixCloudHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  return host === "app.matrix-os.com";
+}
+
+function isCleartextSelfHostedHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
   if (host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1") {
     return true;
   }
 
-  const ipv4Match = /^(\d{1,3})(?:\.(\d{1,3})){3}$/.exec(host);
-  if (!ipv4Match) {
-    return false;
+  const octets = host.split(".").map((part) => Number(part));
+  if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)) {
+    const [first = -1, second = -1] = octets;
+    return first === 10 ||
+      first === 127 ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 169 && second === 254) ||
+      (first === 192 && second === 168);
   }
 
-  const octets = host.split(".").map((part) => Number(part));
-  return octets.length === 4
-    && octets.every((octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255)
-    && octets[0] === 127;
+  return host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
 }

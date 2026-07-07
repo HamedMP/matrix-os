@@ -14,6 +14,7 @@ import {
   type StripeBillingClient,
   type StripeWebhookEvent,
 } from '../../packages/platform/src/billing-routes.js';
+import { MATRIX_TELEMETRY_EVENTS } from '../../packages/observability/src/events.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 const env = {
@@ -46,7 +47,11 @@ describe('platform billing routes', () => {
     await destroyTestPlatformDb(db);
   });
 
-  function createApp(userId: string | null = 'user_123', routeEnv: NodeJS.ProcessEnv = env) {
+  function createApp(
+    userId: string | null = 'user_123',
+    routeEnv: NodeJS.ProcessEnv = env,
+    captureEvent?: Parameters<typeof createBillingRoutes>[0]['captureEvent'],
+  ) {
     const app = new Hono();
     app.route('/billing', createBillingRoutes({
       db,
@@ -54,6 +59,7 @@ describe('platform billing routes', () => {
       env: routeEnv,
       resolveClerkUserId: () => Promise.resolve(userId),
       now: () => new Date('2026-05-30T00:00:00.000Z'),
+      captureEvent,
     }));
     return app;
   }
@@ -85,6 +91,45 @@ describe('platform billing routes', () => {
     );
   });
 
+  it('captures checkout growth funnel events with low-cardinality properties', async () => {
+    const captureEvent = vi.fn();
+    const app = createApp('user_123', env, captureEvent);
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'annual',
+        regionSlug: 'region_nbg1',
+        returnPath: '/auth/device?user_code=BCDF-GHJK',
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_STARTED, {
+      distinctId: 'user_123',
+      properties: expect.objectContaining({
+        plan_slug: 'matrix_builder',
+        billing_interval: 'annual',
+        region_slug: 'region_nbg1',
+        return_path_present: true,
+        price_usd: 190,
+      }),
+    });
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_CREATED, {
+      distinctId: 'user_123',
+      properties: expect.objectContaining({
+        plan_slug: 'matrix_builder',
+        billing_interval: 'annual',
+        region_slug: 'region_nbg1',
+        price_usd: 190,
+      }),
+    });
+    expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_test_session');
+    expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('BCDF-GHJK');
+  });
+
   it('creates the default pre-VPS checkout session from the Builder monthly price', async () => {
     const app = createApp();
 
@@ -102,7 +147,8 @@ describe('platform billing routes', () => {
   });
 
   it('returns a generic allowlisted code when checkout price config is missing', async () => {
-    const app = createApp('user_123', { STRIPE_WEBHOOK_SECRET: 'whsec_test' } as NodeJS.ProcessEnv);
+    const captureEvent = vi.fn();
+    const app = createApp('user_123', { STRIPE_WEBHOOK_SECRET: 'whsec_test' } as NodeJS.ProcessEnv, captureEvent);
 
     const res = await app.request('/billing/checkout', {
       method: 'POST',
@@ -116,6 +162,15 @@ describe('platform billing routes', () => {
       code: 'billing_unavailable',
     });
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_FAILED, {
+      distinctId: 'user_123',
+      properties: expect.objectContaining({
+        plan_slug: 'matrix_builder',
+        billing_interval: 'monthly',
+        failure_code: 'missing_price_config',
+        http_status: 503,
+      }),
+    });
   });
 
   it('uses a validated same-origin returnPath for checkout return URLs', async () => {
@@ -278,6 +333,42 @@ describe('platform billing routes', () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown developer tool ids with a generic validation error', async () => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        developerTools: ['codex', 'cursor'],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid request' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized checkout bodies before parsing developer tool selections', async () => {
+    const app = createApp();
+
+    const res = await app.request('/billing/checkout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        planSlug: 'matrix_builder',
+        interval: 'monthly',
+        developerTools: ['codex'],
+        padding: 'x'.repeat(20 * 1024),
+      }),
+    });
+
+    expect(res.status).toBe(413);
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
 
@@ -464,6 +555,65 @@ describe('platform billing routes', () => {
       defaultServerType: 'cpx52',
       allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
     });
+  });
+
+  it('captures subscription revenue metrics from Stripe webhook projections', async () => {
+    const captureEvent = vi.fn();
+    vi.mocked(stripe.constructWebhookEvent).mockReturnValue(subscriptionEvent('evt_revenue'));
+    const app = createApp(null, env, captureEvent);
+
+    const res = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(res.status).toBe(200);
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED, {
+      distinctId: 'user_123',
+      properties: {
+        plan_slug: 'matrix_max',
+        subscription_status: 'active',
+        billing_interval: 'monthly',
+        price_usd: 49,
+        included_runtime_slots: 3,
+        addon_runtime_slots: 1,
+        max_runtime_slots: 4,
+      },
+    });
+    expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('sub_123');
+    expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cus_123');
+  });
+
+  it('captures checkout completed and expired webhooks without Stripe session ids', async () => {
+    const captureEvent = vi.fn();
+    vi.mocked(stripe.constructWebhookEvent)
+      .mockReturnValueOnce(checkoutSessionEvent('evt_checkout_paid', 'checkout.session.completed'))
+      .mockReturnValueOnce(checkoutSessionEvent('evt_checkout_expired', 'checkout.session.expired'));
+    const app = createApp(null, env, captureEvent);
+
+    const completed = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+    const expired = await app.request('/billing/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'valid' },
+      body: '{}',
+    });
+
+    expect(completed.status).toBe(200);
+    expect(expired.status).toBe(200);
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_COMPLETED, {
+      distinctId: 'user_123',
+      properties: { stripe_event_type: 'checkout.session.completed' },
+    });
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_EXPIRED, {
+      distinctId: 'user_123',
+      properties: { stripe_event_type: 'checkout.session.expired' },
+    });
+    expect(JSON.stringify(captureEvent.mock.calls)).not.toContain('cs_growth_test');
   });
 
   it('links Stripe-created checkout customers from subscription metadata', async () => {
@@ -708,6 +858,26 @@ function subscriptionEvent(id: string): StripeWebhookEvent {
             { price: { id: 'price_max_monthly' }, quantity: 1 },
             { price: { id: 'price_extra_runtime_monthly' }, quantity: 1 },
           ],
+        },
+      },
+    },
+  };
+}
+
+function checkoutSessionEvent(
+  id: string,
+  type: 'checkout.session.completed' | 'checkout.session.expired',
+): StripeWebhookEvent {
+  return {
+    id,
+    type,
+    created: 1_779_753_600,
+    data: {
+      object: {
+        id: 'cs_growth_test',
+        client_reference_id: 'user_123',
+        metadata: {
+          clerk_user_id: 'user_123',
         },
       },
     },

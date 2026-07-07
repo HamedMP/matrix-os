@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBrowserMcpServer } from "../../packages/mcp-browser/src/server.js";
 
 const playwrightMocks = vi.hoisted(() => ({
@@ -14,13 +17,20 @@ vi.mock("playwright", () => ({
 }));
 
 describe("Browser MCP server", () => {
-  beforeEach(() => {
+  let homePath: string;
+
+  beforeEach(async () => {
     vi.clearAllMocks();
+    homePath = await mkdtemp(join(tmpdir(), "mcp-browser-server-"));
+  });
+
+  afterEach(async () => {
+    await rm(homePath, { recursive: true, force: true });
   });
 
   it("creates an MCP server with browser tool", () => {
     const server = createBrowserMcpServer({
-      homePath: "/tmp/test",
+      homePath,
       headless: true,
       timeout: 5000,
     });
@@ -49,7 +59,7 @@ describe("Browser MCP server", () => {
     playwrightMocks.launchPersistentContext.mockResolvedValue(context);
 
     const server = createBrowserMcpServer({
-      homePath: "/tmp/test",
+      homePath,
       headless: true,
       timeout: 5000,
     });
@@ -64,7 +74,7 @@ describe("Browser MCP server", () => {
     await registered._registeredTools.browser.handler({ action: "launch" });
 
     expect(playwrightMocks.launchPersistentContext).toHaveBeenCalledWith(
-      "/tmp/test/data/browser-profiles/default",
+      join(homePath, "data", "browser-profiles", "default"),
       expect.objectContaining({
         headless: true,
         serviceWorkers: "block",
@@ -92,7 +102,7 @@ describe("Browser MCP server", () => {
     playwrightMocks.launchPersistentContext.mockResolvedValue(context);
 
     const server = createBrowserMcpServer({
-      homePath: "/tmp/test",
+      homePath,
       headless: true,
       timeout: 5000,
     });

@@ -65,6 +65,7 @@ export function WorkspaceCanvasNode({ node }: { node: WorkspaceCanvasNodeModel }
           theme={theme}
           isFocused
           sessionId={terminalSessionId}
+          compatMode={terminalSessionId?.startsWith("codex-") ? "codex-tui" : undefined}
           shouldCacheOnUnmount={() => true}
           shouldDestroyOnUnmount={() => false}
         />

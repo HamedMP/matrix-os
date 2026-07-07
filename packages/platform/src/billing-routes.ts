@@ -27,10 +27,13 @@ import {
   parseBillingEntitlementRecord,
   parseBillingOverrideRecord,
   type BillingEntitlementStatus,
+  type BillingEntitlement,
   type MatrixBillingPlanSlug,
   type MatrixBillingInterval,
+  type StripePriceCatalog,
   type StripeSubscriptionProjection,
 } from './billing.js';
+import { DeveloperToolsWithDefaultSchema } from './developer-tools.js';
 
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
@@ -40,11 +43,24 @@ const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
   code: 'billing_unavailable',
 } as const;
+const BILLING_CHECKOUT_STARTED_EVENT =
+  MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_STARTED ?? 'matrix_billing_checkout_started';
+const BILLING_CHECKOUT_CREATED_EVENT =
+  MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_CREATED ?? 'matrix_billing_checkout_created';
+const BILLING_CHECKOUT_FAILED_EVENT =
+  MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_FAILED ?? 'matrix_billing_checkout_failed';
+const BILLING_CHECKOUT_COMPLETED_EVENT =
+  MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_COMPLETED ?? 'matrix_billing_checkout_completed';
+const BILLING_CHECKOUT_EXPIRED_EVENT =
+  MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_EXPIRED ?? 'matrix_billing_checkout_expired';
+const BILLING_SUBSCRIPTION_UPDATED_EVENT =
+  MATRIX_TELEMETRY_EVENTS.BILLING_SUBSCRIPTION_UPDATED ?? 'matrix_billing_subscription_updated';
 
 const CheckoutRequestSchema = z.object({
   planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
   interval: z.enum(['monthly', 'annual']).default('monthly'),
   regionSlug: z.enum(['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil']).default('region_fsn1'),
+  developerTools: DeveloperToolsWithDefaultSchema,
   returnPath: z.string().min(1).max(2048).optional().refine(
     // Safe iff it is already a same-origin allowlisted path (origins.ts is the
     // single source of truth for redirect-target validation).
@@ -52,6 +68,7 @@ const CheckoutRequestSchema = z.object({
     { message: 'Invalid return path' },
   ),
 });
+type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>;
 
 export interface StripeCheckoutSessionInput {
   clerkUserId: string;
@@ -142,8 +159,24 @@ export function createBillingRoutes(options: {
     const parsed = CheckoutRequestSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
 
+    const checkoutProperties = buildCheckoutTelemetryProperties(parsed.data);
+    emitTelemetry(BILLING_CHECKOUT_STARTED_EVENT, {
+      distinctId: clerkUserId,
+      properties: checkoutProperties,
+    });
+
     const priceId = resolvePriceId(env, parsed.data.planSlug, parsed.data.interval);
-    if (!priceId) return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    if (!priceId) {
+      emitTelemetry(BILLING_CHECKOUT_FAILED_EVENT, {
+        distinctId: clerkUserId,
+        properties: {
+          ...checkoutProperties,
+          failure_code: 'missing_price_config',
+          http_status: 503,
+        },
+      });
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
 
     try {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
@@ -169,13 +202,26 @@ export function createBillingRoutes(options: {
           clerkUserId,
           stripeSessionId: session.id,
           createdAt: now().toISOString(),
+          developerTools: parsed.data.developerTools,
         });
       } catch (err: unknown) {
         console.error('[billing] checkout attempt record failed:', err instanceof Error ? err.message : String(err));
       }
+      emitTelemetry(BILLING_CHECKOUT_CREATED_EVENT, {
+        distinctId: clerkUserId,
+        properties: checkoutProperties,
+      });
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] checkout creation failed:', err instanceof Error ? err.message : String(err));
+      emitTelemetry(BILLING_CHECKOUT_FAILED_EVENT, {
+        distinctId: clerkUserId,
+        properties: {
+          ...checkoutProperties,
+          failure_code: 'stripe_unavailable',
+          http_status: 503,
+        },
+      });
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
@@ -265,6 +311,15 @@ export function createBillingRoutes(options: {
               webhookProcessedAt.toISOString(),
             );
           }
+          emitTelemetry(
+            event.type === 'checkout.session.completed'
+              ? BILLING_CHECKOUT_COMPLETED_EVENT
+              : BILLING_CHECKOUT_EXPIRED_EVENT,
+            {
+              distinctId: readClerkUserIdFromCheckoutSession(event.data.object) ?? undefined,
+              properties: { stripe_event_type: event.type },
+            },
+          );
           return { received: true, processed: true };
         }
 
@@ -275,12 +330,17 @@ export function createBillingRoutes(options: {
         const projection = await projectSubscription(trx, event.data.object, webhookProcessedAt);
         if (!projection) return { received: true, ignored: true };
 
+        const priceCatalog = loadStripePriceCatalog(env);
         const entitlement = deriveStripeEntitlement(projection, {
-          priceCatalog: loadStripePriceCatalog(env),
+          priceCatalog,
           runtimeCatalog: loadRuntimeCatalog(env),
           now: webhookProcessedAt,
         });
         await persistEntitlement(trx, entitlement);
+        emitTelemetry(BILLING_SUBSCRIPTION_UPDATED_EVENT, {
+          distinctId: entitlement.clerkUserId,
+          properties: buildSubscriptionTelemetryProperties(entitlement, priceCatalog),
+        });
         return { received: true, processed: true };
       });
       return c.json(result, 200);
@@ -307,6 +367,42 @@ function resolvePriceId(
 ): string | undefined {
   const key = `STRIPE_PRICE_${planSlug.toUpperCase()}_${interval.toUpperCase()}`;
   return env[key];
+}
+
+function buildCheckoutTelemetryProperties(data: CheckoutRequest): Record<string, string | number | boolean | undefined> {
+  return {
+    plan_slug: data.planSlug,
+    billing_interval: data.interval,
+    region_slug: data.regionSlug,
+    return_path_present: Boolean(data.returnPath),
+    developer_tools_count: data.developerTools.length,
+    price_usd: planPriceUsd(data.planSlug, data.interval),
+  };
+}
+
+function buildSubscriptionTelemetryProperties(
+  entitlement: BillingEntitlement,
+  priceCatalog: StripePriceCatalog,
+): Record<string, string | number | boolean | undefined> {
+  const interval = entitlement.stripePriceId
+    ? priceCatalog.priceToPlan.get(entitlement.stripePriceId)?.interval
+    : undefined;
+  const planSlug = entitlement.planSlug === 'internal' ? undefined : entitlement.planSlug;
+  return {
+    plan_slug: planSlug,
+    subscription_status: entitlement.status,
+    billing_interval: interval,
+    price_usd: planSlug && interval ? planPriceUsd(planSlug, interval) : undefined,
+    included_runtime_slots: entitlement.includedRuntimeSlots,
+    addon_runtime_slots: entitlement.addonRuntimeSlots,
+    max_runtime_slots: entitlement.maxRuntimeSlots,
+  };
+}
+
+function planPriceUsd(planSlug: MatrixBillingPlanSlug, interval: MatrixBillingInterval): number | undefined {
+  const plan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((candidate) => candidate.slug === planSlug);
+  if (!plan) return undefined;
+  return interval === 'annual' ? plan.annualUsd : plan.monthlyUsd;
 }
 
 function resolveBillingReturnUrl(
@@ -396,6 +492,15 @@ function readStripeObjectId(value: unknown): string | null {
   if (!value || typeof value !== 'object') return null;
   const id = (value as { id?: unknown }).id;
   return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+function readClerkUserIdFromCheckoutSession(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const session = value as { client_reference_id?: unknown; metadata?: unknown };
+  if (typeof session.client_reference_id === 'string' && CLERK_USER_ID_PATTERN.test(session.client_reference_id)) {
+    return session.client_reference_id;
+  }
+  return readClerkUserIdFromStripeMetadata(session.metadata);
 }
 
 function readClerkUserIdFromStripeMetadata(metadata: unknown): string | null {

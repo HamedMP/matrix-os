@@ -17,6 +17,7 @@ import {
   type MatrixZellijShellThemeId,
   type MatrixZellijConfigPaths,
 } from "./zellij-config.js";
+import { applyTerminalTruecolorEnv } from "../terminal-env.js";
 
 type ExecFile = typeof nodeExecFile;
 type Disposable = { dispose(): void };
@@ -105,6 +106,12 @@ const SAFE_ATTACH_ENV_KEYS = new Set([
   "HOME",
   "LANG",
   "LOGNAME",
+  "MATRIX_APP_DIR",
+  "MATRIX_INSTALL_TOOL_PACK",
+  "MATRIX_NODE_PREFIX",
+  "MATRIX_RUNTIME_DIR",
+  "MATRIX_RUNTIME_HOME",
+  "MATRIX_RUNTIME_USER",
   "PATH",
   "SHELL",
   "TMPDIR",
@@ -141,16 +148,12 @@ function attachEnv(
       env[key] = value;
     }
   }
-  env.TERM = "xterm-256color";
-  env.COLORTERM = "truecolor";
-  env.CLICOLOR = "1";
-  env.FORCE_COLOR = "3";
   env.LANG = env.LANG || "en_US.UTF-8";
   if (configPaths) {
     env.ZELLIJ_CONFIG_DIR = configPaths.dir;
     env.ZELLIJ_CONFIG_FILE = configPaths.file;
   }
-  return env;
+  return applyTerminalTruecolorEnv(env);
 }
 
 export function sanitizeZellijError(stderr: string): string {
@@ -589,13 +592,6 @@ function initialCommandLayout(command: string, cwd?: string): string {
     ? `      args ${args.map(kdlString).join(" ")}\n`
     : "";
   return `layout {
-  default_tab_template {
-    children
-    pane size=1 borderless=true {
-      plugin location="zellij:compact-bar"
-    }
-  }
-
   tab name="main" {
     pane ${paneAttrs} {
 ${argLine}    }

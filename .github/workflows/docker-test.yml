@@ -107,14 +107,19 @@ jobs:
         with:
           context: .
           file: Dockerfile.dev
-          load: true
           tags: matrix-os-dev:ci
+          outputs: type=docker,dest=/tmp/matrix-os-dev-ci.tar
           cache-from: type=gha,scope=dev-image
           cache-to: type=gha,mode=max,scope=dev-image
 
       - name: Save Docker image artifact
         if: needs.changes.outputs.should_run == 'true'
-        run: docker save matrix-os-dev:ci | gzip -1 > /tmp/matrix-os-dev-ci.tar.gz
+        run: |
+          set -euo pipefail
+          gzip -1 < /tmp/matrix-os-dev-ci.tar > /tmp/matrix-os-dev-ci.tar.gz
+          rm /tmp/matrix-os-dev-ci.tar
+          gzip -t /tmp/matrix-os-dev-ci.tar.gz
+          test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000
 
       - name: Upload Docker image artifact
         if: needs.changes.outputs.should_run == 'true'
@@ -157,7 +162,10 @@ jobs:
 
       - name: Load Docker image artifact
         if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
-        run: gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load
+        run: |
+          set -euo pipefail
+          gzip -t /tmp/docker-image/matrix-os-dev-ci.tar.gz
+          gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load
 
       - name: Create CI env file
         if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
@@ -249,7 +257,10 @@ jobs:
           path: /tmp/docker-image
 
       - name: Load Docker image artifact
-        run: gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load
+        run: |
+          set -euo pipefail
+          gzip -t /tmp/docker-image/matrix-os-dev-ci.tar.gz
+          gzip -dc /tmp/docker-image/matrix-os-dev-ci.tar.gz | docker load
 
       - name: Create CI env file
         run: |

@@ -10,12 +10,14 @@ import {
   SHELL_WINDOW_Z_INDEX_MAX,
   SHELL_Z_INDEX,
 } from "../../shell/src/lib/shell-layering.js";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 
 const fetchSpy = vi.fn().mockResolvedValue({ ok: true });
 vi.stubGlobal("fetch", fetchSpy);
 
 function resetStore() {
   resetWindowManagerLayoutPersistenceForTests();
+  useDesktopMode.setState({ mode: "dev", previousMode: null, _hydrated: true });
   useWindowManager.setState({
     windows: [],
     nextZ: 1,
@@ -66,7 +68,17 @@ describe("Window Manager Store", () => {
       expect(windows[0].minimized).toBe(false);
     });
 
-    it("places second window to the right of the first", () => {
+    it("centers dev-mode windows with a small cascade offset", () => {
+      const { openWindow } = useWindowManager.getState();
+      openWindow("App1", "apps/app1.html", 80);
+      openWindow("App2", "apps/app2.html", 80);
+      const [w1, w2] = useWindowManager.getState().windows;
+      expect(w2.x).toBe(w1.x + 28);
+      expect(w2.y).toBe(w1.y + 28);
+    });
+
+    it("places second canvas window to the right of the first", () => {
+      useDesktopMode.getState().setMode("canvas");
       const { openWindow } = useWindowManager.getState();
       openWindow("App1", "apps/app1.html", 80);
       openWindow("App2", "apps/app2.html", 80);

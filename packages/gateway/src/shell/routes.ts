@@ -1,7 +1,9 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js";
 import { toShellError } from "./errors.js";
+import { SESSION_NAME_PATTERN } from "./names.js";
 import {
   ShellPreferencesSchema,
   type ShellThemeId,
@@ -49,6 +51,21 @@ interface ShellBackendHealthRoutes {
   health(): Promise<{ ok: boolean; code: "ok" | "zellij_failed" }>;
 }
 
+interface ShellSessionDiagnosticSummary {
+  ok: true;
+  total: number;
+  active: number;
+  background: number;
+  unread: number;
+  waiting: number;
+  exited: number;
+}
+
+interface ShellSessionDiagnosticFailure {
+  ok: false;
+  code: "session_list_unavailable";
+}
+
 interface ShellThemeConfigRoutes {
   setShellTheme(themeId: ShellThemeId): Promise<void>;
 }
@@ -61,16 +78,25 @@ export interface ShellRouteDeps {
   shellBackend?: ShellBackendHealthRoutes;
   shellThemeConfig?: ShellThemeConfigRoutes;
   commandRunner?: ShellCommandRunner;
+  sessionCreateRateLimiter?: RateLimiter;
 }
 
+export const SHELL_SESSION_CREATE_RATE_LIMIT = {
+  maxAttempts: 120,
+  windowMs: 60_000,
+  lockoutMs: 10_000,
+  maxKeys: 1,
+};
+
+const NewSessionNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/);
 const CreateSessionBodySchema = z.object({
-  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/),
+  name: NewSessionNameSchema,
   cwd: safeCwdSchema().optional(),
   layout: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/).optional(),
   cmd: z.string().min(1).max(4096).optional(),
 });
 const SafeNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/);
-const SafeSessionNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,30}$/);
+const SafeSessionNameSchema = z.string().regex(SESSION_NAME_PATTERN);
 const SafeLayoutNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const SafeCwdSchema = safeCwdSchema();
 const TabBodySchema = z.object({
@@ -97,7 +123,7 @@ const SessionUiStateBodySchema = z.object({
   visualStatus: z.enum(["running", "finished", "idle", "waiting"]).optional(),
 }).strict().refine((value) => Object.keys(value).length > 0);
 const SessionRenameBodySchema = z.object({
-  name: SafeSessionNameSchema,
+  name: NewSessionNameSchema,
 }).strict();
 const SessionOrderBodySchema = z.object({
   order: z.array(SafeSessionNameSchema).max(100),
@@ -111,6 +137,8 @@ function safeCwdSchema() {
 
 export function createShellRoutes(deps: ShellRouteDeps): Hono {
   const app = new Hono();
+  const sessionCreateRateLimiter =
+    deps.sessionCreateRateLimiter ?? createRateLimiter(SHELL_SESSION_CREATE_RATE_LIMIT);
   const sessionBodyLimit = bodyLimit({ maxSize: 4096 });
   const sessionRenameBodyLimit = bodyLimit({ maxSize: 1024 });
   const sessionOrderBodyLimit = bodyLimit({ maxSize: 8192 });
@@ -128,6 +156,31 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
     try {
       const health = await deps.shellBackend.health();
+      if (new URL(c.req.url).searchParams.get("include") === "sessions") {
+        try {
+          const sessions = await deps.registry.list();
+          return c.json({
+            shell: {
+              ...health,
+              sessions: summarizeShellSessionDiagnostics(sessions),
+            },
+          }, health.ok ? 200 : 503);
+        } catch (err: unknown) {
+          console.warn(
+            "[shell] terminal session diagnostics failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+          return c.json({
+            shell: {
+              ...health,
+              sessions: {
+                ok: false,
+                code: "session_list_unavailable",
+              } satisfies ShellSessionDiagnosticFailure,
+            },
+          }, health.ok ? 200 : 503);
+        }
+      }
       return c.json({ shell: health }, health.ok ? 200 : 503);
     } catch (err: unknown) {
       console.warn("[shell] shell health check failed:", err instanceof Error ? err.message : String(err));
@@ -146,6 +199,13 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
   app.post("/sessions", sessionBodyLimit, async (c) => {
     try {
       const body = CreateSessionBodySchema.parse(await c.req.json());
+      if (!sessionCreateRateLimiter.check("shell-session-create")) {
+        return c.json(
+          { error: { code: "rate_limited", message: "Request failed" } },
+          429,
+          { "Retry-After": String(Math.ceil(SHELL_SESSION_CREATE_RATE_LIMIT.lockoutMs / 1000)) },
+        );
+      }
       const session = await deps.registry.create(body);
       const name =
         typeof session === "object" && session !== null && "name" in session
@@ -361,6 +421,39 @@ export function createShellRoutes(deps: ShellRouteDeps): Hono {
     }
   });
 
+  app.get("/preferences", async (c) => {
+    try {
+      if (!deps.preferences) {
+        return c.json({ preferences: ShellPreferencesSchema.parse({}) });
+      }
+      return c.json({ preferences: await deps.preferences.loadGlobal() });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
+  app.put("/preferences", preferencesBodyLimit, async (c) => {
+    try {
+      if (!deps.preferences) {
+        return c.json(
+          { error: { code: "preferences_unavailable", message: "Request failed" } },
+          503,
+        );
+      }
+      const current = await deps.preferences.loadGlobal();
+      const preferences = await deps.preferences.saveGlobal({
+        ...current,
+        ...(await c.req.json()),
+      });
+      if (deps.shellThemeConfig) {
+        await deps.shellThemeConfig.setShellTheme(preferences.shellThemeId);
+      }
+      return c.json({ preferences });
+    } catch (err) {
+      return safeError(c, err);
+    }
+  });
+
   app.put("/sessions/:name/preferences", preferencesBodyLimit, async (c) => {
     try {
       if (!deps.preferences) {
@@ -457,4 +550,44 @@ function describeErrorForLog(err: unknown) {
     context.cause = String(cause);
   }
   return context;
+}
+
+function summarizeShellSessionDiagnostics(sessions: unknown[]): ShellSessionDiagnosticSummary {
+  const summary: ShellSessionDiagnosticSummary = {
+    ok: true,
+    total: 0,
+    active: 0,
+    background: 0,
+    unread: 0,
+    waiting: 0,
+    exited: 0,
+  };
+  for (const session of sessions) {
+    if (!session || typeof session !== "object") {
+      continue;
+    }
+    summary.total += 1;
+    const candidate = session as {
+      status?: unknown;
+      placement?: unknown;
+      unread?: unknown;
+      visualStatus?: unknown;
+    };
+    if (candidate.status === "active") {
+      summary.active += 1;
+    }
+    if (candidate.status === "exited") {
+      summary.exited += 1;
+    }
+    if (candidate.placement === "background") {
+      summary.background += 1;
+    }
+    if (candidate.unread === true) {
+      summary.unread += 1;
+    }
+    if (candidate.visualStatus === "waiting") {
+      summary.waiting += 1;
+    }
+  }
+  return summary;
 }

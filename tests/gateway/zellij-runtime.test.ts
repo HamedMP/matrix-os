@@ -75,7 +75,14 @@ describe("zellij-runtime", () => {
         cols: 120,
         rows: 40,
         cwd: launch.cwd,
-        env: expect.objectContaining(launch.env),
+        env: expect.objectContaining({
+          ...launch.env,
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          CLICOLOR: "1",
+          FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
+        }),
       }),
     );
     expect(runCommand).not.toHaveBeenCalledWith("zellij", expect.arrayContaining(["--layout"]), expect.any(Object));
@@ -92,7 +99,7 @@ describe("zellij-runtime", () => {
     );
   });
 
-  it("writes compact Matrix zellij config and starts with that config environment", async () => {
+  it("writes chrome-free Matrix zellij config and starts with that config environment", async () => {
     const pty = createPty();
     const spawnPty = vi.fn(() => pty.process);
     const runtime = createZellijRuntime({ homePath, runCommand: vi.fn(), spawnPty, startupDelayMs: 1 });
@@ -124,8 +131,12 @@ describe("zellij-runtime", () => {
     expect(config).not.toContain("matrix-dark {");
     expect(config).not.toContain("matrix-light {");
     expect(config).toContain("matrix {");
-    expect(defaultLayout).toContain('plugin location="zellij:compact-bar"');
-    expect(sessionLayout).toContain('plugin location="zellij:compact-bar"');
+    expect(defaultLayout).not.toContain("compact-bar");
+    expect(defaultLayout).not.toContain("tab-bar");
+    expect(defaultLayout).not.toContain("status-bar");
+    expect(sessionLayout).not.toContain("compact-bar");
+    expect(sessionLayout).not.toContain("tab-bar");
+    expect(sessionLayout).not.toContain("status-bar");
     expect(spawnPty).toHaveBeenCalledWith(
       "zellij",
       ["--session", "matrix-sess_matrix_ui", "--new-session-with-layout", started.layoutPath],

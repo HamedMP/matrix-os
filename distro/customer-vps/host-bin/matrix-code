@@ -21,6 +21,26 @@ fi
 CODE_SERVER_ROOT="$MATRIX_HOME/system/code-server"
 
 if ! command -v code-server >/dev/null 2>&1; then
+  if [ -x /opt/matrix/bin/matrix-install-tool-pack ]; then
+    echo "matrix-code: code-server is missing; attempting install" >&2
+    install_status=0
+    sudo -n /opt/matrix/bin/matrix-install-tool-pack code-server || install_status=$?
+    if [ "$install_status" = "75" ]; then
+      echo "matrix-code: code-server install already running; waiting" >&2
+      for _ in $(seq 1 180); do
+        if command -v code-server >/dev/null 2>&1; then
+          break
+        fi
+        sleep 5
+      done
+    elif [ "$install_status" != "0" ]; then
+      echo "matrix-code: code-server install failed" >&2
+      exit 1
+    fi
+  fi
+fi
+
+if ! command -v code-server >/dev/null 2>&1; then
   echo "matrix-code: code-server is not installed" >&2
   exit 1
 fi

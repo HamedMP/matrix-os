@@ -2,11 +2,12 @@
 
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkState = vi.hoisted(() => ({
   isLoaded: true,
-  userId: "user_123",
+  isSignedIn: true,
+  userId: "user_123" as string | null,
   activePlan: null as string | null,
 }));
 
@@ -14,10 +15,11 @@ function installClerkMock() {
   vi.doMock("@clerk/nextjs", () => ({
     useAuth: () => ({
       isLoaded: clerkState.isLoaded,
-      isSignedIn: true,
+      isSignedIn: clerkState.isSignedIn,
       userId: clerkState.userId,
       has: ({ plan }: { plan: string }) => plan === clerkState.activePlan,
     }),
+    useUser: () => ({ user: { publicMetadata: {} } }),
   }));
 }
 
@@ -36,12 +38,20 @@ describe("BillingSection", () => {
       "../../shell/src/hooks/useMatrixBillingAccess.js"
     );
     resetMatrixBillingAccessCacheForTests();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    clerkState.userId = "user_123";
+    clerkState.activePlan = null;
     vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("waits for Clerk before rendering a subscription state", async () => {
@@ -74,7 +84,87 @@ describe("BillingSection", () => {
     expect(screen.getByText("Mastercard")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Monthly" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByText("Developer tools")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
+  });
+
+  it("shows a reconnecting billing session state when signed-out app-session billing returns 401", async () => {
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.userId = null;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 401,
+        headers: { "content-type": "application/json", "x-auth-failure": "app-session-stale" },
+      }),
+    );
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/status",
+      expect.objectContaining({
+        credentials: "include",
+        method: "GET",
+      }),
+    ));
+    await waitFor(() => expect(screen.getByText("Reconnecting")).toBeTruthy());
+    expect(screen.getByText("Reconnecting billing session")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Continue to pay" })).toBeNull();
+  });
+
+  it("does not cache signed-out billing 401 and unlocks after session refresh succeeds", async () => {
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.userId = null;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json", "x-auth-failure": "app-session-stale" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access: { runtimeProxyAllowed: true, reason: "active" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByText("Reconnecting billing session")).toBeTruthy());
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    await waitFor(() => expect(screen.getAllByText("Active").length).toBeGreaterThanOrEqual(1));
+  });
+
+  it("shows payment setup instead of reconnecting for a plain signed-out billing 401", async () => {
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.userId = null;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+    expect(screen.queryByText("Reconnecting billing session")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue to pay" })).toBeTruthy();
   });
 
   it("keeps billing status unknown and retries after transient status failures", async () => {
@@ -116,7 +206,9 @@ describe("BillingSection", () => {
     render(<BillingSection />);
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
 
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     fireEvent.click(screen.getByRole("button", { name: /Builder/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
     fireEvent.click(screen.getByRole("button", { name: /Nuremberg, Germany/ }));
     fireEvent.click(screen.getByRole("button", { name: "Annual" }));
     expect(screen.getByRole("button", { name: "Annual" }).getAttribute("aria-pressed")).toBe("true");
@@ -134,6 +226,32 @@ describe("BillingSection", () => {
         }),
       ),
     );
+  });
+
+  it("closes only the picker on Escape without dismissing the Settings panel", async () => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+
+    const { BillingSection } = await loadBillingSection();
+
+    render(<BillingSection />);
+    await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
+    expect(screen.getByRole("button", { name: /Builder/ })).toBeTruthy();
+
+    // The Settings panel registers a window-level Escape handler; it must not
+    // receive the event once the picker has handled and stopped it.
+    const settingsEscape = vi.fn();
+    window.addEventListener("keydown", settingsEscape);
+    try {
+      fireEvent.keyDown(document, { key: "Escape" });
+    } finally {
+      window.removeEventListener("keydown", settingsEscape);
+    }
+
+    expect(screen.queryByRole("button", { name: /Builder/ })).toBeNull();
+    expect(settingsEscape).not.toHaveBeenCalled();
   });
 
   it("includes a safe return path when checkout is launched from CLI device setup", async () => {
@@ -184,12 +302,18 @@ describe("BillingSection", () => {
     await waitFor(() => expect(screen.getByText("Not active")).toBeTruthy());
     expect(screen.getByText("Pick the cloud computer Matrix boots on")).toBeTruthy();
     expect(screen.getAllByText("Computer").length).toBeGreaterThanOrEqual(1);
+
+    // Computer options live in a click-to-open dropdown now.
+    fireEvent.click(screen.getByRole("button", { name: "Change computer" }));
     expect(screen.getByText("CPX22")).toBeTruthy();
     expect(screen.getByText("$14")).toBeTruthy();
     expect(screen.getAllByText("CPX32").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("$19").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("CPX52")).toBeTruthy();
     expect(screen.getByText("$49")).toBeTruthy();
+
+    // Region options live in their own dropdown (opening it closes the computer one).
+    fireEvent.click(screen.getByRole("button", { name: "Change region" }));
     expect(screen.getAllByText("Region").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Closest location is selected automatically")).toBeTruthy();
     expect(screen.getAllByText("🇩🇪").length).toBeGreaterThanOrEqual(2);

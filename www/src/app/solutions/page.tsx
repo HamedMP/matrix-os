@@ -42,7 +42,7 @@ export default function SolutionsPage() {
           <CtaButton href="https://app.matrix-os.com" phLocation="solutions_hero" phTarget="start_cloud_dev">
             Get started
           </CtaButton>
-          <CtaButton href="/docs/users/quickstart" variant="outline">
+          <CtaButton href="/docs/quickstart" variant="outline">
             Read quickstart
           </CtaButton>
         </PageHero>

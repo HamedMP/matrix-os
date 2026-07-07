@@ -39,27 +39,23 @@ Four brand colors + warm sand shades for gradient depth:
 
 ```css
 :root {
-  --matrix-bg: #FAFAF5;
-  --app-bg: #FAFAF5;
-  --bg: #FAFAF5;
-  --fg: #32352E;
-  --primary: #434E3F;
-  --primary-fg: #FAFAF5;
-  --accent: #D06F25;
-  --accent-fg: #FFFFFF;
-  --secondary: #E0E1CA;
-  --muted: #F0EDE4;
-  --muted-fg: #7A7768;
-  --card: #FFFFFF;
-  --border: #D6D3C8;
-  --sand-light: #F7F1E7;
-  --sand-mid: #F3EAE0;
-  --sand-warm: #D6AB8B;
-  --destructive: #C4342D;
-  --success: #3A7D44;
-  --warning: #D49B2A;
+  --app-bg: var(--matrix-bg, #FAFAF9);
+  --app-fg: var(--matrix-fg, #32352E);
+  --app-card: var(--matrix-card, #FCFCF8);
+  --app-primary: var(--matrix-primary, #434E3F);
+  --app-primary-fg: var(--matrix-primary-fg, #FAFAF5);
+  --app-accent: var(--matrix-accent, #D06F25);
+  --app-accent-fg: var(--matrix-accent-fg, #FAFAF5);
+  --app-muted: var(--matrix-muted, #E1E1D0);
+  --app-muted-fg: var(--matrix-muted-fg, #747668);
+  --app-border: var(--matrix-border, #D8D6C7);
+  --app-success: var(--matrix-success, #3A7D44);
+  --app-warning: var(--matrix-warning, #E0A12E);
+  --app-danger: var(--matrix-destructive, #D74A3A);
 }
 ```
+
+Use `--matrix-*` directly or define `--app-*` aliases from them. Do not replace inherited tokens with app-local blue, green, purple, or novelty palettes unless the user explicitly asks for branded customization.
 
 ### Color Rules
 
@@ -141,6 +137,8 @@ border: 1px solid rgba(214, 211, 200, 0.35);
 ## Icons
 
 Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
+
+Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present, otherwise the Matrix OS style: light premium iOS/macOS skeuomorphic artwork, warm off-white or pale pastel background, forest/cream/ember/deep accents, one large tactile object, no text/logos/watermarks, no transparent or black dock backgrounds, no empty padding. The Matrix shell owns the final corner radius, so do not bake a visible frame into the artwork.
 
 Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 

@@ -3,14 +3,12 @@ import {
   View,
   TextInput,
   Pressable,
-  Text,
   ActivityIndicator,
-  StyleSheet,
 } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, fonts, spacing, radius } from "@/lib/theme";
 
 interface InputBarProps {
   onSend: (text: string) => void;
@@ -19,6 +17,7 @@ interface InputBarProps {
 }
 
 export function InputBar({ onSend, busy, connected }: InputBarProps) {
+  const { theme } = useUnistyles();
   const [text, setText] = useState("");
 
   const handleSend = useCallback(() => {
@@ -47,7 +46,7 @@ export function InputBar({ onSend, busy, connected }: InputBarProps) {
                 : "Ask Matrix OS..."
               : "Connecting..."
           }
-          placeholderTextColor={colors.light.mutedForeground}
+          placeholderTextColor={theme.colors.mutedForeground}
           multiline
           editable={connected && !busy}
           onSubmitEditing={handleSend}
@@ -64,12 +63,12 @@ export function InputBar({ onSend, busy, connected }: InputBarProps) {
           ]}
         >
           {busy ? (
-            <ActivityIndicator size="small" color={colors.light.primaryForeground} />
+            <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
           ) : (
             <Ionicons
               name="arrow-up"
               size={18}
-              color={canSend ? colors.light.primaryForeground : colors.light.mutedForeground}
+              color={canSend ? theme.colors.primaryForeground : theme.colors.mutedForeground}
             />
           )}
         </Pressable>
@@ -78,32 +77,32 @@ export function InputBar({ onSend, busy, connected }: InputBarProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.light.border,
+    borderTopColor: theme.colors.border,
     overflow: "hidden" as const,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: process.env.EXPO_OS === "ios" ? spacing["2xl"] : spacing.md,
+    paddingHorizontal: theme.spacing.md,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: process.env.EXPO_OS === "ios" ? theme.spacing["2xl"] : theme.spacing.md,
   },
   inputRow: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: spacing.sm,
-    borderRadius: radius.xl,
+    gap: theme.spacing.sm,
+    borderRadius: theme.radius.xl,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
+    borderColor: theme.colors.border,
     backgroundColor: "rgba(255, 255, 255, 0.6)",
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: theme.spacing.md,
     paddingVertical: process.env.EXPO_OS === "ios" ? 8 : 4,
   },
   input: {
     flex: 1,
-    fontFamily: fonts.sans,
+    fontFamily: theme.fonts.sans,
     fontSize: 15,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
     minHeight: 36,
     maxHeight: 100,
     paddingVertical: process.env.EXPO_OS === "ios" ? 8 : 6,
@@ -117,13 +116,13 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   sendButtonActive: {
-    backgroundColor: colors.light.primary,
+    backgroundColor: theme.colors.primary,
   },
   sendButtonDisabled: {
-    backgroundColor: colors.light.muted,
+    backgroundColor: theme.colors.muted,
   },
   sendButtonPressed: {
     opacity: 0.85,
     transform: [{ scale: 0.95 }],
   },
-});
+}));

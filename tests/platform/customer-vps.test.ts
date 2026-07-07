@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 import {
   claimUserMachineDelete,
+  claimRunningUserMachineResize,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
@@ -36,15 +37,13 @@ describe('platform/customer-vps', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await destroyTestPlatformDb(db);
   });
 
-  function createService(overrides: Parameters<typeof createCustomerVpsService>[0] = {} as any) {
-    const hetzner = createMockHetznerClient(overrides.hetzner);
-    const systemStore = createMockCustomerVpsSystemStore(overrides.systemStore);
-    const service = createCustomerVpsService({
-      db,
-      config: loadCustomerVpsConfig({
+  function createTestConfig(overrides: Partial<ReturnType<typeof loadCustomerVpsConfig>> = {}) {
+    return {
+      ...loadCustomerVpsConfig({
         PLATFORM_PORT: '9000',
         PLATFORM_SECRET: 'platform-secret',
         HETZNER_API_TOKEN: 'token',
@@ -55,8 +54,19 @@ describe('platform/customer-vps', () => {
         POSTHOG_TOKEN: 'phc_public',
         POSTHOG_PROJECT_TOKEN: 'phc_project',
         POSTHOG_HOST: 'https://eu.i.posthog.com',
-        NEXT_PUBLIC_POSTHOG_API_HOST: '/ingest',
+        NEXT_PUBLIC_POSTHOG_HOST: 'https://eu.posthog.com',
+        NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
       }),
+      ...overrides,
+    };
+  }
+
+  function createService(overrides: Parameters<typeof createCustomerVpsService>[0] = {} as any) {
+    const hetzner = createMockHetznerClient(overrides.hetzner);
+    const systemStore = createMockCustomerVpsSystemStore(overrides.systemStore);
+    const service = createCustomerVpsService({
+      db,
+      config: createTestConfig(),
       hetzner,
       systemStore,
       tokenFactory: () => ({
@@ -102,10 +112,20 @@ describe('platform/customer-vps', () => {
     expect(config.hostBundleUrl).toBe('https://app.matrix-os.com/system-bundles/stable/matrix-host-bundle.tar.gz');
   });
 
+  it('does not use the private PostHog ingest host as the public browser host', () => {
+    const config = loadCustomerVpsConfig({
+      POSTHOG_HOST: 'https://eu.i.posthog.com',
+      NEXT_PUBLIC_POSTHOG_API_HOST: '/relay',
+    });
+
+    expect(config.posthogHost).toBe('https://eu.i.posthog.com');
+    expect(config.posthogPublicHost).toBe('https://eu.posthog.com');
+  });
+
   it('provisions a user machine idempotently by clerkUserId', async () => {
     const { service, hetzner } = createService();
 
-    const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    const first = await service.provision({ clerkUserId: 'user_123', handle: 'alice', developerTools: ['codex', 'pi'] });
     const second = await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
 
     expect(first).toEqual({ machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112', status: 'provisioning', etaSeconds: 90 });
@@ -114,6 +134,20 @@ describe('platform/customer-vps', () => {
     const row = await getActiveUserMachineByClerkId(db, 'user_123');
     expect(row?.hetznerServerId).toBe(123456);
     expect(row?.registrationTokenHash).toBe(hashRegistrationToken('registration-token'));
+    expect(row?.developerTools).toEqual(['codex', 'pi']);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS='codex pi'");
+  });
+
+  it('preserves an intentional empty developer tool selection', async () => {
+    const { service, hetzner } = createService();
+
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice', developerTools: [] });
+
+    const row = await getActiveUserMachineByClerkId(db, 'user_123');
+    expect(row?.developerTools).toEqual([]);
+    const createInput = vi.mocked(hetzner.createServer).mock.calls[0]?.[0];
+    expect(createInput?.userData).toContain("MATRIX_DEVELOPER_TOOLS=''");
   });
 
   it('uses the active billing entitlement server type when provisioning new machines', async () => {
@@ -215,6 +249,414 @@ describe('platform/customer-vps', () => {
       publicMessage: 'Billing upgrade required',
     });
     expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
+
+  it('resizes a running machine in place without deleting or recreating owner data', async () => {
+    const getServer = vi.fn()
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'migrating', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx32', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'running', serverType: 'cpx32', publicIPv4: '203.0.113.10' });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await expect(service.resize({
+      machineId: provisioned.machineId,
+      serverType: 'cpx32',
+    })).resolves.toEqual({
+      machineId: provisioned.machineId,
+      serverType: 'cpx32',
+      status: 'running',
+    });
+
+    expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
+    expect(hetzner.powerOffServer).not.toHaveBeenCalled();
+    expect(hetzner.resizeServer).toHaveBeenCalledWith(123456, { serverType: 'cpx32', upgradeDisk: false });
+    expect(hetzner.powerOnServer).toHaveBeenCalledWith(123456);
+    expect(vi.mocked(hetzner.shutdownServer).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(hetzner.resizeServer).mock.invocationCallOrder[0],
+    );
+    expect(vi.mocked(hetzner.resizeServer).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(hetzner.powerOnServer).mock.invocationCallOrder[0],
+    );
+    expect(getServer).toHaveBeenCalledTimes(4);
+    expect(getServer.mock.invocationCallOrder[2]).toBeLessThan(
+      vi.mocked(hetzner.powerOnServer).mock.invocationCallOrder[0],
+    );
+    expect(hetzner.createServer).toHaveBeenCalledTimes(1);
+    expect(hetzner.deleteServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      status: 'running',
+      serverType: 'cpx32',
+      deletedAt: null,
+    });
+  });
+
+  it('falls back to hard poweroff when graceful resize shutdown is rejected', async () => {
+    const getServer = vi.fn()
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx32', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'running', serverType: 'cpx32', publicIPv4: '203.0.113.10' });
+    const shutdownServer = vi.fn().mockRejectedValue(new CustomerVpsError(
+      500,
+      'provider_unavailable',
+      'Provisioning provider unavailable',
+    ));
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer, shutdownServer }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await expect(service.resize({
+      machineId: provisioned.machineId,
+      serverType: 'cpx32',
+    })).resolves.toMatchObject({
+      machineId: provisioned.machineId,
+      serverType: 'cpx32',
+      status: 'running',
+    });
+
+    expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
+    expect(hetzner.powerOffServer).toHaveBeenCalledWith(123456);
+    expect(vi.mocked(hetzner.shutdownServer).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(hetzner.powerOffServer).mock.invocationCallOrder[0],
+    );
+    expect(vi.mocked(hetzner.powerOffServer).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(hetzner.resizeServer).mock.invocationCallOrder[0],
+    );
+  });
+
+  it('keeps resize claimed when hard poweroff is accepted but off state is not confirmed', async () => {
+    vi.useFakeTimers();
+    const getServer = vi.fn().mockResolvedValue({
+      id: 123456,
+      status: 'stopping',
+      serverType: 'cpx22',
+      publicIPv4: '203.0.113.10',
+    });
+    const shutdownServer = vi.fn().mockRejectedValue(new CustomerVpsError(
+      500,
+      'provider_unavailable',
+      'Provisioning provider unavailable',
+    ));
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer, shutdownServer }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const resize = service.resize({ machineId: provisioned.machineId, serverType: 'cpx32' });
+    const resizeExpectation = expect(resize).rejects.toMatchObject({
+      code: 'provider_timeout',
+    });
+    await vi.advanceTimersByTimeAsync(91_000);
+
+    await resizeExpectation;
+    expect(hetzner.powerOffServer).toHaveBeenCalledTimes(1);
+    expect(hetzner.resizeServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      status: 'resizing',
+      serverType: 'cpx22',
+      failureCode: null,
+      resizeTargetServerType: 'cpx32',
+    });
+  });
+
+  it('keeps resize claimed when provider change_type is accepted but does not settle', async () => {
+    vi.useFakeTimers();
+    const getServer = vi.fn()
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
+      .mockResolvedValue({ id: 123456, status: 'migrating', serverType: 'cpx22', publicIPv4: '203.0.113.10' });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const resize = service.resize({ machineId: provisioned.machineId, serverType: 'cpx32' });
+    const resizeExpectation = expect(resize).rejects.toMatchObject({
+      code: 'provider_timeout',
+    });
+    await vi.advanceTimersByTimeAsync(91_000);
+
+    await resizeExpectation;
+    expect(hetzner.resizeServer).toHaveBeenCalledWith(123456, {
+      serverType: 'cpx32',
+      upgradeDisk: false,
+    });
+    expect(hetzner.powerOnServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      status: 'resizing',
+      serverType: 'cpx22',
+      failureCode: null,
+      resizeTargetServerType: 'cpx32',
+    });
+  });
+
+  it('keeps waiting on graceful shutdown after a transient provider read failure', async () => {
+    vi.useFakeTimers();
+    const getServer = vi.fn()
+      .mockRejectedValueOnce(new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable'))
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx32', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'running', serverType: 'cpx32', publicIPv4: '203.0.113.10' });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const resize = service.resize({ machineId: provisioned.machineId, serverType: 'cpx32' });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(resize).resolves.toMatchObject({
+      machineId: provisioned.machineId,
+      serverType: 'cpx32',
+      status: 'running',
+    });
+    expect(hetzner.shutdownServer).toHaveBeenCalledWith(123456);
+    expect(hetzner.powerOffServer).not.toHaveBeenCalled();
+  });
+
+  it('does not issue duplicate poweron when the resize poweron wait times out', async () => {
+    vi.useFakeTimers();
+    const getServer = vi.fn()
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx32', publicIPv4: '203.0.113.10' })
+      .mockResolvedValue({ id: 123456, status: 'starting', serverType: 'cpx32', publicIPv4: '203.0.113.10' });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const resize = service.resize({ machineId: provisioned.machineId, serverType: 'cpx32' });
+    const resizeExpectation = expect(resize).rejects.toMatchObject({
+      code: 'provider_timeout',
+    });
+    await vi.advanceTimersByTimeAsync(91_000);
+
+    await resizeExpectation;
+    expect(hetzner.powerOnServer).toHaveBeenCalledTimes(1);
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      status: 'resizing',
+      serverType: 'cpx22',
+      failureCode: null,
+      resizeTargetServerType: 'cpx32',
+    });
+  });
+
+  it('keeps resize claimed when rollback poweron is accepted but not confirmed', async () => {
+    vi.useFakeTimers();
+    const getServer = vi.fn()
+      .mockResolvedValueOnce({ id: 123456, status: 'off', serverType: 'cpx22', publicIPv4: '203.0.113.10' })
+      .mockResolvedValue({ id: 123456, status: 'starting', serverType: 'cpx22', publicIPv4: '203.0.113.10' });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({
+        getServer,
+        resizeServer: vi.fn().mockRejectedValue(new CustomerVpsError(
+          500,
+          'provider_unavailable',
+          'Provisioning provider unavailable',
+        )),
+      }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const resize = service.resize({ machineId: provisioned.machineId, serverType: 'cpx32' });
+    const resizeExpectation = expect(resize).rejects.toMatchObject({
+      code: 'provider_unavailable',
+    });
+    await vi.advanceTimersByTimeAsync(91_000);
+
+    await resizeExpectation;
+    expect(hetzner.powerOnServer).toHaveBeenCalledTimes(1);
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      status: 'resizing',
+      serverType: 'cpx22',
+      failureCode: null,
+      resizeTargetServerType: 'cpx32',
+    });
+  });
+
+  it('returns running without provider work when the machine is already on the requested type', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement()),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx32' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await expect(service.resize({
+      machineId: provisioned.machineId,
+      serverType: 'cpx32',
+    })).resolves.toEqual({
+      machineId: provisioned.machineId,
+      serverType: 'cpx32',
+      status: 'running',
+    });
+
+    expect(hetzner.shutdownServer).not.toHaveBeenCalled();
+    expect(hetzner.powerOffServer).not.toHaveBeenCalled();
+    expect(hetzner.resizeServer).not.toHaveBeenCalled();
+    expect(hetzner.powerOnServer).not.toHaveBeenCalled();
+  });
+
+  it('rejects a second resize while the first resize has claimed the machine', async () => {
+    let markResizeStarted!: () => void;
+    let releaseResize!: () => void;
+    const resizeStarted = new Promise<void>((resolve) => {
+      markResizeStarted = resolve;
+    });
+    const getServer = vi.fn()
+      .mockResolvedValueOnce({ id: 123456, status: 'off', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'off', publicIPv4: '203.0.113.10' })
+      .mockResolvedValueOnce({ id: 123456, status: 'running', publicIPv4: '203.0.113.10' });
+    const resizeServer = vi.fn().mockImplementation(async () => {
+      markResizeStarted();
+      await new Promise<void>((resolve) => {
+        releaseResize = resolve;
+      });
+    });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer, resizeServer }),
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    const firstResize = service.resize({ machineId: provisioned.machineId, serverType: 'cpx32' });
+    await resizeStarted;
+    await expect(service.resize({ machineId: provisioned.machineId, serverType: 'cpx52' })).rejects.toMatchObject({
+      status: 409,
+      publicMessage: 'Machine cannot resize',
+    });
+    await expect(service.delete(provisioned.machineId)).rejects.toMatchObject({
+      status: 409,
+      publicMessage: 'Machine cannot delete',
+    });
+    await expect(service.recover({ clerkUserId: 'user_123', allowEmpty: true })).rejects.toMatchObject({
+      status: 409,
+      publicMessage: 'Machine cannot recover',
+    });
+    expect(hetzner.resizeServer).toHaveBeenCalledTimes(1);
+
+    releaseResize();
+    await firstResize;
+  });
+
+  it('rejects machine resize requests outside the active entitlement without provider mutation', async () => {
+    const { service, hetzner } = createService({
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        allowedServerTypes: ['cpx22'],
+        defaultServerType: 'cpx22',
+      })),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+
+    await expect(service.resize({
+      machineId: provisioned.machineId,
+      serverType: 'cpx52',
+    })).rejects.toMatchObject({
+      status: 402,
+      publicMessage: 'Billing upgrade required',
+    });
+
+    expect(hetzner.resizeServer).not.toHaveBeenCalled();
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      serverType: 'cpx22',
+      status: 'running',
+      deletedAt: null,
+    });
   });
 
   it('pins channel image versions to the current immutable host bundle release at provision time', async () => {
@@ -346,8 +788,8 @@ describe('platform/customer-vps', () => {
     expect(createInput?.userData).toContain('POSTHOG_HOST=https://eu.i.posthog.com');
     expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_KEY=phc_public');
     expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_project');
-    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com');
-    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/ingest');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_HOST=https://eu.posthog.com');
+    expect(createInput?.userData).toContain('NEXT_PUBLIC_POSTHOG_API_HOST=/relay');
   });
 
   it('records a failed status with a generic failure code when Hetzner create fails', async () => {
@@ -1074,6 +1516,279 @@ describe('platform/customer-vps', () => {
     expect(await listPendingProviderDeletions(db, '2026-04-26T12:00:00.000Z', 10)).toHaveLength(0);
   });
 
+  it('reconciles stale resizing machines even when other stale rows fill the batch', async () => {
+    const serverReads = new Map<number, number>();
+    const getServer = vi.fn(async (serverId: number) => {
+      if (serverId !== 222222) return null;
+      const readCount = serverReads.get(serverId) ?? 0;
+      serverReads.set(serverId, readCount + 1);
+      return readCount === 0
+        ? { id: serverId, status: 'off', serverType: 'cpx32', publicIPv4: '203.0.113.20' }
+        : { id: serverId, status: 'running', serverType: 'cpx32', publicIPv4: '203.0.113.20' };
+    });
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'bd30b7f2-68bb-4aa7-9c15-8be106a83f9f',
+    ];
+    const { service, hetzner } = createService({
+      config: createTestConfig({ reconciliationBatchSize: 1 }),
+      hetzner: createMockHetznerClient({ getServer }),
+      machineIdFactory: () => machineIds.shift()!,
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        maxRuntimeSlots: 2,
+        includedRuntimeSlots: 2,
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const staleProvisioning = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      serverType: 'cpx22',
+    });
+    const resizing = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice-staging',
+      runtimeSlot: 'staging',
+      serverType: 'cpx22',
+    });
+    await updateUserMachine(db, staleProvisioning.machineId, {
+      hetznerServerId: null,
+      provisionedAt: '2026-04-26T10:00:00.000Z',
+    });
+    await updateUserMachine(db, resizing.machineId, {
+      status: 'running',
+      hetznerServerId: 222222,
+      publicIPv4: '203.0.113.20',
+      serverType: 'cpx22',
+    });
+    const claimed = await claimRunningUserMachineResize(
+      db,
+      resizing.machineId,
+      222222,
+      '2026-04-26T10:00:00.000Z',
+      'cpx32',
+    );
+    expect(claimed?.status).toBe('resizing');
+
+    const result = await service.reconcileProvisioning();
+
+    expect(result).toMatchObject({ checked: 2, failed: 1, running: 1 });
+    expect(hetzner.powerOnServer).toHaveBeenCalledWith(222222);
+    await expect(getUserMachine(db, resizing.machineId)).resolves.toMatchObject({
+      status: 'running',
+      serverType: 'cpx32',
+      resizeStartedAt: null,
+      resizeTargetServerType: null,
+    });
+  });
+
+  it('reconciles stale resizing machines back to running from provider state', async () => {
+    const getServer = vi.fn()
+      .mockResolvedValueOnce({
+        id: 123456,
+        status: 'off',
+        serverType: 'cpx32',
+        publicIPv4: '203.0.113.10',
+      })
+      .mockResolvedValueOnce({
+        id: 123456,
+        status: 'running',
+        serverType: 'cpx32',
+        publicIPv4: '203.0.113.10',
+        publicIPv6: '2001:db8::/64',
+      })
+      .mockResolvedValueOnce({
+        id: 123456,
+        status: 'running',
+        serverType: 'cpx32',
+        publicIPv4: '203.0.113.10',
+        publicIPv6: '2001:db8::/64',
+      });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer }),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    const claimed = await claimRunningUserMachineResize(
+      db,
+      provisioned.machineId,
+      123456,
+      '2026-04-26T10:00:00.000Z',
+      'cpx32',
+    );
+    expect(claimed?.status).toBe('resizing');
+
+    const result = await service.reconcileProvisioning();
+
+    expect(result).toMatchObject({ checked: 1, failed: 0, running: 1 });
+    expect(hetzner.powerOnServer).toHaveBeenCalledWith(123456);
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      status: 'running',
+      serverType: 'cpx32',
+      resizeStartedAt: null,
+      resizeTargetServerType: null,
+      publicIPv4: '203.0.113.10',
+      publicIPv6: '2001:db8::/64',
+    });
+  });
+
+  it('continues stale resize reconciliation when a provider refresh fails after poweron', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const serverReads = new Map<number, number>();
+    const getServer = vi.fn(async (serverId: number) => {
+      const readCount = serverReads.get(serverId) ?? 0;
+      serverReads.set(serverId, readCount + 1);
+      if (serverId === 123456) {
+        if (readCount === 0) {
+          return {
+            id: serverId,
+            status: 'off',
+            serverType: 'cpx32',
+            publicIPv4: '203.0.113.10',
+          };
+        }
+        if (readCount === 1) {
+          return {
+            id: serverId,
+            status: 'running',
+            serverType: 'cpx32',
+            publicIPv4: '203.0.113.10',
+          };
+        }
+        throw new Error('transient provider refresh failure');
+      }
+      return {
+        id: serverId,
+        status: 'running',
+        serverType: 'cpx32',
+        publicIPv4: '203.0.113.20',
+      };
+    });
+    const machineIds = [
+      '9f05824c-8d0a-4d83-9cb4-b312d43ff112',
+      'bd30b7f2-68bb-4aa7-9c15-8be106a83f9f',
+    ];
+    const { service } = createService({
+      hetzner: createMockHetznerClient({ getServer }),
+      machineIdFactory: () => machineIds.shift()!,
+      resolveBillingEntitlement: vi.fn().mockResolvedValue(activeEntitlement({
+        maxRuntimeSlots: 2,
+        includedRuntimeSlots: 2,
+        allowedServerTypes: ['cpx22', 'cpx32'],
+        defaultServerType: 'cpx32',
+      })),
+    });
+    const first = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice',
+      runtimeSlot: 'primary',
+      serverType: 'cpx22',
+    });
+    const second = await service.provision({
+      clerkUserId: 'user_123',
+      handle: 'alice-staging',
+      runtimeSlot: 'staging',
+      serverType: 'cpx22',
+    });
+    await updateUserMachine(db, first.machineId, {
+      status: 'running',
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      serverType: 'cpx22',
+    });
+    await updateUserMachine(db, second.machineId, {
+      status: 'running',
+      hetznerServerId: 222222,
+      publicIPv4: '203.0.113.20',
+      serverType: 'cpx22',
+    });
+    await claimRunningUserMachineResize(db, first.machineId, 123456, '2026-04-26T10:00:00.000Z', 'cpx32');
+    await claimRunningUserMachineResize(db, second.machineId, 222222, '2026-04-26T10:00:00.000Z', 'cpx32');
+
+    const result = await service.reconcileProvisioning();
+
+    expect(result).toMatchObject({ checked: 2, failed: 0, running: 1 });
+    await expect(getUserMachine(db, first.machineId)).resolves.toMatchObject({
+      status: 'resizing',
+      serverType: 'cpx22',
+      resizeTargetServerType: 'cpx32',
+    });
+    await expect(getUserMachine(db, second.machineId)).resolves.toMatchObject({
+      status: 'running',
+      serverType: 'cpx32',
+      resizeStartedAt: null,
+      resizeTargetServerType: null,
+    });
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[customer-vps] resize reconcile server refresh failed machineId=9f05824c-8d0a-4d83-9cb4-b312d43ff112: transient provider refresh failure',
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('surfaces stale resizing machines that never reached the target server type', async () => {
+    const getServer = vi.fn()
+      .mockResolvedValueOnce({
+        id: 123456,
+        status: 'off',
+        serverType: 'cpx22',
+        publicIPv4: '203.0.113.10',
+      })
+      .mockResolvedValueOnce({
+        id: 123456,
+        status: 'running',
+        serverType: 'cpx22',
+        publicIPv4: '203.0.113.10',
+        publicIPv6: '2001:db8::/64',
+      })
+      .mockResolvedValueOnce({
+        id: 123456,
+        status: 'running',
+        serverType: 'cpx22',
+        publicIPv4: '203.0.113.10',
+        publicIPv6: '2001:db8::/64',
+      });
+    const { service, hetzner } = createService({
+      hetzner: createMockHetznerClient({ getServer }),
+    });
+    const provisioned = await service.provision({ clerkUserId: 'user_123', handle: 'alice', serverType: 'cpx22' });
+    await service.register('registration-token', {
+      machineId: provisioned.machineId,
+      hetznerServerId: 123456,
+      publicIPv4: '203.0.113.10',
+      imageVersion: 'matrix-os-host-2026.04.26-1',
+    });
+    const claimed = await claimRunningUserMachineResize(
+      db,
+      provisioned.machineId,
+      123456,
+      '2026-04-26T10:00:00.000Z',
+      'cpx32',
+    );
+    expect(claimed?.status).toBe('resizing');
+
+    const result = await service.reconcileProvisioning();
+
+    expect(result).toMatchObject({ checked: 1, failed: 1, running: 0 });
+    expect(hetzner.powerOnServer).toHaveBeenCalledWith(123456);
+    await expect(getUserMachine(db, provisioned.machineId)).resolves.toMatchObject({
+      status: 'running',
+      serverType: 'cpx22',
+      failureCode: 'resize_interrupted',
+      failureAt: '2026-04-26T12:00:00.000Z',
+      resizeStartedAt: null,
+      resizeTargetServerType: null,
+      publicIPv4: '203.0.113.10',
+      publicIPv6: '2001:db8::/64',
+    });
+  });
+
   it('cleans up stale provider servers labeled for a machine that never recorded a Hetzner ID', async () => {
     const deleteServer = vi.fn().mockResolvedValue(undefined);
     const listServersByLabel = vi.fn().mockResolvedValue([
@@ -1131,8 +1846,8 @@ describe('platform/customer-vps', () => {
   });
 
   it('publishes VPS-per-user deployment docs through the docs navigation', () => {
-    const meta = JSON.parse(readFileSync('www/content/docs/deployment/meta.json', 'utf8')) as { pages: string[] };
-    const page = readFileSync('www/content/docs/deployment/vps-per-user.mdx', 'utf8');
+    const meta = JSON.parse(readFileSync('www/content/docs/developer/deployment/meta.json', 'utf8')) as { pages: string[] };
+    const page = readFileSync('www/content/docs/developer/deployment/vps-per-user.mdx', 'utf8');
 
     expect(meta.pages).toContain('vps-per-user');
     expect(page).toContain('## Production Scope');

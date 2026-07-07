@@ -3,13 +3,18 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AlertCircleIcon, CircleDollarSignIcon, Loader2Icon, LogInIcon } from "lucide-react";
+import { AlertCircleIcon, Loader2Icon } from "lucide-react";
 import {
   getMatrixBillingSuccessRedirectUrl,
 } from "@/lib/billing";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { MatrixBootMark } from "@/components/MatrixBootMark";
+import {
+  DefaultInstallsStep,
+} from "@/components/onboarding/DefaultInstallsStep";
+import type { DeveloperToolId } from "@/components/onboarding/developer-tools";
 import { Settings } from "./Settings";
 
 const e2eBillingBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
@@ -129,9 +134,7 @@ function SignInRedirecting() {
           }}
           aria-hidden="true"
         />
-        <div className="relative flex size-14 items-center justify-center rounded-2xl border border-forest/15 bg-cream/50 shadow-sm">
-          <LogInIcon className="size-6 text-ember" aria-hidden="true" />
-        </div>
+        <MatrixBootMark size={60} className="relative" />
         <div className="relative space-y-2">
           <h1 className="text-xl font-semibold tracking-tight text-deep">
             Opening Matrix OS sign in
@@ -174,15 +177,14 @@ function SubscriptionConfirmationPending({
         />
 
         <div className="relative flex flex-col items-center gap-5 p-8 text-center">
-          <div className="flex size-14 items-center justify-center rounded-2xl border border-forest/15 bg-white shadow-sm">
-            {failed ? (
-              <AlertCircleIcon className="size-6 text-ember" aria-hidden="true" />
-            ) : (
-              <Loader2Icon className="size-6 animate-spin text-ember" aria-hidden="true" />
-            )}
-          </div>
+          <MatrixBootMark size={64} />
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
+            <p className="flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-forest/60">
+              {failed ? (
+                <AlertCircleIcon className="size-3.5 text-ember" aria-hidden="true" />
+              ) : (
+                <Loader2Icon className="size-3.5 animate-spin text-ember" aria-hidden="true" />
+              )}
               Matrix OS · Billing
             </p>
             <h1 className="text-2xl font-semibold tracking-tight text-deep">
@@ -207,6 +209,33 @@ function SubscriptionConfirmationPending({
   );
 }
 
+function DeviceDefaultInstallsRequired({
+  onBuild,
+  loading,
+  error,
+}: {
+  onBuild: (tools: DeveloperToolId[]) => void;
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center bg-deep/30 px-4 py-8 text-deep backdrop-blur-md"
+      style={{ zIndex: SHELL_Z_INDEX.hardGate }}
+    >
+      <DefaultInstallsStep onBuild={onBuild} loading={loading} error={error} />
+    </div>
+  );
+}
+
+async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), DEVICE_SETUP_TIMEOUT_MS);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
+}
+
 function BillingStatusLoading() {
   return (
     <main data-matrix-billing-gate="true" className="flex min-h-screen items-center justify-center bg-page-bg px-6 py-10 text-forest/70">
@@ -214,9 +243,7 @@ function BillingStatusLoading() {
         className="flex w-full max-w-md flex-col items-center gap-4 rounded-lg border border-forest/15 bg-white/85 p-6 text-center shadow-[0_24px_80px_rgba(50,53,46,0.16)]"
         aria-live="polite"
       >
-        <span className="flex size-12 items-center justify-center rounded-md border border-forest/15 bg-cream/60">
-          <CircleDollarSignIcon className="size-5 text-ember" aria-hidden="true" />
-        </span>
+        <MatrixBootMark size={56} />
         <span className="flex items-center gap-2 text-sm font-medium text-forest">
           <Loader2Icon className="size-4 animate-spin text-ember" aria-hidden="true" />
           Loading billing status
@@ -252,19 +279,22 @@ export function BillingGate({
 
 function BillingGateInner({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
-  const { active: billingActive } = useMatrixBillingAccess();
+  const { active: billingActive, checking: billingAccessChecking } = useMatrixBillingAccess();
   const router = useRouter();
   const searchParams = useSearchParams();
   const checkoutReturnRequested = searchParams.get("checkout") === "success";
   const deviceReturnPath = normalizeDeviceReturnPath(searchParams.get("device_return"));
   const billingCheckoutReturnPath = getBillingCheckoutReturnPath(deviceReturnPath);
-  const hasBillingAccess = isSignedIn ? billingActive === true : false;
-  const billingChecking = isSignedIn && billingActive === null;
+  const hasBillingAccess = billingActive === true;
+  const billingChecking = billingAccessChecking;
   const [checkoutJustCompleted, setCheckoutJustCompleted] = useState(false);
   const [checkoutAttemptChecked, setCheckoutAttemptChecked] = useState(false);
   const [deviceSetupStatus, setDeviceSetupStatus] = useState<"idle" | "preparing" | "failed">("idle");
+  const [deviceSetupError, setDeviceSetupError] = useState<string | null>(null);
   const lastTrackedState = useRef<string | null>(null);
   const deviceSetupStarted = useRef(false);
+  const deviceSetupPollCount = useRef(0);
+  const deviceSetupPollTimeout = useRef<number | undefined>(undefined);
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- not a cascade: this is a single post-hydration resolution of the checkout-return state. The two setStates batch in one render pass and only re-run when `checkoutReturnRequested` changes; they cannot be derived in render because hasRecentBillingCheckoutAttempt() reads sessionStorage, which is client-only and would break SSR/hydration.
   useEffect(() => {
@@ -291,117 +321,110 @@ function BillingGateInner({ children }: { children: ReactNode }) {
   }, [checkoutReturnRequested, deviceReturnPath, hasBillingAccess, router]);
 
   useEffect(() => {
-    if (!deviceReturnPath || !hasBillingAccess || !isLoaded || !isSignedIn) return;
-    if (deviceSetupStarted.current) return;
-    const activeDeviceReturnPath = deviceReturnPath;
-    deviceSetupStarted.current = true;
-    let disposed = false;
-    let pollCount = 0;
-    let pollTimeout: number | undefined;
+    const pollTimeoutRef = deviceSetupPollTimeout;
+    return () => {
+      if (pollTimeoutRef.current !== undefined) {
+        window.clearTimeout(pollTimeoutRef.current);
+      }
+    };
+  }, []);
 
-    async function fetchWithTimeout(url: string, options: RequestInit): Promise<Response> {
-      const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), DEVICE_SETUP_TIMEOUT_MS);
-      return fetch(url, { ...options, signal: controller.signal }).finally(() => {
-        window.clearTimeout(timeoutId);
-      });
+  async function deviceAuthHeaders(): Promise<HeadersInit> {
+    const token = await getToken();
+    return {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
+  }
+
+  async function pollDeviceRuntimeReady(activeDeviceReturnPath: string): Promise<void> {
+    deviceSetupPollCount.current += 1;
+    if (deviceSetupPollCount.current > DEVICE_SETUP_MAX_POLLS) {
+      deviceSetupStarted.current = false;
+      setDeviceSetupStatus("failed");
+      setDeviceSetupError("Matrix could not finish preparing the device login. Try again.");
+      return;
     }
 
-    async function authHeaders(): Promise<HeadersInit> {
-      const token = await getToken();
-      return {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      };
-    }
+    const sessionResponse = await fetchWithTimeout("/api/auth/app-session", {
+      method: "POST",
+      credentials: "include",
+      headers: await deviceAuthHeaders(),
+      body: JSON.stringify({ redirectTo: activeDeviceReturnPath }),
+    });
 
-    async function pollRuntimeReady(): Promise<void> {
-      if (disposed) return;
-      pollCount += 1;
-      if (pollCount > DEVICE_SETUP_MAX_POLLS) {
-        setDeviceSetupStatus("failed");
-        return;
-      }
-
-      const sessionResponse = await fetchWithTimeout("/api/auth/app-session", {
-        method: "POST",
-        credentials: "include",
-        headers: await authHeaders(),
-        body: JSON.stringify({ redirectTo: activeDeviceReturnPath }),
-      });
-      if (disposed) return;
-
-      if (!sessionResponse.ok) {
-        pollTimeout = window.setTimeout(() => {
-          void pollRuntimeReady().catch((error: unknown) => {
-            console.warn("[billing] device runtime poll failed", error instanceof Error ? error.name : typeof error);
-            if (!disposed) setDeviceSetupStatus("failed");
-          });
-        }, DEVICE_SETUP_POLL_MS);
-        return;
-      }
-
-      const readyResponse = await fetchWithTimeout("/", {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-        headers: { Accept: "text/html" },
-      });
-      if (disposed) return;
-
-      if (readyResponse.ok) {
-        window.location.replace(activeDeviceReturnPath);
-        return;
-      }
-
-      pollTimeout = window.setTimeout(() => {
-        void pollRuntimeReady().catch((error: unknown) => {
-          console.warn("[billing] device runtime readiness failed", error instanceof Error ? error.name : typeof error);
-          if (!disposed) setDeviceSetupStatus("failed");
+    if (!sessionResponse.ok) {
+      deviceSetupPollTimeout.current = window.setTimeout(() => {
+        // react-doctor-disable-next-line react-hooks-js/todo -- intentional self-scheduling device readiness poll: the callback must call the current async poll function with the same return target after a delay, and state refs guard duplicate starts/failure state.
+        void pollDeviceRuntimeReady(activeDeviceReturnPath).catch((error: unknown) => {
+          console.warn("[billing] device runtime poll failed", error instanceof Error ? error.name : typeof error);
+          deviceSetupStarted.current = false;
+          setDeviceSetupStatus("failed");
+          setDeviceSetupError("Matrix could not finish preparing the device login. Try again.");
         });
       }, DEVICE_SETUP_POLL_MS);
+      return;
     }
 
-    async function startDeviceRuntimeSetup(): Promise<void> {
-      setDeviceSetupStatus("preparing");
+    const readyResponse = await fetchWithTimeout("/", {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: { Accept: "text/html" },
+    });
+
+    if (readyResponse.ok) {
+      window.location.replace(activeDeviceReturnPath);
+      return;
+    }
+
+    deviceSetupPollTimeout.current = window.setTimeout(() => {
+      // react-doctor-disable-next-line react-hooks-js/todo -- intentional self-scheduling device readiness poll: the callback must call the current async poll function with the same return target after a delay, and state refs guard duplicate starts/failure state.
+      void pollDeviceRuntimeReady(activeDeviceReturnPath).catch((error: unknown) => {
+        console.warn("[billing] device runtime readiness failed", error instanceof Error ? error.name : typeof error);
+        deviceSetupStarted.current = false;
+        setDeviceSetupStatus("failed");
+        setDeviceSetupError("Matrix could not finish preparing the device login. Try again.");
+      });
+    }, DEVICE_SETUP_POLL_MS);
+  }
+
+  async function startDeviceRuntimeSetup(developerTools: DeveloperToolId[]): Promise<void> {
+    if (!deviceReturnPath || deviceSetupStarted.current) return;
+    const activeDeviceReturnPath = deviceReturnPath;
+    deviceSetupStarted.current = true;
+    deviceSetupPollCount.current = 0;
+    setDeviceSetupError(null);
+    setDeviceSetupStatus("preparing");
+    try {
       const provisionResponse = await fetchWithTimeout("/api/auth/provision-runtime", {
         method: "POST",
         credentials: "include",
-        headers: await authHeaders(),
-        body: JSON.stringify({}),
+        headers: await deviceAuthHeaders(),
+        body: JSON.stringify({ developerTools }),
       });
-      if (disposed) return;
       if (!provisionResponse.ok && provisionResponse.status !== 409) {
-        if (provisionResponse.status === 402) {
-          deviceSetupStarted.current = false;
-          setDeviceSetupStatus("failed");
-          return;
-        }
+        deviceSetupStarted.current = false;
         setDeviceSetupStatus("failed");
+        setDeviceSetupError("Matrix could not start building this VPS. Try again.");
         return;
       }
-      await pollRuntimeReady();
-    }
-
-    void startDeviceRuntimeSetup().catch((error: unknown) => {
+      await pollDeviceRuntimeReady(activeDeviceReturnPath);
+    } catch (error: unknown) {
       console.warn("[billing] device runtime setup failed", error instanceof Error ? error.name : typeof error);
-      if (!disposed) setDeviceSetupStatus("failed");
-    });
-
-    return () => {
-      disposed = true;
       deviceSetupStarted.current = false;
-      if (pollTimeout !== undefined) window.clearTimeout(pollTimeout);
-    };
-  }, [deviceReturnPath, getToken, hasBillingAccess, isLoaded, isSignedIn]);
+      setDeviceSetupStatus("failed");
+      setDeviceSetupError("Matrix could not start building this VPS. Try again.");
+    }
+  }
 
   useEffect(() => {
-    if (!isLoaded) return;
-    const state = !isSignedIn
-      ? "signed_out"
-      : hasBillingAccess
-        ? "billing_active"
+    if (!isLoaded || billingChecking) return;
+    const state = hasBillingAccess
+      ? "billing_active"
+      : !isSignedIn
+        ? "signed_out"
         : checkoutReturnRequested
           ? "checkout_return_pending"
           : "billing_required";
@@ -419,7 +442,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
       access_state: state,
       checkout_return_requested: checkoutReturnRequested,
     });
-  }, [checkoutReturnRequested, hasBillingAccess, isLoaded, isSignedIn]);
+  }, [billingChecking, checkoutReturnRequested, hasBillingAccess, isLoaded, isSignedIn]);
 
   if (e2eBillingBypass) {
     return <>{children}</>;
@@ -429,7 +452,7 @@ function BillingGateInner({ children }: { children: ReactNode }) {
     return <BillingStatusLoading />;
   }
 
-  if (!isSignedIn) {
+  if (!isSignedIn && !hasBillingAccess) {
     return <SignInRedirecting />;
   }
 
@@ -472,10 +495,20 @@ function BillingGateInner({ children }: { children: ReactNode }) {
         <div className="min-h-screen pointer-events-none select-none blur-[1px] brightness-90">
           {children}
         </div>
-        <SubscriptionConfirmationPending
-          status={deviceSetupStatus === "failed" ? "failed" : "preparing"}
-          onRefresh={reloadCurrentPage}
-        />
+        {deviceSetupStatus === "idle" ? (
+          <DeviceDefaultInstallsRequired
+            loading={deviceSetupStarted.current}
+            error={deviceSetupError}
+            onBuild={(tools) => {
+              void startDeviceRuntimeSetup(tools);
+            }}
+          />
+        ) : (
+          <SubscriptionConfirmationPending
+            status={deviceSetupStatus === "failed" ? "failed" : "preparing"}
+            onRefresh={reloadCurrentPage}
+          />
+        )}
       </>
     );
   }

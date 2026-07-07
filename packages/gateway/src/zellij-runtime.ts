@@ -14,6 +14,7 @@ import {
   matrixZellijConfigPaths,
   renderMatrixZellijConfig,
 } from "./shell/zellij-config.js";
+import { applyTerminalTruecolorEnv } from "./terminal-env.js";
 
 type CommandRunner = (
   command: string,
@@ -65,6 +66,12 @@ const SAFE_PROCESS_ENV_KEYS = new Set([
   "HOME",
   "LANG",
   "LOGNAME",
+  "MATRIX_APP_DIR",
+  "MATRIX_INSTALL_TOOL_PACK",
+  "MATRIX_NODE_PREFIX",
+  "MATRIX_RUNTIME_DIR",
+  "MATRIX_RUNTIME_HOME",
+  "MATRIX_RUNTIME_USER",
   "PATH",
   "SHELL",
   "TERM",
@@ -125,13 +132,6 @@ function renderLayout(input: {
   return [
     `// Matrix OS generated layout for ${input.sessionName}`,
     "layout {",
-    "  default_tab_template {",
-    "    children",
-    "    pane size=1 borderless=true {",
-    "      plugin location=\"zellij:compact-bar\"",
-    "    }",
-    "  }",
-    "",
     "  tab name=\"Agent\" {",
     `    pane cwd=${kdlString(input.launch.cwd)} command=${kdlString(input.launch.command)} {`,
     argsLine.trimEnd(),
@@ -156,7 +156,10 @@ function ptyEnv(
     env.ZELLIJ_CONFIG_DIR = zellijConfigPaths.dir;
     env.ZELLIJ_CONFIG_FILE = zellijConfigPaths.file;
   }
-  return { ...env, ...launchEnv };
+  return applyTerminalTruecolorEnv({
+    ...env,
+    ...launchEnv,
+  });
 }
 
 function delay(ms: number): Promise<void> {

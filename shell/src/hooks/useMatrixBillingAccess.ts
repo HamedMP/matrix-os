@@ -7,22 +7,27 @@ import { hasMatrixBillingAccess } from "@/lib/billing";
 const BILLING_STATUS_TIMEOUT_MS = 10_000;
 const BILLING_STATUS_CACHE_TTL_MS = 30_000;
 const BILLING_STATUS_RETRY_MS = 3_000;
+const PLATFORM_SESSION_BILLING_CACHE_KEY = "platform-session";
+const APP_SESSION_STALE_AUTH_FAILURE = "app-session-stale";
 
 type BillingStatusSnapshot = {
-  userId: string;
+  cacheKey: string;
   state: BillingAccessRemoteState;
   checkedAt: number;
 };
 
 let billingStatusSnapshot: BillingStatusSnapshot | null = null;
-let billingStatusRequest: { userId: string; promise: Promise<BillingAccessRemoteState> } | null = null;
+let billingStatusRequest: { cacheKey: string; promise: Promise<BillingAccessRemoteState> } | null = null;
 
 type BillingAccessState = {
   active: boolean | null;
   checking: boolean;
   entitlement: BillingEntitlementSummary | null;
   accessReason: string | null;
+  accessIssue: BillingAccessIssue;
 };
+
+export type BillingAccessIssue = "auth" | null;
 
 export type BillingEntitlementSummary = {
   source: "stripe" | "override";
@@ -42,12 +47,17 @@ export type BillingEntitlementSummary = {
 };
 
 type BillingAccessRemoteState = {
-  active: boolean;
+  active: boolean | null;
   entitlement: BillingEntitlementSummary | null;
   accessReason: string | null;
+  accessIssue: BillingAccessIssue;
 };
 
 export function useMatrixBillingAccess(): BillingAccessState {
+  return useManagedMatrixBillingAccess();
+}
+
+function useManagedMatrixBillingAccess(): BillingAccessState {
   const { isLoaded, isSignedIn, has, userId } = useAuth();
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- returned hook API / stable identity for effect dep
   const legacyActive = useMemo(
@@ -60,19 +70,23 @@ export function useMatrixBillingAccess(): BillingAccessState {
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- the setRemoteState/setRemoteChecked pairs live in mutually-exclusive branches (auth-gate, missing-userId, cache-hit, async fetch then/catch) representing a single load's loading -> result transition; they are not a synchronous render cascade and combining them across branches would obscure the distinct cases
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || legacyActive) {
+    if (!isLoaded || legacyActive) {
       // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- async billing-status load hook: it reads Clerk auth + a module-level cache and otherwise fetches /billing/status, setting remoteState/remoteChecked from the (async) result; the value cannot be derived in render
       setRemoteState(null);
-      setRemoteChecked(!isLoaded || !isSignedIn || legacyActive);
+      setRemoteChecked(!isLoaded || legacyActive);
       return;
     }
-    if (!userId) {
-      setRemoteState({ active: false, entitlement: null, accessReason: null });
+    if (isSignedIn && !userId) {
+      setRemoteState({ active: false, entitlement: null, accessReason: null, accessIssue: null });
       setRemoteChecked(true);
       return;
     }
+    const billingCacheKey = isSignedIn ? userId : PLATFORM_SESSION_BILLING_CACHE_KEY;
+    const shouldUseSnapshotCache = isSignedIn;
     const checkoutReturnRequested = isCheckoutSuccessReturn();
-    const cached = checkoutReturnRequested ? null : readCachedBillingStatus(userId);
+    const cached = checkoutReturnRequested || !shouldUseSnapshotCache
+      ? null
+      : readCachedBillingStatus(billingCacheKey);
     if (cached !== null) {
       setRemoteState(cached);
       setRemoteChecked(true);
@@ -81,12 +95,15 @@ export function useMatrixBillingAccess(): BillingAccessState {
     let disposed = false;
     let retryTimeoutId: number | undefined;
     setRemoteChecked(false);
-    readRemoteBillingStatus(userId, { skipInactiveCache: checkoutReturnRequested })
+    readRemoteBillingStatus(billingCacheKey, {
+      skipCache: !shouldUseSnapshotCache,
+      skipInactiveCache: checkoutReturnRequested,
+    })
       .then((state) => {
         if (disposed) return;
         setRemoteState(state);
         setRemoteChecked(true);
-        if (checkoutReturnRequested && !state.active) {
+        if (state.accessIssue === "auth" || (checkoutReturnRequested && state.active === false)) {
           retryTimeoutId = window.setTimeout(() => {
             setRetryTick((current) => current + 1);
           }, BILLING_STATUS_RETRY_MS);
@@ -107,15 +124,32 @@ export function useMatrixBillingAccess(): BillingAccessState {
     };
   }, [isLoaded, isSignedIn, legacyActive, retryTick, userId]);
 
-  if (!isLoaded) return { active: null, checking: true, entitlement: null, accessReason: null };
-  if (!isSignedIn) return { active: false, checking: false, entitlement: null, accessReason: null };
-  if (legacyActive) return { active: true, checking: false, entitlement: null, accessReason: "legacy_clerk_plan" };
-  if (!remoteChecked) return { active: null, checking: true, entitlement: null, accessReason: null };
+  if (!isLoaded) return { active: null, checking: true, entitlement: null, accessReason: null, accessIssue: null };
+  if (legacyActive) {
+    return {
+      active: true,
+      checking: false,
+      entitlement: null,
+      accessReason: "legacy_clerk_plan",
+      accessIssue: null,
+    };
+  }
+  if (remoteState?.accessIssue === "auth") {
+    return {
+      active: null,
+      checking: true,
+      entitlement: null,
+      accessReason: remoteState.accessReason,
+      accessIssue: "auth",
+    };
+  }
+  if (!remoteChecked) return { active: null, checking: true, entitlement: null, accessReason: null, accessIssue: null };
   return {
     active: remoteState?.active === true,
     checking: false,
     entitlement: remoteState?.entitlement ?? null,
     accessReason: remoteState?.accessReason ?? null,
+    accessIssue: null,
   };
 }
 
@@ -124,8 +158,8 @@ export function resetMatrixBillingAccessCacheForTests(): void {
   billingStatusRequest = null;
 }
 
-function readCachedBillingStatus(userId: string): BillingAccessRemoteState | null {
-  if (!billingStatusSnapshot || billingStatusSnapshot.userId !== userId) return null;
+function readCachedBillingStatus(cacheKey: string): BillingAccessRemoteState | null {
+  if (!billingStatusSnapshot || billingStatusSnapshot.cacheKey !== cacheKey) return null;
   if (Date.now() - billingStatusSnapshot.checkedAt > BILLING_STATUS_CACHE_TTL_MS) return null;
   return billingStatusSnapshot.state;
 }
@@ -136,10 +170,10 @@ function isCheckoutSuccessReturn(): boolean {
 }
 
 function readRemoteBillingStatus(
-  userId: string,
-  options: { skipInactiveCache?: boolean } = {},
+  cacheKey: string,
+  options: { skipCache?: boolean; skipInactiveCache?: boolean } = {},
 ): Promise<BillingAccessRemoteState> {
-  if (billingStatusRequest?.userId === userId) return billingStatusRequest.promise;
+  if (billingStatusRequest?.cacheKey === cacheKey) return billingStatusRequest.promise;
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), BILLING_STATUS_TIMEOUT_MS);
@@ -150,11 +184,24 @@ function readRemoteBillingStatus(
     cache: "no-store",
     signal: controller.signal,
   })
-    .then(async (response) => {
+    .then(async (response): Promise<BillingAccessRemoteState> => {
       if (response.status >= 500 || response.status === 429) {
         throw new Error("billing_status_retryable");
       }
-      if (!response.ok) return { active: false, entitlement: null, accessReason: null };
+      if (response.status === 401 || response.status === 403) {
+        if (response.headers.get("x-auth-failure") !== APP_SESSION_STALE_AUTH_FAILURE) {
+          return { active: false, entitlement: null, accessReason: null, accessIssue: null };
+        }
+        return {
+          active: null,
+          entitlement: null,
+          accessReason: "auth_session_refreshing",
+          accessIssue: "auth",
+        };
+      }
+      if (!response.ok) {
+        return { active: false, entitlement: null, accessReason: null, accessIssue: null };
+      }
       const body = (await response.json()) as {
         access?: { runtimeProxyAllowed?: boolean; reason?: string };
         entitlement?: BillingEntitlementSummary | null;
@@ -163,11 +210,12 @@ function readRemoteBillingStatus(
         active: body.access?.runtimeProxyAllowed === true,
         entitlement: body.entitlement ?? null,
         accessReason: typeof body.access?.reason === "string" ? body.access.reason : null,
+        accessIssue: null,
       };
     })
     .then((state) => {
-      if (state.active || !options.skipInactiveCache) {
-        billingStatusSnapshot = { userId, state, checkedAt: Date.now() };
+      if (!options.skipCache && state.accessIssue === null && (state.active || !options.skipInactiveCache)) {
+        billingStatusSnapshot = { cacheKey, state, checkedAt: Date.now() };
       }
       return state;
     })
@@ -176,6 +224,6 @@ function readRemoteBillingStatus(
       if (billingStatusRequest?.promise === promise) billingStatusRequest = null;
     });
 
-  billingStatusRequest = { userId, promise };
+  billingStatusRequest = { cacheKey, promise };
   return promise;
 }

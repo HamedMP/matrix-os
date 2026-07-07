@@ -44,6 +44,10 @@ function createRegistry(
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 describe("SessionRegistry", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   describe("create", () => {
     it("returns a UUID string", () => {
       const registry = createRegistry();
@@ -92,6 +96,49 @@ describe("SessionRegistry", () => {
       registry.create("/home", "/bin/zsh");
       const call = mockSpawn.mock.calls[0];
       expect(call[0]).toBe("/bin/zsh");
+    });
+
+    it("passes Matrix installer runtime overrides to spawned terminals", () => {
+      vi.stubEnv("MATRIX_APP_DIR", "/tmp/matrix-app");
+      vi.stubEnv("MATRIX_INSTALL_TOOL_PACK", "/tmp/matrix-install-tool-pack");
+      vi.stubEnv("MATRIX_NODE_PREFIX", "/tmp/matrix-node");
+      vi.stubEnv("MATRIX_RUNTIME_DIR", "/tmp/matrix-runtime");
+      vi.stubEnv("MATRIX_RUNTIME_HOME", "/tmp/matrix-home");
+      vi.stubEnv("MATRIX_RUNTIME_USER", "local-user");
+      const mockSpawn = createMockSpawn();
+      const registry = createRegistry({}, mockSpawn);
+
+      registry.create("/home");
+
+      const call = mockSpawn.mock.calls[0];
+      expect(call[2]).toMatchObject({
+        env: expect.objectContaining({
+          MATRIX_APP_DIR: "/tmp/matrix-app",
+          MATRIX_INSTALL_TOOL_PACK: "/tmp/matrix-install-tool-pack",
+          MATRIX_NODE_PREFIX: "/tmp/matrix-node",
+          MATRIX_RUNTIME_DIR: "/tmp/matrix-runtime",
+          MATRIX_RUNTIME_HOME: "/tmp/matrix-home",
+          MATRIX_RUNTIME_USER: "local-user",
+        }),
+      });
+    });
+
+    it("passes truecolor terminal hints to spawned PTYs", () => {
+      const mockSpawn = createMockSpawn();
+      const registry = createRegistry({}, mockSpawn);
+
+      registry.create("/home");
+
+      expect(mockSpawn.mock.calls[0]?.[2]).toMatchObject({
+        name: "xterm-256color",
+        env: expect.objectContaining({
+          TERM: "xterm-256color",
+          COLORTERM: "truecolor",
+          CLICOLOR: "1",
+          FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
+        }),
+      });
     });
 
     it("falls back to homePath if spawn fails for a vanished cwd", () => {

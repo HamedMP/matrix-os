@@ -4,10 +4,12 @@ import { useState, useEffect, useEffectEvent, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useIsClient } from "@/hooks/useIsClient";
-import { CreditCardIcon, SearchIcon, UserIcon } from "lucide-react";
+import { SearchIcon, UserIcon } from "lucide-react";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton } from "./UserButton";
+import { ModeSwitcherBar } from "./ModeSwitcherBar";
+import { isSelfHostedDocument } from "@/lib/self-host-mode";
 
 const FALLBACK_APP_ICON = "/icon-192.png";
 
@@ -62,32 +64,56 @@ function MenuBarClock() {
   );
 }
 
-function MenuBarUser() {
+function MenuBarUser({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const mounted = useIsClient();
+
+  if (!mounted) {
+    return <MenuBarUserPlaceholder />;
+  }
+  if (isSelfHostedDocument()) {
+    return <UserButton variant="menubar" onOpenSettings={onOpenSettings} />;
+  }
+
+  return <AuthenticatedMenuBarUser onOpenSettings={onOpenSettings} />;
+}
+
+function MenuBarUserPlaceholder() {
+  return (
+    <div className="px-1 py-0.5 rounded hover:bg-foreground/10">
+      <UserIcon className="size-[14px] text-foreground/70" />
+    </div>
+  );
+}
+
+function AuthenticatedMenuBarUser({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const { isLoaded, isSignedIn } = useAuth();
   const { active: billingActive } = useMatrixBillingAccess();
 
-  if (!mounted || !isLoaded || !isSignedIn) {
-    return (
-      <div className="px-1 py-0.5 rounded hover:bg-foreground/10">
-        <UserIcon className="size-[14px] text-foreground/70" />
-      </div>
-    );
+  if (!isLoaded || !isSignedIn) {
+    return <MenuBarUserPlaceholder />;
   }
+
+  // Only surface a billing chip when action is required. An active subscription
+  // is the expected state — a loud "Active" badge is just noise in the menubar,
+  // so we stay quiet and let billing live in Settings. When access is missing we
+  // show a single, calm, clickable call-to-action that opens billing settings.
+  const needsBilling = billingActive === false;
 
   return (
     <div className="flex items-center gap-1.5">
-      <span
-        className={`hidden items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium sm:inline-flex ${
-          billingActive === true
-            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-            : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-        }`}
-      >
-        <CreditCardIcon className="size-3" aria-hidden="true" />
-        {billingActive === true ? "Active" : "Billing"}
-      </span>
-      <UserButton variant="menubar" />
+      {needsBilling ? (
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          title="Set up billing"
+          aria-label="Set up billing"
+          className="group hidden h-5 items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2 text-[11px] font-medium leading-none text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-300 sm:inline-flex"
+        >
+          <span className="size-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+          Set up billing
+        </button>
+      ) : null}
+      <UserButton variant="menubar" onOpenSettings={onOpenSettings} />
     </div>
   );
 }
@@ -175,7 +201,7 @@ function MenuDropdown({
 
 /* ── Menu Bar ────────────────────────────────── */
 
-export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, children }: { onOpenCommandPalette: () => void; onNewWindow: () => void; onMinimizeWindow?: (id: string) => void; children?: React.ReactNode }) {
+export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, onOpenSettings, children }: { onOpenCommandPalette: () => void; onNewWindow: () => void; onMinimizeWindow?: (id: string) => void; onOpenSettings?: () => void; children?: React.ReactNode }) {
   const windows = useWindowManager((s) => s.windows);
   const apps = useWindowManager((s) => s.apps);
   const focusedWindowId = useWindowManager((s) => s.focusedWindowId);
@@ -250,7 +276,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
 
   return (
     <>
-      <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-7 items-center px-3 text-[13px] leading-7 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
+      <header data-menu-bar className="fixed top-0 inset-x-0 z-[60] hidden md:grid grid-cols-[1fr_auto_1fr] h-8 items-center px-3 text-[13px] leading-8 select-none bg-card/60 backdrop-blur-xl border-b border-border/30 shadow-sm">
         {/* Left: app icon + app menu + global menus */}
         <div className="flex items-center gap-0.5">
           <div className="flex items-center px-2 py-0.5 rounded">
@@ -274,8 +300,9 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
           <MenuDropdown label="View" items={viewItems} open={openMenu === "view"} onToggle={() => toggleMenu("view")} onClose={closeMenu} />
         </div>
 
-        {/* Center: contextual toolbar controls — always centered via grid */}
+        {/* Center: mode switcher + contextual toolbar controls — always centered via grid */}
         <div className="flex items-center gap-0.5 text-foreground/70 [&_button]:text-foreground/60 [&_button:hover]:text-foreground/90 [&_button]:transition-colors [&_.w-px]:bg-foreground/10 [&_.w-px]:h-3">
+          <ModeSwitcherBar />
           {children}
         </div>
 
@@ -293,7 +320,7 @@ export function MenuBar({ onOpenCommandPalette, onNewWindow, onMinimizeWindow, c
             <MenuBarClock />
           </button>
           <div className="pl-0.5">
-            <MenuBarUser />
+            <MenuBarUser onOpenSettings={onOpenSettings} />
           </div>
         </div>
       </header>

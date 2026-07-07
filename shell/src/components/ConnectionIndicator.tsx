@@ -61,6 +61,8 @@ async function loadRuntimeStatus(): Promise<RuntimeStatus> {
 
 export function ConnectionIndicator() {
   const state = useConnectionHealth((s) => s.state);
+  const hasConnected = useConnectionHealth((s) => s.hasConnected);
+  const reconnectQuietElapsed = useConnectionHealth((s) => s.reconnectQuietElapsed);
   const [status, setStatus] = useState<RuntimeStatus>({ reachability: "checking" });
   const [initialGraceElapsed, setInitialGraceElapsed] = useState(false);
 
@@ -72,10 +74,14 @@ export function ConnectionIndicator() {
     return () => clearTimeout(timer);
   }, [state]);
 
+  const suppressReconnectStatus =
+    state === "reconnecting" && hasConnected && !reconnectQuietElapsed;
+
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- polling loop: every setStatus call fires either synchronously to reset the gauge on disconnect or from async fetch/timer callbacks (never a synchronous cascade); a reducer would not change the self-rescheduling sequencing and the cancelled flag guards post-unmount writes.
   useEffect(() => {
     if (state === "connected") return;
     if (state === "initializing" && !initialGraceElapsed) return;
+    if (suppressReconnectStatus) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -101,7 +107,7 @@ export function ConnectionIndicator() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [initialGraceElapsed, state]);
+  }, [initialGraceElapsed, state, suppressReconnectStatus]);
 
   const copy = resolveConnectionCopy(state, status);
   const toneClass = copy.tone === "danger" ? "text-red-500" : "text-amber-500";
@@ -110,7 +116,11 @@ export function ConnectionIndicator() {
     ? "border-red-500/25 bg-card/95 shadow-[0_18px_60px_-24px_rgba(239,68,68,0.58),0_24px_60px_-30px_rgba(0,0,0,0.38)]"
     : "border-amber-500/20 bg-card/95 shadow-[0_18px_60px_-24px_rgba(245,158,11,0.45),0_24px_60px_-30px_rgba(0,0,0,0.34)]";
 
-  if (state === "connected" || (state === "initializing" && !initialGraceElapsed)) return null;
+  if (
+    state === "connected"
+    || (state === "initializing" && !initialGraceElapsed)
+    || suppressReconnectStatus
+  ) return null;
 
   return (
     <ShellNotificationCard

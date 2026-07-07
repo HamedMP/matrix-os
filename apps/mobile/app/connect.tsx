@@ -1,18 +1,19 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useGateway } from "./_layout";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { colors, fonts, radius, spacing } from "@/lib/theme";
 
 export default function ConnectScreen() {
+  const { theme } = useUnistyles();
   const router = useRouter();
   const { connectionState } = useGateway();
 
   return (
     <View style={styles.container}>
       <View style={styles.iconShell}>
-        <Ionicons name="cloud-done-outline" size={34} color={colors.light.forest} />
+        <Ionicons name="cloud-done-outline" size={34} color={theme.colors.forest} />
       </View>
       <Text style={styles.title}>Matrix OS Cloud</Text>
       <Text style={styles.description}>
@@ -29,20 +30,20 @@ export default function ConnectScreen() {
         onPress={() => router.replace("/(tabs)/apps" as any)}
         style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
       >
-        <Ionicons name="apps" size={17} color={colors.light.primaryForeground} />
+        <Ionicons name="apps" size={17} color={theme.colors.primaryForeground} />
         <Text style={styles.buttonText}>Open Apps</Text>
       </Pressable>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.xl,
-    backgroundColor: colors.light.background,
+    padding: theme.spacing.xl,
+    backgroundColor: theme.colors.background,
   },
   iconShell: {
     width: 82,
@@ -52,71 +53,71 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.secondary,
-    marginBottom: spacing.lg,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.secondary,
+    marginBottom: theme.spacing.lg,
   },
   title: {
-    fontFamily: fonts.sansBold,
+    fontFamily: theme.fonts.sansBold,
     fontSize: 26,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   description: {
     maxWidth: 280,
-    marginTop: spacing.sm,
-    fontFamily: fonts.sans,
+    marginTop: theme.spacing.sm,
+    fontFamily: theme.fonts.sans,
     fontSize: 14,
     lineHeight: 20,
     textAlign: "center",
-    color: colors.light.mutedForeground,
+    color: theme.colors.mutedForeground,
   },
   statusRow: {
     minHeight: 42,
-    marginTop: spacing.xl,
-    marginBottom: spacing.xl,
-    paddingLeft: spacing.md,
-    paddingRight: spacing.sm,
-    borderRadius: radius.full,
+    marginTop: theme.spacing.xl,
+    marginBottom: theme.spacing.xl,
+    paddingLeft: theme.spacing.md,
+    paddingRight: theme.spacing.sm,
+    borderRadius: theme.radius.full,
     borderCurve: "continuous" as const,
     borderWidth: 1,
-    borderColor: colors.light.border,
-    backgroundColor: colors.light.card,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
+    gap: theme.spacing.sm,
   },
   statusDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.light.primary,
+    backgroundColor: theme.colors.primary,
   },
   statusText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 13,
-    color: colors.light.foreground,
+    color: theme.colors.foreground,
   },
   statusPill: {
     overflow: "hidden",
-    borderRadius: radius.full,
-    paddingHorizontal: spacing.sm,
+    borderRadius: theme.radius.full,
+    paddingHorizontal: theme.spacing.sm,
     paddingVertical: 4,
-    fontFamily: fonts.sansMedium,
+    fontFamily: theme.fonts.sansMedium,
     fontSize: 11,
-    color: colors.light.forest,
-    backgroundColor: colors.light.secondary,
+    color: theme.colors.forest,
+    backgroundColor: theme.colors.secondary,
   },
   button: {
     minHeight: 48,
     minWidth: 160,
-    borderRadius: radius.full,
+    borderRadius: theme.radius.full,
     borderCurve: "continuous" as const,
-    backgroundColor: colors.light.primary,
+    backgroundColor: theme.colors.primary,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.xl,
+    gap: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.xl,
     boxShadow: "0 12px 24px rgba(50, 61, 46, 0.16)",
   },
   buttonPressed: {
@@ -124,8 +125,8 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.98 }],
   },
   buttonText: {
-    fontFamily: fonts.sansSemiBold,
+    fontFamily: theme.fonts.sansSemiBold,
     fontSize: 15,
-    color: colors.light.primaryForeground,
+    color: theme.colors.primaryForeground,
   },
-});
+}));

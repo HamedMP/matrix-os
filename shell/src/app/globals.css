@@ -75,35 +75,34 @@
 }
 
 :root {
-  --font-sans: "Inter", system-ui, sans-serif;
+  --font-sans: var(--font-instrument), "Instrument Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --radius: 0.75rem;
 
-  /* Moss-green OS accent on white app surfaces (sage-teal retired -> moss) */
+  /* Matrix landing palette shared by shell and first-party apps. */
   --background: #FAFAF9;
-  --foreground: #1c1917;
-  --card: #FAFAF9;
-  --card-foreground: #1c1917;
-  --popover: #FAFAF9;
-  --popover-foreground: #1c1917;
-  --primary: #9AA48C;
-  --primary-foreground: #1a1f18;
-  --secondary: #f5f5f4;
-  --secondary-foreground: #3c4044;
-  --muted: #f5f5f4;
-  --muted-foreground: #6c7178;
-  --accent: #f5f5f4;
-  --accent-foreground: #3c4044;
-  --destructive: #ef4444;
-  --success: #22c55e;
-  --warning: #eab308;
-  --border: #e5e5e4;
-  --input: #e5e5e4;
+  --foreground: #32352E;
+  --card: #FCFCF8;
+  --card-foreground: #32352E;
+  --popover: #FCFCF8;
+  --popover-foreground: #32352E;
+  --primary: #434E3F;
+  --primary-foreground: #FAFAF5;
+  --secondary: #F1F0E3;
+  --secondary-foreground: #3E4339;
+  --muted: #E1E1D0;
+  --muted-foreground: #747668;
+  --accent: #F1F0E3;
+  --accent-foreground: #3E4339;
+  --destructive: #D74A3A;
+  --success: #3A7D44;
+  --warning: #E0A12E;
+  --border: #D8D6C7;
+  --input: #D8D6C7;
   --ring: #D06F25;
 
   /* Brand palette (shared source of truth with the matrix-os.com landing).
-     These do NOT recolor the OS accent (--primary stays the shell theme);
-     they give billing/marketing surfaces the forest/ember identity. */
+     App iframes expose --ember as --matrix-accent for primary actions. */
   --forest: #434E3F;
   --deep: #32352E;
   --ember: #D06F25;
@@ -116,6 +115,34 @@
   --neu-shadow-dark: transparent;
   --neu-distance: 0px;
   --neu-blur: 0px;
+
+  /* ─── Semantic surface / elevation / motion tokens (spec 102) ───
+     Layered on the brand palette above. Mobile chrome, sheets, toasts and
+     the terminal share these so glass + depth + easing stay consistent. */
+
+  /* Glass surfaces: brand bg at ~80% opacity, paired with a backdrop blur.
+     --surface-glass sits on light page chrome; --surface-glass-strong is a
+     denser variant for headers/sheets that overlap busy content. */
+  --surface-glass: color-mix(in srgb, var(--card) 80%, transparent);
+  --surface-glass-strong: color-mix(in srgb, var(--card) 92%, transparent);
+  --surface-glass-deep: color-mix(in srgb, var(--deep) 78%, transparent);
+  --surface-glass-blur: 16px;
+  --surface-glass-border: color-mix(in srgb, var(--foreground) 10%, transparent);
+
+  /* Elevation shadow scale — soft, brand-tinted (deep instead of pure black)
+     so raised surfaces read warm rather than clinical. */
+  --elevation-1: 0 1px 2px color-mix(in srgb, var(--deep) 8%, transparent);
+  --elevation-2: 0 2px 8px color-mix(in srgb, var(--deep) 12%, transparent);
+  --elevation-3: 0 8px 24px color-mix(in srgb, var(--deep) 16%, transparent);
+  --elevation-4: 0 16px 48px color-mix(in srgb, var(--deep) 22%, transparent);
+
+  /* Emphasized easing (iOS-style decelerate) for sheets/app transitions. */
+  --ease-emphasized: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Live keyboard height, published by useVisualViewport on mobile so the
+     key bar / toasts can offset above the on-screen keyboard. */
+  --terminal-keyboard-height: 0px;
 
   /* Page background gradient tokens (separate from app --background) */
   --gradient-deep: #323D2E;
@@ -192,7 +219,10 @@ body {
   font-family: var(--font-sans);
   overflow: hidden;
   overscroll-behavior: none;
+  /* dvh tracks the dynamic viewport (URL bar / keyboard) on mobile; the vh
+     fallback keeps older browsers from collapsing the shell to 0 height. */
   height: 100vh;
+  height: 100dvh;
 }
 
 ::-webkit-scrollbar {
@@ -211,6 +241,31 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
+}
+
+.matrix-terminal-xterm-viewport {
+  scrollbar-color: color-mix(in srgb, var(--foreground) 34%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.matrix-terminal-xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.matrix-terminal-xterm-viewport::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+}
+
+.matrix-terminal-xterm-viewport::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 28%, transparent);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.matrix-terminal-xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--foreground) 46%, transparent);
+  background-clip: padding-box;
 }
 
 input,
@@ -567,6 +622,61 @@ pre {
     -1px -1px 2px var(--neu-shadow-light);
 }
 
+.terminal-sessions-scroll {
+  scrollbar-color: var(--terminal-drawer-scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+.terminal-sessions-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-sessions-scroll::-webkit-scrollbar-track {
+  background: var(--terminal-drawer-scrollbar-track);
+}
+
+.terminal-sessions-scroll::-webkit-scrollbar-thumb {
+  background: var(--terminal-drawer-scrollbar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.terminal-sessions-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--terminal-drawer-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+[data-theme-style="neumorphic"] .terminal-sessions-scroll::-webkit-scrollbar-thumb {
+  background: var(--terminal-drawer-scrollbar-thumb);
+  background-clip: padding-box;
+  box-shadow: none;
+}
+
+[data-theme-style="neumorphic"] .terminal-sessions-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--terminal-drawer-scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+.terminal-drawer-resize-handle {
+  transition: background-color 140ms ease-out;
+}
+
+.terminal-drawer-resize-handle:hover,
+.terminal-drawer-resize-handle:active {
+  background: var(--terminal-drawer-resize-handle-hover) !important;
+}
+
+.terminal-drawer-resize-handle:focus {
+  outline: none;
+}
+
+.terminal-drawer-resize-handle:focus-visible {
+  background: var(--terminal-drawer-resize-handle-hover) !important;
+  outline: 1px solid var(--terminal-drawer-resize-handle-focus) !important;
+  outline-offset: -2px;
+}
+
 /* --- Skeleton: inset --- */
 [data-theme-style="neumorphic"] [data-slot="skeleton"] {
   box-shadow:
@@ -823,4 +933,68 @@ pre {
     scroll-behavior: auto !important;
     transition-duration: 1ms !important;
   }
+}
+
+/* ═══════════════════════════════════════════════
+   Mobile primitives (spec 102) — glass surfaces,
+   safe-area helpers, elevation. Brand-tinted; share
+   one implementation across chrome / sheets / terminal.
+   ═══════════════════════════════════════════════ */
+
+/* Glass surface: brand-tinted translucency + backdrop blur. Pair with a
+   border (--surface-glass-border) for the frosted-edge look. */
+.surface-glass {
+  background: var(--surface-glass);
+  backdrop-filter: blur(var(--surface-glass-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--surface-glass-blur)) saturate(140%);
+  border-color: var(--surface-glass-border);
+}
+
+.surface-glass-strong {
+  background: var(--surface-glass-strong);
+  backdrop-filter: blur(var(--surface-glass-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--surface-glass-blur)) saturate(150%);
+  border-color: var(--surface-glass-border);
+}
+
+/* Dark glass for surfaces over the deep brand backdrop (e.g. terminal chrome). */
+.surface-glass-deep {
+  background: var(--surface-glass-deep);
+  backdrop-filter: blur(var(--surface-glass-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--surface-glass-blur)) saturate(140%);
+  border-color: color-mix(in srgb, var(--cream) 12%, transparent);
+}
+
+/* Elevation utilities mapping to the shadow scale. */
+.elevation-1 { box-shadow: var(--elevation-1); }
+.elevation-2 { box-shadow: var(--elevation-2); }
+.elevation-3 { box-shadow: var(--elevation-3); }
+.elevation-4 { box-shadow: var(--elevation-4); }
+
+/* Safe-area helpers — apply device insets as padding so chrome clears the
+   notch / home indicator / rounded corners on installed PWAs. */
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-left { padding-left: env(safe-area-inset-left); }
+.safe-right { padding-right: env(safe-area-inset-right); }
+.safe-x {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.safe-area {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+/* Margin variant for bottom-pinned UI (toasts/sheets) above the home bar. */
+.safe-mb { margin-bottom: env(safe-area-inset-bottom); }
+
+/* Neumorphic theme drops the frosted look in favor of solid bevels. */
+[data-theme-style="neumorphic"] .surface-glass,
+[data-theme-style="neumorphic"] .surface-glass-strong,
+[data-theme-style="neumorphic"] .surface-glass-deep {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: var(--card);
 }

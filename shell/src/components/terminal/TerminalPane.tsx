@@ -8,11 +8,12 @@ import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
+import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
-import { getAnsiPalette, getTerminalThemePreset } from "./terminal-themes";
+import { buildXtermTheme } from "./terminal-themes";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { WebLinkProvider } from "./web-link-provider";
 import { cacheTerminal, getCached, removeCached, type CachedTerminal } from "./terminal-cache";
@@ -20,6 +21,7 @@ import { discardStaleCachedTerminal, getCachedTerminalRestorePlan } from "./term
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-input-event";
 import { applyTerminalAppearance } from "./terminal-appearance";
 import { buildTerminalFontStack } from "./terminal-fonts";
+import { createCodexTuiCompatTransform, transformTerminalOutputForCompat, type CodexTuiCompatTransform } from "./codex-tui-compat";
 import { sendTerminalResize } from "./terminal-remote-resize";
 import {
   clipboardDataHasImage,
@@ -32,28 +34,13 @@ import {
   terminalWebSocketPathForSession,
 } from "./terminal-session-id";
 import { createXtermLogger } from "./xterm-logger";
-
-function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId) {
-  if (terminalThemeId !== "system") {
-    return getTerminalThemePreset(terminalThemeId);
-  }
-
-  const bg = theme.colors.background || "#1a1a2e";
-  const fg = theme.colors.foreground || "#e0e0e0";
-  const slug = (theme as { slug?: string }).slug ?? "";
-  const ansi = getAnsiPalette(slug, bg);
-
-  return {
-    background: bg,
-    foreground: fg,
-    cursor: theme.colors.primary || "#c2703a",
-    selectionBackground: (theme.colors.primary || "#c2703a") + "44",
-    ...ansi,
-  };
-}
+import type { TerminalCompatMode } from "@/stores/terminal-store";
 
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
+const TERMINAL_SCROLLBACK_LINES = 10_000;
+const TERMINAL_SCROLL_SENSITIVITY = 1;
+const TERMINAL_FAST_SCROLL_SENSITIVITY = 5;
 const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   enableSizeReports: false,
   pixelLimit: 4_194_304,
@@ -66,6 +53,20 @@ const IMAGE_ADDON_OPTIONS: IImageAddonOptions = {
   iipSupport: true,
   iipSizeLimit: 8_000_000,
 };
+
+function shouldDisableWebglRenderer(suppressNativeKeyboard: boolean): boolean {
+  if (suppressNativeKeyboard) return true;
+  if (typeof navigator === "undefined") return false;
+  const userAgent = navigator.userAgent;
+  const isAppleMobile = /\b(iPad|iPhone|iPod)\b/.test(userAgent)
+    || (userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1);
+  const isSafari = /Safari\//.test(userAgent) && !/(Chrome|CriOS|FxiOS|EdgiOS)\//.test(userAgent);
+  return isAppleMobile && isSafari;
+}
+
+function scrollTerminalViewportToBottom(term: Terminal | null): void {
+  term?.scrollToBottom();
+}
 
 const AUTH_BANNER_BASE_STYLE: CSSProperties = {
   position: "absolute",
@@ -234,6 +235,37 @@ function suppressXtermNativeKeyboard(container: HTMLElement): void {
   helper.setAttribute("aria-hidden", "true");
 }
 
+function applyXtermScrollSurface(xtermElement: HTMLElement | null | undefined): void {
+  if (!xtermElement) {
+    return;
+  }
+
+  xtermElement.classList.add("matrix-terminal-xterm-root");
+  xtermElement.style.width = "100%";
+  xtermElement.style.height = "100%";
+  xtermElement.style.overscrollBehavior = "contain";
+  xtermElement.style.touchAction = "pan-y";
+
+  const viewport = xtermElement.querySelector(".xterm-viewport");
+  if (!(viewport instanceof HTMLElement)) {
+    return;
+  }
+
+  viewport.classList.add("matrix-terminal-xterm-viewport");
+  viewport.style.height = "100%";
+  viewport.style.overflowY = "scroll";
+  viewport.style.setProperty("scrollbar-gutter", "stable");
+  viewport.style.overscrollBehavior = "contain";
+  viewport.style.touchAction = "pan-y";
+}
+
+function applyXtermScrollOptions(term: Terminal): void {
+  term.options.scrollback = TERMINAL_SCROLLBACK_LINES;
+  term.options.scrollSensitivity = TERMINAL_SCROLL_SENSITIVITY;
+  term.options.fastScrollSensitivity = TERMINAL_FAST_SCROLL_SENSITIVITY;
+  term.options.scrollOnUserInput = true;
+}
+
 function terminalTelemetry(event: string, properties: Record<string, string | number | boolean | undefined>): void {
   const payload = {
     source: "terminal-pane",
@@ -271,6 +303,7 @@ interface TerminalPaneProps {
   sessionId?: string;
   claudeMode?: boolean;
   startupCommand?: string;
+  compatMode?: TerminalCompatMode;
   onFocus?: (paneId: string) => void;
   onSessionAttached?: (paneId: string, sessionId: string) => void;
   isClosing?: boolean;
@@ -278,6 +311,15 @@ interface TerminalPaneProps {
   shouldDestroyOnUnmount?: (paneId: string) => boolean;
   allowRemoteResize?: boolean;
   suppressNativeKeyboard?: boolean;
+  /**
+   * The CSS transform scale applied to the canvas ancestor. When the canvas is
+   * zoomed via `transform: scale(z)`, xterm's mouse-to-cell mapping breaks
+   * because getBoundingClientRect() returns scaled screen pixels while
+   * cssCellWidth is measured at the unscaled font size. Providing the live zoom
+   * factor allows TerminalPane to correct pointer events before xterm sees them.
+   * Defaults to 1 (no correction).
+   */
+  canvasZoom?: number;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/no-many-boolean-props -- cohesive xterm lifecycle owner: terminal creation, WS attach/replay, fit/resize, addon wiring, and caching are one tightly-coupled effect graph that cannot be split without leaking refs across components; the boolean props (isFocused, isClosing, allowRemoteResize, suppressNativeKeyboard) are independent terminal modes, not a hidden variant enum, so collapsing them into an options object would obscure call sites.
@@ -289,6 +331,7 @@ export function TerminalPane({
   sessionId: initialSessionId,
   claudeMode,
   startupCommand,
+  compatMode,
   onFocus,
   onSessionAttached,
   isClosing,
@@ -296,6 +339,7 @@ export function TerminalPane({
   shouldDestroyOnUnmount,
   allowRemoteResize = true,
   suppressNativeKeyboard = false,
+  canvasZoom = 1,
 }: TerminalPaneProps) {
   const terminalThemeId = useTerminalSettings((s) => s.themeId);
   const terminalFontSize = useTerminalSettings((s) => s.fontSize);
@@ -304,6 +348,10 @@ export function TerminalPane({
   const terminalCursorStyle = useTerminalSettings((s) => s.cursorStyle);
   const terminalSmoothScroll = useTerminalSettings((s) => s.smoothScroll);
   const cursorBlink = useTerminalSettings((s) => s.cursorBlink);
+  // Visual-viewport state drives keyboard-aware re-fitting on mobile: when the
+  // iOS soft keyboard opens the layout viewport doesn't shrink, so the terminal
+  // host must re-fit to the visible band or the prompt hides behind the keyboard.
+  const { height: viewportHeight, offsetTop: viewportOffsetTop, keyboardOpen } = useVisualViewport();
   const containerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRef = useRef<unknown>(null);
@@ -318,8 +366,9 @@ export function TerminalPane({
   const onSessionAttachedRef = useRef(onSessionAttached);
   const shouldCacheOnUnmountRef = useRef(shouldCacheOnUnmount);
   const shouldDestroyOnUnmountRef = useRef(shouldDestroyOnUnmount);
-  const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const webglContextLostHandlerRef = useRef<((event: Event) => void) | null>(null);
+  const webglAddonRef = useRef<{ dispose: () => void } | null>(null);
+  const webglContextLossDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const webglRecreateAttemptedRef = useRef(false);
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const initialStartupCommandRef = useRef(startupCommand);
@@ -335,6 +384,8 @@ export function TerminalPane({
   const isFocusedRef = useRef(isFocused);
   const allowRemoteResizeRef = useRef(allowRemoteResize);
   const pasteSubmitRequestedRef = useRef(false);
+  const compatModeRef = useRef<TerminalCompatMode | undefined>(compatMode);
+  const codexCompatTransformRef = useRef<CodexTuiCompatTransform | null>(null);
 
   // Latest-value refs kept in sync during render so the long-lived init effect
   // (and the cleanup it returns) read current prop values without re-running and
@@ -351,6 +402,114 @@ export function TerminalPane({
   isFocusedRef.current = isFocused;
   // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
   allowRemoteResizeRef.current = allowRemoteResize;
+  // react-doctor-disable-next-line react-hooks-js/refs -- latest-value ref consumed by the long-lived WebSocket output handler without reconnecting on metadata changes.
+  compatModeRef.current = compatMode;
+
+  // Keep a stable ref to the current canvasZoom so the effect below can read
+  // the latest value without being re-run (and re-registering listeners) on
+  // every zoom change.
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
+  const canvasZoomRef = useRef(canvasZoom);
+  // react-doctor-disable-next-line react-hooks-js/refs -- intentional latest-value ref sync; see onSessionAttachedRef above.
+  canvasZoomRef.current = canvasZoom;
+
+  // Canvas-zoom pointer correction.
+  //
+  // xterm maps pointer→cell as:
+  //   col = (clientX − rect.left) / cssCellWidth
+  // where rect = element.getBoundingClientRect() and cssCellWidth is measured
+  // from the font at the unscaled element size.
+  //
+  // When a CSS `transform: scale(z)` is applied to a canvas ancestor the
+  // element appears z× larger on screen. getBoundingClientRect() reflects the
+  // scaled visual bounds, so `clientX − rect.left` is in *screen* pixels
+  // (scaled by z). But cssCellWidth stays at the *unscaled* font metrics.
+  // The division therefore gives col = truecol × z — off by the zoom factor.
+  //
+  // Fix: in capture phase, before xterm's own listeners see the event, emit a
+  // synthetic MouseEvent whose clientX/Y are corrected to unscaled element
+  // space: correctedClientX = rect.left + (clientX − rect.left) / zoom.
+  // The original event is stopped so xterm never processes the scaled coords.
+  //
+  // Only active when zoom ≠ 1; at 1 no events are intercepted.
+  // react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- cleanup is returned explicitly at the end of the effect body
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const MOUSE_EVENTS = ["mousedown", "mousemove", "mouseup"] as const;
+
+    const correct = (e: MouseEvent) => {
+      const zoom = canvasZoomRef.current;
+      if (zoom === 1) return;
+
+      // Find the actual xterm element — it is the direct child element that
+      // xterm appended inside our container div (has class "xterm" or is the
+      // first child element). Use the event target's closest xterm root.
+      const xtermEl = container.querySelector(".xterm") as HTMLElement | null;
+      const el = xtermEl ?? container;
+      const rect = el.getBoundingClientRect();
+
+      // Unscale: move the pointer back into element-space coordinates.
+      const correctedX = rect.left + (e.clientX - rect.left) / zoom;
+      const correctedY = rect.top + (e.clientY - rect.top) / zoom;
+
+      // Stop xterm from processing the original (scaled) event.
+      e.stopImmediatePropagation();
+
+      // Dispatch a corrected synthetic event on the same target so xterm's
+      // own capture listener (registered on the element, not window) sees it.
+      // We must use `bubbles: false` + dispatch on the exact target xterm
+      // registered on, which is the element the pointer landed on.
+      const target = e.target instanceof Element ? e.target : el;
+      const synthetic = new MouseEvent(e.type, {
+        bubbles: e.bubbles,
+        cancelable: e.cancelable,
+        composed: e.composed,
+        detail: e.detail,
+        view: e.view ?? window,
+        screenX: e.screenX,
+        screenY: e.screenY,
+        clientX: correctedX,
+        clientY: correctedY,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey,
+        button: e.button,
+        buttons: e.buttons,
+        relatedTarget: e.relatedTarget,
+        movementX: e.movementX,
+        movementY: e.movementY,
+      });
+      // Mark the event so our own handler ignores it and does not re-correct.
+      Object.defineProperty(synthetic, "_xtermZoomCorrected", { value: true });
+      target.dispatchEvent(synthetic);
+    };
+
+    const handler = (e: MouseEvent) => {
+      // Skip synthetic events we already corrected to avoid infinite loops.
+      if ((e as MouseEvent & { _xtermZoomCorrected?: boolean })._xtermZoomCorrected) return;
+      const zoom = canvasZoomRef.current;
+      if (zoom === 1) return;
+      correct(e);
+    };
+
+    for (const type of MOUSE_EVENTS) {
+      // Capture phase so we intercept before xterm's own listeners.
+      container.addEventListener(type, handler, { capture: true });
+    }
+
+    return () => {
+      for (const type of MOUSE_EVENTS) {
+        container.removeEventListener(type, handler, { capture: true });
+      }
+    };
+  // Effect wires once and reads zoom through the ref — no dependency on
+  // canvasZoom directly, which avoids tearing down/re-registering listeners
+  // on every zoom change while the user is actively zooming the canvas.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleFocus = () => {
     onFocus?.(paneId);
@@ -465,6 +624,8 @@ export function TerminalPane({
         });
       };
 
+      const webglDisabled = shouldDisableWebglRenderer(suppressNativeKeyboard);
+
       const clearAuthDetectTimer = () => {
         if (authDetectTimerRef.current) {
           clearTimeout(authDetectTimerRef.current);
@@ -486,12 +647,28 @@ export function TerminalPane({
         }
       };
 
-      const detachWebglContextLostHandler = () => {
-        if (webglCanvasRef.current && webglContextLostHandlerRef.current) {
-          webglCanvasRef.current.removeEventListener("webglcontextlost", webglContextLostHandlerRef.current);
+      // Tears down only the context-loss subscription (the closure that drives
+      // DOM-renderer fallback). Safe to call on every cleanup path: on a cache
+      // for tab-switch the WebGL addon itself stays loaded on the retained
+      // terminal, while on a destroy path term.dispose() disposes the addon.
+      const teardownWebglSubscription = () => {
+        webglContextLossDisposableRef.current?.dispose();
+        webglContextLossDisposableRef.current = null;
+      };
+
+      // Fully disposes the WebGL renderer, dropping back to xterm's DOM
+      // renderer (the default once no WebGL addon is loaded).
+      const disposeWebgl = () => {
+        teardownWebglSubscription();
+        const addon = webglAddonRef.current;
+        webglAddonRef.current = null;
+        if (addon) {
+          try {
+            addon.dispose();
+          } catch (err: unknown) {
+            console.warn("WebGL addon dispose failed:", err instanceof Error ? err.message : err);
+          }
         }
-        webglCanvasRef.current = null;
-        webglContextLostHandlerRef.current = null;
       };
 
       const container = containerRef.current;
@@ -520,42 +697,117 @@ export function TerminalPane({
       let fitAddon: FitAddon;
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
+      const xtermTheme = buildXtermTheme(theme, terminalThemeId);
+      codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
 
-      const refitAndFocus = () => {
+      const focusIfAllowed = () => {
+        if (isFocusedRef.current && !suppressNativeKeyboard) {
+          term.focus();
+        }
+      };
+
+      const refitOnly = () => {
         if (disposed) {
           return;
         }
         try {
           fitAddon.fit();
           sendTerminalResize(wsRef.current, term, allowRemoteResizeRef.current);
-          if (isFocusedRef.current) {
-            term.focus();
-          }
+          focusIfAllowed();
         } catch (err: unknown) {
           log("fit-failed", { message: err instanceof Error ? err.message : String(err) });
         }
       };
 
       const scheduleStableFit = () => {
-        requestAnimationFrame(refitAndFocus);
-        window.setTimeout(refitAndFocus, 80);
-        window.setTimeout(refitAndFocus, 250);
+        requestAnimationFrame(refitOnly);
+        window.setTimeout(refitOnly, 80);
+        window.setTimeout(refitOnly, 250);
       };
+
+      // Subscribe to GPU context loss (common on mobile Safari, which drops GL
+      // contexts under memory pressure / backgrounding). On loss: dispose the
+      // WebGL renderer so xterm falls back to its DOM renderer, then attempt a
+      // single re-create. We never leave a blank pane — the DOM renderer keeps
+      // working even if re-creation fails.
+      const wireWebglContextLoss = (addon: {
+        onContextLoss: (cb: () => void) => { dispose: () => void };
+      }) => {
+        teardownWebglSubscription();
+        webglContextLossDisposableRef.current = addon.onContextLoss(() => {
+          log("webgl-context-loss", { recreateAttempted: webglRecreateAttemptedRef.current });
+          disposeWebgl();
+          if (!webglRecreateAttemptedRef.current && !disposed) {
+            webglRecreateAttemptedRef.current = true;
+            void enableWebgl();
+          }
+        });
+      };
+
+      // Instantiates and loads the WebGL renderer. Must run only after
+      // term.open() + an initial fit(), and only client-side (browser-only
+      // addon). Returns the addon, or null when WebGL is unavailable / fails —
+      // in which case xterm keeps using the DOM renderer.
+      const enableWebgl = async (): Promise<unknown> => {
+        if (disposed || webglDisabled) {
+          return null;
+        }
+        try {
+          // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower dynamic import() expressions; lazy-loading the WebGL addon this way is intentional code-splitting, not a defect.
+          const { WebglAddon } = await import("@xterm/addon-webgl");
+          if (disposed) {
+            return null;
+          }
+          const addon = new WebglAddon();
+          term.loadAddon(addon);
+          webglAddonRef.current = addon;
+          wireWebglContextLoss(addon);
+          log("webgl-enabled");
+          return addon;
+        } catch (err: unknown) {
+          log("webgl-unavailable", { message: err instanceof Error ? err.message : String(err) });
+          console.warn("WebGL renderer unavailable, using DOM renderer:", err instanceof Error ? err.message : err);
+          disposeWebgl();
+          return null;
+        }
+      };
+
+      // Each init run starts with a fresh re-create budget (one retry).
+      webglRecreateAttemptedRef.current = false;
 
       if (canReuseCachedTerminal && cached) {
         const termElement = (cached.terminal as { element?: HTMLElement }).element;
         if (termElement) {
-          termElement.style.width = "100%";
-          termElement.style.height = "100%";
           container.appendChild(termElement);
+          applyXtermScrollSurface(termElement);
           if (suppressNativeKeyboard) {
             suppressXtermNativeKeyboard(container);
           }
         }
         term = cached.terminal;
+        applyXtermScrollOptions(term);
         fitAddon = cached.fitAddon;
         searchAddon = cached.searchAddon;
         webglAddon = cached.webglAddon;
+        // The cached terminal kept its WebGL addon loaded, but the old
+        // context-loss subscription was torn down on cache. Re-wire it (or
+        // re-create the renderer if a prior context loss left it on the DOM
+        // renderer).
+        webglAddonRef.current = (cached.webglAddon as { dispose: () => void } | null) ?? null;
+        if (webglDisabled && webglAddonRef.current) {
+          disposeWebgl();
+          webglAddon = null;
+        } else if (webglAddonRef.current) {
+          wireWebglContextLoss(
+            webglAddonRef.current as unknown as {
+              onContextLoss: (cb: () => void) => { dispose: () => void };
+            },
+          );
+        } else if (!webglDisabled) {
+          void enableWebgl().then((addon) => {
+            webglAddon = addon;
+          });
+        }
         fitAddon.fit();
         termRef.current = cached.terminal;
         fitAddonRef.current = cached.fitAddon;
@@ -573,12 +825,14 @@ export function TerminalPane({
 
         if (disposed) return;
 
-        const xtermTheme = buildXtermTheme(theme, terminalThemeId);
-
         const xterm = new XTerm({
           cursorBlink,
           cursorStyle: terminalCursorStyle,
           smoothScrollDuration: terminalSmoothScroll ? 125 : 0,
+          scrollback: TERMINAL_SCROLLBACK_LINES,
+          scrollSensitivity: TERMINAL_SCROLL_SENSITIVITY,
+          fastScrollSensitivity: TERMINAL_FAST_SCROLL_SENSITIVITY,
+          scrollOnUserInput: true,
           allowProposedApi: true,
           logger: createXtermLogger(),
           fontSize: terminalFontSize,
@@ -600,8 +854,7 @@ export function TerminalPane({
         }
         const xtermElement = (xterm as { element?: HTMLElement }).element;
         if (xtermElement) {
-          xtermElement.style.width = "100%";
-          xtermElement.style.height = "100%";
+          applyXtermScrollSurface(xtermElement);
           xtermElement.style.fontVariantLigatures = terminalLigatures ? "normal" : "none";
         }
         nextFitAddon.fit();
@@ -611,6 +864,11 @@ export function TerminalPane({
         termRef.current = xterm;
         fitAddonRef.current = nextFitAddon;
         scheduleStableFit();
+
+        // GPU renderer — instantiated after open() + initial fit(). Falls back
+        // to the DOM renderer automatically if WebGL is unavailable or the GL
+        // context is later lost (see enableWebgl / wireWebglContextLoss).
+        webglAddon = await enableWebgl();
 
         // Search addon
         try {
@@ -700,7 +958,7 @@ export function TerminalPane({
         }
       }
 
-      if (isFocusedRef.current) {
+      if (isFocusedRef.current && !suppressNativeKeyboard) {
         requestAnimationFrame(() => {
           if (!disposed) {
             term.focus();
@@ -880,7 +1138,11 @@ export function TerminalPane({
               break;
 
             case "output":
-              term.write(msg.data);
+              term.write(transformTerminalOutputForCompat(
+                msg.data,
+                compatModeRef.current,
+                codexCompatTransformRef.current ?? createCodexTuiCompatTransform(buildXtermTheme(theme, terminalThemeId)),
+              ));
               if (msg.seq !== null) {
                 lastSeqRef.current = msg.seq + 1;
               }
@@ -1132,7 +1394,7 @@ export function TerminalPane({
       });
 
       const resizeObserver = new ResizeObserver(() => {
-        requestAnimationFrame(refitAndFocus);
+        requestAnimationFrame(refitOnly);
       });
       resizeObserver.observe(container);
 
@@ -1143,7 +1405,11 @@ export function TerminalPane({
         clearReconnectTimer();
         clearPendingReconnectBanner();
         heartbeatRef.current?.stop();
-        detachWebglContextLostHandler();
+        // Drop the context-loss subscription on every path. On a cache (tab
+        // switch) the WebGL addon stays loaded on the retained terminal and is
+        // re-wired on reattach; on a destroy path term.dispose() below disposes
+        // the addon along with the terminal.
+        teardownWebglSubscription();
         onDataDisposableRef.current?.dispose();
         onDataDisposableRef.current = null;
         onResizeDisposableRef.current?.dispose();
@@ -1173,7 +1439,8 @@ export function TerminalPane({
           }
           ws?.close();
           removeCached(paneId);
-          term.dispose();
+          term.dispose(); // disposes loaded addons, including the WebGL renderer
+          webglAddonRef.current = null;
         } else if (wsRef.current) {
           // Tab switch — cache the terminal for instant restore
           log("cleanup-cache-terminal");
@@ -1187,7 +1454,10 @@ export function TerminalPane({
           cacheTerminal(paneId, {
             terminal: term,
             fitAddon,
-            webglAddon,
+            // The live addon ref is authoritative: it tracks the renderer
+            // through any context-loss re-create that may have replaced the
+            // addon captured in the local `webglAddon` binding.
+            webglAddon: webglAddonRef.current ?? webglAddon,
             searchAddon,
             ws: wsRef.current,
             lastSeq: lastSeqRef.current,
@@ -1196,7 +1466,8 @@ export function TerminalPane({
         } else {
           // WS never established — dispose, don't cache
           log("cleanup-dispose-no-ws");
-          term.dispose();
+          term.dispose(); // disposes loaded addons, including the WebGL renderer
+          webglAddonRef.current = null;
         }
       };
     }
@@ -1217,12 +1488,15 @@ export function TerminalPane({
   ]);
 
   useEffect(() => {
+    const xtermTheme = buildXtermTheme(theme, terminalThemeId);
+    codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
+
     if (termRef.current && fitAddonRef.current) {
       applyTerminalAppearance(
         termRef.current as Parameters<typeof applyTerminalAppearance>[0],
         fitAddonRef.current as Parameters<typeof applyTerminalAppearance>[1],
         {
-          theme: buildXtermTheme(theme, terminalThemeId),
+          theme: xtermTheme,
           fontFamily: buildTerminalFontStack(terminalFontFamily, theme.fonts?.mono),
           fontSize: terminalFontSize,
           cursorBlink,
@@ -1244,10 +1518,46 @@ export function TerminalPane({
   ]);
 
   useEffect(() => {
-    if (isFocused && termRef.current) {
+    if (isFocused && !suppressNativeKeyboard && termRef.current) {
       (termRef.current as { focus: () => void }).focus();
     }
-  }, [isFocused]);
+  }, [isFocused, suppressNativeKeyboard]);
+
+  // Re-fit the terminal whenever the visual viewport changes (soft keyboard
+  // open/close, URL-bar collapse, orientation). The document viewport is
+  // resized by `interactiveWidget: "resizes-content"`; the terminal host does
+  // not subtract a keyboard CSS var, so these passes only recompute rows/cols
+  // and keep the prompt visible after mobile keyboard transitions settle.
+  useEffect(() => {
+    const fit = fitAddonRef.current as { fit?: () => void } | null;
+    if (!fit?.fit) return;
+    const refit = () => {
+      try {
+        fit.fit?.();
+        sendTerminalResize(
+          wsRef.current,
+          termRef.current as Parameters<typeof sendTerminalResize>[1],
+          allowRemoteResizeRef.current,
+        );
+        if (suppressNativeKeyboard) {
+          scrollTerminalViewportToBottom(termRef.current as Terminal | null);
+        }
+        if (isFocusedRef.current && !suppressNativeKeyboard) {
+          (termRef.current as { focus?: () => void } | null)?.focus?.();
+        }
+      } catch (err: unknown) {
+        console.warn("Terminal viewport re-fit failed:", err instanceof Error ? err.message : err);
+      }
+    };
+    const id = requestAnimationFrame(refit);
+    const settleId = suppressNativeKeyboard ? window.setTimeout(refit, 220) : null;
+    return () => {
+      cancelAnimationFrame(id);
+      if (settleId !== null) {
+        window.clearTimeout(settleId);
+      }
+    };
+  }, [viewportHeight, viewportOffsetTop, keyboardOpen, suppressNativeKeyboard]);
 
   useEffect(() => {
     if (!pasteError) return;
@@ -1265,6 +1575,8 @@ export function TerminalPane({
       style={{
         outline: isFocused ? "1px solid var(--primary)" : "none",
         outlineOffset: "-1px",
+        // Left gutter so the prompt isn't jammed against the window edge.
+        paddingLeft: 12,
       }}
       onPointerDown={handleFocus}
       onClick={handleFocus}

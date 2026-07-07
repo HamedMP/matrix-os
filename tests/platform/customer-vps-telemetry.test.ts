@@ -69,7 +69,12 @@ describe('platform/customer-vps-routes telemetry', () => {
     expect(captureEvent).toHaveBeenCalledTimes(1);
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.VPS_PROVISION_REQUESTED, {
       distinctId: 'user_123',
-      properties: { handle: 'alice' },
+      properties: {
+        handle: 'alice',
+        runtime_slot: 'primary',
+        requested_server_type: undefined,
+        developer_tools_count: undefined,
+      },
     });
   });
 
@@ -214,9 +219,14 @@ describe('platform/customer-vps-routes telemetry', () => {
     const res = await registerRequest(app);
 
     expect(res.status).toBe(200);
-    expect(captureEvent).toHaveBeenCalledTimes(1);
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.VPS_REGISTERED, {
       properties: { machine_id: MACHINE_ID },
+    });
+    expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.RUNTIME_ACTIVATED, {
+      properties: {
+        machine_id: MACHINE_ID,
+        image_version: 'matrix-os-host-2026.06.11-1',
+      },
     });
   });
 

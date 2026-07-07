@@ -149,13 +149,13 @@ describe('platform billing db', () => {
       allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
       reason: 'engineer test',
       createdBy: 'ops-user',
-      expiresAt: '2026-07-01T00:00:00.000Z',
+      expiresAt: '2027-07-01T00:00:00.000Z',
       revokedAt: null,
       createdAt: '2026-05-30T00:00:00.000Z',
     };
 
     await upsertBillingOverride(db, override);
-    await expect(getBillingOverride(db, 'user_123')).resolves.toMatchObject({
+    await expect(getBillingOverride(db, 'user_123', '2026-06-01T00:00:00.000Z')).resolves.toMatchObject({
       id: 'override_123',
       reason: 'engineer test',
       revokedAt: null,
@@ -164,7 +164,7 @@ describe('platform billing db', () => {
     await expect(revokeBillingOverride(db, 'override_123', '2026-06-01T00:00:00.000Z')).resolves.toBe(true);
     await expect(revokeBillingOverride(db, 'override_123', '2026-06-02T00:00:00.000Z')).resolves.toBe(false);
 
-    await expect(getBillingOverride(db, 'user_123')).resolves.toBeUndefined();
+    await expect(getBillingOverride(db, 'user_123', '2026-06-01T00:00:00.000Z')).resolves.toBeUndefined();
     await expect(
       db.executor
         .selectFrom('billing_entitlement_overrides')
@@ -179,7 +179,7 @@ describe('platform billing db', () => {
       revokedAt: null,
     });
 
-    await expect(getBillingOverride(db, 'user_123')).resolves.toBeUndefined();
+    await expect(getBillingOverride(db, 'user_123', '2026-06-01T00:00:00.000Z')).resolves.toBeUndefined();
     await expect(revokeBillingOverride(db, 'missing_override', '2026-06-01T00:00:00.000Z')).resolves.toBe(false);
   });
 
@@ -213,7 +213,7 @@ describe('platform billing db', () => {
       allowedServerTypes: ['cpx22', 'cpx32', 'cpx52'],
       reason: 'engineer test',
       createdBy: 'ops-user',
-      expiresAt: '2026-07-01T00:00:00.000Z',
+      expiresAt: '2027-07-01T00:00:00.000Z',
       revokedAt: null,
       createdAt: '2026-05-30T00:00:00.000Z',
     });

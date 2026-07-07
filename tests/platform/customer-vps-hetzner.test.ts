@@ -61,4 +61,63 @@ describe('platform/customer-vps-hetzner', () => {
       status: 429,
     });
   });
+
+  it('changes server type without upgrading disk so future downgrades remain possible', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('{"action":{"id":42}}', { status: 201 }));
+    const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
+
+    await client.resizeServer(123456, { serverType: 'cpx32', upgradeDisk: false });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.hetzner.cloud/v1/servers/123456/actions/change_type',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ server_type: 'cpx32', upgrade_disk: false }),
+      }),
+    );
+  });
+
+  it('shuts servers down and powers them off or on through Hetzner actions', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('{"action":{"id":42}}', { status: 201 }));
+    const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
+
+    await client.shutdownServer(123456);
+    await client.powerOffServer(123456);
+    await client.powerOnServer(123456);
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      'https://api.hetzner.cloud/v1/servers/123456/actions/shutdown',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      'https://api.hetzner.cloud/v1/servers/123456/actions/poweroff',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      'https://api.hetzner.cloud/v1/servers/123456/actions/poweron',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('maps provider server type from server reads', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      server: {
+        id: 123456,
+        status: 'running',
+        server_type: { name: 'cpx32' },
+        public_net: { ipv4: { ip: '203.0.113.10' } },
+      },
+    }), { status: 200 }));
+    const client = createHetznerClient(config, fetchImpl as unknown as typeof fetch);
+
+    await expect(client.getServer(123456)).resolves.toMatchObject({
+      id: 123456,
+      status: 'running',
+      serverType: 'cpx32',
+      publicIPv4: '203.0.113.10',
+    });
+  });
 });

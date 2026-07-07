@@ -126,7 +126,6 @@ write_files:
       Requires=matrix-restore.service
       ConditionPathExists=/opt/matrix/restore-complete
       ConditionPathExists=/opt/matrix/bin/matrix-code
-      ConditionPathExists=/opt/matrix/runtime/code-server/bin/code-server
 
       [Service]
       User=matrix
@@ -136,6 +135,32 @@ write_files:
       ExecStart=/opt/matrix/bin/matrix-code
       Restart=on-failure
       RestartSec=5
+      TimeoutStartSec=1800
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-code-server.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Install Matrix OS code-server runtime
+      After=network-online.target matrix-restore.service
+      Wants=network-online.target
+      Requires=matrix-restore.service
+      ConditionPathExists=/opt/matrix/restore-complete
+      ConditionPathExists=/opt/matrix/bin/matrix-install-tool-pack
+      ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server
+
+      [Service]
+      Type=oneshot
+      User=root
+      Group=root
+      EnvironmentFile=/opt/matrix/env/host.env
+      ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server
+      Restart=on-failure
+      RestartSec=10m
+      TimeoutStartSec=900
 
       [Install]
       WantedBy=multi-user.target
@@ -179,6 +204,27 @@ write_files:
       Restart=on-failure
       RestartSec=10m
       TimeoutStartSec=1800
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/matrix-hermes-dashboard.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Matrix OS Hermes dashboard API (loopback)
+      After=matrix-hermes.service network-online.target
+      Wants=network-online.target
+      ConditionPathExists=/opt/matrix/bin/matrix-hermes-dashboard
+
+      [Service]
+      User=matrix
+      Group=matrix
+      EnvironmentFile=/opt/matrix/env/host.env
+      WorkingDirectory=/opt/matrix
+      ExecStart=/opt/matrix/bin/matrix-hermes-dashboard
+      Restart=on-failure
+      RestartSec=10
 
       [Install]
       WantedBy=multi-user.target
@@ -338,6 +384,7 @@ write_files:
       MATRIX_CLERK_USER_ID={{clerkUserId}}
       MATRIX_HANDLE={{handle}}
       MATRIX_RUNTIME_SLOT={{runtimeSlot}}
+      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
@@ -353,7 +400,7 @@ write_files:
       POSTHOG_HOST={{posthogHost}}
       NEXT_PUBLIC_POSTHOG_KEY={{posthogToken}}
       NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}
-      NEXT_PUBLIC_POSTHOG_HOST={{posthogHost}}
+      NEXT_PUBLIC_POSTHOG_HOST={{posthogPublicHost}}
       NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}
       DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix
   - path: /opt/matrix/env/symphony.env
@@ -496,7 +543,7 @@ runcmd:
     for required_bin in matrixctl matrix-db-backup.sh matrix-restore.sh matrix-owner-env matrix-gateway matrix-shell matrix-code matrix-sync-agent matrix-symphony matrix-symphony-control matrix-install-hermes; do
       chmod 0750 "/opt/matrix/bin/${required_bin}"
     done
-    for optional_bin in matrix-install-linux-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
+    for optional_bin in matrix-hermes-dashboard matrix-install-linux-tools matrix-install-developer-tools matrix-messaging-health matrix-messaging-backup matrix-messaging-restore; do
       if [ -e "/opt/matrix/bin/${optional_bin}" ]; then
         chmod 0750 "/opt/matrix/bin/${optional_bin}"
       fi
@@ -534,10 +581,14 @@ runcmd:
     systemctl daemon-reload
     loginctl enable-linger matrix
     systemctl start "user@$(id -u matrix).service"
-    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-linux-tools.service matrix-db-backup.timer nginx
-    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service
+    systemctl enable matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
+    systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
+    systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2
+    systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2
     systemctl start --no-block matrix-hermes.service || echo "matrix-host: optional Hermes install will retry via systemd" >&2
+    systemctl start --no-block matrix-hermes-dashboard.service || echo "matrix-host: optional Hermes dashboard will retry via systemd" >&2
     systemctl start --no-block matrix-linux-tools.service || echo "matrix-host: optional Linux tools install will retry via systemd" >&2
+    systemctl start --no-block matrix-developer-tools.service || echo "matrix-host: optional developer tools install will retry via systemd" >&2
     if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then
       systemctl enable matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service
       systemctl start --no-block matrix-homeserver.service matrix-bridge-telegram.service matrix-bridge-whatsapp.service || echo "matrix-host: optional messaging services will retry via systemd" >&2

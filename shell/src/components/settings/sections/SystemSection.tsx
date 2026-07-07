@@ -370,6 +370,8 @@ export function SystemSection({ billingActive = true }: { billingActive?: boolea
     }
     setRepairingUpdate(false);
 
+    if (!mountedRef.current) return;
+    // react-doctor-disable-next-line react-doctor/async-defer-await -- mountedRef must be checked again after the install wait because the component can unmount while waitForInstalledUpdate is pending; the post-await guard prevents state updates after unmount.
     const installed = await waitForInstalledUpdate(failedVersion ? { version: failedVersion } : { channel: selectedChannel });
     if (!mountedRef.current) return;
     if (!installed) {

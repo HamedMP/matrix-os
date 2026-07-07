@@ -1,5 +1,6 @@
 "use client";
 
+import { FolderOpenIcon, Loader2Icon } from "lucide-react";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { IconView } from "./IconView";
 import { ListView } from "./ListView";
@@ -24,7 +25,8 @@ export function FileBrowserContent({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+      <div className="flex items-center justify-center gap-2 h-full text-muted-foreground text-sm">
+        <Loader2Icon className="size-4 animate-spin" aria-hidden="true" />
         Loading...
       </div>
     );
@@ -32,9 +34,14 @@ export function FileBrowserContent({
 
   if (entries.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
-        <div className="text-lg">Empty folder</div>
-        <div className="text-xs">Right-click to create a file or folder</div>
+      <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center">
+        <span className="inline-flex size-12 items-center justify-center rounded-2xl bg-foreground/5 text-muted-foreground/60">
+          <FolderOpenIcon className="size-6" aria-hidden="true" />
+        </span>
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-foreground/80">Empty folder</p>
+          <p className="text-xs text-muted-foreground">Nothing here yet</p>
+        </div>
       </div>
     );
   }

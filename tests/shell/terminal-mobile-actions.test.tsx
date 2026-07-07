@@ -7,11 +7,8 @@ import type { PaneNode } from "../../shell/src/stores/terminal-store.js";
 import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "../../shell/src/components/terminal/terminal-input-event.js";
 
 vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
-  PaneGrid: ({ paneTree, onSessionAttached }: { paneTree: PaneNode; onSessionAttached?: (paneId: string, sessionId: string) => void }) => {
+  PaneGrid: ({ paneTree }: { paneTree: PaneNode }) => {
     const paneId = paneTree.type === "pane" ? paneTree.id : "pane-1";
-    React.useEffect(() => {
-      onSessionAttached?.(paneId, "main");
-    }, [onSessionAttached, paneId]);
     return <div data-testid="pane-grid" data-pane-id={paneId} />;
   },
 }));
@@ -28,9 +25,33 @@ vi.mock("@/hooks/useTheme", () => ({
   }),
 }));
 
-vi.mock("@/stores/terminal-settings", () => ({
-  useTerminalSettings: () => "system",
-}));
+vi.mock("@/stores/terminal-settings", () => {
+  const state = {
+    appThemeId: "matrix-dark",
+    themeId: "system",
+    fontSize: 13,
+    fontFamily: "JetBrains Mono",
+    ligatures: true,
+    cursorStyle: "block",
+    smoothScroll: true,
+    cursorBlink: true,
+    setAppThemeId: () => {},
+    setThemeId: () => {},
+    setFontSize: () => {},
+    setFontFamily: () => {},
+    setLigatures: () => {},
+    setCursorStyle: () => {},
+    setSmoothScroll: () => {},
+    setCursorBlink: () => {},
+  };
+
+  return {
+    TERMINAL_FONT_FAMILIES: ["MesloLGS NF", "Berkeley Mono", "JetBrains Mono", "Fira Code"],
+    DEFAULT_TERMINAL_THEME_ID: "dark",
+    DEFAULT_TERMINAL_APP_THEME_ID: "matrix-dark",
+    useTerminalSettings: (selector: (value: typeof state) => unknown) => selector(state),
+  };
+});
 
 import { TerminalApp } from "../../shell/src/components/terminal/TerminalApp.js";
 
@@ -53,14 +74,53 @@ describe("TerminalApp mobile actions", () => {
     }));
   });
 
-  it("shows mobile terminal actions above the accessory keybar", async () => {
+  it("shows the simplified mobile terminal actions above the accessory keybar", async () => {
     render(<TerminalApp mobile />);
 
     await waitFor(() => expect(screen.getByTestId("terminal-mobile-actions")).toBeTruthy());
 
-    for (const name of ["Shell", "Pane", "Tab", "Cmd", "Paste", "Search"]) {
+    expect(screen.getByText("+ Session")).toBeTruthy();
+    for (const name of ["New session", "Paste", "Search"]) {
       expect(screen.getByRole("button", { name })).toBeTruthy();
     }
+    for (const name of ["Shell", "Pane", "Tab", "Cmd"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+  });
+
+  it("opens the shared new-session menu and creates a canonical shell session from mobile", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    render(<TerminalApp mobile />);
+
+    const newSession = await screen.findByRole("button", { name: "New session" });
+    expect(newSession.getAttribute("aria-haspopup")).toBe("menu");
+    expect(newSession.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(newSession);
+
+    const menu = await screen.findByRole("menu", { name: "New session menu" });
+    expect(newSession.getAttribute("aria-expanded")).toBe("true");
+    expect(menu.textContent).toContain("NEW TAB");
+    expect(screen.getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i })).toBeTruthy();
+
+    fireEvent.click(newSession);
+    await waitFor(() => expect(screen.queryByRole("menu", { name: "New session menu" })).toBeNull());
+    expect(newSession.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(newSession);
+    await screen.findByRole("menu", { name: "New session menu" });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Shell(?:\s+⌘T)?$/i }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input, init]) => (
+        String(input).endsWith("/api/terminal/sessions") &&
+        init?.method === "POST" &&
+        typeof init.body === "string"
+      ))).toBe(true);
+    });
+
+    expect(screen.queryByText("Mobile Shell")).toBeNull();
   });
 
   it("dispatches paste and search actions to the focused pane", async () => {
@@ -81,5 +141,49 @@ describe("TerminalApp mobile actions", () => {
       expect.objectContaining({ action: "search" }),
     ]);
     window.removeEventListener(TERMINAL_INPUT_EVENT, listener);
+  });
+
+  it("loads mobile new-session agent status once under React Strict Mode", async () => {
+    const fetchMock = vi.mocked(fetch);
+
+    render(
+      <React.StrictMode>
+        <TerminalApp mobile />
+      </React.StrictMode>,
+    );
+
+    const newSession = await screen.findByRole("button", { name: "New session" });
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => (
+        String(input).endsWith("/api/agents")
+      )).length).toBeGreaterThanOrEqual(2);
+    });
+    fetchMock.mockClear();
+
+    fireEvent.click(newSession);
+    await screen.findByRole("menu", { name: "New session menu" });
+
+    await waitFor(() => {
+      const agentStatusCalls = fetchMock.mock.calls.filter(([input]) => (
+        String(input).endsWith("/api/agents")
+      ));
+      expect(agentStatusCalls).toHaveLength(1);
+    });
+  });
+
+  it("keeps mobile command input keyboard-safe and uses green primary actions", async () => {
+    render(<TerminalApp mobile />);
+
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Command composer" })).toBeTruthy());
+
+    const newSession = screen.getByRole("button", { name: "New session" });
+    const composer = screen.getByRole("textbox", { name: "Command composer" });
+    const send = screen.getByRole("button", { name: "Send command" });
+
+    expect(newSession.style.background).toBe("var(--terminal-mobile-primary-bg)");
+    expect(send.style.background).toBe("var(--terminal-mobile-primary-bg)");
+    expect(composer.style.fontSize).toBe("16px");
+    expect(composer.getAttribute("autocomplete")).toBe("off");
+    expect(composer.getAttribute("enterkeyhint")).toBe("send");
   });
 });

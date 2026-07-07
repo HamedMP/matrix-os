@@ -204,6 +204,7 @@ describe("zellij adapter", () => {
           COLORTERM: "truecolor",
           CLICOLOR: "1",
           FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
           LANG: "fr_FR.UTF-8",
           XDG_RUNTIME_DIR: "/run/user/999",
           ZELLIJ_CONFIG_DIR: "/home/matrix/.config/zellij",
@@ -279,12 +280,13 @@ describe("zellij adapter", () => {
           COLORTERM: "truecolor",
           CLICOLOR: "1",
           FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
         }),
       }),
     );
   });
 
-  it("writes and uses the compact Matrix zellij config and layout for shell sessions", async () => {
+  it("writes and uses chrome-free Matrix zellij config and layout for shell sessions", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-zellij-"));
     try {
       const pty = ptyProcess();
@@ -328,7 +330,7 @@ describe("zellij adapter", () => {
       expect(config).not.toContain("matrix-dark {");
       expect(config).not.toContain("matrix-light {");
       expect(config).toContain("matrix {");
-      expect(layout).toContain('plugin location="zellij:compact-bar"');
+      expect(layout).not.toContain("compact-bar");
       expect(layout).not.toContain("tab-bar");
       expect(layout).not.toContain("status-bar");
       expect(spawnPty).toHaveBeenCalledWith(
@@ -441,8 +443,8 @@ describe("zellij adapter", () => {
     expect(layoutText).toContain('command="node"');
     expect(layoutText).toContain('args "-e"');
     expect(layoutText).toContain("MATRIX_BENCH_READY");
-    expect(layoutText).toContain("default_tab_template");
-    expect(layoutText).toContain('plugin location="zellij:compact-bar"');
+    expect(layoutText).toContain('tab name="main"');
+    expect(layoutText).not.toContain("compact-bar");
     expect(layoutText).not.toContain("tab-bar");
     expect(layoutText).not.toContain("status-bar");
     expect(layoutPath).toEqual(expect.any(String));
@@ -558,6 +560,7 @@ describe("zellij adapter", () => {
           COLORTERM: "truecolor",
           CLICOLOR: "1",
           FORCE_COLOR: "3",
+          COLORFGBG: "15;0",
         }),
       }));
     }

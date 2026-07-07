@@ -95,6 +95,7 @@ describe("BillingGate", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     window.history.replaceState({}, "", "/");
     window.sessionStorage.clear();
     navigationState.replace.mockReset();
@@ -120,6 +121,144 @@ describe("BillingGate", () => {
     expect(screen.getByText("Matrix workspace")).toBeTruthy();
     expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("renders the shell for app-session billing access without Clerk client auth", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ access: { runtimeProxyAllowed: true, reason: "active" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/billing/status",
+      expect.objectContaining({
+        credentials: "include",
+        method: "GET",
+      }),
+    );
+  });
+
+  it("revalidates app-session billing instead of reusing a signed-out active cache", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access: { runtimeProxyAllowed: true, reason: "active" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json", "x-auth-failure": "app-session-stale" },
+        }),
+      );
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+    cleanup();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Loading billing status")).toBeTruthy();
+    expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue to pay" })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps signed-out app-session billing in checking state on 401 and unlocks after refresh", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.activePlan = null;
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json", "x-auth-failure": "app-session-stale" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access: { runtimeProxyAllowed: true, reason: "active" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Loading billing status")).toBeTruthy();
+    expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue to pay" })).toBeNull();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    expect(await screen.findByText("Matrix workspace")).toBeTruthy();
+  });
+
+  it("redirects signed-out users instead of reconnecting on a plain billing 401", async () => {
+    vi.unstubAllEnvs();
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = false;
+    clerkState.activePlan = null;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+
+    render(
+      <BillingGate>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByText("Opening Matrix OS sign in")).toBeTruthy();
+    expect(screen.queryByText("Loading billing status")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Continue to pay" })).toBeNull();
   });
 
   it("bypasses billing only for explicit test screenshot runs", async () => {
@@ -327,7 +466,7 @@ describe("BillingGate", () => {
     expect(navigationState.replace).toHaveBeenCalledWith("/");
   });
 
-  it("provisions and polls with the CLI device return path once billing is active", async () => {
+  it("shows default installs before provisioning with the CLI device return path once billing is active", async () => {
     vi.unstubAllEnvs();
     window.history.replaceState(
       {},
@@ -366,13 +505,19 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
-    expect(await screen.findByText("Confirming your subscription")).toBeTruthy();
+    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
+    for (const label of ["Codex", "Claude Code", "OpenCode", "Pi"]) {
+      expect(screen.getByRole("checkbox", { name: label })).toHaveProperty("checked", true);
+    }
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/auth/provision-runtime")).toBe(false);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Pi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/auth/provision-runtime",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({ developerTools: ["codex", "claude-code", "opencode"] }),
         }),
       ),
     );
@@ -421,6 +566,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
+    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
     expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
@@ -459,6 +606,8 @@ describe("BillingGate", () => {
       </BillingGate>,
     );
 
+    expect(await screen.findByText("Preinstall coding agents?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Install & build" }));
     expect(await screen.findByText("Matrix setup needs attention")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(screen.queryByText("Confirming your subscription")).toBeNull();
@@ -523,7 +672,7 @@ describe("BillingGate", () => {
     );
 
     expect(screen.queryByText("Matrix workspace")).toBeNull();
-    expect(screen.getByText("Opening Matrix OS sign in")).toBeTruthy();
+    expect(await screen.findByText("Opening Matrix OS sign in")).toBeTruthy();
     expect(screen.queryByTestId("sign-in-component")).toBeNull();
     expect(screen.queryByTestId("pricing-table")).toBeNull();
   });

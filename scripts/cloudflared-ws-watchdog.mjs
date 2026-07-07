@@ -75,6 +75,38 @@ export function redactProbeUrl(rawUrl) {
   }
 }
 
+function classifyProbeFailureReason(reason) {
+  if (typeof reason !== 'string' || !reason) return 'probe_failed';
+  if (/^status_\d{3}$/.test(reason)) return reason;
+  if (/^close_\d+$/.test(reason)) return reason;
+  if (reason === 'timeout') return reason;
+  return 'websocket_error';
+}
+
+export function buildPublicLiveRouteDiagnostic({ machine, results }) {
+  const safeResults = Array.isArray(results) ? results : [];
+  const failures = safeResults
+    .filter((result) => result && result.ok !== true)
+    .map((result) => ({
+      path: typeof result.path === 'string' && result.path ? result.path : 'unknown',
+      reason: classifyProbeFailureReason(result.reason),
+    }));
+  const probedPaths = safeResults
+    .map((result) => (typeof result?.path === 'string' && result.path ? result.path : null))
+    .filter((path) => path !== null);
+  const runtimeSlot = typeof machine?.runtimeSlot === 'string' && machine.runtimeSlot ? machine.runtimeSlot : 'primary';
+
+  return {
+    version: 1,
+    layer: failures.length > 0 ? 'public-route' : 'runtime-reachable',
+    runtimeReachability: machine ? 'online' : 'unavailable',
+    publicLiveRoute: failures.length > 0 ? 'unavailable' : 'online',
+    runtimeSlot,
+    probedPaths,
+    failures,
+  };
+}
+
 export function shouldRestartCloudflared(consecutiveFailures, threshold) {
   return consecutiveFailures >= Math.max(1, threshold);
 }
@@ -247,6 +279,10 @@ async function runProbeCycle(config) {
     console.warn(
       `[cloudflared-watchdog] Public websocket probe failed path=${failure.path} reason=${failure.reason} url=${redactProbeUrl(failure.url)}`,
     );
+  }
+  const diagnostic = buildPublicLiveRouteDiagnostic({ machine, results });
+  if (diagnostic.layer === 'public-route') {
+    console.warn(`[cloudflared-watchdog] Public live-route diagnostic ${JSON.stringify(diagnostic)}`);
   }
   return failures.length === 0;
 }

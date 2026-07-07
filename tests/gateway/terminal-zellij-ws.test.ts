@@ -134,6 +134,26 @@ describe("zellij terminal WebSocket", () => {
     expect(pty.writes).toEqual([]);
   });
 
+  it("accepts explicit destroy frames for scoped terminal pane close", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+    });
+
+    const session = await handler.open({ ws, session: "main", fromSeq: 0 });
+    session.onMessage(JSON.stringify({ type: "destroy" }));
+
+    expect(pty.killed).toBe(true);
+    expect(ws.closed).toBe(true);
+    expect(ws.sent).not.toContainEqual({ type: "error", code: "invalid_message", message: "Invalid message" });
+  });
+
   it("normalizes binary websocket frames before protocol parsing", async () => {
     const pty = new FakePty();
     const ws = socket();

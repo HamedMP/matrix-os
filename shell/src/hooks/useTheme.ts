@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
+import {
+  loadShellSnapshot,
+  saveShellSnapshot,
+  type ShellSnapshotScope,
+} from "@/lib/shell-snapshot-cache";
 
 export interface Theme {
   name: string;
@@ -17,24 +22,24 @@ export const DEFAULT_THEME: Theme = {
   name: "default",
   colors: {
     background: "#FAFAF9",
-    foreground: "#1c1917",
-    card: "#FAFAF9",
-    "card-foreground": "#1c1917",
-    popover: "#FAFAF9",
-    "popover-foreground": "#1c1917",
-    primary: "#9AA48C",
-    "primary-foreground": "#1a1f18",
-    secondary: "#f5f5f4",
-    "secondary-foreground": "#3c4044",
-    muted: "#f5f5f4",
-    "muted-foreground": "#6c7178",
-    accent: "#f5f5f4",
-    "accent-foreground": "#3c4044",
-    destructive: "#ef4444",
-    success: "#22c55e",
-    warning: "#eab308",
-    border: "#e5e5e4",
-    input: "#e5e5e4",
+    foreground: "#32352E",
+    card: "#FCFCF8",
+    "card-foreground": "#32352E",
+    popover: "#FCFCF8",
+    "popover-foreground": "#32352E",
+    primary: "#434E3F",
+    "primary-foreground": "#FAFAF5",
+    secondary: "#F1F0E3",
+    "secondary-foreground": "#3E4339",
+    muted: "#E1E1D0",
+    "muted-foreground": "#747668",
+    accent: "#F1F0E3",
+    "accent-foreground": "#3E4339",
+    destructive: "#D74A3A",
+    success: "#3A7D44",
+    warning: "#E0A12E",
+    border: "#D8D6C7",
+    input: "#D8D6C7",
     ring: "#D06F25",
   },
   fonts: {
@@ -123,14 +128,35 @@ export function getThemeFallback(): Theme {
   return DEFAULT_THEME;
 }
 
-export function useTheme() {
+export interface ShellCacheHookOptions {
+  cacheScope?: ShellSnapshotScope | null;
+}
+
+export function useTheme(options: ShellCacheHookOptions = {}) {
   const fallbackTheme = getThemeFallback();
-  const [theme, setTheme] = useState<Theme>(fallbackTheme);
+  const cacheScope = options.cacheScope ?? null;
+  const cacheKey = cacheScope?.storageKey;
+  const [theme, setTheme] = useState<Theme>(() => (
+    cacheScope ? normalizeTheme(loadShellSnapshot(cacheScope)?.theme, fallbackTheme) : fallbackTheme
+  ));
+
+  useEffect(() => {
+    if (!cacheScope) return;
+    const cachedTheme = loadShellSnapshot(cacheScope)?.theme;
+    if (cachedTheme) setTheme(normalizeTheme(cachedTheme, fallbackTheme));
+  }, [cacheKey, cacheScope, fallbackTheme]);
 
   // Fetch theme from server on mount
   useEffect(() => {
-    fetchTheme(fallbackTheme).then(setTheme);
-  }, [fallbackTheme]);
+    const controller = new AbortController();
+    fetchTheme(fallbackTheme, controller.signal).then((nextTheme) => {
+      if (controller.signal.aborted) return;
+      setTheme(nextTheme);
+      saveShellSnapshot(cacheScope, { theme: nextTheme });
+    });
+
+    return () => controller.abort();
+  }, [fallbackTheme, cacheKey, cacheScope]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -138,14 +164,22 @@ export function useTheme() {
 
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
-      fetchTheme(fallbackTheme).then(setTheme);
+      fetchTheme(fallbackTheme).then((nextTheme) => {
+        setTheme(nextTheme);
+        saveShellSnapshot(cacheScope, { theme: nextTheme });
+      });
     }
   });
 
   return theme;
 }
 
-export async function saveTheme(theme: Theme): Promise<void> {
+export function saveTheme(theme: Theme): Promise<void>;
+export function saveTheme(theme: Theme, options: ShellCacheHookOptions): Promise<void>;
+export async function saveTheme(
+  theme: Theme,
+  options: ShellCacheHookOptions = {},
+): Promise<void> {
   const gatewayUrl = getGatewayUrl();
   const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
     signal: AbortSignal.timeout(10_000),
@@ -156,19 +190,26 @@ export async function saveTheme(theme: Theme): Promise<void> {
   if (!res.ok) {
     throw new Error("Failed to save theme");
   }
+  saveShellSnapshot(options.cacheScope, { theme });
   if (typeof document !== "undefined") {
     applyTheme(theme);
   }
 }
 
-async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME): Promise<Theme> {
+function settingsFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(10_000);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME, signal?: AbortSignal): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
     const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
-      signal: AbortSignal.timeout(10_000),
+      signal: settingsFetchSignal(signal),
     });
     if (res.ok) return normalizeTheme(await res.json(), defaultTheme);
   } catch (err: unknown) {
+    if (signal?.aborted) return defaultTheme;
     console.warn("[theme] Failed to fetch theme:", err instanceof Error ? err.message : String(err));
   }
   return defaultTheme;

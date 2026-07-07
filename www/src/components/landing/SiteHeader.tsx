@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { ArrowRightIcon, ChevronDownIcon } from "lucide-react";
 import { Logo } from "./Logo";
 import { IsoArt } from "./IsoArt";
+import { MATRIX_APP_HREF, SIGN_IN_HREF, SIGN_UP_HREF } from "./links";
 import { palette as c, fonts } from "./theme";
 
 type MenuLink = { label: string; desc: string; href: string };
@@ -29,6 +31,7 @@ const navItems: NavItem[] = [
         { label: "Hermes", desc: "The resident agent for everything else", href: "/hermes" },
         { label: "Every screen", desc: "Web, CLI, mobile, and desktop", href: "/#surfaces" },
         { label: "Whitepaper", desc: "How Matrix works under the hood", href: "/whitepaper" },
+        { label: "Blog", desc: "Field notes from the Matrix team", href: "/blog" },
       ],
       featured: {
         title: "Agents that keep working after your laptop closes",
@@ -57,6 +60,7 @@ const navItems: NavItem[] = [
     },
   },
   { label: "Pricing", href: "/#pricing" },
+  { label: "Blog", href: "/blog" },
   { label: "About us", href: "/team" },
   { label: "Docs", href: "/docs" },
 ];
@@ -324,6 +328,12 @@ export function SiteHeader() {
         @media (min-width: 880px) {
           .site-header-signin { display: inline-flex; }
         }
+        .site-header-user {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 2.25rem;
+        }
         .site-header-menu-toggle { display: inline-flex; }
         @media (min-width: 880px) {
           .site-header-menu-toggle { display: none; }
@@ -492,24 +502,40 @@ export function SiteHeader() {
         </div>
 
         <div className="site-header-actions">
-          <a
-            href="https://app.matrix-os.com"
-            className="site-header-button site-header-button-soft site-header-signin"
-            data-ph-event="marketing_cta_clicked"
-            data-ph-location="nav"
-            data-ph-target="sign_in"
-          >
-            Sign in
-          </a>
-          <a
-            href="https://app.matrix-os.com"
-            className="site-header-button site-header-button-dark"
-            data-ph-event="marketing_cta_clicked"
-            data-ph-location="nav"
-            data-ph-target="get_started"
-          >
-            Get started
-          </a>
+          <SignedOut>
+            <Link
+              href={SIGN_IN_HREF}
+              className="site-header-button site-header-button-soft site-header-signin"
+              data-ph-event="marketing_cta_clicked"
+              data-ph-location="nav"
+              data-ph-target="sign_in"
+            >
+              Sign in
+            </Link>
+            <Link
+              href={SIGN_UP_HREF}
+              className="site-header-button site-header-button-dark"
+              data-ph-event="marketing_cta_clicked"
+              data-ph-location="nav"
+              data-ph-target="get_started"
+            >
+              Get started
+            </Link>
+          </SignedOut>
+          <SignedIn>
+            <a
+              href={MATRIX_APP_HREF}
+              className="site-header-button site-header-button-dark"
+              data-ph-event="marketing_cta_clicked"
+              data-ph-location="nav"
+              data-ph-target="go_to_matrix"
+            >
+              Go to Matrix
+            </a>
+            <span className="site-header-user">
+              <UserButton />
+            </span>
+          </SignedIn>
           <button
             type="button"
             className="site-header-button site-header-button-soft site-header-menu-toggle"
@@ -570,12 +596,22 @@ export function SiteHeader() {
           </nav>
 
           <div className="site-header-sheet-actions">
-            <a href="https://app.matrix-os.com" className="site-header-button site-header-button-soft" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="sign_in">
-              Sign in
-            </a>
-            <a href="https://app.matrix-os.com" className="site-header-button site-header-button-dark" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="get_started">
-              Get started
-            </a>
+            <SignedOut>
+              <Link href={SIGN_IN_HREF} className="site-header-button site-header-button-soft" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="sign_in" onClick={() => setSheetOpen(false)}>
+                Sign in
+              </Link>
+              <Link href={SIGN_UP_HREF} className="site-header-button site-header-button-dark" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="get_started" onClick={() => setSheetOpen(false)}>
+                Get started
+              </Link>
+            </SignedOut>
+            <SignedIn>
+              <a href={MATRIX_APP_HREF} className="site-header-button site-header-button-dark" data-ph-event="marketing_cta_clicked" data-ph-location="mobile_menu" data-ph-target="go_to_matrix">
+                Go to Matrix
+              </a>
+              <span className="site-header-user">
+                <UserButton />
+              </span>
+            </SignedIn>
           </div>
         </div>
       ) : null}

@@ -1,0 +1,21 @@
+{
+  "name": "@matrix-os/brand",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./tokens": {
+      "types": "./src/tokens.ts",
+      "import": "./dist/tokens.js",
+      "default": "./dist/tokens.js"
+    }
+  },
+  "scripts": { "build": "tsc" },
+  "peerDependencies": { "react": "^19.0.0" },
+  "devDependencies": { "@types/node": "^25.2.3", "@types/react": "^19.0.0", "typescript": "^5.9.3" }
+}

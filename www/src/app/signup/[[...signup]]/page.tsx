@@ -1,34 +1,23 @@
-import type { Metadata } from "next";
-import { ClerkProvider, SignUp } from "@clerk/nextjs";
-import { AuthLayout } from "@/components/auth/AuthLayout";
-import { FeatureShowcase } from "@/components/auth/FeatureShowcase";
-import { matrixClerkAppearance } from "@/components/auth/clerkAppearance";
-import { getSignupFallbackRedirectUrl } from "@/inngest/provision-status";
-import { PostHogIdentify } from "@/components/PostHogIdentify";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Sign up",
-  description: "Create your Matrix OS account to get started with your cloud computer.",
+type SignupAliasPageProps = {
+  params: Promise<{
+    signup?: string[];
+  }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
 
-export default function SignUpPage() {
-  return (
-    <ClerkProvider>
-      <AuthLayout
-        featureContent={
-          <FeatureShowcase
-            heading="Start with a free account"
-            subheading="Create your Matrix identity first. The 3-day hosted trial starts only when you provision a cloud computer."
-          />
-        }
-        formContent={
-          <SignUp
-            fallbackRedirectUrl={getSignupFallbackRedirectUrl()}
-            appearance={matrixClerkAppearance}
-          />
-        }
-      />
-      <PostHogIdentify />
-    </ClerkProvider>
-  );
+export default async function SignupAliasPage({ params, searchParams }: SignupAliasPageProps) {
+  const segments = (await params).signup ?? [];
+  const suffix = segments.length > 0 ? `/${segments.map(encodeURIComponent).join("/")}` : "";
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) {
+    if (Array.isArray(value)) {
+      for (const item of value) query.append(key, item);
+    } else if (value !== undefined) {
+      query.set(key, value);
+    }
+  }
+  const queryString = query.toString();
+  redirect(`/sign-up${suffix}${queryString ? `?${queryString}` : ""}`);
 }

@@ -20,11 +20,29 @@
 
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, MotionConfig, type PanInfo } from "framer-motion";
+import { toast } from "sonner";
+import { MobileQuickActions } from "@/components/mobile/MobileQuickActions";
+import {
+  appTransition,
+  EASE_EMPHASIZED,
+  fadeUp,
+  staggerContainer,
+  tapScale,
+} from "@/lib/motion";
 import { useChatContext } from "@/stores/chat-context";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
+import {
+  loadShellSnapshot,
+  saveShellSnapshot,
+  type ShellBootstrapSnapshot,
+  type ShellSnapshotScope,
+} from "@/lib/shell-snapshot-cache";
+import { HERMES_CHAT_HIDDEN } from "@/lib/feature-flags";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
+import { MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, type MobileTerminalInputActiveDetail } from "@/components/terminal/mobile-terminal-events";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { ChatApp } from "@/components/ChatApp";
 import { AppViewer } from "@/components/AppViewer";
@@ -51,8 +69,38 @@ const MAX_TERMINAL_INSTANCES = 5;
 const BUILT_IN_APPS: MobileApp[] = [
   { id: "terminal", name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
-  { id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" },
+  ...(HERMES_CHAT_HIDDEN
+    ? []
+    : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
 ];
+
+function mobileAppsFromBootstrap(
+  bootstrap: ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[] | null | undefined,
+): MobileApp[] {
+  const list = Array.isArray(bootstrap) ? bootstrap : bootstrap?.apps;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((a) => {
+    if (typeof a.name !== "string" || typeof a.path !== "string") return [];
+    const relative = a.path.replace(/^\/files\//, "");
+    return [{
+      id: `app:${relative}`,
+      name: a.name,
+      path: relative,
+      iconSlug: a.icon ?? ("slug" in a && typeof a.slug === "string" ? a.slug : nameToSlug(a.name)),
+    }];
+  });
+}
+
+function mergeMobileApps(base: MobileApp[], installed: MobileApp[]): MobileApp[] {
+  const seen = new Set(base.map((p) => p.path));
+  const merged = [...base];
+  for (const app of installed) {
+    if (seen.has(app.path)) continue;
+    seen.add(app.path);
+    merged.push(app);
+  }
+  return merged;
+}
 
 const LAUNCHER_APP_BUTTON_STYLE: CSSProperties = {
   display: "flex",
@@ -77,15 +125,20 @@ const LAUNCHER_APP_LABEL_STYLE: CSSProperties = {
 };
 
 const SWITCHER_CLOSE_BUTTON_STYLE: CSSProperties = {
-  background: "transparent",
-  border: "1px solid rgba(244,237,224,0.18)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flexShrink: 0,
+  background: "color-mix(in srgb, var(--foreground) 6%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--foreground) 14%, transparent)",
   color: "inherit",
   borderRadius: 999,
-  width: 28,
-  height: 28,
+  width: 44,
+  height: 44,
   cursor: "pointer",
-  opacity: 0.75,
-  fontSize: 12,
+  opacity: 0.85,
+  fontSize: 20,
+  lineHeight: 1,
 };
 
 const SWITCHER_RESUME_BUTTON_STYLE: CSSProperties = {
@@ -130,17 +183,23 @@ const DOCK_BADGE_STYLE: CSSProperties = {
 interface MobileShellProps {
   launchAppPath?: string | null;
   onOpenCommandPalette?: () => void;
+  cacheScope?: ShellSnapshotScope | null;
 }
 
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (apps, openStack, view, settingsOpen, time) are independent concerns with separate update sites and lifecycles (registry load, foreground stack, view mode, settings dialog, clock tick), not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
-export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShellProps) {
+export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }: MobileShellProps) {
   const chat = useChatContext();
+  const cacheKey = cacheScope?.storageKey;
 
-  const [apps, setApps] = useState<MobileApp[]>(BUILT_IN_APPS);
+  const [apps, setApps] = useState<MobileApp[]>(() => mergeMobileApps(
+    BUILT_IN_APPS,
+    mobileAppsFromBootstrap(loadShellSnapshot(cacheScope)?.bootstrap),
+  ));
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [time, setTime] = useState("--:--");
+  const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
   const launchPathConsumedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -148,6 +207,8 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
   }, [openStack]);
 
   const top = openStack[openStack.length - 1];
+  const topIsTerminal = view === "app" && !!top?.app.path.startsWith("__terminal__");
+  const hideBottomDock = topIsTerminal && terminalInputActiveId === top?.id;
 
   useEffect(() => {
     const tick = () => setTime(formatClock(new Date()));
@@ -157,42 +218,50 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    const handleTerminalInputActive = (event: Event) => {
+      const detail = (event as CustomEvent<MobileTerminalInputActiveDetail>).detail;
+      if (!detail || typeof detail.terminalId !== "string") return;
+      if (detail.active) {
+        setTerminalInputActiveId(detail.terminalId);
+        return;
+      }
+      setTerminalInputActiveId((current) => (current === detail.terminalId ? null : current));
+    };
+    window.addEventListener(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, handleTerminalInputActive);
+    return () => window.removeEventListener(MOBILE_TERMINAL_INPUT_ACTIVE_EVENT, handleTerminalInputActive);
+  }, []);
+
+  useEffect(() => {
+    if (!topIsTerminal || terminalInputActiveId !== top?.id) {
+      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- event-state cleanup: this clears mobile terminal input mode when the active foreground app is no longer the terminal that opened the input. It cannot be derived during render because MOBILE_TERMINAL_INPUT_ACTIVE_EVENT is an external DOM event source.
+      setTerminalInputActiveId(null);
+    }
+  }, [terminalInputActiveId, top?.id, topIsTerminal]);
+
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- guarded mount load of the installed-apps registry: it runs once on mount, aborts via AbortSignal.timeout, and is cancellation-guarded by the `cancelled` flag in cleanup. A data-fetching library would be overkill for this single shell-bootstrap read.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`${getGatewayUrl()}/api/apps`, {
+        const res = await fetch(`${getGatewayUrl()}/api/shell/bootstrap`, {
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
         if (!res.ok) return;
-        const list = (await res.json()) as { name: string; path: string; icon?: string }[];
+        const bootstrap = await res.json() as ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[];
         if (cancelled) return;
-        const installed: MobileApp[] = list.map((a) => {
-          const relative = a.path.replace(/^\/files\//, "");
-          return {
-            id: `app:${relative}`,
-            name: a.name,
-            path: relative,
-            iconSlug: a.icon ?? nameToSlug(a.name),
-          };
-        });
-        setApps((prev) => {
-          const seen = new Set(prev.map((p) => p.path));
-          const merged = [...prev];
-          for (const a of installed) {
-            if (!seen.has(a.path)) merged.push(a);
-          }
-          return merged;
-        });
+        if (!Array.isArray(bootstrap)) {
+          saveShellSnapshot(cacheScope, { bootstrap });
+        }
+        setApps((prev) => mergeMobileApps(prev, mobileAppsFromBootstrap(bootstrap)));
       } catch (err: unknown) {
-        console.warn("[mobile-shell] failed to load /api/apps:", err instanceof Error ? err.message : err);
+        console.warn("[mobile-shell] failed to load /api/shell/bootstrap:", err instanceof Error ? err.message : err);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [cacheKey, cacheScope]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
   const openApp = useCallback((app: MobileApp) => {
@@ -232,6 +301,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
   }, [apps, launchAppPath, openApp]);
 
   const closeApp = (openId: string) => {
+    const closed = stackRef.current.find((o) => o.id === openId);
     setOpenStack((prev) => {
       const next = prev.filter((o) => o.id !== openId);
       if (next.length === 0) {
@@ -239,11 +309,14 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
       }
       return next;
     });
+    if (closed) toast(`Closed ${closed.app.name}`);
   };
 
   const closeAll = () => {
+    const count = stackRef.current.length;
     setOpenStack([]);
     setView("launcher");
+    if (count > 0) toast(`Closed ${count} app${count === 1 ? "" : "s"}`);
   };
 
   const showSwitcher = () => {
@@ -284,6 +357,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
   }, []);
 
   return (
+    <MotionConfig reducedMotion="user">
     <div
       data-testid="mobile-shell"
       className="flex h-full w-full flex-col"
@@ -324,58 +398,90 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
           const isTop = i === openStack.length - 1;
           const visible = view === "app" && isTop;
           return (
-            <div
+            <motion.div
               key={o.id}
               aria-hidden={!visible}
+              // Kept mounted (never unmounted) to preserve live app state such as
+              // terminal sessions; we animate opacity/transform instead of
+              // toggling `visibility`, so foregrounding an app slides + fades in.
+              initial={false}
+              animate={
+                visible
+                  ? { opacity: 1, y: 0, scale: 1 }
+                  : { opacity: 0, y: 16, scale: 0.985 }
+              }
+              transition={{ duration: 0.32, ease: EASE_EMPHASIZED }}
               style={{
                 position: "absolute",
                 inset: 0,
-                display: "block",
-                visibility: visible ? "visible" : "hidden",
                 pointerEvents: visible ? "auto" : "none",
                 background: "var(--background)",
               }}
             >
               <MobileAppFrame app={o.app} openId={o.id} chat={chat} />
-            </div>
+            </motion.div>
           );
         })}
 
-        {view === "launcher" && (
-          <Launcher
-            apps={apps}
-            onOpen={openApp}
-            onOpenSettings={() => setSettingsOpen(true)}
-            openStackCount={openStack.length}
-            onShowSwitcher={showSwitcher}
-          />
-        )}
+        <AnimatePresence initial={false}>
+          {view === "launcher" && (
+            <motion.div
+              key="launcher"
+              className="absolute inset-0"
+              style={{ background: "var(--background)" }}
+              variants={appTransition}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <Launcher
+                apps={apps}
+                onOpen={openApp}
+                onOpenSettings={() => setSettingsOpen(true)}
+                openStackCount={openStack.length}
+                onShowSwitcher={showSwitcher}
+                onCloseAll={closeAll}
+              />
+            </motion.div>
+          )}
 
-        {view === "switcher" && (
-          <AppSwitcher
-            open={openStack}
-            onResume={() => setView("app")}
-            onSelect={(id) => {
-              setOpenStack((prev) => {
-                const idx = prev.findIndex((o) => o.id === id);
-                if (idx < 0) return prev;
-                const next = prev.slice();
-                const [taken] = next.splice(idx, 1);
-                next.push(taken);
-                return next;
-              });
-              setView("app");
-            }}
-            onClose={closeApp}
-            onCloseAll={closeAll}
-            onBack={() => setView(top ? "app" : "launcher")}
-          />
-        )}
+          {view === "switcher" && (
+            <motion.div
+              key="switcher"
+              className="absolute inset-0"
+              variants={appTransition}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <AppSwitcher
+                open={openStack}
+                onResume={() => setView("app")}
+                onSelect={(id) => {
+                  setOpenStack((prev) => {
+                    const idx = prev.findIndex((o) => o.id === id);
+                    if (idx < 0) return prev;
+                    const next = prev.slice();
+                    const [taken] = next.splice(idx, 1);
+                    next.push(taken);
+                    return next;
+                  });
+                  setView("app");
+                }}
+                onClose={closeApp}
+                onCloseAll={closeAll}
+                onBack={() => setView(top ? "app" : "launcher")}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
 
       <nav
+        data-testid="mobile-bottom-dock"
         className="flex items-center justify-around px-2"
         style={{
+          display: hideBottomDock ? "none" : "flex",
           height: 64,
           background: "rgba(0,0,0,0.35)",
           borderTop: "1px solid rgba(244,237,224,0.08)",
@@ -420,6 +526,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette }: MobileShell
 
       <Settings open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
+    </MotionConfig>
   );
 }
 
@@ -485,9 +592,10 @@ interface LauncherProps {
   onOpenSettings: () => void;
   openStackCount: number;
   onShowSwitcher: () => void;
+  onCloseAll: () => void;
 }
 
-function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher }: LauncherProps) {
+function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher, onCloseAll }: LauncherProps) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
@@ -497,42 +605,18 @@ function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher
             {apps.length} installed{openStackCount > 0 ? ` · ${openStackCount} open` : ""}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {openStackCount > 0 && (
-            <button
-              onClick={onShowSwitcher}
-              type="button"
-              style={{
-                background: "rgba(244,237,224,0.08)",
-                color: "inherit",
-                border: "1px solid rgba(244,237,224,0.12)",
-                borderRadius: 999,
-                padding: "6px 12px",
-                fontSize: 12,
-              }}
-            >
-              Switcher
-            </button>
-          )}
-          <button
-            onClick={onOpenSettings}
-            type="button"
-            aria-label="Settings"
-            style={{
-              background: "rgba(244,237,224,0.08)",
-              color: "inherit",
-              border: "1px solid rgba(244,237,224,0.12)",
-              borderRadius: 999,
-              padding: "6px 10px",
-              fontSize: 12,
-            }}
-          >
-            ⚙
-          </button>
-        </div>
+        <MobileQuickActions
+          openStackCount={openStackCount}
+          onOpenSettings={onOpenSettings}
+          onShowSwitcher={onShowSwitcher}
+          onCloseAll={onCloseAll}
+        />
       </div>
-      <div
+      <motion.div
         className="flex-1 overflow-y-auto"
+        variants={staggerContainer()}
+        initial="initial"
+        animate="animate"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(4, minmax(0,1fr))",
@@ -542,17 +626,20 @@ function Launcher({ apps, onOpen, onOpenSettings, openStackCount, onShowSwitcher
         }}
       >
         {apps.map((app) => (
-          <button
+          <motion.button
             key={app.id}
+            data-testid={`mobile-launcher-app-${app.path}`}
             type="button"
             onClick={() => onOpen(app)}
+            variants={fadeUp}
+            {...tapScale}
             style={LAUNCHER_APP_BUTTON_STYLE}
           >
             <AppIcon slug={app.iconSlug} size={56} />
             <span style={LAUNCHER_APP_LABEL_STYLE}>{app.name}</span>
-          </button>
+          </motion.button>
         ))}
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -603,7 +690,10 @@ function AppSwitcher({
           Close all
         </button>
       </div>
-      <div
+      <motion.div
+        variants={staggerContainer(0.05)}
+        initial="initial"
+        animate="animate"
         style={{
           flex: 1,
           overflowY: "auto",
@@ -617,16 +707,26 @@ function AppSwitcher({
           .slice()
           .reverse()
           .map((o) => (
-            <div
+            <motion.div
               key={o.id}
+              layout
+              variants={fadeUp}
+              // Swipe a card left/right to dismiss the app (≥96px throw).
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.12}
+              onDragEnd={(_, info: PanInfo) => {
+                if (Math.abs(info.offset.x) > 96) onClose(o.id);
+              }}
+              whileDrag={{ scale: 0.98, cursor: "grabbing" }}
+              className="surface-glass elevation-2 border"
               style={{
-                background: "var(--card, rgba(244,237,224,0.06))",
-                border: "1px solid rgba(244,237,224,0.12)",
                 borderRadius: 18,
                 padding: 14,
                 display: "flex",
                 gap: 12,
                 alignItems: "center",
+                touchAction: "pan-y",
               }}
             >
               <AppIcon slug={o.app.iconSlug} size={44} />
@@ -648,22 +748,38 @@ function AppSwitcher({
                   Opened {new Date(o.openedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </div>
               </button>
-              <button
+              <motion.button
                 onClick={() => onClose(o.id)}
                 type="button"
                 aria-label={`Close ${o.app.name}`}
+                whileTap={{ scale: 0.85 }}
+                whileHover={{ rotate: 90 }}
+                transition={{ duration: 0.18, ease: EASE_EMPHASIZED }}
                 style={SWITCHER_CLOSE_BUTTON_STYLE}
               >
                 ×
-              </button>
-            </div>
+              </motion.button>
+            </motion.div>
           ))}
         {open.length > 0 && (
-          <button onClick={onResume} type="button" style={SWITCHER_RESUME_BUTTON_STYLE}>
-            Resume foreground app
-          </button>
+          <>
+            <p
+              aria-hidden
+              style={{ fontSize: 11, textAlign: "center", opacity: 0.4, marginTop: 2 }}
+            >
+              Swipe a card aside to close
+            </p>
+            <motion.button
+              onClick={onResume}
+              type="button"
+              {...tapScale}
+              style={SWITCHER_RESUME_BUTTON_STYLE}
+            >
+              Resume foreground app
+            </motion.button>
+          </>
         )}
-      </div>
+      </motion.div>
     </div>
   );
 }

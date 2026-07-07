@@ -6,9 +6,18 @@ export interface AnsiPalette {
 }
 
 export interface TerminalThemeOption {
-  id: import("@/stores/terminal-settings").TerminalThemeId;
+  id: TerminalThemeId;
   label: string;
 }
+
+type TerminalThemeId = import("@/stores/terminal-settings").TerminalThemeId;
+type Theme = import("@/hooks/useTheme").Theme;
+type XtermTheme = {
+  background: string;
+  foreground: string;
+  cursor: string;
+  selectionBackground: string;
+} & AnsiPalette;
 
 const palettes: Record<string, AnsiPalette> = {
   "matrix-shell-dark": {
@@ -343,7 +352,7 @@ const terminalThemePresets = {
     selectionBackground: "#0969da33",
   },
 } satisfies Record<
-  Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
+  Exclude<TerminalThemeId, "system">,
   {
     label: string;
     background: string;
@@ -379,7 +388,7 @@ export function getAnsiPalette(themeSlug: string, backgroundHex: string): AnsiPa
 }
 
 export function getTerminalThemePreset(
-  themeId: Exclude<import("@/stores/terminal-settings").TerminalThemeId, "system">,
+  themeId: Exclude<TerminalThemeId, "system">,
 ) {
   const mappedThemeId =
     themeId === "one-light" || themeId === "solarized-light" || themeId === "github-light"
@@ -398,5 +407,26 @@ export function getTerminalThemePreset(
   return {
     ...terminalThemePresets[mappedThemeId],
     ...shellPalette,
+  };
+}
+
+export function buildXtermTheme(theme: Theme, terminalThemeId: TerminalThemeId): XtermTheme {
+  if (terminalThemeId !== "system") {
+    return getTerminalThemePreset(terminalThemeId);
+  }
+
+  const background = theme.colors.background || "#1a1a2e";
+  const foreground = theme.colors.foreground || "#e0e0e0";
+  const cursor = theme.colors.primary || "#c2703a";
+  const slug = (theme as { slug?: string }).slug ?? "";
+  const ansi = getAnsiPalette(slug, background);
+  const selectionBackground = `${cursor}44`;
+
+  return {
+    background,
+    foreground,
+    cursor,
+    selectionBackground,
+    ...ansi,
   };
 }
