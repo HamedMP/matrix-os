@@ -18,11 +18,12 @@ describe("Push Notification Adapter", () => {
   });
 
   it("registers push tokens", () => {
-    adapter.registerToken("ExponentPushToken[abc123]", "ios");
+    adapter.registerToken("ExponentPushToken[abc123]", "ios", "owner_a");
     const tokens = adapter.getTokens();
     expect(tokens).toHaveLength(1);
     expect(tokens[0].token).toBe("ExponentPushToken[abc123]");
     expect(tokens[0].platform).toBe("ios");
+    expect(tokens[0].ownerId).toBe("owner_a");
   });
 
   it("removes push tokens", () => {
@@ -114,6 +115,33 @@ describe("Push Notification Adapter", () => {
       threadId: "thread_push_attention",
       type: "message",
     });
+  });
+
+  it("sends owner-scoped replies only to matching registered push tokens", async () => {
+    adapter.registerToken("ExponentPushToken[owner-a]", "ios", "owner_a");
+    adapter.registerToken("ExponentPushToken[owner-b]", "ios", "owner_b");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      ownerId: "owner_a",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+      },
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body).toHaveLength(1);
+    expect(body[0].to).toBe("ExponentPushToken[owner-a]");
   });
 
   it("drops unsafe reply metadata before calling the Expo Push API", async () => {

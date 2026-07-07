@@ -7,6 +7,7 @@ import type {
   ChannelReply,
   ChannelId,
 } from "../../../packages/gateway/src/channels/types.js";
+import type { OutboundMessage, OutboundQueue } from "../../../packages/gateway/src/security/outbound-queue.js";
 
 function mockAdapter(id: ChannelId): ChannelAdapter {
   return {
@@ -169,5 +170,62 @@ describe("ChannelManager", () => {
 
     expect(status.telegram).toBe("connected");
     expect(status.slack).toBeUndefined();
+  });
+
+  it("preserves owner and metadata when replaying queued replies", async () => {
+    const messages: OutboundMessage[] = [];
+    const queue: OutboundQueue = {
+      enqueue: vi.fn((msg) => {
+        messages.push({
+          id: "queued-1",
+          channel: msg.channel,
+          target: msg.target,
+          content: msg.content,
+          ownerId: msg.ownerId,
+          metadata: msg.metadata,
+          createdAt: 1,
+          attempts: 0,
+        });
+        return "queued-1";
+      }),
+      ack: vi.fn(),
+      failed: vi.fn(),
+      pending: vi.fn(() => messages),
+    };
+    const failOnceAdapter = mockAdapter("push");
+    (failOnceAdapter.send as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce(undefined);
+
+    const mgr = createChannelManager({
+      config: { push: { enabled: true } },
+      adapters: { push: failOnceAdapter },
+      outboundQueue: queue,
+      onMessage: vi.fn(),
+    });
+
+    await expect(mgr.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      ownerId: "owner_a",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+      },
+    })).rejects.toThrow("temporary failure");
+
+    await expect(mgr.replay()).resolves.toEqual({ replayed: 1, failed: 0 });
+
+    expect(failOnceAdapter.send).toHaveBeenLastCalledWith({
+      channelId: "push",
+      chatId: "coding-agents",
+      ownerId: "owner_a",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+      },
+    });
   });
 });

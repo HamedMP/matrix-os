@@ -26,6 +26,11 @@ describe("T831: Outbound write-ahead queue", () => {
       channel: "telegram",
       target: "chat-123",
       content: "Hello",
+      ownerId: "owner_a",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+      },
     });
     expect(id).toBeTruthy();
 
@@ -33,6 +38,11 @@ describe("T831: Outbound write-ahead queue", () => {
     const pending = fresh.pending();
     expect(pending).toHaveLength(1);
     expect(pending[0].content).toBe("Hello");
+    expect(pending[0].ownerId).toBe("owner_a");
+    expect(pending[0].metadata).toEqual({
+      category: "agent",
+      threadId: "thread_push_attention",
+    });
   });
 
   it("ack removes from queue", () => {

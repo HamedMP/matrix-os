@@ -113,6 +113,7 @@ describe("coding agent attention notifications", () => {
     expect(send).toHaveBeenCalledWith({
       channelId: "push",
       chatId: "coding-agents",
+      ownerId: principal.userId,
       text: "Agent needs approval.",
       metadata: {
         category: "agent",
@@ -140,6 +141,7 @@ describe("coding agent attention notifications", () => {
     });
 
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: principal.userId,
       text: "Agent needs input.",
       metadata: {
         category: "agent",
@@ -168,6 +170,7 @@ describe("coding agent attention notifications", () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: principal.userId,
       text: "Agent run needs attention.",
       metadata: {
         category: "agent",

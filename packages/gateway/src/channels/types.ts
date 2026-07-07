@@ -13,6 +13,7 @@ export interface ChannelMessage {
 export interface ChannelReply {
   channelId: ChannelId;
   chatId: string;
+  ownerId?: string;
   text: string;
   replyToId?: string;
   metadata?: Record<string, unknown>;

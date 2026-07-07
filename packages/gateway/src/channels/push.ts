@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 interface PushToken {
   token: string;
   platform: string;
+  ownerId?: string;
   registeredAt: number;
 }
 
@@ -39,7 +40,7 @@ function safePushData(reply: ChannelReply): Record<string, unknown> {
 }
 
 export function createPushAdapter(): ChannelAdapter & {
-  registerToken(token: string, platform: string): void;
+  registerToken(token: string, platform: string, ownerId?: string): void;
   removeToken(token: string): void;
   getTokens(): PushToken[];
 } {
@@ -102,8 +103,8 @@ export function createPushAdapter(): ChannelAdapter & {
   return {
     id: "push",
 
-    registerToken(token: string, platform: string) {
-      tokens.set(token, { token, platform, registeredAt: Date.now() });
+    registerToken(token: string, platform: string, ownerId?: string) {
+      tokens.set(token, { token, platform, ownerId, registeredAt: Date.now() });
     },
 
     removeToken(token: string) {
@@ -127,7 +128,9 @@ export function createPushAdapter(): ChannelAdapter & {
 
       sendTimestamps.push(Date.now());
 
-      const allTokens = Array.from(tokens.values()).map((t) => t.token);
+      const allTokens = Array.from(tokens.values())
+        .filter((token) => reply.ownerId === undefined || token.ownerId === reply.ownerId)
+        .map((t) => t.token);
       if (allTokens.length === 0) return;
 
       await sendPush(allTokens, "Matrix OS", reply.text, safePushData(reply));

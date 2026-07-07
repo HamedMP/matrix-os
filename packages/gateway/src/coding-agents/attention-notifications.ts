@@ -32,6 +32,7 @@ function bodyFor(kind: AttentionNotificationKind): string {
 }
 
 export function buildCodingAgentAttentionNotification(input: {
+  ownerId: string;
   threadId: string;
   events: AgentThreadEvent[];
 }): ChannelReply | null {
@@ -44,6 +45,7 @@ export function buildCodingAgentAttentionNotification(input: {
   return {
     channelId: "push",
     chatId: PUSH_CHAT_ID,
+    ownerId: input.ownerId,
     text: bodyFor(kind),
     metadata: {
       category: "agent",
@@ -53,8 +55,8 @@ export function buildCodingAgentAttentionNotification(input: {
 }
 
 export function registerCodingAgentAttentionNotifications(options: CodingAgentAttentionNotificationsOptions): { dispose(): void } {
-  return options.threads.registerEventSink(({ threadId, events }) => {
-    const notification = buildCodingAgentAttentionNotification({ threadId, events });
+  return options.threads.registerEventSink(({ ownerId, threadId, events }) => {
+    const notification = buildCodingAgentAttentionNotification({ ownerId, threadId, events });
     if (!notification) return;
 
     void options.send(notification).catch((err: unknown) => {
