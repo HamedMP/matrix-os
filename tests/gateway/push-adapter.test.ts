@@ -87,6 +87,65 @@ describe("Push Notification Adapter", () => {
     expect(body[0].title).toBe("Matrix OS");
   });
 
+  it("includes bounded reply metadata in the Expo push data payload", async () => {
+    adapter.registerToken("ExponentPushToken[test]", "ios");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+      },
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body[0].data).toEqual({
+      category: "agent",
+      chatId: "coding-agents",
+      threadId: "thread_push_attention",
+      type: "message",
+    });
+  });
+
+  it("drops unsafe reply metadata before calling the Expo Push API", async () => {
+    adapter.registerToken("ExponentPushToken[test]", "ios");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+        unsafe: "/home/matrix/secret",
+        nested: { raw: "value" },
+        "bad key": "value",
+      },
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body[0].data).toEqual({
+      chatId: "coding-agents",
+      type: "message",
+    });
+  });
+
   it("truncates long message bodies", async () => {
     adapter.registerToken("token", "ios");
 

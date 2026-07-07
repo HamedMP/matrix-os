@@ -103,6 +103,7 @@ import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./
 import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
+import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -1410,6 +1411,12 @@ export async function createGateway(config: GatewayConfig) {
         });
     },
   });
+  const codingAgentAttentionNotifications = codingAgentThreadStore
+    ? registerCodingAgentAttentionNotifications({
+      threads: codingAgentThreadStore,
+      send: (reply) => channelManager.send(reply),
+    })
+    : undefined;
 
   channelManager.start().then(() => {
     channelManager.replay().catch((err: unknown) => {
@@ -4061,6 +4068,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       codingAgentThreadStream?.shutdown();
+      codingAgentAttentionNotifications?.dispose();
       codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);

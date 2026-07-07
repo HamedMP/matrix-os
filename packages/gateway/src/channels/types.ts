@@ -15,6 +15,7 @@ export interface ChannelReply {
   chatId: string;
   text: string;
   replyToId?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ChannelConfig {
