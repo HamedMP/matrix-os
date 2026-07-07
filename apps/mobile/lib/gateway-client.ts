@@ -7,9 +7,11 @@ import {
 import {
   AgentThreadSnapshotSchema,
   CursorSchema,
+  ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
   type CreateAgentThreadRequest,
+  type ReviewSnapshot,
   type RuntimeSummary,
   boundedListSchema,
 } from "@matrix-os/contracts";
@@ -91,6 +93,10 @@ export type CodingAgentReviewsResult =
   | { ok: true; reviews: z.infer<typeof CodingAgentReviewListSchema> }
   | { ok: false; error: "Review state unavailable" };
 
+export type CodingAgentReviewSnapshotResult =
+  | { ok: true; snapshot: ReviewSnapshot }
+  | { ok: false; error: "Review details unavailable" };
+
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
   | { type: "switch_session"; sessionId: string }
@@ -109,6 +115,7 @@ type ReactNativeWebSocketConstructor = new (
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+const SAFE_REVIEW_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const SECURE_TOKEN_TRANSPORT_ERROR =
   "Matrix OS Cloud requires HTTPS/WSS.";
 const CLEARTEXT_HOST_ERROR =
@@ -588,6 +595,32 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/coding-agents/reviews unavailable");
       return { ok: false, error: "Review state unavailable" };
+    }
+  }
+
+  async getCodingAgentReviewSnapshot(
+    options: { reviewId: string },
+  ): Promise<CodingAgentReviewSnapshotResult> {
+    try {
+      if (!SAFE_REVIEW_REFERENCE.test(options.reviewId) || options.reviewId.includes("..")) {
+        return { ok: false, error: "Review details unavailable" };
+      }
+      const res = await this.fetchGateway(`/api/coding-agents/reviews/${encodeURIComponent(options.reviewId)}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/reviews/:reviewId unavailable", res.status);
+        return { ok: false, error: "Review details unavailable" };
+      }
+      const body = await res.json();
+      const parsed = ReviewSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/reviews/:reviewId returned invalid payload");
+        return { ok: false, error: "Review details unavailable" };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/reviews/:reviewId ${reason}`);
+      return { ok: false, error: "Review details unavailable" };
     }
   }
 

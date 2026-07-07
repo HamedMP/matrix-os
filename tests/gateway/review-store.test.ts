@@ -54,6 +54,23 @@ describe("review-store", () => {
     });
   });
 
+  it("persists contract-valid review references with dots and colons", async () => {
+    const store = createReviewStore({ homePath });
+    const reviewId = "rev_mobile:round.2";
+
+    await expect(store.saveReview(record(reviewId))).resolves.toEqual({ ok: true });
+
+    const path = join(homePath, "system", "reviews", `${reviewId}.json`);
+    await expect(stat(path)).resolves.toMatchObject({ isFile: expect.any(Function) });
+    await expect(store.getReview(reviewId)).resolves.toMatchObject({
+      ok: true,
+      review: { id: reviewId, status: "queued" },
+    });
+    await expect(store.listReviews({ limit: 1, cursor: reviewId })).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
   it("lists review records sorted by updated time and supports project filters", async () => {
     const store = createReviewStore({ homePath });
     await store.saveReview(record("rev_older"));
