@@ -6,7 +6,7 @@ import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { createSocketHealth } from "@/lib/socket-health";
 import { isTerminalDebugEnabled } from "@/lib/terminal-debug";
 import { useTerminalSettings } from "@/stores/terminal-settings";
-import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
+import { buildAuthenticatedWebSocketUrl, getWebSocketAuthToken } from "@/lib/websocket-auth";
 import type { Theme } from "@/hooks/useTheme";
 import { useVisualViewport } from "@/hooks/useVisualViewport";
 import { ImageAddon, type IImageAddonOptions } from "@xterm/addon-image";
@@ -38,6 +38,7 @@ const MAX_TERMINAL_INPUT = 65_536;
 const MAX_OSC52_BASE64_LENGTH = 1_000_000;
 const OSC52_ALLOWED_TARGETS = new Set(["", "c", "p", "s", "0", "1", "2", "3", "4", "5", "6", "7"]);
 const SUPPORTED_TERMINAL_PASTE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
 const TERMINAL_PASTE_MIME_BY_EXTENSION = new Map([
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -105,6 +106,22 @@ function filesFromTerminalFilePayload(payload: DataTransfer | ClipboardEvent["cl
     return files;
   }
   return Array.from(payload.files ?? []).filter(isSupportedTerminalPasteFile);
+}
+
+function terminalPasteUploadSignal(): AbortSignal | undefined {
+  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(TERMINAL_PASTE_UPLOAD_TIMEOUT_MS)
+    : undefined;
+}
+
+function splitBracketedPastePayload(parts: string[]): string[] {
+  const maxPayloadLength = MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD;
+  const payload = parts.filter((part) => part.length > 0).join(" ");
+  const chunks: string[] = [];
+  for (let index = 0; index < payload.length; index += maxPayloadLength) {
+    chunks.push(payload.slice(index, index + maxPayloadLength));
+  }
+  return chunks;
 }
 
 function scrollTerminalViewportToBottom(term: Terminal | null): void {
@@ -572,13 +589,15 @@ export function TerminalPane({
     const container = containerRef.current;
     if (!container) return;
 
-    const sendBracketedPaste = (terminalPath: string) => {
+    const sendBracketedPaste = (terminalPaths: string[]) => {
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: "input",
-          data: `${BRACKETED_PASTE_OPEN}${terminalPath}${BRACKETED_PASTE_CLOSE}`,
-        }));
+        for (const chunk of splitBracketedPastePayload(terminalPaths)) {
+          ws.send(JSON.stringify({
+            type: "input",
+            data: `${BRACKETED_PASTE_OPEN}${chunk}${BRACKETED_PASTE_CLOSE}`,
+          }));
+        }
       }
     };
 
@@ -588,20 +607,32 @@ export function TerminalPane({
         return;
       }
       const terminalPaths: string[] = [];
+      let authToken: string | null = null;
+      try {
+        authToken = await getWebSocketAuthToken();
+      } catch (err: unknown) {
+        console.warn("Terminal paste auth token unavailable:", err instanceof Error ? err.message : err);
+      }
       for (const file of files) {
         const mimeType = terminalPasteMimeType(file);
         if (!mimeType) {
           continue;
         }
         try {
+          const headers: Record<string, string> = {
+            "Content-Type": mimeType,
+            "X-Matrix-Filename": file.name,
+          };
+          if (authToken) {
+            headers.Authorization = `Bearer ${authToken}`;
+          }
           const url = new URL(`${getGatewayUrl()}/api/terminal/sessions/${encodeURIComponent(sessionId)}/paste-assets`);
           url.searchParams.set("cwd", cwd || "projects");
           const res = await fetch(url.toString(), {
             method: "POST",
-            headers: {
-              "Content-Type": mimeType,
-              "X-Matrix-Filename": file.name,
-            },
+            credentials: "same-origin",
+            headers,
+            signal: terminalPasteUploadSignal(),
             body: file,
           });
           if (!res.ok) {
@@ -617,7 +648,7 @@ export function TerminalPane({
         }
       }
       if (terminalPaths.length > 0) {
-        sendBracketedPaste(terminalPaths.join(" "));
+        sendBracketedPaste(terminalPaths);
       }
     };
 

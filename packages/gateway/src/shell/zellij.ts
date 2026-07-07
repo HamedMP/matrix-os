@@ -485,13 +485,7 @@ export function createZellijAdapter(deps: ZellijAdapterDeps = {}): ZellijAdapter
       return attachProcess(name, options);
     },
     async sendInput(name, data) {
-      const pty = attachProcess(name);
-      try {
-        pty.write(data);
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      } finally {
-        pty.kill();
-      }
+      await run(["--session", name, "action", "write-chars", "--", data]);
     },
     async listTabs(name) {
       const stdout = await run(["--session", name, "action", "query-tab-names"]);

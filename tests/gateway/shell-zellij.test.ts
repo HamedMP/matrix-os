@@ -253,22 +253,38 @@ describe("zellij adapter", () => {
     expect(pty.resize).toHaveBeenCalledWith(140, 50);
   });
 
-  it("sends one-shot input through a transient attach PTY", async () => {
-    const pty = ptyProcess();
-    const spawnPty = vi.fn(() => pty);
-    const adapter = createZellijAdapter({ execFile: vi.fn(), spawnPty, timeoutMs: 25 });
+  it("sends one-shot input through the zellij action API", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(null, "", "");
+      return child;
+    });
+    const spawnPty = vi.fn();
+    const adapter = createZellijAdapter({ execFile, spawnPty, timeoutMs: 25 });
 
-    const sent = adapter.sendInput("main", "pwd\r");
+    await adapter.sendInput("main", "pwd\r");
 
-    expect(spawnPty).toHaveBeenCalledWith(
+    expect(spawnPty).not.toHaveBeenCalled();
+    expect(execFile).toHaveBeenCalledWith(
       "zellij",
-      ["attach", "main"],
-      expect.objectContaining({ name: "xterm-256color", cols: 120, rows: 40 }),
+      ["--session", "main", "action", "write-chars", "--", "pwd\r"],
+      expect.objectContaining({ timeout: 25, signal: expect.any(AbortSignal) }),
+      expect.any(Function),
     );
-    expect(pty.writes).toEqual(["pwd\r"]);
-    expect(pty.kill).not.toHaveBeenCalled();
-    await sent;
-    expect(pty.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects one-shot input when the zellij action fails", async () => {
+    const child = childProcess();
+    const execFile = vi.fn((_file, _args, _opts, cb) => {
+      cb(new Error("boom"), "", "failed in /home/alice/project");
+      return child;
+    });
+    const adapter = createZellijAdapter({ execFile, spawnPty: vi.fn(), timeoutMs: 25 });
+
+    await expect(adapter.sendInput("main", "pwd\r")).rejects.toMatchObject({
+      code: "zellij_failed",
+      safeMessage: "Shell operation failed",
+    });
   });
 
   it("creates sessions in the requested cwd using a retained PTY", async () => {
