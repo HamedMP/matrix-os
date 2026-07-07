@@ -3,6 +3,7 @@ import {
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
   submitCodingAgentApprovalDecision,
+  submitCodingAgentInputAnswer,
 } from "../../desktop/src/main/coding-agents/runtime-summary-client";
 import type { AuthService } from "../../desktop/src/main/auth/auth-service";
 
@@ -208,6 +209,88 @@ describe("coding agent desktop runtime client", () => {
       request: {
         decision: "approve",
         correlationId: "corr_desktop_1",
+        clientRequestId: "req_desktop_1",
+      },
+    }, fetchFn)).rejects.not.toThrow("secret");
+  });
+
+  it("submits input answers with bearer auth and validates the returned thread snapshot", async () => {
+    const answered = {
+      ...threadSnapshotBody(),
+      thread: {
+        ...threadSnapshotBody().thread,
+        status: "running",
+        attention: "none",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      events: {
+        ...threadSnapshotBody().events,
+        items: [
+          {
+            type: "user_input.answered",
+            eventId: "evt_input_2",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+            requestId: "req_input_desktop_1",
+            correlationId: "corr_input_desktop_1",
+          },
+        ],
+      },
+    };
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(answered), { status: 200 }));
+
+    const snapshot = await submitCodingAgentInputAnswer(auth(), {
+      threadId: "thread_desktop_1",
+      inputRequestId: "req_input_desktop_1",
+      request: {
+        answer: "Run the focused desktop test.",
+        correlationId: "corr_input_desktop_1",
+        clientRequestId: "req_desktop_1",
+      },
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/threads/thread_desktop_1/inputs/req_input_desktop_1/answer",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          answer: "Run the focused desktop test.",
+          correlationId: "corr_input_desktop_1",
+          clientRequestId: "req_desktop_1",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(snapshot.thread.status).toBe("running");
+    expect(snapshot.events.items[0]?.type).toBe("user_input.answered");
+  });
+
+  it("rejects unsafe input answer responses with a generic error", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...threadSnapshotBody(),
+      accessToken: "secret",
+    }), { status: 200 }));
+
+    await expect(submitCodingAgentInputAnswer(auth(), {
+      threadId: "thread_desktop_1",
+      inputRequestId: "req_input_desktop_1",
+      request: {
+        answer: "Run the focused desktop test.",
+        correlationId: "corr_input_desktop_1",
+        clientRequestId: "req_desktop_1",
+      },
+    }, fetchFn)).rejects.toThrow("input unavailable");
+    await expect(submitCodingAgentInputAnswer(auth(), {
+      threadId: "thread_desktop_1",
+      inputRequestId: "req_input_desktop_1",
+      request: {
+        answer: "Run the focused desktop test.",
+        correlationId: "corr_input_desktop_1",
         clientRequestId: "req_desktop_1",
       },
     }, fetchFn)).rejects.not.toThrow("secret");

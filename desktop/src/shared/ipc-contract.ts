@@ -13,6 +13,8 @@ import {
   ReviewSummarySchema,
   RuntimeSummarySchema,
   ThreadIdSchema,
+  RequestIdSchema,
+  UserInputAnswerRequestSchema,
   boundedListSchema,
 } from "@matrix-os/contracts";
 
@@ -130,6 +132,16 @@ export const INVOKE_CHANNELS = {
         approvalId: ApprovalIdSchema,
       })
       .extend(ApprovalDecisionRequestSchema.shape)
+      .strict(),
+    response: AgentThreadSnapshotSchema,
+  },
+  "runtime:submit-input-answer": {
+    request: z
+      .object({
+        threadId: ThreadIdSchema,
+        inputRequestId: RequestIdSchema,
+      })
+      .extend(UserInputAnswerRequestSchema.shape)
       .strict(),
     response: AgentThreadSnapshotSchema,
   },

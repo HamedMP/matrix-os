@@ -6,6 +6,7 @@ import {
   type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
+  type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { invoke } from "../lib/operator";
@@ -42,6 +43,9 @@ interface CodingAgentWorkspaceState {
   approvalActionError: string | null;
   pendingApprovalKeys: string[];
   approvalActionErrors: Record<string, string>;
+  inputActionStatus: ActionStatus;
+  pendingInputRequestId: string | null;
+  inputActionError: string | null;
   activeThreadId: string | null;
   refresh: () => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
@@ -50,6 +54,12 @@ interface CodingAgentWorkspaceState {
     threadId: string;
     approvalId: string;
     decision: ApprovalDecisionRequest["decision"];
+    correlationId: string;
+  }) => Promise<void>;
+  submitInputAnswer: (input: {
+    threadId: string;
+    inputRequestId: string;
+    answer: UserInputAnswerRequest["answer"];
     correlationId: string;
   }) => Promise<void>;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
@@ -121,6 +131,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   approvalActionError: null,
   pendingApprovalKeys: [],
   approvalActionErrors: {},
+  inputActionStatus: "idle",
+  pendingInputRequestId: null,
+  inputActionError: null,
   activeThreadId: null,
 
   refresh: async () => {
@@ -325,6 +338,57 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
             [approvalKey]: "Approval could not be sent. Try again.",
           },
         };
+      });
+    }
+  },
+
+  submitInputAnswer: async ({ threadId, inputRequestId, answer, correlationId }) => {
+    const { inputActionStatus } = useCodingAgentWorkspace.getState();
+    if (inputActionStatus === "submitting") return;
+
+    set({
+      inputActionStatus: "submitting",
+      pendingInputRequestId: inputRequestId,
+      inputActionError: null,
+    });
+    try {
+      const snapshot = await invoke("runtime:submit-input-answer", {
+        threadId,
+        inputRequestId,
+        answer,
+        correlationId,
+        clientRequestId: nextActionRequestId(),
+      });
+      set((state) => {
+        const currentSummary = state.summary;
+        const summary = currentSummary
+          ? {
+              ...currentSummary,
+              activeThreads: {
+                ...currentSummary.activeThreads,
+                items: currentSummary.activeThreads.items.map((thread) =>
+                  thread.id === snapshot.thread.id ? snapshot.thread : thread,
+                ),
+              },
+            }
+          : currentSummary;
+        return {
+          inputActionStatus: "idle",
+          pendingInputRequestId: null,
+          inputActionError: null,
+          activeThreadId: snapshot.thread.id,
+          threadSnapshotStatus: "ready",
+          threadSnapshot: snapshot,
+          threadSnapshotError: null,
+          summary,
+        };
+      });
+    } catch {
+      console.warn("[coding-agents] input answer failed");
+      set({
+        inputActionStatus: "idle",
+        pendingInputRequestId: null,
+        inputActionError: "Input could not be sent. Try again.",
       });
     }
   },

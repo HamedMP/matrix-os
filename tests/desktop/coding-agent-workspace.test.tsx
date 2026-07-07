@@ -337,6 +337,68 @@ function multiApprovalThreadSnapshotFixture() {
   };
 }
 
+function inputRequestedThreadSnapshotFixture() {
+  return {
+    thread: {
+      id: "thread_alpha",
+      providerId: "codex",
+      title: "Fix settings route",
+      status: "waiting_for_input",
+      attention: "input_required",
+      terminalSessionId: "matrix-abc1234",
+      createdAt: "2026-07-06T00:00:00.000Z",
+      updatedAt: "2026-07-06T00:06:00.000Z",
+    },
+    events: {
+      items: [
+        {
+          type: "user_input.requested",
+          eventId: "evt_input_desktop_1",
+          threadId: "thread_alpha",
+          occurredAt: "2026-07-06T00:06:00.000Z",
+          request: {
+            requestId: "req_input_desktop_1",
+            threadId: "thread_alpha",
+            title: "Clarify failure",
+            safeDescription: "Which desktop test should run next?",
+            placeholder: "Describe the focused test",
+            required: true,
+            correlationId: "corr_input_desktop_1",
+          },
+        },
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  };
+}
+
+function inputAnsweredThreadSnapshotFixture() {
+  return {
+    ...inputRequestedThreadSnapshotFixture(),
+    thread: {
+      ...inputRequestedThreadSnapshotFixture().thread,
+      status: "running",
+      attention: "none",
+      updatedAt: "2026-07-06T00:07:00.000Z",
+    },
+    events: {
+      ...inputRequestedThreadSnapshotFixture().events,
+      items: [
+        ...inputRequestedThreadSnapshotFixture().events.items,
+        {
+          type: "user_input.answered",
+          eventId: "evt_input_desktop_2",
+          threadId: "thread_alpha",
+          occurredAt: "2026-07-06T00:07:00.000Z",
+          requestId: "req_input_desktop_1",
+          correlationId: "corr_input_desktop_1",
+        },
+      ],
+    },
+  };
+}
+
 describe("AgentWorkspace", () => {
   beforeEach(() => {
     useCodingAgentWorkspace.setState({
@@ -360,6 +422,9 @@ describe("AgentWorkspace", () => {
       approvalActionError: null,
       pendingApprovalKeys: [],
       approvalActionErrors: {},
+      inputActionStatus: "idle",
+      pendingInputRequestId: null,
+      inputActionError: null,
       activeThreadId: null,
     });
     useConnection.setState({
@@ -602,6 +667,35 @@ describe("AgentWorkspace", () => {
 
     await screen.findByRole("button", { name: /approve run beta tests/i });
     expect(screen.queryByText("Approval could not be sent. Try again.")).toBeNull();
+  });
+
+  it("submits user input answers through trusted IPC and refreshes the thread details", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    const answeredSnapshot = inputAnsweredThreadSnapshotFixture();
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(inputRequestedThreadSnapshotFixture());
+      if (channel === "runtime:submit-input-answer") return Promise.resolve(answeredSnapshot);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    const input = await screen.findByLabelText(/answer clarify failure/i);
+    fireEvent.change(input, { target: { value: "Run the focused desktop workspace test." } });
+    fireEvent.click(screen.getByRole("button", { name: /send clarify failure/i }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:submit-input-answer", {
+        threadId: "thread_alpha",
+        inputRequestId: "req_input_desktop_1",
+        answer: "Run the focused desktop workspace test.",
+        correlationId: "corr_input_desktop_1",
+        clientRequestId: expect.stringMatching(/^req_desktop_/),
+      });
+    });
+    expect(await screen.findByText("Input answered")).toBeTruthy();
   });
 
   it("clears selected thread details when the refreshed summary no longer includes the thread", async () => {

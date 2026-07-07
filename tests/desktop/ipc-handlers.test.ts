@@ -41,6 +41,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     fetchReviewSnapshot: vi.fn(),
     fetchThreadSnapshot: vi.fn(),
     submitApprovalDecision: vi.fn(),
+    submitInputAnswer: vi.fn(),
     createAgentThread: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
@@ -378,6 +379,67 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:submit-approval-decision", request)).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:submit-approval-decision", request)).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("submits input answers through trusted-core IPC without exposing credentials", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "user_input.answered",
+            eventId: "evt_input_2",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+            requestId: "req_input_desktop_1",
+            correlationId: "corr_input_desktop_1",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const submitInputAnswer = vi.fn().mockResolvedValue(snapshot);
+    const harness = makeHarness({ submitInputAnswer } as Partial<HandlerContext>);
+    const request = {
+      threadId: "thread_desktop_1",
+      inputRequestId: "req_input_desktop_1",
+      answer: "Run the focused desktop test.",
+      correlationId: "corr_input_desktop_1",
+      clientRequestId: "req_desktop_1",
+    };
+
+    await expect(harness.invoke("runtime:submit-input-answer", request)).resolves.toEqual(snapshot);
+    expect(submitInputAnswer).toHaveBeenCalledWith(request);
+    await expect(harness.invoke("runtime:submit-input-answer", {
+      ...request,
+      providerToken: "secret",
+    })).rejects.toThrow("invalid request");
+  });
+
+  it("maps input answer failures to a generic IPC error", async () => {
+    const submitInputAnswer = vi
+      .fn()
+      .mockRejectedValue(new Error("provider input failed at /home/matrix/home with token secret"));
+    const harness = makeHarness({ submitInputAnswer } as Partial<HandlerContext>);
+    const request = {
+      threadId: "thread_desktop_1",
+      inputRequestId: "req_input_desktop_1",
+      answer: "Run the focused desktop test.",
+      correlationId: "corr_input_desktop_1",
+      clientRequestId: "req_desktop_1",
+    };
+
+    await expect(harness.invoke("runtime:submit-input-answer", request)).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:submit-input-answer", request)).rejects.not.toThrow("/home/matrix");
   });
 
   it("creates agent threads through trusted-core IPC without exposing credentials", async () => {

@@ -494,10 +494,18 @@ function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
   const pendingApprovalKeys = useCodingAgentWorkspace((s) => s.pendingApprovalKeys);
   const approvalActionErrors = useCodingAgentWorkspace((s) => s.approvalActionErrors);
   const submitApprovalDecision = useCodingAgentWorkspace((s) => s.submitApprovalDecision);
+  const inputActionStatus = useCodingAgentWorkspace((s) => s.inputActionStatus);
+  const pendingInputRequestId = useCodingAgentWorkspace((s) => s.pendingInputRequestId);
+  const inputActionError = useCodingAgentWorkspace((s) => s.inputActionError);
+  const submitInputAnswer = useCodingAgentWorkspace((s) => s.submitInputAnswer);
+  const [inputAnswer, setInputAnswer] = useState("");
   const approval = event.type === "approval.requested" ? event.approval : null;
+  const inputRequest = event.type === "user_input.requested" ? event.request : null;
   const approvalKey = approval ? codingAgentApprovalActionKey(approval.threadId, approval.approvalId) : null;
   const approvalPending = approvalKey ? pendingApprovalKeys.includes(approvalKey) : false;
   const approvalActionError = approvalKey ? approvalActionErrors[approvalKey] : undefined;
+  const inputPending = inputActionStatus === "submitting" && pendingInputRequestId === inputRequest?.requestId;
+  const trimmedInputAnswer = inputAnswer.trim();
   return (
     <div
       className="grid gap-1 rounded-md border px-3 py-2"
@@ -537,6 +545,43 @@ function ThreadEventRow({ event }: { event: AgentThreadEvent }) {
               {approvalActionError}
             </span>
           ) : null}
+        </div>
+      ) : null}
+      {inputRequest ? (
+        <div className="grid gap-2 pt-1">
+          <textarea
+            aria-label={`Answer ${inputRequest.title}`}
+            className="min-h-20 resize-y rounded-md border px-3 py-2 text-sm outline-none"
+            maxLength={8000}
+            placeholder={inputRequest.placeholder ?? "Answer"}
+            style={{
+              borderColor: "var(--border-subtle)",
+              background: "var(--bg-surface)",
+              color: "var(--text-primary)",
+            }}
+            value={inputAnswer}
+            onChange={(e) => setInputAnswer(e.currentTarget.value)}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              aria-label={`Send ${inputRequest.title}`}
+              variant="primary"
+              disabled={inputActionStatus === "submitting" || (inputRequest.required && trimmedInputAnswer.length === 0)}
+              onClick={() => void submitInputAnswer({
+                threadId: inputRequest.threadId,
+                inputRequestId: inputRequest.requestId,
+                answer: inputAnswer,
+                correlationId: inputRequest.correlationId,
+              })}
+            >
+              {inputPending ? "Sending..." : "Send"}
+            </Button>
+            {inputActionError ? (
+              <span className="text-xs" style={{ color: "var(--danger)" }}>
+                {inputActionError}
+              </span>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
