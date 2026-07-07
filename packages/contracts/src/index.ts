@@ -655,6 +655,30 @@ export const ReviewFileDiffSchema = z.object({
   partial: z.boolean(),
 }).strict();
 
+const ReviewDiffLineNumberSchema = z.number().int().min(1).max(1_000_000);
+const ReviewDiffLineContentSchema = z.string()
+  .max(1_000)
+  .refine((value) => byteLength(value) <= 4_000, { message: "Diff line exceeds byte limit" });
+
+export const ReviewDiffLineSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("context"),
+    oldLine: ReviewDiffLineNumberSchema,
+    newLine: ReviewDiffLineNumberSchema,
+    content: ReviewDiffLineContentSchema,
+  }).strict(),
+  z.object({
+    kind: z.literal("add"),
+    newLine: ReviewDiffLineNumberSchema,
+    content: ReviewDiffLineContentSchema,
+  }).strict(),
+  z.object({
+    kind: z.literal("remove"),
+    oldLine: ReviewDiffLineNumberSchema,
+    content: ReviewDiffLineContentSchema,
+  }).strict(),
+]);
+
 export const ReviewDiffHunkSchema = z.object({
   id: referenceId(128),
   oldStart: z.number().int().min(0).max(1_000_000),
@@ -663,6 +687,7 @@ export const ReviewDiffHunkSchema = z.object({
   newLines: z.number().int().min(0).max(1_000_000),
   heading: SafeDisplayStringSchema.optional(),
   partial: z.boolean(),
+  lines: z.array(ReviewDiffLineSchema).max(120).optional(),
 }).strict();
 
 export const ReviewFindingSummarySchema = z.object({

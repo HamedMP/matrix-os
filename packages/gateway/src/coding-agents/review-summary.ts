@@ -23,6 +23,8 @@ const RAW_REVIEW_SCAN_LIMIT = 100;
 const MAX_REVIEW_SCAN_PAGES = 5;
 const REVIEW_SNAPSHOT_FILE_LIMIT = 100;
 const REVIEW_SNAPSHOT_FINDINGS_PER_FILE_LIMIT = 100;
+const REVIEW_DIFF_HUNK_LINE_LIMIT = 120;
+const REVIEW_DIFF_LINE_CHAR_LIMIT = 1_000;
 const REVIEW_DIFF_OUTPUT_BYTES = 256 * 1024;
 const REVIEW_DIFF_TIMEOUT_MS = 5_000;
 
@@ -30,6 +32,8 @@ const execFileAsync = promisify(execFile);
 
 type ReviewSnapshotErrorCode = "review_not_found" | "review_state_unavailable";
 type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
+type ReviewSnapshotHunk = ReviewSnapshotFile["hunks"][number];
+type ReviewDiffLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
 type ReviewDiffReadResult = {
   ok: true;
   files: ReviewSnapshotFile[];
@@ -280,6 +284,8 @@ function parseUnifiedDiff(stdout: string): ReviewDiffReadResult {
     partial: boolean;
   } | null = null;
   let hasMore = false;
+  let oldLine = 0;
+  let newLine = 0;
 
   const pushCurrent = () => {
     if (!current) return;
@@ -304,6 +310,28 @@ function parseUnifiedDiff(stdout: string): ReviewDiffReadResult {
     current = null;
   };
 
+  const markCurrentPartial = () => {
+    if (!current) return;
+    current.partial = true;
+    hasMore = true;
+    const hunk = current.hunks[current.hunks.length - 1];
+    if (hunk) hunk.partial = true;
+  };
+
+  const addCurrentHunkLine = (line: ReviewDiffLine) => {
+    if (!current) return;
+    const hunk = current.hunks[current.hunks.length - 1];
+    if (!hunk) return;
+    if ((hunk.lines?.length ?? 0) >= REVIEW_DIFF_HUNK_LINE_LIMIT) {
+      markCurrentPartial();
+      return;
+    }
+    const content = line.content.slice(0, REVIEW_DIFF_LINE_CHAR_LIMIT);
+    const partial = content.length < line.content.length;
+    hunk.lines = [...(hunk.lines ?? []), { ...line, content }];
+    if (partial) markCurrentPartial();
+  };
+
   for (const line of stdout.split("\n")) {
     const diffHeader = parseDiffGitHeader(line);
     if (diffHeader) {
@@ -316,6 +344,8 @@ function parseUnifiedDiff(stdout: string): ReviewDiffReadResult {
         hunks: [],
         partial: false,
       };
+      oldLine = 0;
+      newLine = 0;
       continue;
     }
     if (!current) continue;
@@ -348,19 +378,42 @@ function parseUnifiedDiff(stdout: string): ReviewDiffReadResult {
         hasMore = true;
         continue;
       }
+      oldLine = parseRangeStart(hunk[1]);
+      newLine = parseRangeStart(hunk[3]);
       current.hunks.push({
         id: hunkIdFor(current.path, current.hunks.length),
-        oldStart: parseRangeStart(hunk[1]),
+        oldStart: oldLine,
         oldLines: parseRangeLines(hunk[2]),
-        newStart: parseRangeStart(hunk[3]),
+        newStart: newLine,
         newLines: parseRangeLines(hunk[4]),
         heading: line.slice(0, 120),
         partial: false,
+        lines: [],
       });
       continue;
     }
-    if (line.startsWith("+") && !line.startsWith("+++")) current.additions += 1;
-    if (line.startsWith("-") && !line.startsWith("---")) current.deletions += 1;
+    if (line.startsWith("\\ No newline")) continue;
+    if (line.startsWith(" ") && current.hunks.length > 0) {
+      addCurrentHunkLine({ kind: "context", oldLine, newLine, content: line.slice(1) });
+      oldLine += 1;
+      newLine += 1;
+      continue;
+    }
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      current.additions += 1;
+      if (current.hunks.length > 0) {
+        addCurrentHunkLine({ kind: "add", newLine, content: line.slice(1) });
+        newLine += 1;
+      }
+      continue;
+    }
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      current.deletions += 1;
+      if (current.hunks.length > 0) {
+        addCurrentHunkLine({ kind: "remove", oldLine, content: line.slice(1) });
+        oldLine += 1;
+      }
+    }
   }
   pushCurrent();
   return {
@@ -368,6 +421,30 @@ function parseUnifiedDiff(stdout: string): ReviewDiffReadResult {
     files,
     hasMore,
     partial: hasMore || files.some((file) => file.partial),
+  };
+}
+
+function capReviewHunkLines(hunk: ReviewSnapshotHunk): ReviewSnapshotHunk {
+  let partial = hunk.partial;
+  const lines = (hunk.lines ?? []).slice(0, REVIEW_DIFF_HUNK_LINE_LIMIT).map((line) => {
+    const content = line.content.slice(0, REVIEW_DIFF_LINE_CHAR_LIMIT);
+    if (content.length < line.content.length) partial = true;
+    return { ...line, content } as ReviewDiffLine;
+  });
+  if ((hunk.lines?.length ?? 0) > REVIEW_DIFF_HUNK_LINE_LIMIT) partial = true;
+  return {
+    ...hunk,
+    partial,
+    lines: lines.length > 0 ? lines : hunk.lines,
+  };
+}
+
+function capReviewSnapshotFile(file: ReviewSnapshotFile): ReviewSnapshotFile {
+  const hunks = file.hunks.map(capReviewHunkLines);
+  return {
+    ...file,
+    partial: file.partial || hunks.some((hunk) => hunk.partial),
+    hunks,
   };
 }
 
@@ -407,7 +484,7 @@ async function readGitReviewDiff(worktreeRoot: string): Promise<ReviewDiffReadRe
     console.warn("[coding-agents] review worktree unavailable");
     return { ok: false };
   }
-  const diffArgs = ["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--unified=0"];
+  const diffArgs = ["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--unified=3"];
   let base: string | undefined;
   for (const candidate of ["origin/HEAD", "origin/main", "origin/master", "origin/develop"]) {
     base = (await execGit(worktreeRoot, ["merge-base", "HEAD", candidate], {
@@ -501,9 +578,10 @@ function mergeDiffAndFindings(input: {
   const files: ReviewSnapshotFile[] = [];
   let hasMore = input.diff.hasMore || input.findings.hasMore;
   for (const file of input.diff.files) {
+    const cappedFile = capReviewSnapshotFile(file);
     const parsed = ReviewSnapshotFileSchema.safeParse({
-      ...file,
-      findings: findingsByPath.get(file.path),
+      ...cappedFile,
+      findings: findingsByPath.get(cappedFile.path),
     });
     if (!parsed.success) continue;
     files.push(parsed.data);

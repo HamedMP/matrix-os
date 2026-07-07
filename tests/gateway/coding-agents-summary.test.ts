@@ -782,6 +782,117 @@ describe("coding agent runtime summary", () => {
     }
   });
 
+  it("includes bounded hunk lines for a small git diff from a safe owner review worktree", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-review-diff-lines-"));
+    try {
+      const worktreeRoot = join(homePath, "projects", "matrix-os", "worktrees", "wt_abc123def456");
+      const sourceDir = join(worktreeRoot, "packages", "gateway", "src", "coding-agents");
+      await mkdir(sourceDir, { recursive: true });
+      await mkdir(join(worktreeRoot, ".matrix"), { recursive: true });
+      await execFileAsync("git", ["init"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.email", "matrix@example.invalid"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["config", "user.name", "Matrix Review"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), [
+        "export function route() {",
+        "  return 1;",
+        "}",
+        "",
+      ].join("\n"));
+      await execFileAsync("git", ["add", "."], { cwd: worktreeRoot });
+      await execFileAsync("git", ["commit", "-m", "base"], { cwd: worktreeRoot });
+      await execFileAsync("git", ["update-ref", "refs/remotes/origin/develop", "HEAD"], { cwd: worktreeRoot });
+      await writeFile(join(sourceDir, "routes.ts"), [
+        "export function route() {",
+        "  const next = 2;",
+        "  return next;",
+        "}",
+        "",
+      ].join("\n"));
+      await writeFile(join(worktreeRoot, ".matrix", "review-round-1.md"), "## Findings\n\nNo findings.\n");
+      const store = createCodingAgentReviewSummaryStore({
+        getReview: async () => ({
+          ok: true,
+          review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+        }),
+        listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+      } as ReviewLoopStore, {
+        ownerId: testPrincipal.userId,
+        homePath,
+      });
+
+      const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+      const hunk = snapshot.files.items[0]?.hunks[0];
+
+      expect(snapshot.partial).toBe(false);
+      expect(hunk?.partial).toBe(false);
+      expect(hunk?.lines).toEqual([
+        { kind: "context", oldLine: 1, newLine: 1, content: "export function route() {" },
+        { kind: "remove", oldLine: 2, content: "  return 1;" },
+        { kind: "add", newLine: 2, content: "  const next = 2;" },
+        { kind: "add", newLine: 3, content: "  return next;" },
+        { kind: "context", oldLine: 3, newLine: 4, content: "}" },
+      ]);
+      expect(JSON.stringify(snapshot)).not.toContain(homePath);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("caps large diff hunk line bodies and marks the snapshot partial", async () => {
+    const diffReader = vi.fn(async () => ({
+      ok: true as const,
+      files: [{
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        status: "modified" as const,
+        additions: 160,
+        deletions: 0,
+        partial: false,
+        hunks: [{
+          id: "hunk_large",
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 160,
+          partial: false,
+          lines: Array.from({ length: 160 }, (_, index) => ({
+            kind: "add" as const,
+            newLine: index + 1,
+            content: `const value${index} = ${index};`,
+          })),
+        }],
+      }],
+      hasMore: false,
+      partial: false,
+    }));
+    const store = createCodingAgentReviewSummaryStore({
+      getReview: async () => ({
+        ok: true,
+        review: reviewRecord({ ownerId: testPrincipal.userId, rounds: [successfulFindingsRound()] }),
+      }),
+      listReviews: async () => ({ ok: true, reviews: [], nextCursor: null }),
+    } as ReviewLoopStore, {
+      ownerId: testPrincipal.userId,
+      homePath: "/home/matrix/home",
+      diffReader,
+      findingsReader: async () => ({
+        ok: true,
+        parserStatus: "success",
+        findingsCount: 0,
+        severityCounts: { high: 0, medium: 0, low: 0 },
+        findings: [],
+      }),
+    });
+
+    const snapshot = await store.getReviewSnapshot!(testPrincipal, "rev_1");
+    const hunk = snapshot.files.items[0]?.hunks[0];
+
+    expect(hunk?.lines).toHaveLength(120);
+    expect(hunk?.partial).toBe(true);
+    expect(snapshot.files.items[0]?.partial).toBe(true);
+    expect(snapshot.partial).toBe(true);
+    expect(snapshot.safeNotice).toBe("Some diff content is unavailable. Showing bounded review metadata.");
+  });
+
   it("keeps unquoted binary diff headers aligned when paths contain the header separator text", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-review-binary-header-diff-"));
     try {

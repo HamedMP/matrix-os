@@ -8,6 +8,7 @@ import {
   CreateAgentThreadRequestSchema,
   FileMetadataSchema,
   PreviewSessionSummarySchema,
+  ReviewDiffLineSchema,
   ReviewFileDiffSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
@@ -353,6 +354,18 @@ describe("coding agent contracts", () => {
                 newLines: 1,
                 heading: "Finding HIGH-1",
                 partial: true,
+                lines: [
+                  {
+                    kind: "remove",
+                    oldLine: 12,
+                    content: "const unsafe = true;",
+                  },
+                  {
+                    kind: "add",
+                    newLine: 12,
+                    content: "const safe = true;",
+                  },
+                ],
               },
             ],
             findings: [
@@ -373,6 +386,32 @@ describe("coding agent contracts", () => {
       updatedAt: now,
     });
     expect(reviewSnapshot.files.items[0]?.hunks[0]?.partial).toBe(true);
+    expect(reviewSnapshot.files.items[0]?.hunks[0]?.lines?.[1]).toMatchObject({
+      kind: "add",
+      newLine: 12,
+      content: "const safe = true;",
+    });
+    expect(ReviewDiffLineSchema.parse({
+      kind: "context",
+      oldLine: 14,
+      newLine: 14,
+      content: "return value;",
+    }).kind).toBe("context");
+    expect(() =>
+      ReviewDiffLineSchema.parse({
+        kind: "add",
+        newLine: 1,
+        content: "x".repeat(1001),
+      }),
+    ).toThrow();
+    expect(() =>
+      ReviewDiffLineSchema.parse({
+        kind: "context",
+        oldLine: 0,
+        newLine: 1,
+        content: "return value;",
+      }),
+    ).toThrow();
     expect(() =>
       ReviewSnapshotSchema.parse({
         ...reviewSnapshot,

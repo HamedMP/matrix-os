@@ -1,12 +1,12 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-review-summary`
-**Updated**: 2026-07-06
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-review-diff-lines`
+**Updated**: 2026-07-07
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Desktop and mobile review details render changed-file counts and selectable hunk coordinate metadata. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Full file content, raw diff lines, and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Review snapshots can include bounded per-hunk diff lines with truncation markers. Desktop and mobile review details render changed-file counts and selectable hunk coordinate metadata. Desktop and mobile can seed their existing agent composers from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -28,7 +28,7 @@ Implemented coding-agent schemas:
 - Events: `AgentThreadEventSchema` discriminated union with lifecycle, text delta, tool activity, approval/input, file change, review ready, terminal bound, safe error, and completion event variants.
 - Approvals/input: `AgentApprovalRequestSchema`, `ApprovalDecisionRequestSchema`, `UserInputRequestSchema`, `UserInputAnswerRequestSchema`.
 - Terminal frames/summaries: `TerminalSessionSummarySchema`, `TerminalClientFrameSchema`, `TerminalServerFrameSchema`.
-- File/review/preview: `FilePathSchema`, `FileMetadataSchema`, `ReviewSummarySchema`, `ReviewFileDiffSchema`, `ReviewDiffHunkSchema`, `ReviewFindingSummarySchema`, `ReviewSnapshotFileSchema`, `ReviewSnapshotSchema`, `PreviewSessionSummarySchema`.
+- File/review/preview: `FilePathSchema`, `FileMetadataSchema`, `ReviewSummarySchema`, `ReviewFileDiffSchema`, `ReviewDiffLineSchema`, `ReviewDiffHunkSchema`, `ReviewFindingSummarySchema`, `ReviewSnapshotFileSchema`, `ReviewSnapshotSchema`, `PreviewSessionSummarySchema`.
 
 Contract tests:
 
@@ -207,7 +207,7 @@ Current behavior:
 
 - Read-only dashboard renders providers, active threads, and terminals.
 - When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the trusted main-process IPC route and renders project, PR, round, status, and high-severity count.
-- Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, and safe finding summaries. They do not render raw diff lines or file contents.
+- Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, and safe finding summaries. The gateway snapshot can include bounded hunk lines, but desktop rendering of those lines is not wired in this slice.
 - When thread creation is enabled, selecting a review hunk can open the mobile composer with bounded review metadata and a `structured_ref` attachment for the target file/hunk; the existing authenticated `createCodingAgentThread` gateway client performs the mutation.
 - When thread creation is enabled, selecting a review hunk can seed the existing desktop composer with bounded review metadata and a `structured_ref` attachment for the target file/hunk; the normal trusted `runtime:create-thread` IPC path performs the mutation.
 - Safe generic error state if the runtime summary is unavailable.
@@ -230,7 +230,7 @@ Screen:
 - `apps/mobile/app/agents/[threadId].tsx`
 - Read-only phone-first dashboard with providers, active threads, and terminal sessions.
 - When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the authenticated gateway client and renders project, PR, round, status, and high-severity count.
-- Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, and safe finding summaries. They do not render raw diff lines or file contents.
+- Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, and safe finding summaries. The gateway snapshot can include bounded hunk lines, but mobile rendering of those lines is not wired in this slice.
 - Safe generic review error state if review summaries are unavailable; review failures do not drop the runtime summary dashboard.
 - Composer route for creating accepted coding-agent threads; thread route is a bounded placeholder until replay/review surfaces are wired.
 - Flag: `apps/mobile/lib/feature-flags.ts` with `EXPO_PUBLIC_CODING_AGENTS_MOBILE_WORKSPACE === "1"`.
@@ -260,7 +260,7 @@ Relevant existing browser shell paths:
 
 Open follow-up: decide whether a browser-shell coding-agent entry belongs in Canvas, Developer mode, or both after desktop/mobile read-only shells settle.
 
-Public docs note: public docs remain deferred for these review-summary/snapshot/follow-up slices because the cross-shell review flow still lacks full file diffs and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
+Public docs note: public docs remain deferred for these review-summary/snapshot/follow-up slices because the cross-shell review flow still lacks shell-rendered full diff views and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
 
 ## Feature Flags
 
@@ -334,7 +334,7 @@ git diff --check
 ## Open Questions And Deferred Work
 
 - Session completion reconciliation: implemented for workspace `session.stopped` events that carry owner id, workspace session id, and bound `terminalSessionId`; the gateway thread store marks matching active coding-agent threads completed or failed server-side without matching unrelated owners or reused terminal ids. Remaining work: if runtime managers add autonomous process-exit detection beyond explicit workspace stop events, route those through the same `session.stopped` publisher path.
-- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata from safe owner worktrees and partial findings-derived fallback metadata for later shell diff panels. Full file contents, desktop/mobile diff rendering, and previews are not implemented yet.
+- File/review/preview shell surfaces: read-only review summaries now have coding-agent contracts/routes/desktop IPC/mobile clients plus desktop and mobile read-only review panels. A read-only review snapshot route now exposes bounded diff hunk metadata and capped hunk line bodies from safe owner worktrees plus partial findings-derived fallback metadata for later shell diff panels. Full file contents, desktop/mobile diff rendering, and previews are not implemented yet.
 - Browser shell entry point: Canvas-first placement is still undecided.
 - Notifications/attention routing: desktop notification IPC exists, but thread attention notifications are not yet wired end-to-end from gateway events.
 - Public docs: public Matrix OS docs should be updated once the user-facing coding-agent shell flow is stable enough to document.
