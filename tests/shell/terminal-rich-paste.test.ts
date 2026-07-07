@@ -25,6 +25,8 @@ describe("terminal rich clipboard paste", () => {
 
   it("uploads images from paste event clipboard data", async () => {
     vi.stubGlobal("WebSocket", { OPEN: 1 });
+    const signal = AbortSignal.abort().signal;
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(signal);
     const fetchMock = vi.fn(async () => ({ ok: true })) as unknown as typeof fetch;
     vi.stubGlobal("fetch", fetchMock);
     const blob = new Blob(["event image"], { type: "image/png" });
@@ -49,8 +51,9 @@ describe("terminal rich clipboard paste", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringMatching(/^https:\/\/gateway\.example\/api\/files\/blob\?path=data%2Fterminal-paste%2Fpaste-/),
-      expect.objectContaining({ method: "PUT", body: blob }),
+      expect.objectContaining({ method: "PUT", body: blob, signal }),
     );
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
     const sent = JSON.parse(ws.send.mock.calls[0]![0]);
     expect(sent.data).toContain("~/data/terminal-paste/paste-");
     expect(sent.data).toContain(".png");

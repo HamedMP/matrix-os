@@ -3,6 +3,7 @@ const BRACKETED_PASTE_CLOSE = "\x1b[201~";
 const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
 const MAX_TERMINAL_INPUT = 65_536;
 const TERMINAL_PASTE_IMAGE_DIR = "data/terminal-paste";
+const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
 
 type TerminalInputSink = {
   readyState: number;
@@ -78,6 +79,7 @@ async function uploadClipboardImage(gatewayUrl: string, blob: Blob, remotePath: 
     method: "PUT",
     headers: { "Content-Type": blob.type || "application/octet-stream" },
     body: blob,
+    signal: AbortSignal.timeout(TERMINAL_PASTE_UPLOAD_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`image upload failed (${res.status})`);
