@@ -4,11 +4,15 @@ import { access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
+  AgentAttachmentSchema,
+  type AgentAttachment,
+} from "@matrix-os/contracts";
+import {
   SupportedAgentSchema,
   type AgentLaunchSandbox,
   type SupportedAgent,
 } from "./agent-launcher.js";
-import { PromptContentSchema } from "./prompt-validation.js";
+import { MAX_PROMPT_CONTENT_LENGTH, PromptContentSchema } from "./prompt-validation.js";
 import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import type { createAgentLauncher } from "./agent-launcher.js";
@@ -88,6 +92,7 @@ const StartSessionSchema = z.object({
   pr: z.number().int().positive().optional(),
   agent: SupportedAgentSchema.optional(),
   prompt: PromptContentSchema.optional(),
+  attachments: z.array(AgentAttachmentSchema).max(8).optional(),
   mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
   approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "never"]).optional(),
   sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
@@ -116,6 +121,32 @@ function toAgentApprovalPolicy(policy?: SessionApprovalPolicy): "untrusted" | "o
   if (policy === "on_request") return "on-request";
   if (policy === "on_failure") return "on-failure";
   return policy;
+}
+
+function launchPromptWithReferences(prompt: string | undefined, attachments: AgentAttachment[] | undefined): string | undefined {
+  const references = (attachments ?? [])
+    .filter((attachment) => attachment.kind === "structured_ref")
+    .map((attachment) => {
+      const target = attachment.path ? `: ${attachment.path}` : "";
+      return `- [${attachment.kind}] ${attachment.label}${target}`;
+    });
+  if (references.length === 0) return prompt;
+  const context = ["Context references:", ...references].join("\n");
+  const nextPrompt = prompt && prompt.trim().length > 0 ? `${prompt}\n\n${context}` : context;
+  const parsed = PromptContentSchema.safeParse(nextPrompt);
+  if (parsed.success) return parsed.data;
+
+  const contextOnly = PromptContentSchema.safeParse(context);
+  if (!contextOnly.success) return prompt;
+  if (!prompt || prompt.trim().length === 0) return contextOnly.data;
+
+  const separator = "\n\n";
+  const promptBudget = MAX_PROMPT_CONTENT_LENGTH - context.length - separator.length;
+  if (promptBudget <= 0) return contextOnly.data;
+
+  const truncatedPrompt = prompt.slice(0, promptBudget);
+  const boundedPrompt = PromptContentSchema.safeParse(`${truncatedPrompt}${separator}${context}`);
+  return boundedPrompt.success ? boundedPrompt.data : contextOnly.data;
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -295,7 +326,7 @@ export function createAgentSessionManager(options: {
           ? options.agentLauncher.buildLaunch({
             agent: request.agent!,
             cwd,
-            prompt: request.prompt,
+            prompt: launchPromptWithReferences(request.prompt, request.attachments),
             mode: request.mode,
             sandbox: request.sandbox,
             approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),

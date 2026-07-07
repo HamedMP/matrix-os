@@ -28,6 +28,18 @@ const STATUS_COLOR: Record<string, string> = {
 };
 const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
 type ReviewDetailStatus = "idle" | "loading" | "ready" | "error";
+type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
+type ReviewSnapshotHunk = ReviewSnapshotFile["hunks"][number];
+type ComposerSeed = {
+  seedId: number;
+  draft: AgentThreadComposerDraft;
+};
+type SelectedReviewHunk = {
+  key: string;
+  file: ReviewSnapshotFile;
+  hunk: ReviewSnapshotHunk;
+  hunkIndex: number;
+};
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
@@ -133,7 +145,66 @@ function ProviderList({ summary }: { summary: RuntimeSummary }) {
   );
 }
 
-function AgentComposer({ summary }: { summary: RuntimeSummary }) {
+export function mergeAttachments(
+  current: AgentThreadComposerDraft["attachments"],
+  seeded: AgentThreadComposerDraft["attachments"],
+): AgentThreadComposerDraft["attachments"] {
+  const currentAttachments = current ?? [];
+  const seededById = new Map((seeded ?? []).map((attachment) => [attachment.id, attachment]));
+  const merged = currentAttachments.map((attachment) => seededById.get(attachment.id) ?? attachment);
+  const seen = new Set(merged.map((attachment) => attachment.id));
+  for (const attachment of seeded ?? []) {
+    if (seen.has(attachment.id) || merged.length >= 8) continue;
+    seen.add(attachment.id);
+    merged.push(attachment);
+  }
+  return merged.length ? merged : undefined;
+}
+
+export function mergeComposerSeed(current: AgentThreadComposerDraft, seeded: AgentThreadComposerDraft): AgentThreadComposerDraft {
+  const currentPrompt = current.prompt.trim();
+  const seededPrompt = seeded.prompt.trim();
+  const attachments = mergeAttachments(current.attachments, seeded.attachments);
+  const missingRequiredReference = (seeded.attachments ?? [])
+    .some((attachment) => attachment.kind === "structured_ref"
+      && !attachments?.some((candidate) => candidate.id === attachment.id));
+  if (missingRequiredReference) return current;
+
+  return {
+    ...seeded,
+    providerId: current.providerId ?? seeded.providerId,
+    mode: current.mode ?? seeded.mode,
+    approvalPolicy: current.approvalPolicy ?? seeded.approvalPolicy,
+    sandboxMode: current.sandboxMode ?? seeded.sandboxMode,
+    prompt: currentPrompt && currentPrompt !== seededPrompt
+      ? `${current.prompt.trimEnd()}\n\n---\n\n${seeded.prompt}`
+      : seeded.prompt,
+    attachments,
+  };
+}
+
+export function clearComposerLaunchContext(current: AgentThreadComposerDraft): AgentThreadComposerDraft {
+  const attachments = current.attachments?.filter((attachment) => attachment.kind !== "structured_ref");
+  return {
+    ...current,
+    projectId: undefined,
+    taskId: undefined,
+    terminalSessionId: undefined,
+    worktreeId: undefined,
+    attachments: attachments?.length ? attachments : undefined,
+  };
+}
+
+function hasComposerContent(current: AgentThreadComposerDraft): boolean {
+  return current.prompt.trim().length > 0
+    || Boolean(current.projectId)
+    || Boolean(current.taskId)
+    || Boolean(current.terminalSessionId)
+    || Boolean(current.worktreeId)
+    || Boolean(current.attachments?.length);
+}
+
+function AgentComposer({ summary, seed }: { summary: RuntimeSummary; seed: ComposerSeed | null }) {
   const initialDraft = useMemo(() => defaultAgentThreadComposerDraft(summary), [summary]);
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
@@ -143,8 +214,13 @@ function AgentComposer({ summary }: { summary: RuntimeSummary }) {
   const canCreate = capabilityEnabled(summary, "codingAgentsThreadCreate");
 
   useEffect(() => {
-    setDraft(initialDraft);
+    setDraft((current) => hasComposerContent(current) ? current : initialDraft);
   }, [initialDraft]);
+
+  useEffect(() => {
+    if (!seed) return;
+    setDraft((current) => mergeComposerSeed(current, seed.draft));
+  }, [seed]);
 
   if (!canCreate) return null;
 
@@ -153,8 +229,12 @@ function AgentComposer({ summary }: { summary: RuntimeSummary }) {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const threadId = await createThread(draft);
-    if (!threadId) return;
+    const submittedDraft = draft;
+    const threadId = await createThread(submittedDraft);
+    if (!threadId) {
+      setDraft((current) => clearComposerLaunchContext(current));
+      return;
+    }
     const thread = useCodingAgentWorkspace
       .getState()
       .summary?.activeThreads.items.find((candidate) => candidate.id === threadId);
@@ -164,7 +244,7 @@ function AgentComposer({ summary }: { summary: RuntimeSummary }) {
       title: thread?.title ?? "Agent thread",
       closable: true,
     });
-    setDraft((current) => ({ ...current, prompt: "" }));
+    setDraft(initialDraft);
   }
 
   return (
@@ -333,7 +413,13 @@ function formatHunkRange(hunk: ReviewSnapshot["files"]["items"][number]["hunks"]
   return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
 }
 
-function ReviewList() {
+function ReviewList({
+  canCreateFollowUp,
+  onAskHunkFollowUp,
+}: {
+  canCreateFollowUp: boolean;
+  onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
+}) {
   const reviewsStatus = useCodingAgentWorkspace((s) => s.reviewsStatus);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
   const reviewsError = useCodingAgentWorkspace((s) => s.reviewsError);
@@ -390,6 +476,8 @@ function ReviewList() {
           status={reviewSnapshotStatus}
           snapshot={reviewSnapshot}
           error={reviewSnapshotError}
+          canCreateFollowUp={canCreateFollowUp}
+          onAskHunkFollowUp={onAskHunkFollowUp}
         />
         {reviewsStatus !== "error" && reviewsStatus !== "loading" && items.length === 0 ? (
           <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
@@ -405,16 +493,30 @@ function ReviewSnapshotPanel({
   status,
   snapshot,
   error,
+  canCreateFollowUp,
+  onAskHunkFollowUp,
 }: {
   status: ReviewDetailStatus;
   snapshot: ReviewSnapshot | null;
   error: string | null;
+  canCreateFollowUp: boolean;
+  onAskHunkFollowUp: (snapshot: ReviewSnapshot, selected: SelectedReviewHunk) => void;
 }) {
   const [selectedHunkKey, setSelectedHunkKey] = useState<string | null>(null);
+  const selectedHunk = useMemo(() => {
+    if (!snapshot || !selectedHunkKey) return null;
+    for (const [fileIndex, file] of snapshot.files.items.entries()) {
+      for (const [hunkIndex, hunk] of file.hunks.entries()) {
+        const key = reviewHunkKey(fileIndex, file, hunk, hunkIndex);
+        if (key === selectedHunkKey) return { key, file, hunk, hunkIndex };
+      }
+    }
+    return null;
+  }, [selectedHunkKey, snapshot]);
 
   useEffect(() => {
     setSelectedHunkKey(null);
-  }, [snapshot?.review.id]);
+  }, [snapshot?.review.id, snapshot?.updatedAt]);
 
   if (status === "idle") return null;
   if (status === "loading") {
@@ -500,8 +602,8 @@ function ReviewSnapshotPanel({
             {file.hunks.length ? (
               <div className="grid gap-1">
                 {file.hunks.map((hunk, hunkIndex) => {
-                  const hunkKey = `${fileIndex}\u0000${file.path}\u0000${hunk.id}\u0000${hunkIndex}`;
-                  const selected = selectedHunkKey === hunkKey;
+                  const hunkKey = reviewHunkKey(fileIndex, file, hunk, hunkIndex);
+                  const selected = selectedHunk?.key === hunkKey;
                   return (
                     <button
                       key={`${file.path}:${fileIndex}:${hunk.id}:${hunkIndex}`}
@@ -534,8 +636,58 @@ function ReviewSnapshotPanel({
           </div>
         ))}
       </div>
+      {selectedHunk ? (
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            type="button"
+            disabled={!canCreateFollowUp}
+            onClick={() => onAskHunkFollowUp(snapshot, selectedHunk)}
+            aria-label="Ask agent about selected hunk"
+          >
+            <Bot size={14} />
+            Ask agent about selected hunk
+          </Button>
+        </div>
+      ) : null}
     </article>
   );
+}
+
+function reviewHunkKey(fileIndex: number, file: ReviewSnapshotFile, hunk: ReviewSnapshotHunk, hunkIndex: number): string {
+  return `${fileIndex}\u0000${file.path}\u0000${hunk.id}\u0000${hunkIndex}`;
+}
+
+function safeReferenceSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.:-]+/g, "_").replace(/\.\.+/g, "_").slice(0, 64) || "ref";
+}
+
+function reviewHunkFollowUpDraft(summary: RuntimeSummary, snapshot: ReviewSnapshot, selected: SelectedReviewHunk): AgentThreadComposerDraft {
+  const base = defaultAgentThreadComposerDraft(summary);
+  const range = formatHunkRange(selected.hunk);
+  const hunkNumber = selected.hunkIndex + 1;
+  return {
+    ...base,
+    projectId: snapshot.review.projectId,
+    prompt: [
+      "Please follow up on this review hunk.",
+      "",
+      `Review: PR #${snapshot.review.pullRequestNumber}, round ${snapshot.review.round} of ${snapshot.review.maxRounds}`,
+      `Project: ${snapshot.review.projectId}`,
+      `File: ${selected.file.path}`,
+      `Hunk: ${range}`,
+      "",
+      "Use the structured reference attached to inspect the current source and propose the smallest safe fix.",
+    ].join("\n"),
+    attachments: [
+      {
+        id: `review:${safeReferenceSegment(snapshot.review.id)}:hunk:${safeReferenceSegment(selected.hunk.id)}`,
+        kind: "structured_ref",
+        label: `Review hunk ${hunkNumber}`,
+        path: selected.file.path,
+      },
+    ],
+  };
 }
 
 export default function AgentWorkspace() {
@@ -544,6 +696,7 @@ export default function AgentWorkspace() {
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const error = useCodingAgentWorkspace((s) => s.error);
   const refresh = useCodingAgentWorkspace((s) => s.refresh);
+  const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
 
   useEffect(() => {
     void refresh();
@@ -572,17 +725,29 @@ export default function AgentWorkspace() {
 
   if (!summary) return null;
 
+  const canCreateFollowUp = capabilityEnabled(summary, "codingAgentsThreadCreate");
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <RuntimeHeader summary={summary} onRefresh={() => void refresh()} />
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
-        <AgentComposer summary={summary} />
+        <AgentComposer summary={summary} seed={composerSeed} />
         <ProviderList summary={summary} />
         <div className="grid gap-4 xl:grid-cols-2">
           <ThreadList summary={summary} />
           <TerminalList summary={summary} />
         </div>
-        {capabilityEnabled(summary, "codingAgentsReview") ? <ReviewList /> : null}
+        {capabilityEnabled(summary, "codingAgentsReview") ? (
+          <ReviewList
+            canCreateFollowUp={canCreateFollowUp}
+            onAskHunkFollowUp={(snapshot, selected) => {
+              setComposerSeed({
+                seedId: Date.now(),
+                draft: reviewHunkFollowUpDraft(summary, snapshot, selected),
+              });
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );
