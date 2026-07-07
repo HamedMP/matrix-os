@@ -23,6 +23,8 @@ The coding-agent route module is `packages/gateway/src/coding-agents/routes.ts`,
 - `POST /threads/:threadId/inputs/:inputRequestId/answer` records a bounded user-input answer.
 - `GET /reviews` and `GET /reviews/:reviewId` expose bounded review summaries and snapshots.
 - `GET /files/read` exposes bounded owner-worktree text snapshots.
+- `GET /notification-preferences` returns coding-agent notification preferences for the authenticated owner.
+- `PUT /notification-preferences` updates coding-agent notification preferences for the authenticated owner with a small body limit and atomic per-owner file persistence.
 
 Every mutating route needs auth, `bodyLimit`, Zod validation, an ownership check, safe error mapping, and focused tests.
 
@@ -84,6 +86,10 @@ Approval and input requests are gateway-owned lifecycle events.
 - Other shells update from the returned snapshot or stream event.
 
 Client UI must disable duplicate submission while a decision is in flight and recover by rehydrating the thread snapshot on failure. User-facing errors should be generic and recovery-oriented.
+
+## Attention Notifications
+
+Coding-agent attention notifications are gateway-owned. Thread events for approval requests, user-input requests, and failed runs may emit safe push-channel payloads with generic copy plus a bounded thread id. The bridge deduplicates owner/thread/kind notifications in a capped TTL registry and checks owner notification preferences before sending. Missing preferences default to enabled; corrupt or unavailable preferences must fail closed for push delivery and log details server-side only.
 
 ## Client State Rules
 

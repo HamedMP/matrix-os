@@ -108,6 +108,7 @@ import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-su
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
+import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -512,6 +513,7 @@ export async function createGateway(config: GatewayConfig) {
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
   });
+  const codingAgentNotificationPreferenceStore = createCodingAgentNotificationPreferenceStore({ homePath });
   const workspaceEventPublisher = createWorkspaceEventPublisher({
     eventStore: workspaceEventStore,
     onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
@@ -1453,6 +1455,7 @@ export async function createGateway(config: GatewayConfig) {
     ? registerCodingAgentAttentionNotifications({
       threads: codingAgentThreadStore,
       send: (reply) => channelManager.send(reply),
+      preferences: codingAgentNotificationPreferenceStore,
     })
     : undefined;
 
@@ -1606,6 +1609,7 @@ export async function createGateway(config: GatewayConfig) {
     reviews: codingAgentReviewSummaryStore,
     files: codingAgentFileStore,
     sourceControl: codingAgentSourceControlStore,
+    notificationPreferences: codingAgentNotificationPreferenceStore,
   }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,

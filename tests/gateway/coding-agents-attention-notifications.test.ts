@@ -286,4 +286,79 @@ describe("coding agent attention notifications", () => {
 
     subscription.dispose();
   });
+
+  it("honors owner notification preferences before sending attention push payloads", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-attention-notifications-"));
+    const send = vi.fn<(reply: ChannelReply) => Promise<void>>().mockResolvedValue(undefined);
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => now,
+      providers: [approvalProvider()],
+    });
+    const subscription = registerCodingAgentAttentionNotifications({
+      threads,
+      send,
+      preferences: {
+        isAttentionPushEnabled: async ({ ownerId, kind }) => ownerId !== principal.userId || kind !== "approval",
+      },
+    });
+
+    await threads.createThread(principal, {
+      providerId: "codex",
+      prompt: "Review the next command.",
+      clientRequestId: "req_attention_preferences",
+    });
+
+    expect(send).not.toHaveBeenCalled();
+
+    subscription.dispose();
+  });
+
+  it("does not consume dedupe state when preferences skip an attention notification", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-attention-notifications-"));
+    let enabled = false;
+    const send = vi.fn<(reply: ChannelReply) => Promise<void>>().mockResolvedValue(undefined);
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => now,
+      providers: [repeatedApprovalProvider()],
+    });
+    const subscription = registerCodingAgentAttentionNotifications({
+      threads,
+      send,
+      now: () => 1_000,
+      dedupeWindowMs: 60_000,
+      preferences: {
+        isAttentionPushEnabled: async () => enabled,
+      },
+    });
+
+    const created = await threads.createThread(principal, {
+      providerId: "codex",
+      prompt: "Review the next command.",
+      clientRequestId: "req_attention_preferences_dedupe",
+    });
+    await Promise.resolve();
+    expect(send).not.toHaveBeenCalled();
+
+    enabled = true;
+    await threads.submitApproval(principal, created.snapshot.thread.id, "appr_safe_action", {
+      decision: "approve",
+      correlationId: "corr_safe_action",
+      clientRequestId: "req_attention_preferences_dedupe_approval",
+    });
+    await Promise.resolve();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: principal.userId,
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: created.snapshot.thread.id,
+      },
+    }));
+
+    subscription.dispose();
+  });
 });

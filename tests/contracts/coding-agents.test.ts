@@ -16,6 +16,8 @@ import {
   SourceControlPrepareCommitResponseSchema,
   SourceControlCreatePullRequestRequestSchema,
   SourceControlCreatePullRequestResponseSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   FileMetadataSchema,
@@ -274,6 +276,41 @@ describe("coding agent contracts", () => {
       createdAt: now,
       updatedAt: now,
     }).status).toBe("running");
+  });
+
+  it("validates coding-agent notification preferences without accepting extra payload data", () => {
+    expect(CodingAgentNotificationPreferencesSchema.parse({
+      attentionPush: {
+        approval: true,
+        input: false,
+        failed: true,
+      },
+    })).toEqual({
+      attentionPush: {
+        approval: true,
+        input: false,
+        failed: true,
+      },
+    });
+
+    expect(CodingAgentNotificationPreferencesUpdateSchema.parse({
+      attentionPush: {
+        approval: false,
+        input: false,
+        failed: false,
+      },
+    }).attentionPush.approval).toBe(false);
+
+    expect(() =>
+      CodingAgentNotificationPreferencesSchema.parse({
+        attentionPush: {
+          approval: true,
+          input: true,
+          failed: true,
+          provider: "raw",
+        },
+      }),
+    ).toThrow();
   });
 
   it("validates decision, input, file, review, preview, and server frame contracts", () => {
