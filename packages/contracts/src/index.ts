@@ -695,6 +695,34 @@ export const FileReadResponseSchema = z.object({
 export type FileReadRequest = z.infer<typeof FileReadRequestSchema>;
 export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
 
+const FileContentSchema = z.string()
+  .max(65_536)
+  .refine((value) => byteLength(value) <= 65_536, { message: "File content exceeds byte limit" });
+
+export const FileWriteRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  path: FilePathSchema,
+  content: FileContentSchema,
+  encoding: z.literal("utf8"),
+  baseEtag: referenceId(160).nullable(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+export const FileWriteResponseSchema = z.object({
+  metadata: FileMetadataSchema.extend({
+    kind: z.literal("file"),
+    sizeBytes: z.number().int().min(0).max(65_536),
+    etag: referenceId(160),
+    updatedAt: IsoTimestampSchema,
+  }),
+  encoding: z.literal("utf8"),
+  writtenBytes: z.number().int().min(0).max(65_536),
+}).strict();
+export type FileWriteRequest = z.infer<typeof FileWriteRequestSchema>;
+export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
+
 export const ReviewFileDiffSchema = z.object({
   path: FilePathSchema,
   status: z.enum(["added", "modified", "deleted", "renamed", "binary"]),

@@ -9,6 +9,8 @@ import {
   CursorSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
   ProjectIdSchema,
   RequestIdSchema,
   ThreadIdSchema,
@@ -38,6 +40,7 @@ import {
 } from "./review-summary.js";
 import {
   CodingAgentFileReadError,
+  CodingAgentFileWriteError,
   type CodingAgentFileStore,
 } from "./file-read.js";
 
@@ -53,6 +56,7 @@ const THREAD_MUTATION_BODY_LIMIT = 128 * 1024;
 const THREAD_ABORT_BODY_LIMIT = 1024;
 const THREAD_APPROVAL_BODY_LIMIT = 8 * 1024;
 const THREAD_INPUT_BODY_LIMIT = 40 * 1024;
+const FILE_WRITE_BODY_LIMIT = 96 * 1024;
 
 const AbortThreadBodySchema = z.object({
   clientRequestId: RequestIdSchema,
@@ -118,6 +122,27 @@ function fileNotFound() {
   });
 }
 
+function fileConflict() {
+  return SafeClientErrorSchema.parse({
+    code: "file_conflict",
+    safeMessage: "File changed before the update could be saved. Refresh and try again.",
+    retryable: false,
+    recoveryActions: ["retry"],
+  });
+}
+
+function bodyTooLarge() {
+  return SafeClientErrorSchema.parse({
+    code: "payload_too_large",
+    safeMessage: "Request is too large. Reduce the file content and try again.",
+    retryable: false,
+  });
+}
+
+function isBodyLimitError(err: unknown): boolean {
+  return err instanceof Error && err.name === "BodyLimitError" && err.message === "Payload Too Large";
+}
+
 function validationFailed() {
   return SafeClientErrorSchema.parse({
     code: "validation_failed",
@@ -149,6 +174,10 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
   const threadAbortBodyLimit = bodyLimit({ maxSize: THREAD_ABORT_BODY_LIMIT });
   const threadApprovalBodyLimit = bodyLimit({ maxSize: THREAD_APPROVAL_BODY_LIMIT });
   const threadInputBodyLimit = bodyLimit({ maxSize: THREAD_INPUT_BODY_LIMIT });
+  const fileWriteBodyLimit = bodyLimit({
+    maxSize: FILE_WRITE_BODY_LIMIT,
+    onError: (c) => c.json({ error: bodyTooLarge() }, 413),
+  });
 
   app.get("/summary", async (c) => {
     try {
@@ -317,6 +346,34 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           return c.json({ error: filesUnavailable() }, 503);
         }
         console.warn("[coding-agents] file read route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: filesUnavailable() }, 503);
+      }
+    });
+
+    app.post("/files/write", fileWriteBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = FileWriteRequestSchema.parse(await c.req.json());
+        const response = FileWriteResponseSchema.parse(await deps.files!.writeFile(principal, request));
+        return c.json(response, request.baseEtag === null ? 201 : 200);
+      } catch (err: unknown) {
+        if (isBodyLimitError(err)) {
+          return c.json({ error: bodyTooLarge() }, 413);
+        }
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError || err instanceof SyntaxError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentFileWriteError) {
+          if (err.code === "file_not_found") return c.json({ error: fileNotFound() }, 404);
+          if (err.code === "file_conflict") return c.json({ error: fileConflict() }, 409);
+          if (err.code === "not_file" || err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
+          return c.json({ error: filesUnavailable() }, 503);
+        }
+        console.warn("[coding-agents] file write route failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: filesUnavailable() }, 503);
       }
     });
