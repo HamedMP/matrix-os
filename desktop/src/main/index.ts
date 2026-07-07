@@ -6,6 +6,7 @@ import { installGatewayCors, installHeaderInjection } from "./auth/header-inject
 import { EmbedService } from "./embeds/embed-service";
 import {
   createCodingAgentThread,
+  fetchCodingAgentReviewSnapshot,
   fetchCodingAgentReviewSummaries,
   fetchCodingAgentRuntimeSummary,
 } from "./coding-agents/runtime-summary-client";
@@ -233,6 +234,7 @@ if (!gotLock) {
         getUpdateStatus: () => updater.status(),
         fetchRuntimeSummary: () => fetchCodingAgentRuntimeSummary(auth),
         fetchReviewSummaries: (options) => fetchCodingAgentReviewSummaries(auth, options),
+        fetchReviewSnapshot: (options) => fetchCodingAgentReviewSnapshot(auth, options),
         createAgentThread: (request) => createCodingAgentThread(auth, request),
       });
 

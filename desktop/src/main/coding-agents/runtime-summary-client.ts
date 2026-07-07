@@ -1,8 +1,10 @@
 import {
   AgentThreadSnapshotSchema,
+  ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
   type CreateAgentThreadRequest,
+  type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
   boundedListSchema,
@@ -12,6 +14,7 @@ import type { AuthService } from "../auth/auth-service";
 
 const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
+const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
 const THREAD_CREATE_TIMEOUT_MS = 15_000;
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
@@ -119,6 +122,40 @@ export async function fetchCodingAgentReviewSummaries(
 
   const body = await res.json();
   const parsed = ReviewSummaryListSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("review state unavailable");
+  }
+  return parsed.data;
+}
+
+export async function fetchCodingAgentReviewSnapshot(
+  auth: AuthService,
+  options: { reviewId: string },
+  fetchFn: FetchFn = fetch,
+): Promise<ReviewSnapshot> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("review state unavailable");
+  }
+
+  const url = new URL(
+    `/api/coding-agents/reviews/${encodeURIComponent(options.reviewId)}`,
+    auth.getGatewayOrigin(),
+  );
+  const res = await fetchFn(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(REVIEW_SNAPSHOT_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("review state unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = ReviewSnapshotSchema.safeParse(body);
   if (!parsed.success) {
     throw new Error("review state unavailable");
   }

@@ -1,6 +1,7 @@
 import {
   buildCreateAgentThreadRequestFromComposer,
   type AgentThreadComposerDraft,
+  type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
@@ -24,16 +25,32 @@ interface CodingAgentWorkspaceState {
   reviewsStatus: ReviewStatus;
   reviews: ReviewSummaryList | null;
   reviewsError: string | null;
+  selectedReviewId: string | null;
+  reviewSnapshotStatus: ReviewStatus;
+  reviewSnapshot: ReviewSnapshot | null;
+  reviewSnapshotError: string | null;
   createStatus: CreateStatus;
   createError: string | null;
   activeThreadId: string | null;
   refresh: () => Promise<void>;
+  selectReview: (reviewId: string) => Promise<void>;
   createThread: (draft: AgentThreadComposerDraft) => Promise<string | null>;
 }
 
 let refreshSeq = 0;
 let reviewsSeq = 0;
+let reviewSnapshotSeq = 0;
 let createRequestSeq = 0;
+
+function clearReviewSelectionState() {
+  reviewSnapshotSeq += 1;
+  return {
+    selectedReviewId: null,
+    reviewSnapshotStatus: "idle" as const,
+    reviewSnapshot: null,
+    reviewSnapshotError: null,
+  };
+}
 
 function nextCreateRequestId(): string {
   createRequestSeq += 1;
@@ -47,6 +64,10 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   reviewsStatus: "idle",
   reviews: null,
   reviewsError: null,
+  selectedReviewId: null,
+  reviewSnapshotStatus: "idle",
+  reviewSnapshot: null,
+  reviewSnapshotError: null,
   createStatus: "idle",
   createError: null,
   activeThreadId: null,
@@ -62,7 +83,12 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       if (seq !== refreshSeq) return;
       set({ status: "ready", summary, error: null });
       if (!summary.capabilities.some((capability) => capability.id === "codingAgentsReview" && capability.enabled)) {
-        set({ reviewsStatus: "idle", reviews: null, reviewsError: null });
+        set({
+          reviewsStatus: "idle",
+          reviews: null,
+          reviewsError: null,
+          ...clearReviewSelectionState(),
+        });
         return;
       }
       const reviewSeq = ++reviewsSeq;
@@ -73,16 +99,68 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       try {
         const reviews = await invoke("runtime:get-reviews", {});
         if (reviewSeq !== reviewsSeq) return;
-        set({ reviewsStatus: "ready", reviews, reviewsError: null });
+        set((state) => {
+          const selectedReviewStillPresent = state.selectedReviewId
+            ? reviews.items.some((review) => review.id === state.selectedReviewId)
+            : true;
+          return {
+            reviewsStatus: "ready",
+            reviews,
+            reviewsError: null,
+            ...(selectedReviewStillPresent
+              ? {}
+              : clearReviewSelectionState()),
+          };
+        });
       } catch {
         console.warn("[coding-agents] review summary refresh failed");
         if (reviewSeq !== reviewsSeq) return;
-        set({ reviewsStatus: "error", reviewsError: "Review state unavailable" });
+        set({
+          reviewsStatus: "error",
+          reviewsError: "Review state unavailable",
+          ...clearReviewSelectionState(),
+        });
       }
     } catch {
       console.warn("[coding-agents] summary refresh failed");
       if (seq !== refreshSeq) return;
-      set({ status: "error", error: "Runtime summary unavailable" });
+      set({
+        status: "error",
+        error: "Runtime summary unavailable",
+        reviewsStatus: "idle",
+        reviews: null,
+        reviewsError: null,
+        ...clearReviewSelectionState(),
+      });
+    }
+  },
+
+  selectReview: async (reviewId) => {
+    const seq = ++reviewSnapshotSeq;
+    set((state) => ({
+      selectedReviewId: reviewId,
+      reviewSnapshotStatus: state.reviewSnapshot?.review.id === reviewId ? "ready" : "loading",
+      reviewSnapshotError: null,
+      reviewSnapshot: state.reviewSnapshot?.review.id === reviewId ? state.reviewSnapshot : null,
+    }));
+    try {
+      const snapshot = await invoke("runtime:get-review-snapshot", { reviewId });
+      if (seq !== reviewSnapshotSeq) return;
+      set({
+        selectedReviewId: reviewId,
+        reviewSnapshotStatus: "ready",
+        reviewSnapshot: snapshot,
+        reviewSnapshotError: null,
+      });
+    } catch {
+      console.warn("[coding-agents] review snapshot refresh failed");
+      if (seq !== reviewSnapshotSeq) return;
+      set({
+        selectedReviewId: reviewId,
+        reviewSnapshotStatus: "error",
+        reviewSnapshot: null,
+        reviewSnapshotError: "Review details unavailable",
+      });
     }
   },
 
