@@ -27,6 +27,7 @@ const DEFAULT_FILE_WRITE_LIMIT_BYTES = 64 * 1024;
 const MAX_FILE_ETAG_BYTES = 100 * 1024 * 1024;
 const MAX_FILE_WRITE_LOCKS = 256;
 const MAX_FILE_LIST_LIMIT = 100;
+const MAX_FILE_BROWSE_INSPECTED = 500;
 const MAX_FILE_SEARCH_DIRECTORIES = 512;
 const MAX_FILE_SEARCH_ENTRIES = 2_000;
 const SKIPPED_SEARCH_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", ".expo"]);
@@ -295,7 +296,15 @@ export function createCodingAgentFileStore(options: {
         throw new CodingAgentFileReadError("file_unavailable");
       });
       const entries: FileMetadata[] = [];
+      const inspectBudget = Math.min(MAX_FILE_BROWSE_INSPECTED, Math.max(limit + 1, limit * 10));
+      let inspectedEntries = 0;
+      let hasMore = false;
       for (const name of names.sort((a, b) => a.localeCompare(b, "en"))) {
+        if (inspectedEntries >= inspectBudget) {
+          hasMore = true;
+          break;
+        }
+        inspectedEntries += 1;
         const absolutePath = resolve(targetReal, name);
         const responsePath = pathForResponse(request.path, name);
         if (!responsePath || entries.length > limit) continue;
@@ -310,7 +319,10 @@ export function createCodingAgentFileStore(options: {
             console.warn("[coding-agents] file browse entry skipped");
           }
         }
-        if (entries.length > limit) break;
+        if (entries.length > limit) {
+          hasMore = true;
+          break;
+        }
       }
 
       return FileBrowseResponseSchema.parse({
@@ -321,7 +333,7 @@ export function createCodingAgentFileStore(options: {
         },
         entries: {
           items: entries.slice(0, limit),
-          hasMore: entries.length > limit,
+          hasMore: hasMore || entries.length > limit,
           limit,
         },
       });

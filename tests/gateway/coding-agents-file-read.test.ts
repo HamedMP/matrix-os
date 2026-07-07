@@ -93,6 +93,33 @@ describe("coding agent file read route", () => {
     }
   });
 
+  it("marks browse results partial when skipped entries exhaust the inspect budget", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+    });
+    try {
+      await mkdir(join(harness.worktreeRoot, "skipped"), { recursive: true });
+      await Promise.all(Array.from({ length: 105 }, async (_, index) => {
+        await symlink(
+          join(harness.homePath, `missing-${index}.txt`),
+          join(harness.worktreeRoot, "skipped", `link-${String(index).padStart(4, "0")}.txt`),
+        );
+      }));
+
+      const res = await harness.app.request(
+        `/api/coding-agents/files/browse?projectId=${projectId}&worktreeId=${worktreeId}&path=skipped&limit=10`,
+      );
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.entries.items).toEqual([]);
+      expect(body.entries.hasMore).toBe(true);
+      expect(JSON.stringify(body)).not.toMatch(/\/tmp\/matrix-coding-agent-files|missing-104/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
+    }
+  });
+
   it("searches bounded owner worktree file paths and hides inaccessible worktrees", async () => {
     const ownerHarness = await createRouteHarness({
       ownerIds: [testPrincipal.userId],
