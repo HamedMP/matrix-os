@@ -40,6 +40,8 @@ type FileSaveState =
   | { status: "saved"; error: null }
   | { status: "error"; error: "File could not be saved. Refresh and try again." };
 
+type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
+
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
 
@@ -95,6 +97,10 @@ function safeFindingSummary(summary: string): string {
 
 function safeSnapshotText(value: string, fallback: string): string {
   return SECRET_LIKE_FINDING_TEXT.test(value) ? fallback : value;
+}
+
+function fileReferenceMatches(left: FileReference | null, right: FileReference): boolean {
+  return left?.projectId === right.projectId && left.worktreeId === right.worktreeId && left.path === right.path;
 }
 
 function formatHunkRange(hunk: ReviewSnapshotHunk): string {
@@ -189,9 +195,13 @@ export default function AgentsScreen() {
   const reviewSnapshotGeneration = useRef(0);
   const fileContentGeneration = useRef(0);
   const selectedReviewIdRef = useRef<string | null>(null);
+  const selectedFileReferenceRef = useRef<FileReference | null>(null);
+  const activeFileSaveReferenceRef = useRef<FileReference | null>(null);
 
   const clearFileContent = useCallback(() => {
     fileContentGeneration.current += 1;
+    selectedFileReferenceRef.current = null;
+    activeFileSaveReferenceRef.current = null;
     setFileContentState(INITIAL_FILE_CONTENT_STATE);
     setFileSaveState(INITIAL_FILE_SAVE_STATE);
   }, []);
@@ -246,6 +256,8 @@ export default function AgentsScreen() {
   }, [clearFileContent, client]);
 
   const loadFileContent = useCallback(async (request: FileReadRequest) => {
+    selectedFileReferenceRef.current = request;
+    activeFileSaveReferenceRef.current = null;
     if (!client) {
       setFileContentState({
         status: "error",
@@ -267,6 +279,7 @@ export default function AgentsScreen() {
     const result = await client.getCodingAgentFileContent(request);
     if (generation !== fileContentGeneration.current) return;
     if (result.ok) {
+      selectedFileReferenceRef.current = request;
       setFileContentState({
         status: "ready",
         selectedPath: request.path,
@@ -276,6 +289,7 @@ export default function AgentsScreen() {
       setFileSaveState(INITIAL_FILE_SAVE_STATE);
       return;
     }
+    selectedFileReferenceRef.current = request;
     setFileContentState({
       status: "error",
       selectedPath: request.path,
@@ -289,12 +303,19 @@ export default function AgentsScreen() {
     request: Omit<FileWriteRequest, "encoding" | "clientRequestId">,
   ) => {
     if (!client || fileSaveState.status === "saving") return;
+    activeFileSaveReferenceRef.current = request;
     setFileSaveState({ status: "saving", error: null });
     const result = await client.saveCodingAgentFileContent({
       ...request,
       encoding: "utf8",
       clientRequestId: nextFileSaveRequestId(),
     });
+    if (!fileReferenceMatches(activeFileSaveReferenceRef.current, request)) return;
+    activeFileSaveReferenceRef.current = null;
+    if (!fileReferenceMatches(selectedFileReferenceRef.current, request)) {
+      setFileSaveState(INITIAL_FILE_SAVE_STATE);
+      return;
+    }
     if (!result.ok) {
       setFileSaveState({
         status: "error",
@@ -303,7 +324,7 @@ export default function AgentsScreen() {
       return;
     }
     setFileContentState((current) => {
-      if (current.status !== "ready" || current.selectedPath !== request.path) {
+      if (current.status !== "ready" || !fileReferenceMatches(selectedFileReferenceRef.current, request)) {
         return current;
       }
       return {
@@ -976,6 +997,7 @@ function ReadyFileContentPanel({
   const [draft, setDraft] = useState(file.content);
   const dirty = draft !== file.content;
   const saveDisabled = saveState.status === "saving" || !dirty || file.truncated;
+  const displayPath = safeSnapshotText(file.metadata.path, HIDDEN_FILE_PATH);
 
   return (
     <View style={styles.fileContentPanel}>
@@ -986,7 +1008,7 @@ function ReadyFileContentPanel({
           {file.truncated ? <Text style={styles.fileContentTruncated}>Truncated</Text> : null}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Save file ${file.metadata.path}`}
+            accessibilityLabel={`Save file ${displayPath}`}
             accessibilityState={{ disabled: saveDisabled }}
             disabled={saveDisabled}
             onPress={() => onSave({
@@ -1011,7 +1033,7 @@ function ReadyFileContentPanel({
         </View>
       </View>
       <TextInput
-        accessibilityLabel={`Edit file ${file.metadata.path}`}
+        accessibilityLabel={`Edit file ${displayPath}`}
         multiline
         scrollEnabled={false}
         autoCapitalize="none"
