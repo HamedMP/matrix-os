@@ -984,6 +984,87 @@ describe("AgentsScreen", () => {
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
+  it("ignores stale mobile pull request completions after another review opens the same worktree", async () => {
+    const pullRequestResult = deferred<{
+      ok: true;
+      pullRequest: {
+        status: "created";
+        number: number;
+        url: string;
+        headBranch: string;
+        baseBranch: string;
+        safeMessage: string;
+      };
+    }>();
+    const secondReview = {
+      ...reviewsFixture().items[0],
+      id: "rev_mobile_2",
+      pullRequestNumber: 760,
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    };
+    const reviews = {
+      ...reviewsFixture(),
+      items: [reviewsFixture().items[0], secondReview],
+    };
+    const secondSnapshot = {
+      ...reviewSnapshotFixture(),
+      review: secondReview,
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    };
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture({ sourceControl: true }),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews,
+      }),
+      getCodingAgentReviewSnapshot: jest.fn(({ reviewId }: { reviewId: string }) => Promise.resolve({
+        ok: true,
+        snapshot: reviewId === "rev_mobile_2" ? secondSnapshot : reviewSnapshotFixture(),
+      })),
+      createCodingAgentSourcePullRequest: jest.fn(() => pullRequestResult.promise),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByLabelText("Open review PR #759");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Create pull request for review PR #759"));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #760"));
+    });
+    await screen.findByText("PR #760 review details");
+
+    await act(async () => {
+      pullRequestResult.resolve({
+        ok: true,
+        pullRequest: {
+          status: "created",
+          number: 808,
+          url: "https://github.com/HamedMP/matrix-os/pull/808",
+          headBranch: "feature/review-fix",
+          baseBranch: "main",
+          safeMessage: "Pull request is ready for review.",
+        },
+      });
+      await pullRequestResult.promise;
+    });
+
+    expect(screen.queryByText("Pull request ready")).toBeNull();
+    expect(screen.queryByText(/Pull request could not be created/i)).toBeNull();
+  });
+
   it("ignores stale mobile save completions after another worktree opens the same path", async () => {
     const saveResult = deferred<{ ok: true; file: ReturnType<typeof fileWriteFixture> }>();
     const secondWorktreeFile = {

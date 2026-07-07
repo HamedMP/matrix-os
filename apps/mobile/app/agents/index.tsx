@@ -400,26 +400,26 @@ export default function AgentsScreen() {
   const createSourcePullRequest = useCallback(async (
     request: Omit<SourceControlCreatePullRequestRequest, "clientRequestId">,
   ) => {
-    if (!client || sourcePullRequestState.status === "creating") return;
+    const initiatingReview = reviewSnapshotState.status === "ready" ? reviewSnapshotState.snapshot.review : null;
+    const initiatingReviewId = initiatingReview?.id ?? null;
+    if (!client || sourcePullRequestState.status === "creating" || !initiatingReview || !initiatingReviewId) return;
     setSourcePullRequestState({ status: "creating", error: null });
     const result = await client.createCodingAgentSourcePullRequest({
       ...request,
       clientRequestId: nextSourceCommitRequestId(),
     });
     if (!result.ok) {
+      if (selectedReviewIdRef.current !== initiatingReviewId) return;
       setSourcePullRequestState({
         status: "error",
         error: "Pull request could not be created. Refresh and try again.",
       });
       return;
     }
-    const currentReview = selectedReviewIdRef.current;
-    const selectedReview = reviewSnapshotState.status === "ready" ? reviewSnapshotState.snapshot.review : null;
     if (
-      !currentReview
-      || !selectedReview
-      || selectedReview.projectId !== request.projectId
-      || selectedReview.worktreeId !== request.worktreeId
+      selectedReviewIdRef.current !== initiatingReviewId
+      || initiatingReview.projectId !== request.projectId
+      || initiatingReview.worktreeId !== request.worktreeId
     ) {
       setSourcePullRequestState(INITIAL_SOURCE_PULL_REQUEST_STATE);
       return;

@@ -521,8 +521,10 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   },
 
   createSourcePullRequest: async (request) => {
-    const { sourcePullRequestStatus } = useCodingAgentWorkspace.getState();
+    const { sourcePullRequestStatus, reviewSnapshot } = useCodingAgentWorkspace.getState();
     if (sourcePullRequestStatus === "creating") return;
+    const initiatingReviewId = reviewSnapshot?.review.id ?? null;
+    if (!initiatingReviewId) return;
 
     set({
       sourcePullRequestStatus: "creating",
@@ -538,14 +540,11 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         const selectedReview = state.reviewSnapshot?.review;
         if (
           !selectedReview
+          || selectedReview.id !== initiatingReviewId
           || selectedReview.projectId !== request.projectId
           || selectedReview.worktreeId !== request.worktreeId
         ) {
-          return {
-            sourcePullRequestStatus: "idle",
-            sourcePullRequest: null,
-            sourcePullRequestError: null,
-          };
+          return state;
         }
         return {
           sourcePullRequestStatus: "ready",
@@ -559,6 +558,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         const selectedReview = state.reviewSnapshot?.review;
         if (
           !selectedReview
+          || selectedReview.id !== initiatingReviewId
           || selectedReview.projectId !== request.projectId
           || selectedReview.worktreeId !== request.worktreeId
         ) {
