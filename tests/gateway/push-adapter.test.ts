@@ -52,6 +52,22 @@ describe("Push Notification Adapter", () => {
     expect(adapter.getTokens()).toHaveLength(1);
   });
 
+  it("keeps the same push token registered separately per owner", () => {
+    adapter.registerToken("ExponentPushToken[shared]", "ios", "owner_a");
+    adapter.registerToken("ExponentPushToken[shared]", "ios", "owner_b");
+
+    expect(adapter.getTokens()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ token: "ExponentPushToken[shared]", ownerId: "owner_a" }),
+      expect.objectContaining({ token: "ExponentPushToken[shared]", ownerId: "owner_b" }),
+    ]));
+
+    adapter.removeToken("ExponentPushToken[shared]", "owner_a");
+
+    expect(adapter.getTokens()).toEqual([
+      expect.objectContaining({ token: "ExponentPushToken[shared]", ownerId: "owner_b" }),
+    ]);
+  });
+
   it("stop clears all tokens", async () => {
     adapter.registerToken("token1", "ios");
     await adapter.stop();

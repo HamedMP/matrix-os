@@ -48,6 +48,10 @@ export function createPushAdapter(): ChannelAdapter & {
   const sendTimestamps: number[] = [];
   let messageHandler: (msg: ChannelMessage) => void = () => {};
 
+  function tokenKey(token: string, ownerId: string | undefined): string {
+    return JSON.stringify([ownerId ?? null, token]);
+  }
+
   function isRateLimited(): boolean {
     const now = Date.now();
     const cutoff = now - RATE_LIMIT_WINDOW_MS;
@@ -104,12 +108,17 @@ export function createPushAdapter(): ChannelAdapter & {
     id: "push",
 
     registerToken(token: string, platform: string, ownerId?: string) {
-      tokens.set(token, { token, platform, ownerId, registeredAt: Date.now() });
+      tokens.set(tokenKey(token, ownerId), { token, platform, ownerId, registeredAt: Date.now() });
     },
 
     removeToken(token: string, ownerId?: string) {
-      if (ownerId !== undefined && tokens.get(token)?.ownerId !== ownerId) return;
-      tokens.delete(token);
+      if (ownerId !== undefined) {
+        tokens.delete(tokenKey(token, ownerId));
+        return;
+      }
+      for (const [key, registered] of tokens) {
+        if (registered.token === token) tokens.delete(key);
+      }
     },
 
     getTokens(): PushToken[] {
@@ -132,9 +141,10 @@ export function createPushAdapter(): ChannelAdapter & {
       const allTokens = Array.from(tokens.values())
         .filter((token) => reply.ownerId === undefined || token.ownerId === reply.ownerId)
         .map((t) => t.token);
-      if (allTokens.length === 0) return;
+      const uniqueTokens = Array.from(new Set(allTokens));
+      if (uniqueTokens.length === 0) return;
 
-      await sendPush(allTokens, "Matrix OS", reply.text, safePushData(reply));
+      await sendPush(uniqueTokens, "Matrix OS", reply.text, safePushData(reply));
     },
 
     set onMessage(handler: (msg: ChannelMessage) => void) {
