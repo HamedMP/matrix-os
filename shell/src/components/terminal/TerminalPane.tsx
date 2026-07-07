@@ -111,10 +111,16 @@ function filesFromTerminalFilePayload(payload: DataTransfer | ClipboardEvent["cl
   return Array.from(payload.files ?? []).filter(isSupportedTerminalPasteFile);
 }
 
-function terminalPasteUploadSignal(): AbortSignal | undefined {
-  return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-    ? AbortSignal.timeout(TERMINAL_PASTE_UPLOAD_TIMEOUT_MS)
-    : undefined;
+function terminalPasteUploadTimeout(): { signal: AbortSignal; cleanup: () => void } {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return { signal: AbortSignal.timeout(TERMINAL_PASTE_UPLOAD_TIMEOUT_MS), cleanup: () => {} };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TERMINAL_PASTE_UPLOAD_TIMEOUT_MS);
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timeout),
+  };
 }
 
 function splitBracketedPastePayload(parts: string[]): string[] {
@@ -626,6 +632,7 @@ export function TerminalPane({
         if (!mimeType) {
           continue;
         }
+        const uploadTimeout = terminalPasteUploadTimeout();
         try {
           const headers: Record<string, string> = {
             "Content-Type": mimeType,
@@ -640,7 +647,7 @@ export function TerminalPane({
             method: "POST",
             credentials: "same-origin",
             headers,
-            signal: terminalPasteUploadSignal(),
+            signal: uploadTimeout.signal,
             body: file,
           });
           if (!res.ok) {
@@ -653,6 +660,8 @@ export function TerminalPane({
           }
         } catch (err: unknown) {
           console.warn("Terminal paste upload failed:", err instanceof Error ? err.message : err);
+        } finally {
+          uploadTimeout.cleanup();
         }
       }
       if (terminalPaths.length > 0) {
