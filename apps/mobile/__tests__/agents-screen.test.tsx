@@ -727,6 +727,119 @@ describe("AgentsScreen", () => {
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
+  it("browses and searches review workspace files through the mobile gateway client", async () => {
+    const browse = {
+      directory: {
+        path: "packages",
+        kind: "directory",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      entries: {
+        items: [
+          {
+            path: "packages/gateway",
+            kind: "directory",
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+          {
+            path: "packages/README.md",
+            kind: "file",
+            sizeBytes: 24,
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    const search = {
+      matches: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            kind: "file",
+            sizeBytes: 37,
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture({ files: true }),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotFixture(),
+      }),
+      browseCodingAgentFiles: jest.fn().mockResolvedValue({
+        ok: true,
+        browse,
+      }),
+      searchCodingAgentFiles: jest.fn().mockResolvedValue({
+        ok: true,
+        search,
+      }),
+      getCodingAgentFileContent: jest.fn().mockResolvedValue({
+        ok: true,
+        file: fileReadFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByLabelText("Open review PR #759");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+    await screen.findByText("PR #759 review details");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Browse workspace files for review PR #759"));
+    });
+
+    expect(await screen.findByText("packages/gateway")).toBeTruthy();
+    expect(client.browseCodingAgentFiles).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_mobile_1",
+      limit: 20,
+    });
+
+    await act(async () => {
+      fireEvent.changeText(screen.getByLabelText("Search review workspace files"), "routes");
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Run review workspace file search"));
+    });
+
+    expect((await screen.findAllByText("packages/gateway/src/coding-agents/routes.ts")).length).toBeGreaterThanOrEqual(2);
+    expect(client.searchCodingAgentFiles).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_mobile_1",
+      query: "routes",
+      limit: 20,
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open file packages/gateway/src/coding-agents/routes.ts from search results"));
+    });
+    expect(client.getCodingAgentFileContent).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_mobile_1",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    });
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
   it("saves edited file content through the mobile gateway client without exposing credentials", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({

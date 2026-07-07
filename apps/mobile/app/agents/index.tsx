@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, TextInp
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { FileReadRequest, FileReadResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
+import type { FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -53,6 +53,7 @@ type SourcePullRequestState =
   | { status: "error"; error: "Pull request could not be created. Refresh and try again." };
 
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
+type FileBrowserStatus = "idle" | "loading" | "ready" | "error";
 
 type ReviewSnapshotHunk = ReviewSnapshot["files"]["items"][number]["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
@@ -933,6 +934,14 @@ function ReviewSnapshotPanel({
       {state.snapshot.safeNotice ? (
         <Text style={styles.reviewDetailNotice}>{safeSnapshotText(state.snapshot.safeNotice, HIDDEN_REVIEW_NOTICE)}</Text>
       ) : null}
+      {canReadFiles ? (
+        <ReviewFileBrowserPanel
+          key={`${state.snapshot.review.projectId}:${state.snapshot.review.worktreeId}:${state.snapshot.review.id}:${state.snapshot.updatedAt}`}
+          snapshot={state.snapshot}
+          canReadFiles={canReadFiles}
+          onOpenFile={onOpenFile}
+        />
+      ) : null}
       {state.snapshot.files.items.map((file, fileIndex) => (
         <ReviewSnapshotFileRow
           key={`${file.path}:${fileIndex}`}
@@ -978,6 +987,192 @@ function ReviewSnapshotPanel({
           <Text style={styles.reviewFollowUpText}>Ask agent about selected hunk</Text>
         </Pressable>
       ) : null}
+    </View>
+  );
+}
+
+function ReviewFileBrowserPanel({
+  snapshot,
+  canReadFiles,
+  onOpenFile,
+}: {
+  snapshot: ReviewSnapshot;
+  canReadFiles: boolean;
+  onOpenFile: (request: FileReadRequest) => void;
+}) {
+  const { theme } = useUnistyles();
+  const { client } = useGateway();
+  const [browseStatus, setBrowseStatus] = useState<FileBrowserStatus>("idle");
+  const [browse, setBrowse] = useState<FileBrowseResponse | null>(null);
+  const [browseError, setBrowseError] = useState<"File list unavailable" | null>(null);
+  const [searchStatus, setSearchStatus] = useState<FileBrowserStatus>("idle");
+  const [searchResult, setSearchResult] = useState<FileSearchResponse | null>(null);
+  const [searchError, setSearchError] = useState<"File search unavailable" | null>(null);
+  const [query, setQuery] = useState("");
+  const projectId = snapshot.review.projectId;
+  const worktreeId = snapshot.review.worktreeId;
+
+  const loadBrowse = useCallback(async (path?: string) => {
+    if (!client) {
+      setBrowseStatus("error");
+      setBrowse(null);
+      setBrowseError("File list unavailable");
+      return;
+    }
+    setBrowseStatus("loading");
+    setBrowseError(null);
+    let result;
+    try {
+      result = await client.browseCodingAgentFiles({
+        projectId,
+        worktreeId,
+        ...(path ? { path } : {}),
+        limit: 20,
+      });
+    } catch {
+      setBrowseStatus("error");
+      setBrowse(null);
+      setBrowseError("File list unavailable");
+      return;
+    }
+    if (!result.ok) {
+      setBrowseStatus("error");
+      setBrowse(null);
+      setBrowseError("File list unavailable");
+      return;
+    }
+    setBrowseStatus("ready");
+    setBrowse(result.browse);
+  }, [client, projectId, worktreeId]);
+
+  const runSearch = useCallback(async () => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    if (!client) {
+      setSearchStatus("error");
+      setSearchResult(null);
+      setSearchError("File search unavailable");
+      return;
+    }
+    setSearchStatus("loading");
+    setSearchError(null);
+    let result;
+    try {
+      result = await client.searchCodingAgentFiles({
+        projectId,
+        worktreeId,
+        query: trimmed,
+        limit: 20,
+      });
+    } catch {
+      setSearchStatus("error");
+      setSearchResult(null);
+      setSearchError("File search unavailable");
+      return;
+    }
+    if (!result.ok) {
+      setSearchStatus("error");
+      setSearchResult(null);
+      setSearchError("File search unavailable");
+      return;
+    }
+    setSearchStatus("ready");
+    setSearchResult(result.search);
+  }, [client, projectId, query, worktreeId]);
+
+  const renderEntry = (
+    entry: FileBrowseResponse["entries"]["items"][number],
+    source: "file browser" | "search results",
+  ) => {
+    const isDirectory = entry.kind === "directory";
+    const isFile = entry.kind === "file";
+    return (
+      <View key={`${source}:${entry.path}`} style={styles.fileBrowserRow}>
+        <View style={styles.rowIcon}>
+          <Ionicons
+            name={isDirectory ? "folder-open-outline" : "document-text-outline"}
+            size={17}
+            color={theme.colors.moss}
+          />
+        </View>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle}>{entry.path}</Text>
+          <Text style={styles.rowSubtitle}>{entry.kind}</Text>
+        </View>
+        {isDirectory ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Open directory ${entry.path}`}
+            onPress={() => void loadBrowse(entry.path)}
+            style={styles.fileBrowserSmallButton}
+          >
+            <Text style={styles.fileBrowserSmallButtonText}>Open</Text>
+          </Pressable>
+        ) : null}
+        {canReadFiles && isFile ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Open file ${entry.path} from ${source}`}
+            onPress={() => onOpenFile({ projectId, worktreeId, path: entry.path })}
+            style={styles.fileBrowserSmallButton}
+          >
+            <Text style={styles.fileBrowserSmallButtonText}>Open</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.fileBrowserPanel}>
+      <View style={styles.reviewDetailHeader}>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle}>File browser</Text>
+          <Text style={styles.rowSubtitle}>{`${projectId} / ${worktreeId}`}</Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Browse workspace files for review PR #${snapshot.review.pullRequestNumber}`}
+          accessibilityState={{ disabled: browseStatus === "loading" }}
+          disabled={browseStatus === "loading"}
+          onPress={() => void loadBrowse()}
+          style={[
+            styles.reviewFileOpenButton,
+            browseStatus === "loading" ? styles.fileContentSaveButtonDisabled : null,
+          ]}
+        >
+          <Ionicons name="folder-open-outline" size={15} color={theme.colors.background} />
+          <Text style={styles.reviewFileOpenText}>{browseStatus === "loading" ? "Loading" : "Browse files"}</Text>
+        </Pressable>
+      </View>
+      <View style={styles.fileBrowserSearchRow}>
+        <TextInput
+          accessibilityLabel="Search review workspace files"
+          value={query}
+          onChangeText={(value) => setQuery(value.slice(0, 80))}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={styles.fileBrowserSearchInput}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Run review workspace file search"
+          accessibilityState={{ disabled: !query.trim() || searchStatus === "loading" }}
+          disabled={!query.trim() || searchStatus === "loading"}
+          onPress={() => void runSearch()}
+          style={[
+            styles.fileBrowserSearchButton,
+            !query.trim() || searchStatus === "loading" ? styles.fileContentSaveButtonDisabled : null,
+          ]}
+        >
+          <Ionicons name="search-outline" size={15} color={theme.colors.background} />
+          <Text style={styles.reviewFileOpenText}>{searchStatus === "loading" ? "Searching" : "Search"}</Text>
+        </Pressable>
+      </View>
+      {browseStatus === "error" ? <Text style={styles.fileContentError}>{browseError}</Text> : null}
+      {browse?.entries.items.map((entry) => renderEntry(entry, "file browser"))}
+      {searchStatus === "error" ? <Text style={styles.fileContentError}>{searchError}</Text> : null}
+      {searchResult?.matches.items.map((entry) => renderEntry(entry, "search results"))}
     </View>
   );
 }
@@ -1530,6 +1725,67 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 12,
     color: theme.colors.background,
+  },
+  fileBrowserPanel: {
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.secondary,
+    padding: theme.spacing.sm,
+    gap: theme.spacing.sm,
+  },
+  fileBrowserRow: {
+    minHeight: 48,
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.sm,
+  },
+  fileBrowserSmallButton: {
+    minHeight: 30,
+    borderRadius: 15,
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing.sm,
+    backgroundColor: theme.colors.forest,
+  },
+  fileBrowserSmallButtonText: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.background,
+  },
+  fileBrowserSearchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.sm,
+  },
+  fileBrowserSearchInput: {
+    minHeight: 38,
+    flex: 1,
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.sm,
+    fontFamily: theme.fonts.sans,
+    fontSize: 14,
+    color: theme.colors.foreground,
+    backgroundColor: theme.colors.card,
+  },
+  fileBrowserSearchButton: {
+    minHeight: 38,
+    borderRadius: 19,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.md,
+    backgroundColor: theme.colors.forest,
   },
   fileContentPanel: {
     borderRadius: 12,
