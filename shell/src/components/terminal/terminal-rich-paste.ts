@@ -30,6 +30,11 @@ type ClipboardDataLike = {
   files?: ArrayLike<Blob>;
 };
 
+type ClipboardImageBlob = {
+  blob: Blob;
+  type: string;
+};
+
 export function bracketTerminalPaste(text: string): string {
   const safe = text.replace(/\x1b\[20[01]~/g, "");
   const capped = safe.slice(0, MAX_TERMINAL_INPUT - BRACKETED_PASTE_OVERHEAD);
@@ -152,7 +157,7 @@ export async function readClipboardDataImagePaths(input: {
     return [];
   }
 
-  const paths: string[] = [];
+  const images: ClipboardImageBlob[] = [];
   for (const item of Array.from(data.items ?? [])) {
     if (!extensionForMime(item.type)) {
       continue;
@@ -161,18 +166,18 @@ export async function readClipboardDataImagePaths(input: {
     if (!blob) {
       continue;
     }
-    const path = await uploadImageBlob({ gatewayUrl: input.gatewayUrl, blob, type: item.type || blob.type });
-    if (path) {
-      paths.push(path);
+    images.push({ blob, type: item.type || blob.type });
+  }
+
+  if (images.length === 0) {
+    for (const file of Array.from(data.files ?? [])) {
+      images.push({ blob: file, type: file.type });
     }
   }
 
-  if (paths.length > 0) {
-    return paths;
-  }
-
-  for (const file of Array.from(data.files ?? [])) {
-    const path = await uploadImageBlob({ gatewayUrl: input.gatewayUrl, blob: file, type: file.type });
+  const paths: string[] = [];
+  for (const image of images) {
+    const path = await uploadImageBlob({ gatewayUrl: input.gatewayUrl, blob: image.blob, type: image.type });
     if (path) {
       paths.push(path);
     }

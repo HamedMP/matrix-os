@@ -67,6 +67,54 @@ describe("terminal rich clipboard paste", () => {
     expect(sent.data).toContain(".png");
   });
 
+  it("captures all paste event image blobs before awaiting uploads", async () => {
+    vi.stubGlobal("WebSocket", { OPEN: 1 });
+    const firstBlob = new Blob(["first image"], { type: "image/png" });
+    const secondBlob = new Blob(["second image"], { type: "image/png" });
+    let protectedMode = false;
+    const fetchMock = vi.fn(async () => {
+      protectedMode = true;
+      return { ok: true };
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    const clipboardData = {
+      items: [
+        {
+          kind: "file",
+          type: "image/png",
+          getAsFile: vi.fn(() => firstBlob),
+        },
+        {
+          kind: "file",
+          type: "image/png",
+          getAsFile: vi.fn(() => (protectedMode ? null : secondBlob)),
+        },
+      ],
+      files: [],
+    };
+    const ws = { readyState: 1, send: vi.fn() };
+
+    await expect(pasteClipboardDataIntoTerminal({
+      clipboardData,
+      gatewayUrl: "https://gateway.example",
+      ws,
+    })).resolves.toBe("image");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(/^https:\/\/gateway\.example\/api\/files\/blob\?path=data%2Fterminal-paste%2Fpaste-/),
+      expect.objectContaining({ body: firstBlob }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/^https:\/\/gateway\.example\/api\/files\/blob\?path=data%2Fterminal-paste%2Fpaste-/),
+      expect.objectContaining({ body: secondBlob }),
+    );
+    const sent = JSON.parse(ws.send.mock.calls[0]![0]);
+    expect(sent.data).toContain("Screenshots attached:");
+  });
+
   it("uploads clipboard images and pastes their Matrix file path", async () => {
     vi.stubGlobal("WebSocket", { OPEN: 1 });
     const fetchMock = vi.fn(async () => ({ ok: true })) as unknown as typeof fetch;
