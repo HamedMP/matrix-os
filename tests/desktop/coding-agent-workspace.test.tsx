@@ -399,6 +399,65 @@ function inputAnsweredThreadSnapshotFixture() {
   };
 }
 
+function multiInputRequestedThreadSnapshotFixture() {
+  const base = inputRequestedThreadSnapshotFixture();
+  return {
+    ...base,
+    events: {
+      ...base.events,
+      items: [
+        ...base.events.items,
+        {
+          type: "user_input.requested",
+          eventId: "evt_input_desktop_2",
+          threadId: "thread_alpha",
+          occurredAt: "2026-07-06T00:06:30.000Z",
+          request: {
+            requestId: "req_input_desktop_2",
+            threadId: "thread_alpha",
+            title: "Clarify review",
+            safeDescription: "Which review should be checked next?",
+            placeholder: "Describe the review",
+            required: true,
+            correlationId: "corr_input_desktop_2",
+          },
+        },
+      ],
+    },
+  };
+}
+
+function multiInputAnsweredThreadSnapshotFixture(inputRequestId: string, correlationId: string) {
+  const base = multiInputRequestedThreadSnapshotFixture();
+  return {
+    ...base,
+    thread: {
+      ...base.thread,
+      status: "running",
+      attention: "none",
+      updatedAt: inputRequestId === "req_input_desktop_2"
+        ? "2026-07-06T00:08:00.000Z"
+        : "2026-07-06T00:07:00.000Z",
+    },
+    events: {
+      ...base.events,
+      items: [
+        ...base.events.items,
+        {
+          type: "user_input.answered",
+          eventId: `evt_${inputRequestId}_answered`,
+          threadId: "thread_alpha",
+          occurredAt: inputRequestId === "req_input_desktop_2"
+            ? "2026-07-06T00:08:00.000Z"
+            : "2026-07-06T00:07:00.000Z",
+          requestId: inputRequestId,
+          correlationId,
+        },
+      ],
+    },
+  };
+}
+
 describe("AgentWorkspace", () => {
   beforeEach(() => {
     useCodingAgentWorkspace.setState({
@@ -425,6 +484,8 @@ describe("AgentWorkspace", () => {
       inputActionStatus: "idle",
       pendingInputRequestId: null,
       inputActionError: null,
+      pendingInputRequestKeys: [],
+      inputActionErrors: {},
       activeThreadId: null,
     });
     useConnection.setState({
@@ -696,6 +757,73 @@ describe("AgentWorkspace", () => {
       });
     });
     expect(await screen.findByText("Input answered")).toBeTruthy();
+    expect(screen.queryByLabelText(/answer clarify failure/i)).toBeNull();
+  });
+
+  it("shows input submission errors only on the failed input row", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    window.operator.invoke = vi.fn((channel: string, payload?: { inputRequestId?: string }) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(multiInputRequestedThreadSnapshotFixture());
+      if (channel === "runtime:submit-input-answer" && payload?.inputRequestId === "req_input_desktop_1") {
+        return Promise.reject(new Error("provider leaked /home/matrix"));
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    const firstInput = await screen.findByLabelText(/answer clarify failure/i);
+    fireEvent.change(firstInput, { target: { value: "Run workspace tests." } });
+    fireEvent.click(screen.getByRole("button", { name: /send clarify failure/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Input could not be sent. Try again.")).toHaveLength(1);
+    });
+  });
+
+  it("keeps independent input prompts actionable while another prompt is pending", async () => {
+    useCodingAgentWorkspace.setState({ activeThreadId: "thread_alpha" });
+    let resolveFirstInput: ((snapshot: ReturnType<typeof multiInputAnsweredThreadSnapshotFixture>) => void) | null = null;
+    window.operator.invoke = vi.fn((channel: string, payload?: { inputRequestId?: string }) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(multiInputRequestedThreadSnapshotFixture());
+      if (channel === "runtime:submit-input-answer" && payload?.inputRequestId === "req_input_desktop_1") {
+        return new Promise((resolve) => {
+          resolveFirstInput = resolve;
+        });
+      }
+      if (channel === "runtime:submit-input-answer" && payload?.inputRequestId === "req_input_desktop_2") {
+        return Promise.resolve(multiInputAnsweredThreadSnapshotFixture("req_input_desktop_2", "corr_input_desktop_2"));
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    fireEvent.change(await screen.findByLabelText(/answer clarify failure/i), { target: { value: "Run workspace tests." } });
+    fireEvent.change(await screen.findByLabelText(/answer clarify review/i), { target: { value: "Check review summary." } });
+    const firstSend = screen.getByRole("button", { name: /send clarify failure/i });
+    const secondSend = screen.getByRole("button", { name: /send clarify review/i });
+    fireEvent.click(firstSend);
+    await waitFor(() => expect((firstSend as HTMLButtonElement).disabled).toBe(true));
+    expect((secondSend as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(secondSend);
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:submit-input-answer", expect.objectContaining({
+        inputRequestId: "req_input_desktop_2",
+      }));
+    });
+    await screen.findByText("Input answered");
+    expect(screen.queryByLabelText(/answer clarify review/i)).toBeNull();
+    await act(async () => {
+      resolveFirstInput?.(multiInputAnsweredThreadSnapshotFixture("req_input_desktop_1", "corr_input_desktop_1"));
+      await Promise.resolve();
+    });
+    expect(screen.queryByLabelText(/answer clarify review/i)).toBeNull();
   });
 
   it("clears selected thread details when the refreshed summary no longer includes the thread", async () => {
