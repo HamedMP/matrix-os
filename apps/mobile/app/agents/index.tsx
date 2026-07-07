@@ -395,6 +395,10 @@ export default function AgentsScreen() {
         })}
       </Section>
 
+      {capabilityEnabled(summary, "codingAgentsPreview") ? (
+        <PreviewSection summary={summary} />
+      ) : null}
+
       <Section title="Terminals" count={summary.terminalSessions.items.length}>
         {summary.terminalSessions.items.length === 0 ? <EmptyText>No terminal sessions.</EmptyText> : null}
         {summary.terminalSessions.items.map((session) => (
@@ -420,6 +424,29 @@ export default function AgentsScreen() {
         />
       ) : null}
     </ScrollView>
+  );
+}
+
+function PreviewSection({ summary }: { summary: RuntimeSummary }) {
+  const { theme } = useUnistyles();
+  const previews = summary.previewSessions ?? { items: [], hasMore: false, limit: 50 };
+
+  return (
+    <Section title="Previews" count={previews.items.length}>
+      {previews.items.length === 0 ? <EmptyText>No previews.</EmptyText> : null}
+      {previews.items.map((preview) => (
+        <View key={preview.id} style={styles.row}>
+          <View style={styles.rowIcon}>
+            <Ionicons name="browsers-outline" size={18} color={theme.colors.moss} />
+          </View>
+          <View style={styles.rowText}>
+            <Text style={styles.rowTitle}>{preview.label}</Text>
+            <Text style={styles.rowSubtitle}>{preview.origin ?? "No local origin"}</Text>
+          </View>
+          <Text style={styles.rowMeta}>{preview.status}</Text>
+        </View>
+      ))}
+    </Section>
   );
 }
 

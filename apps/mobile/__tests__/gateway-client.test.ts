@@ -260,6 +260,11 @@ describe("GatewayClient", () => {
         limit: 20,
         hasMore: false,
       },
+      previewSessions: {
+        items: [],
+        limit: 50,
+        hasMore: false,
+      },
       recentActivity: {
         items: [],
         limit: 20,
