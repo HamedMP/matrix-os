@@ -28,6 +28,8 @@ type ReviewSnapshotState =
   | { status: "ready"; selectedReviewId: string; snapshot: ReviewSnapshot; error: null }
   | { status: "error"; selectedReviewId: string; snapshot: null; error: "Review details unavailable" };
 
+type SelectedReviewHunk = { reviewId: string; snapshotKey: string; key: string };
+
 const INITIAL_REVIEW_SNAPSHOT_STATE: ReviewSnapshotState = {
   status: "idle",
   selectedReviewId: null,
@@ -51,6 +53,25 @@ function safeFindingSummary(summary: string): string {
 
 function safeSnapshotText(value: string, fallback: string): string {
   return SECRET_LIKE_FINDING_TEXT.test(value) ? fallback : value;
+}
+
+function formatHunkRange(hunk: ReviewSnapshot["files"]["items"][number]["hunks"][number]): string {
+  return `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+}
+
+function reviewSnapshotSelectionKey(snapshot: ReviewSnapshot): string {
+  return [
+    snapshot.updatedAt,
+    snapshot.files.items.length,
+    snapshot.files.items.map((file) => [
+      file.path,
+      file.status,
+      file.additions,
+      file.deletions,
+      file.partial ? "partial" : "complete",
+      file.hunks.map((hunk) => `${hunk.id}:${hunk.oldStart}:${hunk.oldLines}:${hunk.newStart}:${hunk.newLines}:${hunk.partial ? "partial" : "complete"}`).join("|"),
+    ].join(":")).join("\u0001"),
+  ].join("\u0002");
 }
 
 export default function AgentsScreen() {
@@ -342,7 +363,8 @@ function ReviewSection({
 }
 
 function ReviewSnapshotPanel({ state }: { state: ReviewSnapshotState }) {
-  const { theme } = useUnistyles();
+  const [selectedHunk, setSelectedHunk] = useState<SelectedReviewHunk | null>(null);
+
   if (state.status === "idle") return null;
   if (state.status === "loading") {
     return <Text style={styles.reviewDetailNotice}>Loading review details...</Text>;
@@ -350,6 +372,8 @@ function ReviewSnapshotPanel({ state }: { state: ReviewSnapshotState }) {
   if (state.status === "error") {
     return <Text style={styles.reviewError}>{state.error}</Text>;
   }
+
+  const snapshotKey = reviewSnapshotSelectionKey(state.snapshot);
 
   return (
     <View style={styles.reviewDetailPanel}>
@@ -364,38 +388,99 @@ function ReviewSnapshotPanel({ state }: { state: ReviewSnapshotState }) {
         <Text style={styles.reviewDetailNotice}>{safeSnapshotText(state.snapshot.safeNotice, HIDDEN_REVIEW_NOTICE)}</Text>
       ) : null}
       {state.snapshot.files.items.map((file, fileIndex) => (
-        <View key={`${file.path}:${fileIndex}`} style={styles.reviewFileRow}>
-          <View style={styles.reviewDetailHeader}>
-            <View style={styles.rowIcon}>
-              <Ionicons name="document-text-outline" size={17} color={theme.colors.moss} />
-            </View>
-            <View style={styles.rowText}>
-              <Text
-                selectable={!SECRET_LIKE_FINDING_TEXT.test(file.path)}
-                style={styles.rowTitle}
-              >
-                {safeSnapshotText(file.path, HIDDEN_FILE_PATH)}
-              </Text>
-              <Text style={styles.rowSubtitle}>{file.status}</Text>
-            </View>
-          </View>
-          {file.findings?.length ? (
-            file.findings.map((finding, findingIndex) => (
-              <Text
-                key={`${finding.id}:${finding.line}:${findingIndex}`}
+        <ReviewSnapshotFileRow
+          key={`${file.path}:${fileIndex}`}
+          file={file}
+          fileIndex={fileIndex}
+          selectedReviewId={state.selectedReviewId}
+          snapshotKey={snapshotKey}
+          selectedHunk={selectedHunk}
+          onSelectHunk={setSelectedHunk}
+        />
+      ))}
+    </View>
+  );
+}
+
+function ReviewSnapshotFileRow({
+  file,
+  fileIndex,
+  selectedReviewId,
+  snapshotKey,
+  selectedHunk,
+  onSelectHunk,
+}: {
+  file: ReviewSnapshot["files"]["items"][number];
+  fileIndex: number;
+  selectedReviewId: string;
+  snapshotKey: string;
+  selectedHunk: SelectedReviewHunk | null;
+  onSelectHunk: (hunk: SelectedReviewHunk) => void;
+}) {
+  const { theme } = useUnistyles();
+  const displayPath = safeSnapshotText(file.path, HIDDEN_FILE_PATH);
+
+  return (
+    <View style={styles.reviewFileRow}>
+      <View style={styles.reviewDetailHeader}>
+        <View style={styles.rowIcon}>
+          <Ionicons name="document-text-outline" size={17} color={theme.colors.moss} />
+        </View>
+        <View style={styles.rowText}>
+          <Text
+            selectable={!SECRET_LIKE_FINDING_TEXT.test(file.path)}
+            style={styles.rowTitle}
+          >
+            {displayPath}
+          </Text>
+          <Text style={styles.rowSubtitle}>{file.status}</Text>
+        </View>
+      </View>
+      <View style={styles.reviewFileStats}>
+        <Text style={styles.reviewAdditionBadge}>{`+${file.additions}`}</Text>
+        <Text style={styles.reviewDeletionBadge}>{`-${file.deletions}`}</Text>
+        {file.partial ? <Text style={styles.reviewPartialBadge}>Partial file</Text> : null}
+      </View>
+      {file.findings?.length ? (
+        file.findings.map((finding, findingIndex) => (
+          <Text
+            key={`${finding.id}:${finding.line}:${findingIndex}`}
+            style={[
+              styles.reviewFinding,
+              finding.severity === "high" ? styles.reviewHighActive : null,
+            ]}
+          >
+            {safeFindingSummary(finding.summary)}
+          </Text>
+        ))
+      ) : (
+        <Text style={styles.rowSubtitle}>No findings in this file.</Text>
+      )}
+      {file.hunks.length ? (
+        <View style={styles.reviewHunks}>
+          {file.hunks.map((hunk, hunkIndex) => {
+            const hunkKey = `${fileIndex}\u0000${file.path}\u0000${hunk.id}\u0000${hunkIndex}`;
+            const selected = selectedHunk?.reviewId === selectedReviewId && selectedHunk.snapshotKey === snapshotKey && selectedHunk.key === hunkKey;
+            return (
+              <Pressable
+                key={`${file.path}:${fileIndex}:${hunk.id}:${hunkIndex}`}
+                accessibilityRole="button"
+                accessibilityLabel={`Select hunk ${hunkIndex + 1} in ${displayPath}`}
+                accessibilityState={{ selected }}
+                onPress={() => onSelectHunk({ reviewId: selectedReviewId, snapshotKey, key: hunkKey })}
                 style={[
-                  styles.reviewFinding,
-                  finding.severity === "high" ? styles.reviewHighActive : null,
+                  styles.reviewHunkRow,
+                  selected ? styles.selectedReviewHunkRow : null,
                 ]}
               >
-                {safeFindingSummary(finding.summary)}
-              </Text>
-            ))
-          ) : (
-            <Text style={styles.rowSubtitle}>No findings in this file.</Text>
-          )}
+                <Text style={styles.reviewHunkLabel}>{`Hunk ${hunkIndex + 1}`}</Text>
+                <Text style={styles.reviewHunkRange}>{formatHunkRange(hunk)}</Text>
+                {hunk.partial ? <Text style={styles.reviewHunkPartial}>Partial hunk</Text> : null}
+              </Pressable>
+            );
+          })}
         </View>
-      ))}
+      ) : null}
     </View>
   );
 }
@@ -635,6 +720,75 @@ const styles = StyleSheet.create((theme, rt) => ({
   reviewFinding: {
     fontFamily: theme.fonts.sans,
     fontSize: 12,
+    color: theme.colors.mutedForeground,
+  },
+  reviewFileStats: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: theme.spacing.xs,
+  },
+  reviewAdditionBadge: {
+    borderRadius: 10,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 3,
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.forest,
+  },
+  reviewDeletionBadge: {
+    borderRadius: 10,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 3,
+    fontFamily: theme.fonts.mono,
+    fontSize: 11,
+    color: theme.colors.destructive,
+  },
+  reviewPartialBadge: {
+    borderRadius: 10,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 3,
+    fontFamily: theme.fonts.sansMedium,
+    fontSize: 11,
+    color: theme.colors.mutedForeground,
+  },
+  reviewHunks: {
+    gap: theme.spacing.xs,
+  },
+  reviewHunkRow: {
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    padding: theme.spacing.sm,
+    gap: 2,
+  },
+  selectedReviewHunkRow: {
+    borderColor: theme.colors.forest,
+    backgroundColor: theme.colors.background,
+  },
+  reviewHunkLabel: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
+  },
+  reviewHunkRange: {
+    fontFamily: theme.fonts.mono,
+    fontSize: 12,
+    color: theme.colors.foreground,
+  },
+  reviewHunkPartial: {
+    fontFamily: theme.fonts.sans,
+    fontSize: 11,
     color: theme.colors.mutedForeground,
   },
   emptyText: {

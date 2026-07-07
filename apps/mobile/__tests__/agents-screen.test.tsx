@@ -179,6 +179,62 @@ function reviewSnapshotWithFinding(summary: string) {
   };
 }
 
+function reviewSnapshotWithHunks() {
+  const snapshot = reviewSnapshotFixture();
+  return {
+    ...snapshot,
+    files: {
+      ...snapshot.files,
+      items: snapshot.files.items.map((file) => ({
+        ...file,
+        additions: 12,
+        deletions: 4,
+        hunks: [
+          {
+            id: "hunk_rev_mobile_1_0_0",
+            oldStart: 42,
+            oldLines: 3,
+            newStart: 45,
+            newLines: 5,
+            partial: true,
+          },
+          {
+            id: "hunk_rev_mobile_1_0_1",
+            oldStart: 88,
+            oldLines: 1,
+            newStart: 93,
+            newLines: 2,
+            partial: false,
+          },
+        ],
+      })),
+    },
+  };
+}
+
+function reviewSnapshotWithChangedHunks() {
+  const snapshot = reviewSnapshotWithHunks();
+  return {
+    ...snapshot,
+    files: {
+      ...snapshot.files,
+      items: snapshot.files.items.map((file) => ({
+        ...file,
+        hunks: file.hunks.map((hunk, hunkIndex) => hunkIndex === 1
+          ? {
+              ...hunk,
+              oldStart: 120,
+              oldLines: 4,
+              newStart: 130,
+              newLines: 6,
+            }
+          : hunk),
+      })),
+    },
+    updatedAt: "2026-07-06T00:04:00.000Z",
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((promiseResolve) => {
@@ -274,6 +330,96 @@ describe("AgentsScreen", () => {
     expect(screen.getByText("Validate ownership before returning snapshots.")).toBeTruthy();
     expect(screen.getByText("Diff content is not available yet. Showing bounded review findings.")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("renders selectable review hunk metadata without raw diff contents", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotWithHunks(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+
+    expect(await screen.findByText("packages/gateway/src/coding-agents/routes.ts")).toBeTruthy();
+    expect(screen.getByText("+12")).toBeTruthy();
+    expect(screen.getByText("-4")).toBeTruthy();
+    expect(screen.getByText("@@ -42,3 +45,5 @@")).toBeTruthy();
+    expect(screen.getByText("@@ -88,1 +93,2 @@")).toBeTruthy();
+    expect(screen.getByText("Partial hunk")).toBeTruthy();
+
+    const hunk = screen.getByLabelText("Select hunk 2 in packages/gateway/src/coding-agents/routes.ts");
+    await act(async () => {
+      fireEvent.press(hunk);
+    });
+
+    expect(hunk.props.accessibilityState?.selected).toBe(true);
+    expect(screen.queryByText(/export const|function create|raw diff/i)).toBeNull();
+  });
+
+  it("clears selected hunk state when a selected review snapshot refreshes", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: reviewSnapshotWithHunks(),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: reviewSnapshotWithChangedHunks(),
+        }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review PR #759"));
+    });
+
+    const selectedBeforeRefresh = screen.getByLabelText("Select hunk 2 in packages/gateway/src/coding-agents/routes.ts");
+    await act(async () => {
+      fireEvent.press(selectedBeforeRefresh);
+    });
+    expect(selectedBeforeRefresh.props.accessibilityState?.selected).toBe(true);
+
+    await act(async () => {
+      screen.getByLabelText("Refresh agent workspace").props.refreshControl.props.onRefresh();
+    });
+
+    expect(await screen.findByText("@@ -120,4 +130,6 @@")).toBeTruthy();
+    const refreshedHunk = screen.getByLabelText("Select hunk 2 in packages/gateway/src/coding-agents/routes.ts");
+    expect(refreshedHunk.props.accessibilityState?.selected).toBe(false);
   });
 
   it("renders a generic review error without dropping the runtime summary", async () => {
