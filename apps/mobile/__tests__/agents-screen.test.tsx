@@ -16,6 +16,7 @@ jest.mock("expo-router", () => ({
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { Linking } from "react-native";
 import AgentsScreen from "../app/agents";
 import { useGateway } from "@/app/_layout";
 import type { GatewayClient } from "../lib/gateway-client";
@@ -1041,6 +1042,7 @@ describe("AgentsScreen", () => {
   });
 
   it("creates a source-control pull request for reviewed files through the mobile gateway client", async () => {
+    const openURLSpy = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
         ok: true,
@@ -1094,6 +1096,10 @@ describe("AgentsScreen", () => {
     }));
     expect(JSON.stringify(pullRequestCall)).not.toMatch(/token|bearer|secret/i);
     expect(await screen.findByText("Pull request ready")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open created pull request #808"));
+    });
+    expect(openURLSpy).toHaveBeenCalledWith("https://github.com/HamedMP/matrix-os/pull/808");
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
