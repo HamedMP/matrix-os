@@ -3,8 +3,12 @@ import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
+  type SourceControlCreatePullRequestRequest,
+  type SourceControlCreatePullRequestResponse,
   type SourceControlPrepareCommitRequest,
   type SourceControlPrepareCommitResponse,
 } from "@matrix-os/contracts";
@@ -37,6 +41,10 @@ export interface CodingAgentSourceControlStore {
     principal: RequestPrincipal,
     request: SourceControlPrepareCommitRequest,
   ): Promise<SourceControlPrepareCommitResponse>;
+  createPullRequest(
+    principal: RequestPrincipal,
+    request: SourceControlCreatePullRequestRequest,
+  ): Promise<SourceControlCreatePullRequestResponse>;
 }
 
 function ownerIdsFor(options: { ownerId?: string; principalOwnerIds?: readonly string[] }): string[] {
@@ -58,7 +66,9 @@ function isWithin(base: string, target: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function worktreeRootFor(homePath: string, request: SourceControlPrepareCommitRequest): string {
+type SourceControlWorktreeRequest = Pick<SourceControlPrepareCommitRequest, "projectId" | "worktreeId">;
+
+function worktreeRootFor(homePath: string, request: SourceControlWorktreeRequest): string {
   return resolve(homePath, "projects", request.projectId, "worktrees", request.worktreeId);
 }
 
@@ -127,24 +137,34 @@ export function createCodingAgentSourceControlStore(options: {
   principalOwnerIds?: readonly string[];
   gitTimeoutMs?: number;
   gitCommand?: string;
+  ghCommand?: string;
   maxQueueDepth?: number;
 }): CodingAgentSourceControlStore {
   const homePath = resolve(options.homePath);
   const ownerIds = ownerIdsFor(options);
   const gitTimeoutMs = Math.max(1000, Math.min(options.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS, 30_000));
   const gitCommand = options.gitCommand ?? "git";
+  const ghCommand = options.ghCommand ?? "gh";
   const maxQueueDepth = Math.max(1, Math.min(options.maxQueueDepth ?? DEFAULT_MAX_QUEUE_DEPTH, 64));
   const locks = new Map<string, SourceControlLockState>();
 
-  async function git(cwd: string, args: string[], options: { maxBuffer?: number; trim?: boolean } = {}): Promise<string> {
-    const result = await execFileAsync(gitCommand, args, {
+  async function run(cwd: string, command: string, args: string[], options: { maxBuffer?: number; trim?: boolean } = {}): Promise<string> {
+    const result = await execFileAsync(command, args, {
       cwd,
-      env: { ...process.env, ...GIT_ENV },
+      env: { ...process.env, ...GIT_ENV, GH_PROMPT_DISABLED: "1" },
       signal: AbortSignal.timeout(gitTimeoutMs),
       maxBuffer: options.maxBuffer ?? DEFAULT_GIT_OUTPUT_BYTES,
     });
     const stdout = String(result.stdout);
     return options.trim === false ? stdout : stdout.trim();
+  }
+
+  async function git(cwd: string, args: string[], options: { maxBuffer?: number; trim?: boolean } = {}): Promise<string> {
+    return run(cwd, gitCommand, args, options);
+  }
+
+  async function gh(cwd: string, args: string[], options: { maxBuffer?: number; trim?: boolean } = {}): Promise<string> {
+    return run(cwd, ghCommand, args, options);
   }
 
   async function gitWithInput(cwd: string, args: string[], input: string, maxBuffer: number): Promise<string> {
@@ -200,7 +220,7 @@ export function createCodingAgentSourceControlStore(options: {
     });
   }
 
-  async function resolveWorktree(request: SourceControlPrepareCommitRequest): Promise<string> {
+  async function resolveWorktree(request: SourceControlWorktreeRequest): Promise<string> {
     const worktreeRoot = worktreeRootFor(homePath, request);
     if (!isWithin(homePath, worktreeRoot)) {
       throw new CodingAgentSourceControlError("source_control_not_found");
@@ -241,6 +261,93 @@ export function createCodingAgentSourceControlStore(options: {
     await git(root, ["reset", "-q", "--", ...pathspecs]);
     if (stagedPatch.length > 0) {
       await gitWithInput(root, ["apply", "--cached", "--whitespace=nowarn", "-"], stagedPatch, MAX_STAGED_PATCH_BYTES);
+    }
+  }
+
+  function githubRepoFromRemote(remoteUrl: string): string | null {
+    const value = remoteUrl.trim();
+    const patterns = [
+      /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/,
+      /^git@github\.com:([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/,
+    ];
+    for (const pattern of patterns) {
+      const match = value.match(pattern);
+      if (!match?.[1] || !match[2]) continue;
+      return `${match[1]}/${match[2]}`;
+    }
+    return null;
+  }
+
+  function parsePullRequestJson(value: string): {
+    number: number;
+    url: string;
+    headRefName: string;
+    baseRefName: string;
+  } | null {
+    try {
+      const parsed = JSON.parse(value) as {
+        number?: unknown;
+        url?: unknown;
+        headRefName?: unknown;
+        baseRefName?: unknown;
+      };
+      if (
+        typeof parsed.number !== "number"
+        || !Number.isInteger(parsed.number)
+        || typeof parsed.url !== "string"
+        || typeof parsed.headRefName !== "string"
+        || typeof parsed.baseRefName !== "string"
+      ) {
+        return null;
+      }
+      return {
+        number: parsed.number,
+        url: parsed.url,
+        headRefName: parsed.headRefName,
+        baseRefName: parsed.baseRefName,
+      };
+    } catch (_err: unknown) {
+      return null;
+    }
+  }
+
+  async function viewPullRequest(root: string, repo: string, ref: string): Promise<{
+    number: number;
+    url: string;
+    headRefName: string;
+    baseRefName: string;
+  } | null> {
+    try {
+      const output = await gh(root, [
+        "pr",
+        "view",
+        ref,
+        "--repo",
+        repo,
+        "--json",
+        "number,url,headRefName,baseRefName",
+      ]);
+      return parsePullRequestJson(output);
+    } catch (_err: unknown) {
+      return null;
+    }
+  }
+
+  function responseFromPullRequest(
+    status: "created" | "existing",
+    pullRequest: { number: number; url: string; headRefName: string; baseRefName: string },
+  ): SourceControlCreatePullRequestResponse {
+    try {
+      return SourceControlCreatePullRequestResponseSchema.parse({
+        status,
+        number: pullRequest.number,
+        url: pullRequest.url,
+        headBranch: normalizeBranch(pullRequest.headRefName),
+        baseBranch: normalizeBranch(pullRequest.baseRefName),
+        safeMessage: "Pull request is ready for review.",
+      });
+    } catch (_err: unknown) {
+      throw new CodingAgentSourceControlError("source_control_unavailable");
     }
   }
 
@@ -298,6 +405,67 @@ export function createCodingAgentSourceControlStore(options: {
           });
         } catch (err: unknown) {
           console.warn("[coding-agents] source-control commit failed");
+          throw new CodingAgentSourceControlError("source_control_unavailable");
+        }
+      });
+    },
+
+    async createPullRequest(principal, rawRequest) {
+      if (!canAccessSourceControl(principal, ownerIds)) {
+        throw new CodingAgentSourceControlError("source_control_not_found");
+      }
+      const request = SourceControlCreatePullRequestRequestSchema.parse(rawRequest);
+      const root = await resolveWorktree(request);
+
+      return withSourceControlLock(locks, root, maxQueueDepth, async () => {
+        let branch: string;
+        let repo: string | null;
+        try {
+          branch = normalizeBranch(await git(root, ["rev-parse", "--abbrev-ref", "HEAD"]));
+          if (branch === "detached") {
+            throw new CodingAgentSourceControlError("invalid_request");
+          }
+          repo = githubRepoFromRemote(await git(root, ["remote", "get-url", "origin"]));
+        } catch (err: unknown) {
+          if (err instanceof CodingAgentSourceControlError) throw err;
+          console.warn("[coding-agents] source-control pull request metadata failed");
+          throw new CodingAgentSourceControlError("source_control_unavailable");
+        }
+        if (!repo) {
+          throw new CodingAgentSourceControlError("invalid_request");
+        }
+        const baseBranch = request.baseBranch ?? "main";
+        const existing = await viewPullRequest(root, repo, branch);
+        if (existing) {
+          return responseFromPullRequest("existing", existing);
+        }
+
+        try {
+          await git(root, ["push", "-u", "origin", branch]);
+          const args = [
+            "pr",
+            "create",
+            "--repo",
+            repo,
+            "--head",
+            branch,
+            "--base",
+            baseBranch,
+            "--title",
+            request.title,
+            "--body",
+            request.body ?? "",
+          ];
+          if (request.draft) args.push("--draft");
+          const createdUrl = await gh(root, args);
+          const created = await viewPullRequest(root, repo, createdUrl);
+          if (!created) {
+            throw new CodingAgentSourceControlError("source_control_unavailable");
+          }
+          return responseFromPullRequest("created", created);
+        } catch (err: unknown) {
+          if (err instanceof CodingAgentSourceControlError) throw err;
+          console.warn("[coding-agents] source-control pull request failed");
           throw new CodingAgentSourceControlError("source_control_unavailable");
         }
       });

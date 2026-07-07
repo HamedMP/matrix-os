@@ -744,6 +744,31 @@ const SourceControlBranchSchema = z.string()
     !value.endsWith(".lock") &&
     !/[~^:?*[\]\\\s\u0000-\u001F\u007F]/.test(value)
   ), { message: "Invalid branch name" });
+const SourceControlPullRequestTitleSchema = z.string()
+  .min(1)
+  .max(256)
+  .refine((value) => value.trim().length > 0, { message: "Pull request title is required" })
+  .refine((value) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value), {
+    message: "Pull request title contains unsupported characters",
+  });
+const SourceControlPullRequestBodySchema = z.string()
+  .max(16_384)
+  .refine((value) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value), {
+    message: "Pull request body contains unsupported characters",
+  });
+const GitHubPullRequestUrlSchema = z.string()
+  .url()
+  .max(512)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:"
+        && url.hostname === "github.com"
+        && /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*\/?$/.test(url.pathname);
+    } catch (_err: unknown) {
+      return false;
+    }
+  }, { message: "Invalid pull request URL" });
 
 export const SourceControlPrepareCommitRequestSchema = z.object({
   projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
@@ -763,8 +788,31 @@ export const SourceControlPrepareCommitResponseSchema = z.object({
   safeMessage: SafeDisplayStringSchema,
 }).strict();
 
+export const SourceControlCreatePullRequestRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  title: SourceControlPullRequestTitleSchema,
+  body: SourceControlPullRequestBodySchema.optional(),
+  baseBranch: SourceControlBranchSchema.optional(),
+  draft: z.boolean().optional(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+export const SourceControlCreatePullRequestResponseSchema = z.object({
+  status: z.enum(["created", "existing"]),
+  number: z.number().int().min(1).max(1_000_000_000),
+  url: GitHubPullRequestUrlSchema,
+  headBranch: SourceControlBranchSchema,
+  baseBranch: SourceControlBranchSchema,
+  safeMessage: SafeDisplayStringSchema,
+}).strict();
+
 export type SourceControlPrepareCommitRequest = z.infer<typeof SourceControlPrepareCommitRequestSchema>;
 export type SourceControlPrepareCommitResponse = z.infer<typeof SourceControlPrepareCommitResponseSchema>;
+export type SourceControlCreatePullRequestRequest = z.infer<typeof SourceControlCreatePullRequestRequestSchema>;
+export type SourceControlCreatePullRequestResponse = z.infer<typeof SourceControlCreatePullRequestResponseSchema>;
 
 export const ReviewFileDiffSchema = z.object({
   path: FilePathSchema,

@@ -21,6 +21,8 @@ import {
   ReviewIdSchema,
   ReviewSnapshotSchema,
   ReviewSummarySchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
 } from "@matrix-os/contracts";
@@ -443,6 +445,36 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
           return c.json({ error: sourceControlUnavailable() }, 503);
         }
         console.warn("[coding-agents] source-control route failed:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: sourceControlUnavailable() }, 503);
+      }
+    });
+
+    app.post("/source-control/pull-requests", sourceControlBodyLimit, async (c) => {
+      try {
+        const principal = principalFor(c);
+        const request = SourceControlCreatePullRequestRequestSchema.parse(await c.req.json());
+        const response = SourceControlCreatePullRequestResponseSchema.parse(
+          await deps.sourceControl!.createPullRequest(principal, request),
+        );
+        return c.json(response, response.status === "created" ? 201 : 200);
+      } catch (err: unknown) {
+        if (isBodyLimitError(err)) {
+          return c.json({ error: bodyTooLarge() }, 413);
+        }
+        if (isRequestPrincipalError(err)) {
+          const mapped = mapRequestPrincipalError(err);
+          return c.json(mapped.body, mapped.status as ContentfulStatusCode);
+        }
+        if (err instanceof z.ZodError || err instanceof SyntaxError) {
+          return c.json({ error: validationFailed() }, 400);
+        }
+        if (err instanceof CodingAgentSourceControlError) {
+          if (err.code === "source_control_not_found") return c.json({ error: sourceControlNotFound() }, 404);
+          if (err.code === "source_control_no_changes") return c.json({ error: sourceControlNoChanges() }, 409);
+          if (err.code === "invalid_request") return c.json({ error: validationFailed() }, 400);
+          return c.json({ error: sourceControlUnavailable() }, 503);
+        }
+        console.warn("[coding-agents] source-control pull request route failed:", err instanceof Error ? err.message : String(err));
         return c.json({ error: sourceControlUnavailable() }, 503);
       }
     });
