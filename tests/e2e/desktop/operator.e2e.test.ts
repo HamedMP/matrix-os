@@ -86,6 +86,15 @@ suite("operator desktop e2e", () => {
     await page.screenshot({ path: join(SCREENSHOT_DIR, "03-task-tab.png") });
   }, 30_000);
 
+  it("opens the Agents workspace from the command palette", async () => {
+    await page.locator("aside button", { hasText: "Home" }).first().click();
+    await page.keyboard.press("Control+K");
+    await page.getByLabel("Command palette").waitFor({ timeout: 10_000 });
+    await page.getByText("Open Agents").click();
+    await page.getByRole("button", { name: "Start run" }).waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents-palette.png") });
+  }, 30_000);
+
   it("starts an agent thread from the Agents workspace composer", async () => {
     await page.locator("aside button", { hasText: "Agents" }).first().click({ timeout: 5_000 });
     await page.locator("textarea:visible").first().fill("fix the failing auth tests", { timeout: 5_000 });
@@ -94,7 +103,7 @@ suite("operator desktop e2e", () => {
     await expect.poll(() => gateway.state.codingAgentCreates.length, { timeout: 5_000 }).toBe(1);
     await page.getByText("fix the failing auth tests").first().waitFor({ timeout: 10_000 });
     await page.getByText("Completed").first().waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "04-agents.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "05-agents.png") });
   }, 30_000);
 
   it("opens the Terminal workspace with a session sidebar", async () => {
@@ -103,7 +112,7 @@ suite("operator desktop e2e", () => {
     // (the hidden task-tab chip with the same name is a span, not matched here).
     await page.getByText("Shells").first().waitFor({ timeout: 10_000 });
     await page.locator("button", { hasText: "matrix-task-1" }).first().waitFor({ state: "visible", timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "05-terminal-workspace.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "06-terminal-workspace.png") });
   }, 30_000);
 
   it("lists apps and opens one as a tab", async () => {
@@ -113,31 +122,31 @@ suite("operator desktop e2e", () => {
     await page.getByText("Notes").first().click();
     // The app opens in its own tab (tab chip with the app name).
     await page.locator('[role="tab"]', { hasText: "Notes" }).first().waitFor({ timeout: 10_000 });
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "06-apps.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "07-apps.png") });
   }, 30_000);
 
   it("detaches the hosted shell while non-Home tabs are active", async () => {
     await page.locator("aside button", { hasText: "Home" }).first().click();
     await expect.poll(attachedNativeViewCount).toBe(1);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "07-home-shell-active.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "08-home-shell-active.png") });
 
     await page.locator("aside button", { hasText: "Settings" }).first().click();
     await page.getByRole("heading", { name: "Settings" }).waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "08-settings-no-shell-overlay.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "09-settings-no-shell-overlay.png") });
 
     await page.locator("aside button", { hasText: "Chat" }).first().click();
     await page.getByRole("heading", { name: /What should we build/i }).waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "09-chat-no-shell-overlay.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "10-chat-no-shell-overlay.png") });
 
     await page.locator("aside button", { hasText: "Apps" }).first().click();
     await page.getByText("Notes").first().waitFor({ timeout: 10_000 });
     await expect.poll(attachedNativeViewCount).toBe(0);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "10-apps-no-shell-overlay.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "11-apps-no-shell-overlay.png") });
 
     await page.locator("aside button", { hasText: "Home" }).first().click();
     await expect.poll(attachedNativeViewCount).toBe(1);
-    await page.screenshot({ path: join(SCREENSHOT_DIR, "11-home-shell-restored.png") });
+    await page.screenshot({ path: join(SCREENSHOT_DIR, "12-home-shell-restored.png") });
   }, 40_000);
 });

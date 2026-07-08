@@ -44,6 +44,7 @@ describe("createAppMenuTemplate", () => {
       : null;
 
     expect(agentsItem).toBeTruthy();
+    expect(agentsItem && "accelerator" in agentsItem ? agentsItem.accelerator : null).toBe("Cmd+Alt+A");
     if (!agentsItem || !("click" in agentsItem) || typeof agentsItem.click !== "function") {
       throw new Error("Agents menu item is not clickable");
     }

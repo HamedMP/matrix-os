@@ -38,7 +38,7 @@ export function createAppMenuTemplate({
   if (codingAgentsWorkspace) {
     viewSubmenu.push({
       label: "Agents",
-      accelerator: "Cmd+Shift+A",
+      accelerator: "Cmd+Alt+A",
       click: () => send("menu:navigate", { kind: "agents" }),
     });
   }
