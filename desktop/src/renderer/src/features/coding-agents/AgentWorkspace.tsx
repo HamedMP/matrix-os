@@ -1,5 +1,5 @@
 import { Bell, Bot, ChevronDown, ChevronRight, ChevronUp, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Search, Server, SquareTerminal } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ReviewIdSchema,
   defaultAgentThreadComposerDraft,
@@ -358,9 +358,10 @@ function hasComposerContent(current: AgentThreadComposerDraft): boolean {
     || Boolean(current.attachments?.length);
 }
 
-function AgentComposer({ summary, seed }: { summary: RuntimeSummary; seed: ComposerSeed | null }) {
+function AgentComposer({ summary, seed, focusRequestId }: { summary: RuntimeSummary; seed: ComposerSeed | null; focusRequestId: number }) {
   const initialDraft = useMemo(() => defaultAgentThreadComposerDraft(summary), [summary]);
   const [draft, setDraft] = useState<AgentThreadComposerDraft>(initialDraft);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const createStatus = useCodingAgentWorkspace((s) => s.createStatus);
   const createError = useCodingAgentWorkspace((s) => s.createError);
   const createThread = useCodingAgentWorkspace((s) => s.createThread);
@@ -376,7 +377,23 @@ function AgentComposer({ summary, seed }: { summary: RuntimeSummary; seed: Compo
     setDraft((current) => mergeComposerSeed(current, seed.draft));
   }, [seed]);
 
-  if (!canCreate) return null;
+  useEffect(() => {
+    if (focusRequestId <= 0) return;
+    promptRef.current?.focus();
+  }, [focusRequestId]);
+
+  if (!canCreate) {
+    return (
+      <Section title="New Run">
+        <div
+          className="rounded-md border p-3 text-sm"
+          style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)", color: "var(--text-secondary)" }}
+        >
+          Agent runs are not available on this runtime yet.
+        </div>
+      </Section>
+    );
+  }
 
   const selectedProvider = summary.providers.find((provider) => provider.id === draft.providerId);
   const modes = selectedProvider?.supportedModes ?? [];
@@ -462,6 +479,7 @@ function AgentComposer({ summary, seed }: { summary: RuntimeSummary; seed: Compo
         <label className="grid gap-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
           <span className="sr-only">Agent run prompt</span>
           <textarea
+            ref={promptRef}
             aria-label="Agent run prompt"
             className="min-h-[92px] resize-y rounded-md border px-3 py-2 text-sm outline-none"
             style={{
@@ -2000,6 +2018,7 @@ export default function AgentWorkspace() {
   const threadSnapshotError = useCodingAgentWorkspace((s) => s.threadSnapshotError);
   const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const loadNotificationPreferences = useCodingAgentWorkspace((s) => s.loadNotificationPreferences);
+  const composerFocusRequestId = useCodingAgentWorkspace((s) => s.composerFocusRequestId);
   const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null);
 
   useEffect(() => {
@@ -2042,7 +2061,7 @@ export default function AgentWorkspace() {
     <div className="flex min-h-0 flex-1 flex-col">
       <RuntimeHeader summary={summary} onRefresh={() => void refresh()} />
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-5">
-        <AgentComposer summary={summary} seed={composerSeed} />
+        <AgentComposer summary={summary} seed={composerSeed} focusRequestId={composerFocusRequestId} />
         <NotificationPreferencesPanel />
         <ProviderList summary={summary} />
         <AttentionThreadList summary={summary} />
