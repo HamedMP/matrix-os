@@ -24,6 +24,10 @@ function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {
         enabled: threadCreate,
         ...(threadCreate ? {} : { reason: "Not enabled yet" }),
       },
+      {
+        id: "codingAgentsReview",
+        enabled: true,
+      },
     ],
     providers: [
       {
@@ -86,12 +90,42 @@ function summaryFixture({ threadCreate = false }: { threadCreate?: boolean } = {
   };
 }
 
+function reviewsFixture() {
+  return {
+    items: [
+      {
+        id: "rev_desktop_1",
+        projectId: "matrix-os",
+        worktreeId: "wt_desktop_1",
+        status: "reviewing",
+        pullRequestNumber: 758,
+        round: 2,
+        maxRounds: 3,
+        reviewer: "matrix-reviewer",
+        implementer: "matrix-implementer",
+        findings: {
+          total: 3,
+          high: 1,
+          medium: 1,
+          low: 1,
+        },
+        updatedAt: "2026-07-06T00:02:00.000Z",
+      },
+    ],
+    hasMore: false,
+    limit: 50,
+  };
+}
+
 describe("AgentWorkspace", () => {
   beforeEach(() => {
     useCodingAgentWorkspace.setState({
       status: "idle",
       summary: null,
       error: null,
+      reviewsStatus: "idle",
+      reviews: null,
+      reviewsError: null,
       createStatus: "idle",
       createError: null,
       activeThreadId: null,
@@ -104,7 +138,11 @@ describe("AgentWorkspace", () => {
       api: null,
     });
     window.operator = {
-      invoke: vi.fn().mockResolvedValue(summaryFixture()),
+      invoke: vi.fn((channel: string) => {
+        if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+        if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+        return Promise.reject(new Error("unexpected channel"));
+      }),
       on: vi.fn(() => () => undefined),
     };
   });
@@ -125,9 +163,37 @@ describe("AgentWorkspace", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
   });
 
+  it("renders read-only review summaries through trusted IPC", async () => {
+    render(<AgentWorkspace />);
+
+    await screen.findByText("Review");
+    expect(screen.getByText("matrix-os")).toBeTruthy();
+    expect(screen.getByText(/PR #758/)).toBeTruthy();
+    expect(screen.getByText("1 high")).toBeTruthy();
+    expect(screen.getByText(/Round 2 of 3/)).toBeTruthy();
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-reviews", {});
+  });
+
+  it("shows a generic safe review error without dropping the runtime summary", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") {
+        return Promise.reject(new Error("review store failed at /home/matrix/private token secret"));
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("Primary");
+    expect(await screen.findByText("Review state unavailable")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
   it("creates a thread from the desktop composer and focuses the new thread", async () => {
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:create-thread") {
         return Promise.resolve({
           thread: {
@@ -173,6 +239,7 @@ describe("AgentWorkspace", () => {
   it("shows safe composer validation and create failures", async () => {
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
       if (channel === "runtime:create-thread") {
         return Promise.reject(new Error("provider failed on /home/matrix/private with token secret"));
       }

@@ -1,18 +1,29 @@
 import {
   buildCreateAgentThreadRequestFromComposer,
   type AgentThreadComposerDraft,
+  type ReviewSummary,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { invoke } from "../lib/operator";
 
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
+type ReviewStatus = "idle" | "loading" | "ready" | "error";
 type CreateStatus = "idle" | "submitting";
+type ReviewSummaryList = {
+  items: ReviewSummary[];
+  hasMore: boolean;
+  nextCursor?: string;
+  limit: number;
+};
 
 interface CodingAgentWorkspaceState {
   status: WorkspaceStatus;
   summary: RuntimeSummary | null;
   error: string | null;
+  reviewsStatus: ReviewStatus;
+  reviews: ReviewSummaryList | null;
+  reviewsError: string | null;
   createStatus: CreateStatus;
   createError: string | null;
   activeThreadId: string | null;
@@ -21,6 +32,7 @@ interface CodingAgentWorkspaceState {
 }
 
 let refreshSeq = 0;
+let reviewsSeq = 0;
 let createRequestSeq = 0;
 
 function nextCreateRequestId(): string {
@@ -32,6 +44,9 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   status: "idle",
   summary: null,
   error: null,
+  reviewsStatus: "idle",
+  reviews: null,
+  reviewsError: null,
   createStatus: "idle",
   createError: null,
   activeThreadId: null,
@@ -46,6 +61,24 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
       const summary = await invoke("runtime:get-summary", {});
       if (seq !== refreshSeq) return;
       set({ status: "ready", summary, error: null });
+      if (!summary.capabilities.some((capability) => capability.id === "codingAgentsReview" && capability.enabled)) {
+        set({ reviewsStatus: "idle", reviews: null, reviewsError: null });
+        return;
+      }
+      const reviewSeq = ++reviewsSeq;
+      set((state) => ({
+        reviewsStatus: state.reviews ? "ready" : "loading",
+        reviewsError: null,
+      }));
+      try {
+        const reviews = await invoke("runtime:get-reviews", {});
+        if (reviewSeq !== reviewsSeq) return;
+        set({ reviewsStatus: "ready", reviews, reviewsError: null });
+      } catch {
+        console.warn("[coding-agents] review summary refresh failed");
+        if (reviewSeq !== reviewsSeq) return;
+        set({ reviewsStatus: "error", reviewsError: "Review state unavailable" });
+      }
     } catch {
       console.warn("[coding-agents] summary refresh failed");
       if (seq !== refreshSeq) return;

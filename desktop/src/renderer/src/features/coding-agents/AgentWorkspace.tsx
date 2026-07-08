@@ -1,8 +1,9 @@
-import { Bot, GitBranch, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
+import { Bot, ClipboardCheck, GitBranch, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
   type AgentThreadComposerDraft,
+  type ReviewSummary,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
 import { Button, EmptyState, StatusDot } from "../../design/primitives";
@@ -322,6 +323,61 @@ function TerminalList({ summary }: { summary: RuntimeSummary }) {
   );
 }
 
+function reviewStatusLabel(status: ReviewSummary["status"]): string {
+  return status.replace(/_/g, " ");
+}
+
+function ReviewList() {
+  const reviewsStatus = useCodingAgentWorkspace((s) => s.reviewsStatus);
+  const reviews = useCodingAgentWorkspace((s) => s.reviews);
+  const reviewsError = useCodingAgentWorkspace((s) => s.reviewsError);
+  const items = reviews?.items ?? [];
+
+  return (
+    <Section title="Review" count={items.length}>
+      <div className="grid gap-2">
+        {reviewsStatus === "error" ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+            {reviewsError ?? "Review state unavailable"}
+          </p>
+        ) : null}
+        {items.map((review) => (
+          <article
+            key={review.id}
+            className="flex items-center justify-between gap-3 rounded-md border p-3"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <ClipboardCheck size={15} style={{ color: "var(--text-tertiary)" }} />
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                  {review.projectId}
+                </h3>
+                <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                  {`PR #${review.pullRequestNumber} - Round ${review.round} of ${review.maxRounds}`}
+                </p>
+              </div>
+            </div>
+            <div className="shrink-0 text-right text-xs" style={{ color: "var(--text-secondary)" }}>
+              <p className="capitalize">{reviewStatusLabel(review.status)}</p>
+              {review.findings ? (
+                <p style={{ color: review.findings.high > 0 ? "var(--danger)" : "var(--text-tertiary)" }}>
+                  {review.findings.high} high
+                </p>
+              ) : null}
+            </div>
+          </article>
+        ))}
+        {reviewsStatus !== "error" && reviewsStatus !== "loading" && items.length === 0 ? (
+          <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+            No reviews.
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
 export default function AgentWorkspace() {
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const status = useCodingAgentWorkspace((s) => s.status);
@@ -366,6 +422,7 @@ export default function AgentWorkspace() {
           <ThreadList summary={summary} />
           <TerminalList summary={summary} />
         </div>
+        {capabilityEnabled(summary, "codingAgentsReview") ? <ReviewList /> : null}
       </div>
     </div>
   );
