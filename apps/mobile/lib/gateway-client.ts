@@ -4,6 +4,7 @@ import {
   parseShellSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
+import { RuntimeSummarySchema, type RuntimeSummary } from "@matrix-os/contracts";
 
 function randomShellSuffix(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -66,6 +67,10 @@ export interface MatrixAppManifestResponse {
     [key: string]: unknown;
   };
 }
+
+export type CodingAgentRuntimeSummaryResult =
+  | { ok: true; summary: RuntimeSummary }
+  | { ok: false; error: "Runtime summary unavailable" };
 
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
@@ -491,6 +496,26 @@ export class GatewayClient {
     } catch (err: unknown) {
       console.warn("[mobile] /api/terminal/sessions unavailable", err instanceof Error ? err.message : String(err));
       return [];
+    }
+  }
+
+  async getCodingAgentRuntimeSummary(): Promise<CodingAgentRuntimeSummaryResult> {
+    try {
+      const res = await this.fetchGateway("/api/coding-agents/summary");
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/summary unavailable", res.status);
+        return { ok: false, error: "Runtime summary unavailable" };
+      }
+      const body = await res.json();
+      const parsed = RuntimeSummarySchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/summary returned invalid payload");
+        return { ok: false, error: "Runtime summary unavailable" };
+      }
+      return { ok: true, summary: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/summary unavailable");
+      return { ok: false, error: "Runtime summary unavailable" };
     }
   }
 

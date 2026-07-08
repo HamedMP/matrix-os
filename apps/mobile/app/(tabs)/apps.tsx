@@ -28,8 +28,9 @@ import { colors } from "@/lib/theme";
 
 const H_PADDING = 16;
 
-// Apps intentionally kept out of the launcher grid (Chat lives elsewhere).
-const HIDDEN_APP_SLUGS = new Set<string>(["chat"]);
+// Chat intentionally stays out of the launcher grid; the Apps launcher also
+// hides itself because it is the current surface.
+const HIDDEN_APP_SLUGS = new Set<string>(["apps", "chat"]);
 
 // Fallback monogram-tile palette: tinted background + legible glyph colour,
 // stable per app via a slug hash, used only when an icon image is unavailable.
@@ -108,6 +109,7 @@ const MAX_GRID_LABEL_CHARS = 13;
 
 const NATIVE_SHELL_ICON_GLYPHS = new Map<string, keyof typeof Ionicons.glyphMap>([
   ["apps", "grid"],
+  ["agents", "sparkles"],
   ["settings", "settings"],
 ]);
 
@@ -509,10 +511,12 @@ export default function AppsScreen() {
   useEffect(() => {
     let cancelled = false;
     if (!client) {
-      queueMicrotask(() => {
+      Promise.resolve().then(() => {
         if (!cancelled) setAuthHeader(undefined);
       });
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
     client
       .getAuthorizationHeader()

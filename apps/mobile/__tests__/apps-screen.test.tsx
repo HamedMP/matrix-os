@@ -62,8 +62,9 @@ describe("AppsScreen", () => {
     render(<AppsScreen />);
 
     await waitFor(() => expect(screen.getByText("Terminal")).toBeTruthy());
-    // Apps is the current surface, so it is intentionally hidden from the grid.
-    expect(screen.getAllByText("Apps")).toHaveLength(1);
+    // The mobile workspace slice keeps system surfaces visible in the grid,
+    // except the current Apps launcher itself.
+    expect(screen.queryByLabelText("Open Apps")).toBeNull();
     expect(screen.getByText("Tasks")).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
     // Chat is intentionally hidden from the launcher grid.
