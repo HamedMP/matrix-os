@@ -539,6 +539,27 @@ describe("SessionRegistry", () => {
       expect(received).toContainEqual({ type: "output", data: raw, seq: 0 });
     });
 
+    it("flushes partial Codex compatibility escape bytes before PTY exit", () => {
+      const mockPty = createMockPty();
+      const mockSpawn = createMockSpawn(mockPty);
+      const registry = createRegistry({}, mockSpawn);
+      const id = registry.create("/home");
+
+      const handle = registry.attach(id)!;
+      const received: PtyServerMessage[] = [];
+      handle.subscribe((msg) => received.push(msg));
+
+      const dataCb = mockPty.onData.mock.calls[0][0];
+      dataCb("OpenAI Codex (v0.142.5)\n");
+      dataCb("prompt\x1b[");
+      const exitCb = mockPty.onExit.mock.calls[0][0];
+      exitCb({ exitCode: 0, signal: 0 });
+
+      expect(received).toContainEqual({ type: "output", data: "prompt", seq: 1 });
+      expect(received).toContainEqual({ type: "output", data: "\x1b[", seq: 2 });
+      expect(received.at(-1)).toEqual({ type: "exit", code: 0 });
+    });
+
     it("sends output with seq numbers to subscribers", () => {
       const mockPty = createMockPty();
       const mockSpawn = createMockSpawn(mockPty);

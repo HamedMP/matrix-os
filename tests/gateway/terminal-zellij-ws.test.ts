@@ -128,6 +128,29 @@ describe("zellij terminal WebSocket", () => {
     expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: raw });
   });
 
+  it("flushes partial Codex compatibility escape bytes before attach close", async () => {
+    const pty = new FakePty();
+    const ws = socket();
+    const handler = createShellWsHandler({
+      registry: {
+        list: vi.fn(async () => [{ name: "codex-main", status: "active" }]),
+      },
+      adapter: {
+        attachSession: vi.fn(() => pty),
+      },
+      maxReplayBytes: 4096,
+    });
+
+    const session = await handler.open({ ws, session: "codex-main", fromSeq: 0 });
+    pty.emitData("prompt\x1b[");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    session.onClose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(ws.sent).toContainEqual({ type: "output", seq: 0, data: "prompt" });
+    expect(ws.sent).toContainEqual({ type: "output", seq: 1, data: "\x1b[" });
+  });
+
   it("attaches to a named session, replays from seq, forwards input, and cleans up", async () => {
     const pty = new FakePty();
     const ws = socket();
@@ -174,6 +197,7 @@ describe("zellij terminal WebSocket", () => {
 
     await handler.open({ ws, session: "main", fromSeq: 0 });
     pty.emitExit({ exitCode: 101 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(ws.sent).toContainEqual({ type: "exit", code: 101 });
   });

@@ -194,20 +194,22 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
     }
 
     const outputCompat = createTerminalOutputCompatStream({ sessionName: safeName });
-    const onData = (data: string) => {
-      const compatibleData = outputCompat.write(data);
-      if (compatibleData.length === 0) {
+    const persistOutput = async (data: string) => {
+      if (data.length === 0) {
         return;
       }
-      void replayBuffer.writePersistent(compatibleData)
+      await replayBuffer.writePersistent(data)
         .then((result) => {
           if (result.seq !== null) {
-            sendJson(ws, { type: "output", seq: result.seq, data: compatibleData });
+            sendJson(ws, { type: "output", seq: result.seq, data });
           }
         })
         .catch((err: unknown) => {
           console.warn("[shell] failed to persist terminal output:", err instanceof Error ? err.message : String(err));
         });
+    };
+    const onData = (data: string) => {
+      void persistOutput(outputCompat.write(data));
     };
     const onExit = (event: { exitCode: number }) => {
       if (closed) {
@@ -215,7 +217,9 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
       }
       closed = true;
       cleanupProcessListeners();
-      sendJson(ws, { type: "exit", code: event.exitCode });
+      void persistOutput(outputCompat.flush()).finally(() => {
+        sendJson(ws, { type: "exit", code: event.exitCode });
+      });
     };
     dataDisposable = child.onData(onData);
     exitDisposable = child.onExit(onExit);
@@ -225,6 +229,7 @@ export function createShellWsHandler(options: ShellWsHandlerOptions) {
         return;
       }
       closed = true;
+      void persistOutput(outputCompat.flush());
       abortController.abort();
       cleanupProcessListeners();
       child.kill();

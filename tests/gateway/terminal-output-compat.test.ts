@@ -51,6 +51,22 @@ describe("terminal output compatibility stream", () => {
     expect(stream.write("7m")).toBe("\x1b[39;49m");
   });
 
+  it("restores the pre-reverse color state when reverse video turns off", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
+
+    expect(stream.write("\x1b[32mgreen\x1b[7mselected\x1b[27mstill green")).toBe(
+      "\x1b[32mgreen\x1b[38;2;214;216;221;48;2;48;54;61mselected\x1b[32;49mstill green",
+    );
+  });
+
+  it("flushes partial escape bytes so terminal replay is not truncated", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
+
+    expect(stream.write("prompt\x1b[")).toBe("prompt");
+    expect(stream.flush()).toBe("\x1b[");
+    expect(stream.flush()).toBe("");
+  });
+
   it("preserves OSC and non-SGR escape sequences", () => {
     const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
     const osc52 = "\x1b]52;c;SGVsbG8=\x07";

@@ -8,6 +8,7 @@ const CODEX_TUI_BANNER = "OpenAI Codex (";
 export interface TerminalOutputCompatStream {
   readonly codexTuiActive: boolean;
   write(data: string): string;
+  flush(): string;
 }
 
 interface CodexTuiCompatTheme {
@@ -17,6 +18,14 @@ interface CodexTuiCompatTheme {
 
 interface CodexTuiCompatTransform {
   write(data: string): string;
+  flush(): string;
+}
+
+type SgrColor = string[] | null;
+
+interface SgrColorState {
+  foreground: SgrColor;
+  background: SgrColor;
 }
 
 function parseHexColor(value: string, fallback: string): [number, number, number] {
@@ -49,11 +58,60 @@ function sgrColorGroupLength(params: string[], index: number): number {
   return 0;
 }
 
-function rewriteSgr(sequence: string, theme: CodexTuiCompatTheme): string {
+function cloneColorState(state: SgrColorState): SgrColorState {
+  return {
+    foreground: state.foreground ? [...state.foreground] : null,
+    background: state.background ? [...state.background] : null,
+  };
+}
+
+function restoreColorParams(state: SgrColorState): string[] {
+  return [
+    ...(state.foreground ?? ["39"]),
+    ...(state.background ?? ["49"]),
+  ];
+}
+
+function applyColorParamToState(param: string, state: SgrColorState): void {
+  const value = Number.parseInt(param, 10);
+  if ((value >= 30 && value <= 37) || (value >= 90 && value <= 97)) {
+    state.foreground = [param];
+    return;
+  }
+  if ((value >= 40 && value <= 47) || (value >= 100 && value <= 107)) {
+    state.background = [param];
+    return;
+  }
+  if (param === "39") {
+    state.foreground = null;
+    return;
+  }
+  if (param === "49") {
+    state.background = null;
+  }
+}
+
+function applyColorGroupToState(group: string[], state: SgrColorState): void {
+  const target = group[0];
+  if (target === "38") {
+    state.foreground = [...group];
+  } else if (target === "48") {
+    state.background = [...group];
+  }
+}
+
+function rewriteSgr(
+  sequence: string,
+  theme: CodexTuiCompatTheme,
+  colorState: SgrColorState,
+  reverseSnapshot: { current: SgrColorState | null },
+): string {
   const body = sequence.slice(2, -1);
   const params = body.length === 0 ? ["0"] : body.split(";");
   const foreground = parseHexColor(theme.foreground, CODEX_TUI_FOREGROUND);
   const reverseBackground = parseHexColor(theme.reverseBackground, CODEX_TUI_REVERSE_BG);
+  const foregroundParams = rgbSgr(38, foreground).split(";");
+  const backgroundParams = rgbSgr(48, reverseBackground).split(";");
   const output: string[] = [];
   let pending: string[] = [];
 
@@ -66,7 +124,9 @@ function rewriteSgr(sequence: string, theme: CodexTuiCompatTheme): string {
   for (let index = 0; index < params.length; index += 1) {
     const colorGroupLength = sgrColorGroupLength(params, index);
     if (colorGroupLength > 0) {
-      pending.push(...params.slice(index, index + colorGroupLength));
+      const group = params.slice(index, index + colorGroupLength);
+      applyColorGroupToState(group, colorState);
+      pending.push(...group);
       index += colorGroupLength - 1;
       continue;
     }
@@ -75,18 +135,32 @@ function rewriteSgr(sequence: string, theme: CodexTuiCompatTheme): string {
     if (param === "0" || param === "") {
       flushPending();
       output.push("\x1b[0m");
+      colorState.foreground = null;
+      colorState.background = null;
+      reverseSnapshot.current = null;
       continue;
     }
     if (param === "7") {
       flushPending();
+      reverseSnapshot.current = cloneColorState(colorState);
+      colorState.foreground = foregroundParams;
+      colorState.background = backgroundParams;
       output.push(`\x1b[${rgbSgr(38, foreground)};${rgbSgr(48, reverseBackground)}m`);
       continue;
     }
     if (param === "27") {
       flushPending();
-      output.push("\x1b[39;49m");
+      if (reverseSnapshot.current) {
+        colorState.foreground = reverseSnapshot.current.foreground;
+        colorState.background = reverseSnapshot.current.background;
+        output.push(`\x1b[${restoreColorParams(colorState).join(";")}m`);
+        reverseSnapshot.current = null;
+      } else {
+        output.push("\x1b[27m");
+      }
       continue;
     }
+    applyColorParamToState(param, colorState);
     pending.push(param);
   }
 
@@ -109,6 +183,8 @@ function findOscTerminator(value: string, start: number): number | null {
 
 function createCodexTuiCompatTransform(theme: CodexTuiCompatTheme): CodexTuiCompatTransform {
   let pending = "";
+  const colorState: SgrColorState = { foreground: null, background: null };
+  const reverseSnapshot: { current: SgrColorState | null } = { current: null };
 
   return {
     write(data: string): string {
@@ -141,7 +217,9 @@ function createCodexTuiCompatTransform(theme: CodexTuiCompatTheme): CodexTuiComp
             break;
           }
           const sequence = input.slice(escapeIndex, finalIndex + 1);
-          output += input[finalIndex] === "m" ? rewriteSgr(sequence, theme) : sequence;
+          output += input[finalIndex] === "m"
+            ? rewriteSgr(sequence, theme, colorState, reverseSnapshot)
+            : sequence;
           index = finalIndex + 1;
           continue;
         }
@@ -166,6 +244,11 @@ function createCodexTuiCompatTransform(theme: CodexTuiCompatTheme): CodexTuiComp
         pending = "";
       }
 
+      return output;
+    },
+    flush(): string {
+      const output = pending;
+      pending = "";
       return output;
     },
   };
@@ -253,6 +336,9 @@ export function createTerminalOutputCompatStream(options: {
         codexTuiActive = detectionText.includes(CODEX_TUI_BANNER);
       }
       return codexTuiActive ? codexTuiTransform.write(data) : data;
+    },
+    flush(): string {
+      return codexTuiActive ? codexTuiTransform.flush() : "";
     },
   };
 }
