@@ -69,6 +69,7 @@ const NATIVE_MATRIX_APPS: MatrixAppEntry[] = [
     description: "Track tasks, cron jobs, and background work.",
     icon: "task-manager",
     category: "System",
+    slug: "tasks",
     file: "tasks/index.html",
     path: "/files/apps/tasks/index.html",
   },
