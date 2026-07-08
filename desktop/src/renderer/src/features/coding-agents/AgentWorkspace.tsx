@@ -1,12 +1,14 @@
-import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Server, SquareTerminal } from "lucide-react";
+import { Bot, ChevronRight, ClipboardCheck, ExternalLink, FileText, FolderOpen, GitBranch, GitCommitHorizontal, GitPullRequest, Monitor, Play, RefreshCw, Save, Search, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
+  type FileBrowseResponse,
   type FileReadRequest,
   type FileReadResponse,
+  type FileSearchResponse,
   type PreviewSessionSummary,
   type ReviewSnapshot,
   type ReviewSummary,
@@ -40,6 +42,7 @@ type ThreadDetailStatus = "idle" | "loading" | "ready" | "error";
 type ReviewSnapshotFile = ReviewSnapshot["files"]["items"][number];
 type ReviewSnapshotHunk = ReviewSnapshotFile["hunks"][number];
 type ReviewSnapshotLine = NonNullable<ReviewSnapshotHunk["lines"]>[number];
+type FileBrowserStatus = "idle" | "loading" | "ready" | "error";
 type FileReadStatus = "idle" | "loading" | "ready" | "error";
 type FileWriteStatus = "idle" | "saving" | "saved" | "error";
 type ComposerSeed = {
@@ -1228,6 +1231,14 @@ function ReviewSnapshotPanel({
           {snapshot.safeNotice}
         </p>
       ) : null}
+      {canReadFiles ? (
+        <ReviewFileBrowserPanel
+          key={`${snapshot.review.projectId}:${snapshot.review.worktreeId}:${snapshot.review.id}:${snapshot.updatedAt}`}
+          snapshot={snapshot}
+          canReadFiles={canReadFiles}
+          onOpenFile={onOpenFile}
+        />
+      ) : null}
       <div className="grid gap-2">
         {snapshot.files.items.map((file, fileIndex) => (
           <div
@@ -1359,6 +1370,181 @@ function ReviewSnapshotPanel({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function ReviewFileBrowserPanel({
+  snapshot,
+  canReadFiles,
+  onOpenFile,
+}: {
+  snapshot: ReviewSnapshot;
+  canReadFiles: boolean;
+  onOpenFile: (request: FileReadRequest) => void;
+}) {
+  const [browseStatus, setBrowseStatus] = useState<FileBrowserStatus>("idle");
+  const [browse, setBrowse] = useState<FileBrowseResponse | null>(null);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [searchStatus, setSearchStatus] = useState<FileBrowserStatus>("idle");
+  const [searchResult, setSearchResult] = useState<FileSearchResponse | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const projectId = snapshot.review.projectId;
+  const worktreeId = snapshot.review.worktreeId;
+
+  async function loadBrowse(path?: string) {
+    setBrowseStatus("loading");
+    setBrowseError(null);
+    try {
+      const response = await invoke("runtime:browse-files", {
+        projectId,
+        worktreeId,
+        ...(path ? { path } : {}),
+        limit: 20,
+      });
+      setBrowse(response);
+      setBrowseStatus("ready");
+    } catch {
+      console.warn("[coding-agents] file browse failed");
+      setBrowse(null);
+      setBrowseStatus("error");
+      setBrowseError("File list unavailable");
+    }
+  }
+
+  async function runSearch() {
+    const query = searchQuery.trim();
+    if (!query) return;
+    setSearchStatus("loading");
+    setSearchError(null);
+    try {
+      const response = await invoke("runtime:search-files", {
+        projectId,
+        worktreeId,
+        query,
+        limit: 20,
+      });
+      setSearchResult(response);
+      setSearchStatus("ready");
+    } catch {
+      console.warn("[coding-agents] file search failed");
+      setSearchResult(null);
+      setSearchStatus("error");
+      setSearchError("File search unavailable");
+    }
+  }
+
+  const renderEntry = (
+    entry: FileBrowseResponse["entries"]["items"][number],
+    source: "browse" | "search",
+  ) => {
+    const isDirectory = entry.kind === "directory";
+    const isFile = entry.kind === "file";
+    return (
+      <div
+        key={`${source}:${entry.path}`}
+        className="flex min-h-[42px] items-center justify-between gap-3 rounded-md border px-3 py-2"
+        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {isDirectory ? (
+            <FolderOpen size={14} style={{ color: "var(--text-tertiary)" }} />
+          ) : (
+            <FileText size={14} style={{ color: "var(--text-tertiary)" }} />
+          )}
+          <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>
+            {entry.path}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-xs capitalize" style={{ color: "var(--text-tertiary)" }}>
+            {entry.kind}
+          </span>
+          {isDirectory ? (
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label={`Open directory ${entry.path}`}
+              onClick={() => void loadBrowse(entry.path)}
+            >
+              <FolderOpen size={14} />
+              Open
+            </Button>
+          ) : null}
+          {canReadFiles && isFile ? (
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label={`Open file ${entry.path} from ${source === "search" ? "search results" : "file browser"}`}
+              onClick={() => onOpenFile({ projectId, worktreeId, path: entry.path })}
+            >
+              <FileText size={14} />
+              Open
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="grid gap-2 rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h4 className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+            File browser
+          </h4>
+          <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {`${projectId} / ${worktreeId}`}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          type="button"
+          aria-label={`Browse workspace files for PR #${snapshot.review.pullRequestNumber}`}
+          disabled={browseStatus === "loading"}
+          onClick={() => void loadBrowse()}
+        >
+          <FolderOpen size={14} />
+          {browseStatus === "loading" ? "Loading" : "Browse files"}
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          aria-label="Search review workspace files"
+          className="no-drag min-w-[180px] flex-1 rounded-md border bg-transparent px-3 py-1.5 text-sm outline-none"
+          style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.currentTarget.value.slice(0, 80))}
+        />
+        <Button
+          variant="ghost"
+          type="button"
+          aria-label="Run review workspace file search"
+          disabled={!searchQuery.trim() || searchStatus === "loading"}
+          onClick={() => void runSearch()}
+        >
+          <Search size={14} />
+          {searchStatus === "loading" ? "Searching" : "Search"}
+        </Button>
+      </div>
+      {browseStatus === "error" ? (
+        <p className="text-xs" style={{ color: "var(--danger)" }}>{browseError ?? "File list unavailable"}</p>
+      ) : null}
+      {browse?.entries.items.length ? (
+        <div className="grid gap-1">
+          {browse.entries.items.map((entry) => renderEntry(entry, "browse"))}
+        </div>
+      ) : null}
+      {searchStatus === "error" ? (
+        <p className="text-xs" style={{ color: "var(--danger)" }}>{searchError ?? "File search unavailable"}</p>
+      ) : null}
+      {searchResult?.matches.items.length ? (
+        <div className="grid gap-1">
+          {searchResult.matches.items.map((entry) => renderEntry(entry, "search"))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

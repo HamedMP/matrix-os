@@ -1311,6 +1311,100 @@ describe("AgentWorkspace", () => {
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 
+  it("browses and searches review workspace files through trusted IPC", async () => {
+    const browse = {
+      directory: {
+        path: "packages",
+        kind: "directory",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      entries: {
+        items: [
+          {
+            path: "packages/gateway",
+            kind: "directory",
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+          {
+            path: "packages/README.md",
+            kind: "file",
+            sizeBytes: 24,
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    const search = {
+      matches: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            kind: "file",
+            sizeBytes: 37,
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ files: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      if (channel === "runtime:browse-files") return Promise.resolve(browse);
+      if (channel === "runtime:search-files") return Promise.resolve(search);
+      if (channel === "runtime:get-file-content") return Promise.resolve(fileReadFixture());
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open review PR #758" }));
+    });
+    await screen.findByText("PR #758 review details");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Browse workspace files for PR #758" }));
+    });
+
+    await screen.findByText("packages/gateway");
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:browse-files", {
+      projectId: "matrix-os",
+      worktreeId: "wt_desktop_1",
+      limit: 20,
+    });
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Search review workspace files"), {
+        target: { value: "routes" },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Run review workspace file search" }));
+    });
+
+    expect((await screen.findAllByText("packages/gateway/src/coding-agents/routes.ts")).length).toBeGreaterThanOrEqual(2);
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:search-files", {
+      projectId: "matrix-os",
+      worktreeId: "wt_desktop_1",
+      query: "routes",
+      limit: 20,
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Open file packages/gateway/src/coding-agents/routes.ts from search results" }));
+    });
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-file-content", {
+      projectId: "matrix-os",
+      worktreeId: "wt_desktop_1",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    });
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
   it("saves edited file content through trusted IPC without exposing credentials", async () => {
     const savedFile = {
       metadata: {
