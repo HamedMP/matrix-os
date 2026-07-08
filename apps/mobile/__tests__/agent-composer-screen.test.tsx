@@ -6,6 +6,10 @@ jest.mock("@/lib/feature-flags", () => ({
   CODING_AGENTS_MOBILE_WORKSPACE: true,
 }));
 
+jest.mock("@react-navigation/elements", () => ({
+  useHeaderHeight: () => 88,
+}));
+
 const mockRouterPush = jest.fn();
 let mockSearchParams: Record<string, string | string[] | undefined> = {};
 
@@ -18,6 +22,7 @@ jest.mock("expo-router", () => ({
 }));
 
 import React from "react";
+import { KeyboardAvoidingView } from "react-native";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AgentComposerScreen from "../components/AgentComposerScreen";
 import { useGateway } from "@/app/_layout";
@@ -476,5 +481,26 @@ describe("AgentComposerScreen", () => {
     fireEvent.press(screen.getByRole("button", { name: "Claude" }));
 
     expect(screen.getByLabelText("Agent run prompt").props.value).toBe("Keep this prompt");
+  });
+
+  it("keeps the composer inside a keyboard-aware layout", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      createCodingAgentThread: jest.fn(),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const view = render(<AgentComposerScreen />);
+
+    expect(await screen.findByLabelText("Agent composer keyboard area")).toBeTruthy();
+    expect(view.UNSAFE_getByType(KeyboardAvoidingView).props.keyboardVerticalOffset).toBe(88);
+    expect(screen.getByLabelText("Agent run prompt")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start run" })).toBeTruthy();
   });
 });
