@@ -37,6 +37,7 @@ describe("CommandPalette", () => {
     useShellSessions.setState({ ...useShellSessions.getInitialState(), load: vi.fn().mockResolvedValue(undefined) }, true);
     useTabs.setState({ tabs: [], activeTabId: null, openTab: vi.fn() });
     useCodingAgentWorkspace.setState({
+      summary: null,
       reviewsStatus: "idle",
       reviews: null,
       reviewsError: null,
@@ -200,5 +201,75 @@ describe("CommandPalette", () => {
       title: "Agents",
     });
     expect(selectReview).toHaveBeenCalledWith("rev_recent");
+  });
+
+  it("opens provider setup actions in a foreground terminal from the command palette", async () => {
+    const openTab = vi.fn();
+    const post = vi.fn().mockResolvedValue({ name: "matrix-setup-codex" });
+    useTabs.setState({ openTab });
+    useConnection.setState({
+      api: {
+        get: vi.fn(),
+        post,
+      } as never,
+    });
+    useCodingAgentWorkspace.setState({
+      summary: {
+        target: {
+          id: "runtime-local",
+          label: "Local Matrix",
+          status: "available",
+        },
+        serverTime: "2026-07-07T00:00:00.000Z",
+        capabilities: [{ id: "codingAgentsDesktopWorkspace", enabled: true }],
+        limits: {
+          maxPromptBytes: 16384,
+          maxAttachmentCount: 8,
+          maxTerminalInputBytes: 4096,
+          maxListItems: 50,
+        },
+        providers: [
+          {
+            id: "codex",
+            displayName: "Codex",
+            kind: "codex",
+            availability: "setup_required",
+            installStatus: "missing",
+            authStatus: "missing",
+            supportedModes: ["default"],
+            defaultMode: "default",
+            setupActions: [
+              {
+                id: "codex",
+                kind: "foreground_terminal",
+                label: "Install Codex",
+                command: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@latest",
+              },
+            ],
+          },
+        ],
+        projects: { items: [], hasMore: false, limit: 20 },
+        activeThreads: { items: [], hasMore: false, limit: 20 },
+        attentionThreads: { items: [], hasMore: false, limit: 20 },
+        terminals: { items: [], hasMore: false, limit: 20 },
+      },
+    });
+
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Install Codex"));
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
+        name: "matrix-setup-codex",
+        cwd: "projects",
+        cmd: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@latest",
+      });
+    });
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "terminal",
+      sessionName: "matrix-setup-codex",
+      title: "Install Codex",
+    });
   });
 });

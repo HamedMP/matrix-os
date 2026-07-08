@@ -1,6 +1,6 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-desktop-review-palette`
+**Branch stack**: `spec/coding-agent-shells` plus stacked implementation branches through `105-coding-agent-desktop-provider-setup-palette`
 **Updated**: 2026-07-08
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
@@ -245,7 +245,7 @@ Renderer:
 
 Current behavior:
 
-- Read-only dashboard renders providers, gateway-owned attention threads, active threads, and terminals. The desktop command palette and app menu open the same Agents tab through the existing tab store when the desktop coding-agent workspace flag is enabled. The desktop command palette also exposes a bounded set of already-loaded review summaries and routes selection through the existing Agents tab plus workspace review selection state.
+- Read-only dashboard renders providers, gateway-owned attention threads, active threads, and terminals. The desktop command palette and app menu open the same Agents tab through the existing tab store when the desktop coding-agent workspace flag is enabled. The desktop command palette also exposes a bounded set of already-loaded review summaries and routes selection through the existing Agents tab plus workspace review selection state. Provider setup actions that arrive as bounded `foreground_terminal` actions can be opened from the command palette through the existing canonical terminal session create/open path.
 - Desktop keyboard flow can focus an existing Terminal tab or open the Terminal workspace through the app menu `Terminal` action and the matching global shortcut.
 - Notification controls render approval, input, and failed-run attention push preferences, load them through trusted IPC, and submit full replacement updates through trusted IPC with generic error states.
 - Attention thread rows read only from `RuntimeSummarySchema.attentionThreads`, show safe attention labels such as approval/input/failed, and open the existing bounded thread detail path through trusted IPC.
