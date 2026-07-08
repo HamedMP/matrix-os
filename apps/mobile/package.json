@@ -26,6 +26,7 @@
     "@expo/vector-icons": "15.1.1",
     "@matrix-os/contracts": "workspace:*",
     "@react-native-async-storage/async-storage": "^2.2.0",
+    "@react-navigation/elements": "2.9.5",
     "expo": "^57.0.0",
     "expo-auth-session": "~57.0.1",
     "expo-blur": "~57.0.0",
@@ -60,7 +61,8 @@
     "react-native-unistyles": "^3.2.5",
     "react-native-web": "^0.21.0",
     "react-native-webview": "13.16.1",
-    "react-native-worklets": "0.10.0"
+    "react-native-worklets": "0.10.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@babel/core": "^7.25.0",

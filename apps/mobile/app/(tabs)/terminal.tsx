@@ -37,6 +37,9 @@ export default function TerminalScreen() {
   const { client } = useGateway();
   const [state, dispatch] = useReducer(terminalReducer, initialTerminalState);
   const [lastTerminalSessionId, setLastTerminalSessionId] = useState<string | null>(null);
+  const [terminalHandoffSessionId, setTerminalHandoffSessionId] = useState<string | null>(null);
+  const [terminalResumeLoaded, setTerminalResumeLoaded] = useState(false);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [chromeExpanded, setChromeExpanded] = useState(false);
   const terminalClient = useMemo(() => (client ? new MobileTerminalClient(client) : null), [client]);
@@ -53,17 +56,25 @@ export default function TerminalScreen() {
     if (!terminalClient) return;
     const sessions = await terminalClient.listSessions();
     dispatch({ type: "sessions.loaded", sessions });
+    setSessionsLoaded(true);
   }, [terminalClient]);
 
   useEffect(() => {
+    setSessionsLoaded(false);
     loadSessions();
   }, [loadSessions]);
 
   useEffect(() => {
     loadMobileShellState()
-      .then((saved) => setLastTerminalSessionId(saved.lastActiveTerminalSessionId))
+      .then((saved) => {
+        setLastTerminalSessionId(saved.lastActiveTerminalSessionId);
+        setTerminalHandoffSessionId(saved.terminalHandoffSessionId ?? null);
+      })
       .catch((err: unknown) => {
         console.warn("[mobile] failed to load terminal resume state", err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        setTerminalResumeLoaded(true);
       });
   }, []);
 
@@ -95,11 +106,13 @@ export default function TerminalScreen() {
         replay: frame.replay,
       });
       setLastTerminalSessionId(frame.sessionId);
+      setTerminalHandoffSessionId(null);
       loadMobileShellState()
         .then((saved) => saveMobileShellState({
           ...saved,
           mode: "terminal",
           lastActiveTerminalSessionId: frame.sessionId,
+          terminalHandoffSessionId: null,
           updatedAt: new Date().toISOString(),
         }))
         .catch((err: unknown) => {
@@ -123,6 +136,19 @@ export default function TerminalScreen() {
       dispatch({ type: "terminal.error", message: frame.message ?? "Terminal unavailable" });
     }
   }, [loadSessions]);
+
+  const clearTerminalHandoff = useCallback(() => {
+    setTerminalHandoffSessionId(null);
+    loadMobileShellState()
+      .then((saved) => saveMobileShellState({
+        ...saved,
+        terminalHandoffSessionId: null,
+        updatedAt: new Date().toISOString(),
+      }))
+      .catch((err: unknown) => {
+        console.warn("[mobile] failed to clear terminal handoff state", err instanceof Error ? err.message : String(err));
+      });
+  }, []);
 
   const connectSession = useCallback(async (sessionId?: string) => {
     if (!terminalClient) {
@@ -241,11 +267,13 @@ export default function TerminalScreen() {
     connectionRef.current?.destroy();
     connectionRef.current = null;
     setLastTerminalSessionId(null);
+    setTerminalHandoffSessionId(null);
     loadMobileShellState()
       .then((saved) => saveMobileShellState({
         ...saved,
         mode: "terminal",
         lastActiveTerminalSessionId: null,
+        terminalHandoffSessionId: null,
         updatedAt: new Date().toISOString(),
       }))
       .catch((err: unknown) => {
@@ -264,11 +292,17 @@ export default function TerminalScreen() {
   }, [destroySession]);
 
   const runningSessions = state.sessions.filter((session) => session.state === "running");
+  const handoffRunningSession = terminalHandoffSessionId
+    ? runningSessions.find((session) => session.sessionId === terminalHandoffSessionId) ?? null
+    : null;
   const lastRunningSession = lastTerminalSessionId
     ? runningSessions.find((session) => session.sessionId === lastTerminalSessionId) ?? null
     : null;
-  // Last-session-first: prefer the remembered session, else fall back to any running one.
-  const autoAttachSession = lastRunningSession ?? runningSessions[0] ?? null;
+  // Explicit handoffs come from a tapped terminal row and must not attach a
+  // different session if the selected one disappeared before this tab opened.
+  const autoAttachSession = terminalHandoffSessionId
+    ? handoffRunningSession
+    : lastRunningSession ?? runningSessions[0] ?? null;
   const cwd = formatTerminalCwd(state.cwd);
 
   // Last-session-first: when the terminal opens idle and there is a known last
@@ -277,11 +311,27 @@ export default function TerminalScreen() {
   const autoConnectedRef = useRef(false);
   useEffect(() => {
     if (autoConnectedRef.current) return;
+    if (!terminalResumeLoaded || !sessionsLoaded) return;
     if (state.status !== "idle") return;
+    if (terminalHandoffSessionId && !handoffRunningSession) {
+      autoConnectedRef.current = true;
+      dispatch({ type: "terminal.error", message: "Terminal unavailable" });
+      clearTerminalHandoff();
+      return;
+    }
     if (!autoAttachSession) return;
     autoConnectedRef.current = true;
     connectSession(autoAttachSession.sessionId);
-  }, [state.status, autoAttachSession, connectSession]);
+  }, [
+    autoAttachSession,
+    clearTerminalHandoff,
+    connectSession,
+    handoffRunningSession,
+    sessionsLoaded,
+    state.status,
+    terminalHandoffSessionId,
+    terminalResumeLoaded,
+  ]);
 
   return (
     <View style={styles.screen}>

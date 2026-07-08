@@ -73,13 +73,21 @@ describe("review-loop", () => {
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
-    const needsImplementation = completeReview(started.review, { parseResult: parsedWithFindings, now });
+    const needsImplementation = completeReview(started.review, {
+      parseResult: parsedWithFindings,
+      findingsPath: ".matrix/review-round-1.md",
+      now,
+    });
     expect(needsImplementation).toMatchObject({
       ok: true,
       review: {
         status: "implementing",
         round: 1,
-        rounds: [expect.objectContaining({ findingsCount: 1, severityCounts: { high: 1, medium: 0, low: 0 } })],
+        rounds: [expect.objectContaining({
+          findingsCount: 1,
+          findingsPath: ".matrix/review-round-1.md",
+          severityCounts: { high: 1, medium: 0, low: 0 },
+        })],
       },
     });
     if (!needsImplementation.ok) return;

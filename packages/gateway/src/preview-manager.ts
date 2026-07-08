@@ -66,6 +66,16 @@ const ListPreviewSchema = z.object({
   limit: z.number().int().min(1).max(100).default(100),
 });
 
+function paginatePreviews(
+  previews: PreviewRecord[],
+  query: z.infer<typeof ListPreviewSchema>,
+): { previews: PreviewRecord[]; nextCursor: string | null } {
+  const startIndex = query.cursor ? previews.findIndex((preview) => preview.id === query.cursor) + 1 : 0;
+  const page = previews.slice(Math.max(0, startIndex), Math.max(0, startIndex) + query.limit);
+  const nextCursor = previews.length > Math.max(0, startIndex) + query.limit ? page.at(-1)?.id ?? null : null;
+  return { previews: page, nextCursor };
+}
+
 function nowIso(now?: () => string): string {
   return now ? now() : new Date().toISOString();
 }
@@ -311,10 +321,28 @@ export function createPreviewManager(options: {
         .filter((preview) => !query.taskId || preview.taskId === query.taskId)
         .filter((preview) => !query.sessionId || preview.sessionId === query.sessionId)
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-      const startIndex = query.cursor ? previews.findIndex((preview) => preview.id === query.cursor) + 1 : 0;
-      const page = previews.slice(Math.max(0, startIndex), Math.max(0, startIndex) + query.limit);
-      const nextCursor = previews.length > Math.max(0, startIndex) + query.limit ? page.at(-1)?.id ?? null : null;
-      return { ok: true, previews: page, nextCursor };
+      return { ok: true, ...paginatePreviews(previews, query) };
+    },
+
+    async listRecentPreviews(projectSlug: string, input: unknown = {}): Promise<
+      Result<{ previews: PreviewRecord[]; nextCursor: string | null }> | Failure
+    > {
+      const projectError = validateProjectSlug(projectSlug);
+      if (projectError) return projectError;
+      const missingProject = await requireProject(homePath, projectSlug);
+      if (missingProject) return missingProject;
+      const parsed = ListPreviewSchema.safeParse(input);
+      if (!parsed.success) return failure(400, "invalid_preview_query", "Preview query is invalid");
+      const query = parsed.data;
+      const previews = (await listPreviewRecords(homePath, projectSlug))
+        .filter((preview) => !query.taskId || preview.taskId === query.taskId)
+        .filter((preview) => !query.sessionId || preview.sessionId === query.sessionId)
+        .sort((a, b) =>
+          b.updatedAt.localeCompare(a.updatedAt) ||
+          b.createdAt.localeCompare(a.createdAt) ||
+          a.id.localeCompare(b.id)
+        );
+      return { ok: true, ...paginatePreviews(previews, query) };
     },
 
     async updatePreview(projectSlug: string, previewId: string, input: unknown): Promise<Result<{ preview: PreviewRecord }> | Failure> {

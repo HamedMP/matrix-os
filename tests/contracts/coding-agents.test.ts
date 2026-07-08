@@ -6,9 +6,25 @@ import {
   ApprovalDecisionRequestSchema,
   AgentThreadComposerDraftSchema,
   CreateAgentThreadRequestSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
+  FileReadRequestSchema,
+  FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
   FileMetadataSchema,
   PreviewSessionSummarySchema,
+  ReviewDiffLineSchema,
   ReviewFileDiffSchema,
+  ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
   SafeClientErrorSchema,
@@ -64,6 +80,21 @@ describe("coding agent contracts", () => {
       providers: [],
       projects: { items: [], hasMore: false, limit: 20 },
       activeThreads: { items: [], hasMore: false, limit: 20 },
+      attentionThreads: {
+        items: [
+          {
+            id: "thread_attention",
+            providerId: "codex",
+            title: "Approve deployment",
+            status: "waiting_for_approval",
+            attention: "approval_required",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
       terminalSessions: {
         items: [
           {
@@ -88,6 +119,10 @@ describe("coding agent contracts", () => {
       serverTime: now,
     });
 
+    expect(summary.attentionThreads.items[0]).toMatchObject({
+      id: "thread_attention",
+      attention: "approval_required",
+    });
     expect(summary.terminalSessions.items[0]?.attachable).toBe(true);
     expect(() =>
       RuntimeSummarySchema.parse({
@@ -243,6 +278,45 @@ describe("coding agent contracts", () => {
     }).status).toBe("running");
   });
 
+  it("validates coding-agent notification preferences without accepting extra payload data", () => {
+    expect(CodingAgentNotificationPreferencesSchema.parse({
+      attentionPush: {
+        approval: true,
+        input: false,
+        failed: true,
+        completed: true,
+      },
+    })).toEqual({
+      attentionPush: {
+        approval: true,
+        input: false,
+        failed: true,
+        completed: true,
+      },
+    });
+
+    expect(CodingAgentNotificationPreferencesUpdateSchema.parse({
+      attentionPush: {
+        approval: false,
+        input: false,
+        failed: false,
+        completed: false,
+      },
+    }).attentionPush.completed).toBe(false);
+
+    expect(() =>
+      CodingAgentNotificationPreferencesSchema.parse({
+        attentionPush: {
+          approval: true,
+          input: true,
+          failed: true,
+          completed: true,
+          provider: "raw",
+        },
+      }),
+    ).toThrow();
+  });
+
   it("validates decision, input, file, review, preview, and server frame contracts", () => {
     expect(ApprovalDecisionRequestSchema.parse({
       decision: "approve",
@@ -270,6 +344,224 @@ describe("coding agent contracts", () => {
       updatedAt: now,
     }).path).toBe("src/index.ts");
     expect(() => FileMetadataSchema.parse({ path: "../secret", kind: "file" })).toThrow();
+
+    expect(FileReadRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "src/index.ts",
+    }).path).toBe("src/index.ts");
+    expect(() => FileReadRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+    })).toThrow();
+    expect(FileReadResponseSchema.parse({
+      metadata: {
+        path: "src/index.ts",
+        kind: "file",
+        sizeBytes: 27,
+        etag: "sha256_123",
+        updatedAt: now,
+      },
+      content: "export const answer = 42;\n",
+      encoding: "utf8",
+      truncated: false,
+      limitBytes: 65536,
+    }).truncated).toBe(false);
+    expect(FileWriteRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "src/index.ts",
+      content: "export const answer = 43;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_123",
+      clientRequestId: "req_file_write",
+    }).baseEtag).toBe("sha256_123");
+    expect(FileWriteRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "src/new.ts",
+      content: "export {};\n",
+      encoding: "utf8",
+      baseEtag: null,
+      clientRequestId: "req_file_create",
+    }).baseEtag).toBeNull();
+    expect(() => FileWriteRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      content: "unsafe",
+      encoding: "utf8",
+      baseEtag: null,
+      clientRequestId: "req_file_bad_path",
+    })).toThrow();
+    expect(FileWriteResponseSchema.parse({
+      metadata: {
+        path: "src/index.ts",
+        kind: "file",
+        sizeBytes: 27,
+        etag: "sha256_456",
+        updatedAt: now,
+      },
+      encoding: "utf8",
+      writtenBytes: 27,
+    }).writtenBytes).toBe(27);
+    expect(FileBrowseRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "src",
+      limit: 20,
+    }).path).toBe("src");
+    expect(FileBrowseRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+    }).path).toBeUndefined();
+    expect(() => FileBrowseRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system",
+    })).toThrow();
+    expect(FileBrowseResponseSchema.parse({
+      directory: {
+        path: "src",
+        kind: "directory",
+      },
+      entries: {
+        items: [{
+          path: "src/index.ts",
+          kind: "file",
+          sizeBytes: 27,
+          etag: "sha256_123",
+          updatedAt: now,
+        }],
+        hasMore: false,
+        limit: 20,
+      },
+    }).entries.items[0]?.path).toBe("src/index.ts");
+    expect(FileSearchRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "index",
+      path: "src",
+      limit: 20,
+    }).query).toBe("index");
+    expect(FileSearchRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "bearer-token.test.ts",
+    }).query).toBe("bearer-token.test.ts");
+    expect(() => FileSearchRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: " ",
+    })).toThrow();
+    expect(FileSearchResponseSchema.parse({
+      matches: {
+        items: [{ path: "src/index.ts", kind: "file", sizeBytes: 27 }],
+        hasMore: false,
+        limit: 20,
+      },
+    }).matches.items).toHaveLength(1);
+
+    expect(SourceControlPrepareCommitRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files\n\nInclude the detailed review notes for src/index.ts.",
+      paths: ["src/index.ts"],
+      clientRequestId: "req_prepare_commit",
+    }).message).toContain("detailed review notes");
+    expect(SourceControlPrepareCommitRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      clientRequestId: "req_prepare_commit_all",
+    }).paths).toBeUndefined();
+    expect(() => SourceControlPrepareCommitRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix:\u0000 update reviewed files",
+      clientRequestId: "req_prepare_commit_unsafe",
+    })).toThrow();
+    expect(() => SourceControlPrepareCommitRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["../secret.txt"],
+      clientRequestId: "req_prepare_commit_bad_path",
+    })).toThrow();
+    expect(SourceControlPrepareCommitResponseSchema.parse({
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef01234567",
+      branch: "feature/var/review-fix",
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    }).branch).toBe("feature/var/review-fix");
+    expect(SourceControlPrepareCommitResponseSchema.parse({
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef012345670123456789abcdef01234567",
+      branch: "detached",
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    }).commitSha).toHaveLength(64);
+    expect(SourceControlPrepareCommitResponseSchema.parse({
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef01234567",
+      branch: `feature/${"a".repeat(220)}`,
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    }).branch).toHaveLength(228);
+    expect(SourceControlCreatePullRequestRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: update reviewed files",
+      body: "Review updates are ready.",
+      baseBranch: "main",
+      draft: true,
+      clientRequestId: "req_create_pull_request",
+    }).draft).toBe(true);
+    expect(SourceControlCreatePullRequestRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: update reviewed files",
+      clientRequestId: "req_create_pull_request_default",
+    }).body).toBeUndefined();
+    expect(() => SourceControlCreatePullRequestRequestSchema.parse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix:\u0000 update reviewed files",
+      clientRequestId: "req_create_pull_request_bad_title",
+    })).toThrow();
+    expect(SourceControlCreatePullRequestRequestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: update reviewed files",
+      clientRequestId: "req_create_pull_request_leak",
+      accessToken: "secret",
+    }).success).toBe(false);
+    expect(SourceControlCreatePullRequestResponseSchema.parse({
+      status: "created",
+      number: 807,
+      url: "https://github.com/HamedMP/matrix-os/pull/807",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    }).number).toBe(807);
+    expect(SourceControlCreatePullRequestResponseSchema.parse({
+      status: "existing",
+      number: 808,
+      url: "https://github.com/HamedMP/matrix-os/pull/808",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    }).status).toBe("existing");
+    expect(() => SourceControlCreatePullRequestResponseSchema.parse({
+      status: "created",
+      number: 807,
+      url: "https://internal.example.test/HamedMP/matrix-os/pull/807",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    })).toThrow();
 
     expect(ReviewSummarySchema.parse({
       id: "rev_123",
@@ -322,8 +614,122 @@ describe("coding agent contracts", () => {
       }),
     ).toThrow();
 
+    const reviewSnapshot = ReviewSnapshotSchema.parse({
+      review: {
+        id: "rev_123",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        updatedAt: now,
+      },
+      files: {
+        items: [
+          {
+            path: "src/index.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [
+              {
+                id: "hunk_rev_123_0_0",
+                oldStart: 12,
+                oldLines: 1,
+                newStart: 12,
+                newLines: 1,
+                heading: "Finding HIGH-1",
+                partial: true,
+                lines: [
+                  {
+                    kind: "remove",
+                    oldLine: 12,
+                    content: "const unsafe = true;",
+                  },
+                  {
+                    kind: "add",
+                    newLine: 12,
+                    content: "const safe = true;",
+                  },
+                ],
+              },
+            ],
+            findings: [
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 12,
+                summary: "Validate the request before reading review state.",
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+      updatedAt: now,
+    });
+    expect(reviewSnapshot.files.items[0]?.hunks[0]?.partial).toBe(true);
+    expect(reviewSnapshot.files.items[0]?.hunks[0]?.lines?.[1]).toMatchObject({
+      kind: "add",
+      newLine: 12,
+      content: "const safe = true;",
+    });
+    expect(ReviewDiffLineSchema.parse({
+      kind: "context",
+      oldLine: 14,
+      newLine: 14,
+      content: "return value;",
+    }).kind).toBe("context");
+    expect(() =>
+      ReviewDiffLineSchema.parse({
+        kind: "add",
+        newLine: 1,
+        content: "x".repeat(1001),
+      }),
+    ).toThrow();
+    expect(() =>
+      ReviewDiffLineSchema.parse({
+        kind: "context",
+        oldLine: 0,
+        newLine: 1,
+        content: "return value;",
+      }),
+    ).toThrow();
+    expect(() =>
+      ReviewSnapshotSchema.parse({
+        ...reviewSnapshot,
+        files: {
+          ...reviewSnapshot.files,
+          items: [{ ...reviewSnapshot.files.items[0], path: "../secret.ts" }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      ReviewSnapshotSchema.parse({
+        ...reviewSnapshot,
+        files: {
+          ...reviewSnapshot.files,
+          items: [{
+            ...reviewSnapshot.files.items[0],
+            findings: [{
+              ...reviewSnapshot.files.items[0]!.findings![0],
+              summary: "Postgres failed at /home/matrix/home",
+            }],
+          }],
+        },
+      }),
+    ).toThrow();
+
     expect(PreviewSessionSummarySchema.parse({
       id: "preview_main",
+      projectId: "repo-main",
       label: "Development preview",
       status: "running",
       origin: `https://preview.example.com/${"a".repeat(700)}?token=${"b".repeat(700)}`,

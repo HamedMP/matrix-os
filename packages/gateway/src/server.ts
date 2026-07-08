@@ -34,6 +34,7 @@ import {
 import { summarizeConversation, saveSummary } from "./conversation-summary.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import { createWorkspaceRoutes } from "./workspace-routes.js";
+import { createPreviewManager } from "./preview-manager.js";
 import { createReviewStore } from "./review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
@@ -103,6 +104,11 @@ import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./
 import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
 import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
 import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
+import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
+import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
+import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
+import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
+import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -276,6 +282,15 @@ const ApiMessageBodySchema = z.object({
     displayName: z.string().optional(),
   }).optional(),
 });
+
+const PushRegisterBodySchema = z.object({
+  token: z.string().trim().min(1).max(512),
+  platform: z.string().trim().min(1).max(32),
+}).strict();
+
+const PushUnregisterBodySchema = z.object({
+  token: z.string().trim().min(1).max(512),
+}).strict();
 
 export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
   await mkdirAsync(dirname(persistPath), { recursive: true });
@@ -479,11 +494,26 @@ export async function createGateway(config: GatewayConfig) {
   const workspaceEventStore = createWorkspaceEventStore({ homePath });
   const reviewStore = createReviewStore({ homePath });
   const codingAgentReviewSummaryStore = createCodingAgentReviewSummaryStore(reviewStore, {
+    homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
       (id): id is string => Boolean(id),
     ),
   });
+  const codingAgentOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
+    (id): id is string => Boolean(id),
+  );
+  const codingAgentFileStore = createCodingAgentFileStore({
+    homePath,
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
+  const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
+    homePath,
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: codingAgentOwnerIds,
+  });
+  const codingAgentNotificationPreferenceStore = createCodingAgentNotificationPreferenceStore({ homePath });
   const workspaceEventPublisher = createWorkspaceEventPublisher({
     eventStore: workspaceEventStore,
     onSessionStopped: (session) => codingAgentSessionStopReconciler.handleSessionStopped(session),
@@ -528,17 +558,31 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentThreadStream = codingAgentThreadStore
     ? createCodingAgentThreadStream({ threads: codingAgentThreadStore })
     : undefined;
+  const codingAgentPreviewSummaryStore = createCodingAgentPreviewSummaryStore({
+    homePath,
+    previewManager: createPreviewManager({ homePath }),
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter(
+      (id): id is string => typeof id === "string" && id.length > 0,
+    ),
+  });
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
     terminalRegistry: zellijShellRegistry,
     agentCredentials: agentCredentialService,
+    providerIds: codingAgentProviders.map((provider) => provider.providerId),
     threads: codingAgentThreadStore,
+    previews: codingAgentPreviewSummaryStore,
     capabilities: {
       workspace: codingAgentWorkspaceEnabled,
       approvals: false,
       review: true,
+      preview: true,
+      files: true,
+      sourceControl: true,
     },
     terminalOwnerId: process.env.MATRIX_USER_ID,
+    filesOwnerId: process.env.MATRIX_USER_ID,
   });
   const integrationCapabilityService = createIntegrationCapabilityService({
     getConnectedCapabilityIds,
@@ -1409,6 +1453,13 @@ export async function createGateway(config: GatewayConfig) {
         });
     },
   });
+  const codingAgentAttentionNotifications = codingAgentThreadStore
+    ? registerCodingAgentAttentionNotifications({
+      threads: codingAgentThreadStore,
+      send: (reply) => channelManager.send(reply),
+      preferences: codingAgentNotificationPreferenceStore,
+    })
+    : undefined;
 
   channelManager.start().then(() => {
     channelManager.replay().catch((err: unknown) => {
@@ -1558,6 +1609,9 @@ export async function createGateway(config: GatewayConfig) {
     service: codingAgentRuntimeSummaryService,
     threads: codingAgentThreadStore,
     reviews: codingAgentReviewSummaryStore,
+    files: codingAgentFileStore,
+    sourceControl: codingAgentSourceControlStore,
+    notificationPreferences: codingAgentNotificationPreferenceStore,
   }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
@@ -3722,20 +3776,66 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   app.post("/api/push/register", pushRegistrationBodyLimit, async (c) => {
-    const body = await c.req.json<{ token: string; platform: string }>();
-    if (!body.token || !body.platform) {
-      return c.json({ error: "token and platform are required" }, 400);
+    let principal;
+    try {
+      principal = requireRequestPrincipal(c);
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Push registration failed");
+        if (mapped.log) console.error("[push] Request principal misconfigured:", err.name);
+        return c.json(mapped.body, mapped.status);
+      }
+      throw err;
     }
-    pushAdapter.registerToken(body.token, body.platform);
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        logBestEffortFailure("Failed to parse push registration", err);
+      }
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+
+    const parsed = PushRegisterBodySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+
+    pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId);
     return c.json({ ok: true });
   });
 
   app.delete("/api/push/register", pushRegistrationBodyLimit, async (c) => {
-    const body = await c.req.json<{ token: string }>();
-    if (!body.token) {
-      return c.json({ error: "token is required" }, 400);
+    let principal;
+    try {
+      principal = requireRequestPrincipal(c);
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Push registration failed");
+        if (mapped.log) console.error("[push] Request principal misconfigured:", err.name);
+        return c.json(mapped.body, mapped.status);
+      }
+      throw err;
     }
-    pushAdapter.removeToken(body.token);
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        logBestEffortFailure("Failed to parse push registration removal", err);
+      }
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+
+    const parsed = PushUnregisterBodySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+
+    pushAdapter.removeToken(parsed.data.token, principal.userId);
     return c.json({ ok: true });
   });
 
@@ -4060,6 +4160,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       codingAgentThreadStream?.shutdown();
+      codingAgentAttentionNotifications?.dispose();
       codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);

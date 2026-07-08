@@ -1,15 +1,92 @@
 import { Command } from "cmdk";
-import { useEffect } from "react";
-import { Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { AgentThreadSummary, ReviewSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import { Bot, ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useShellSessions } from "../../stores/shell-sessions";
-import { useTabs } from "../../stores/tabs";
+import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
+import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../coding-agents/provider-setup-terminal";
+
+const EMPTY_REVIEWS: ReviewSummary[] = [];
+const MAX_PALETTE_REVIEWS = 10;
+const MAX_PALETTE_THREADS = 20;
+const MAX_PALETTE_TERMINALS = 20;
+const TERMINAL_REVIEW_STATUSES: ReviewSummary["status"][] = ["approved", "converged", "stopped"];
+const SESSION_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?$/;
+const SETUP_DISCONNECTED_ERROR = "Connect to your Matrix computer before opening setup.";
+const SETUP_TERMINAL_ERROR = "Could not open setup terminal. Try again from Terminal.";
+
+function isTerminalReviewStatus(status: ReviewSummary["status"]): boolean {
+  return TERMINAL_REVIEW_STATUSES.includes(status);
+}
+
+function reviewUpdatedAtMs(review: ReviewSummary): number {
+  const value = Date.parse(review.updatedAt);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function paletteReviewCommands(reviews: ReviewSummary[]): ReviewSummary[] {
+  return [...reviews]
+    .sort((a, b) => {
+      const statusPriority = Number(isTerminalReviewStatus(a.status)) - Number(isTerminalReviewStatus(b.status));
+      if (statusPriority !== 0) return statusPriority;
+      const updatedPriority = reviewUpdatedAtMs(b) - reviewUpdatedAtMs(a);
+      if (updatedPriority !== 0) return updatedPriority;
+      const pullRequestPriority = b.pullRequestNumber - a.pullRequestNumber;
+      if (pullRequestPriority !== 0) return pullRequestPriority;
+      return a.id.localeCompare(b.id);
+    })
+    .slice(0, MAX_PALETTE_REVIEWS);
+}
+
+function paletteThreadCommands(summary: { activeThreads: { items: AgentThreadSummary[] }; attentionThreads: { items: AgentThreadSummary[] } } | null): AgentThreadSummary[] {
+  if (!summary) return [];
+  const commands: AgentThreadSummary[] = [];
+  const seen = new Set<string>();
+  for (const thread of [...summary.attentionThreads.items, ...summary.activeThreads.items]) {
+    if (seen.has(thread.id)) continue;
+    seen.add(thread.id);
+    commands.push(thread);
+    if (commands.length >= MAX_PALETTE_THREADS) break;
+  }
+  return commands;
+}
+
+function paletteTerminalCommands(
+  summary: { terminalSessions?: { items: TerminalSessionSummary[] } } | null,
+  shellSessions: Array<{ name: string }>,
+): TerminalSessionSummary[] {
+  if (!summary?.terminalSessions) return [];
+  const shellSessionNames = new Set(shellSessions.map((session) => session.name));
+  const commands: TerminalSessionSummary[] = [];
+  const seen = new Set<string>();
+  for (const session of summary.terminalSessions.items) {
+    if (
+      !session.attachable
+      || !SESSION_NAME_PATTERN.test(session.name)
+      || shellSessionNames.has(session.name)
+      || seen.has(session.name)
+    ) continue;
+    seen.add(session.name);
+    commands.push(session);
+    if (commands.length >= MAX_PALETTE_TERMINALS) break;
+  }
+  return commands;
+}
+
+function canRequestAgentComposerFocus(summary: { capabilities: Array<{ id: string; enabled: boolean }> } | null): boolean {
+  if (!summary) return true;
+  return summary.capabilities.some((capability) => capability.id === "codingAgentsThreadCreate" && capability.enabled);
+}
 
 export default function CommandPalette() {
+  const [actionError, setActionError] = useState<string | null>(null);
   const open = useUi((s) => s.paletteOpen);
   const setOpen = useUi((s) => s.setPaletteOpen);
   const openTab = useTabs((s) => s.openTab);
@@ -27,6 +104,11 @@ export default function CommandPalette() {
   const apps = useApps((s) => s.apps);
   const appsError = useApps((s) => s.error);
   const loadApps = useApps((s) => s.load);
+  const summary = useCodingAgentWorkspace((s) => s.summary);
+  const reviews = useCodingAgentWorkspace((s) => s.reviews);
+  const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
+  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
+  const requestComposerFocus = useCodingAgentWorkspace((s) => s.requestComposerFocus);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
 
@@ -39,14 +121,37 @@ export default function CommandPalette() {
     if (open && api) void loadShellSessions(api);
   }, [open, api, loadShellSessions]);
 
+  useEffect(() => {
+    if (open) setActionError(null);
+  }, [open]);
+
   if (!open) return null;
 
   const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
   const otherTabs = tabs.filter((t) => t.id !== activeTabId);
+  const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteReviewCommands(reviews?.items ?? EMPTY_REVIEWS) : EMPTY_REVIEWS;
+  const threadCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteThreadCommands(summary) : [];
+  const terminalCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteTerminalCommands(summary, shellSessions) : [];
+  const setupCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? providerSetupCommands(summary?.providers ?? []) : [];
 
   const run = (fn: () => void) => {
+    setActionError(null);
     setOpen(false);
     fn();
+  };
+
+  const runProviderSetup = async (setup: ProviderSetupCommand) => {
+    setActionError(null);
+    if (!api) {
+      setActionError(SETUP_DISCONNECTED_ERROR);
+      return;
+    }
+    const opened = await openProviderSetupTerminal(api, setup, openTab, "palette");
+    if (opened) {
+      setOpen(false);
+    } else {
+      setActionError(SETUP_TERMINAL_ERROR);
+    }
   };
 
   return (
@@ -76,6 +181,11 @@ export default function CommandPalette() {
           className="w-full border-b bg-transparent px-4 py-3 text-md outline-none"
           style={{ borderColor: "var(--border-subtle)", color: "var(--text-primary)" }}
         />
+        {actionError ? (
+          <div className="border-b px-4 py-2 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+            {actionError}
+          </div>
+        ) : null}
         <Command.List className="max-h-[320px] overflow-y-auto p-1.5">
           <Command.Empty
             className="px-3 py-6 text-center text-sm"
@@ -101,7 +211,34 @@ export default function CommandPalette() {
                 })
               }
             />
-            <PaletteItem icon={<MessageSquarePlus size={14} />} label="New agent run" shortcut="⌘J" onSelect={() => run(() => setComposerOpen(true))} />
+            <PaletteItem
+              icon={<MessageSquarePlus size={14} />}
+              label="New agent run"
+              shortcut="⌘J"
+              onSelect={() =>
+                run(() => {
+                  if (CODING_AGENTS_DESKTOP_WORKSPACE) {
+                    if (canRequestAgentComposerFocus(summary)) requestComposerFocus();
+                    openTab(AGENTS_WORKSPACE_TAB_SPEC);
+                    return;
+                  }
+                  setComposerOpen(true);
+                })
+              }
+            />
+            {CODING_AGENTS_DESKTOP_WORKSPACE ? (
+              <PaletteItem icon={<Bot size={14} />} label="Open Agents" onSelect={() => run(() => openTab(AGENTS_WORKSPACE_TAB_SPEC))} />
+            ) : null}
+            {setupCommands.map((setup) => (
+              <PaletteItem
+                key={setup.key}
+                icon={<SquareTerminal size={14} />}
+                label={setup.label}
+                onSelect={() =>
+                  void runProviderSetup(setup)
+                }
+              />
+            ))}
             <PaletteItem icon={<Home size={14} />} label="Go to Home" onSelect={() => run(() => openTab({ kind: "home", title: "Home", closable: false }))} />
             <PaletteItem icon={<SquareTerminal size={14} />} label="Open Terminal" onSelect={() => run(() => openTab({ kind: "terminals", title: "Terminal" }))} />
             <PaletteItem icon={<LayoutGrid size={14} />} label="Open Apps" onSelect={() => run(() => openTab({ kind: "apps", title: "Apps" }))} />
@@ -129,6 +266,57 @@ export default function CommandPalette() {
                   icon={<Kanban size={14} />}
                   label={card.title}
                   onSelect={() => run(() => openTab({ kind: "task", taskId: card.id, projectSlug: card.projectSlug, title: card.title }))}
+                />
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {reviewCommands.length > 0 ? (
+            <Command.Group heading="Reviews" style={{ color: "var(--text-tertiary)" }}>
+              {reviewCommands.map((review) => (
+                <PaletteItem
+                  key={review.id}
+                  icon={<ClipboardCheck size={14} />}
+                  label={`Open review PR #${review.pullRequestNumber}`}
+                  onSelect={() =>
+                    run(() => {
+                      openTab(AGENTS_WORKSPACE_TAB_SPEC);
+                      void selectReview(review.id);
+                    })
+                  }
+                />
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {threadCommands.length > 0 ? (
+            <Command.Group heading="Threads" style={{ color: "var(--text-tertiary)" }}>
+              {threadCommands.map((thread) => (
+                <PaletteItem
+                  key={thread.id}
+                  icon={<GitBranch size={14} />}
+                  label={`Open thread ${thread.title}`}
+                  onSelect={() =>
+                    run(() => {
+                      openTab(AGENTS_WORKSPACE_TAB_SPEC);
+                      void loadThreadSnapshot(thread.id);
+                    })
+                  }
+                />
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {terminalCommands.length > 0 ? (
+            <Command.Group heading="Agent terminals" style={{ color: "var(--text-tertiary)" }}>
+              {terminalCommands.map((session) => (
+                <PaletteItem
+                  key={session.id}
+                  icon={<SquareTerminal size={14} />}
+                  label={`Open terminal ${session.name}`}
+                  onSelect={() =>
+                    run(() => openTab({ kind: "terminal", sessionName: session.name, title: session.name }))
+                  }
                 />
               ))}
             </Command.Group>

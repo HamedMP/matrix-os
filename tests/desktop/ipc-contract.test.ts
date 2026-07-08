@@ -14,6 +14,19 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:subscribe-thread-events",
+      "runtime:unsubscribe-thread-events",
+      "runtime:get-notification-preferences",
+      "runtime:update-notification-preferences",
+      "runtime:submit-approval-decision",
+      "runtime:submit-input-answer",
+      "runtime:get-thread-snapshot",
+      "runtime:browse-files",
+      "runtime:search-files",
+      "runtime:get-file-content",
+      "runtime:save-file-content",
+      "runtime:prepare-source-commit",
+      "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
       "runtime:select",
@@ -31,6 +44,52 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("validates trusted desktop thread stream IPC without credential fields", () => {
+    const subscribeSchema = INVOKE_CHANNELS["runtime:subscribe-thread-events"].request;
+    const unsubscribeSchema = INVOKE_CHANNELS["runtime:unsubscribe-thread-events"].request;
+    const eventSchema = EVENT_CHANNELS["runtime:thread-event"];
+    const errorSchema = EVENT_CHANNELS["runtime:thread-stream-error"];
+    const event = {
+      threadId: "thread_desktop_1",
+      event: {
+        type: "approval.resolved",
+        eventId: "evt_approval_2",
+        threadId: "thread_desktop_1",
+        occurredAt: "2026-07-06T00:02:00.000Z",
+        approvalId: "appr_desktop_1",
+        decision: "approve",
+      },
+    };
+
+    expect(subscribeSchema.safeParse({ threadId: "thread_desktop_1", cursor: "evt_approval_1" }).success).toBe(true);
+    expect(subscribeSchema.safeParse({ threadId: "../secret" }).success).toBe(false);
+    expect(subscribeSchema.safeParse({ threadId: "thread_desktop_1", bearerToken: "secret" }).success).toBe(false);
+    expect(unsubscribeSchema.safeParse({ threadId: "thread_desktop_1" }).success).toBe(true);
+    expect(unsubscribeSchema.safeParse({ threadId: "thread_desktop_1", accessToken: "secret" }).success).toBe(false);
+    expect(eventSchema.safeParse(event).success).toBe(true);
+    expect(eventSchema.safeParse({ ...event, token: "secret" }).success).toBe(false);
+    expect(eventSchema.safeParse({
+      ...event,
+      event: { ...event.event, providerSecret: "secret" },
+    }).success).toBe(false);
+    expect(errorSchema.safeParse({
+      threadId: "thread_desktop_1",
+      error: {
+        code: "stream_unavailable",
+        safeMessage: "Thread stream unavailable",
+        retryable: true,
+      },
+    }).success).toBe(true);
+    expect(errorSchema.safeParse({
+      threadId: "thread_desktop_1",
+      error: {
+        code: "raw_provider_error",
+        safeMessage: "/home/matrix/secret token failed",
+        retryable: true,
+      },
+    }).success).toBe(false);
   });
 
   it("validates runtime:create-thread requests and rejects credential leakage shapes", () => {
@@ -65,6 +124,135 @@ describe("IPC contract", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("validates runtime:get-thread-snapshot requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-thread-snapshot"].request;
+    const schema = INVOKE_CHANNELS["runtime:get-thread-snapshot"].response;
+    const valid = {
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "waiting_for_approval",
+        attention: "approval_required",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:01:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "approval.requested",
+            eventId: "evt_approval_1",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:01:00.000Z",
+            approval: {
+              approvalId: "appr_desktop_1",
+              threadId: "thread_desktop_1",
+              actionKind: "command",
+              risk: "medium",
+              title: "Run tests",
+              safeDescription: "Run the focused desktop tests.",
+              allowedDecisions: ["approve", "decline"],
+              correlationId: "corr_desktop_1",
+            },
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+
+    expect(requestSchema.safeParse({ threadId: "thread_desktop_1" }).success).toBe(true);
+    expect(requestSchema.safeParse({ threadId: "../secret" }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      thread: { ...valid.thread, providerSecret: "secret" },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:submit-approval-decision requests and responses", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:submit-approval-decision"].request;
+    const responseSchema = INVOKE_CHANNELS["runtime:submit-approval-decision"].response;
+    const request = {
+      threadId: "thread_desktop_1",
+      approvalId: "appr_desktop_1",
+      decision: "approve",
+      correlationId: "corr_desktop_1",
+      clientRequestId: "req_desktop_1",
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, providerToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, approvalId: "../secret" }).success).toBe(false);
+    expect(responseSchema.safeParse({
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:02:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "approval.resolved",
+            eventId: "evt_approval_2",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+            approvalId: "appr_desktop_1",
+            decision: "approve",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    }).success).toBe(true);
+  });
+
+  it("validates runtime:submit-input-answer requests and responses", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:submit-input-answer"].request;
+    const responseSchema = INVOKE_CHANNELS["runtime:submit-input-answer"].response;
+    const request = {
+      threadId: "thread_desktop_1",
+      inputRequestId: "req_input_desktop_1",
+      answer: "Run the focused desktop test.",
+      correlationId: "corr_input_desktop_1",
+      clientRequestId: "req_desktop_1",
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, providerToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, inputRequestId: "../secret" }).success).toBe(false);
+    expect(responseSchema.safeParse({
+      thread: {
+        id: "thread_desktop_1",
+        providerId: "codex",
+        title: "Fix desktop notifications",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            type: "user_input.answered",
+            eventId: "evt_input_2",
+            threadId: "thread_desktop_1",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+            requestId: "req_input_desktop_1",
+            correlationId: "corr_input_desktop_1",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    }).success).toBe(true);
   });
 
   it("validates runtime:get-summary responses and rejects credential leakage shapes", () => {
@@ -115,6 +303,18 @@ describe("IPC contract", () => {
     expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
   });
 
+  it("validates notification preference IPC without credential fields", () => {
+    const getSchema = INVOKE_CHANNELS["runtime:get-notification-preferences"].response;
+    const updateRequestSchema = INVOKE_CHANNELS["runtime:update-notification-preferences"].request;
+    const updateResponseSchema = INVOKE_CHANNELS["runtime:update-notification-preferences"].response;
+
+    expect(getSchema.safeParse({ attentionPush: { approval: true, input: true, failed: false, completed: true } }).success).toBe(true);
+    expect(getSchema.safeParse({ attentionPush: { approval: true, input: true, failed: false, completed: true }, accessToken: "secret" }).success).toBe(false);
+    expect(updateRequestSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true, completed: true } }).success).toBe(true);
+    expect(updateRequestSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true, completed: true }, bearerToken: "secret" }).success).toBe(false);
+    expect(updateResponseSchema.safeParse({ attentionPush: { approval: false, input: true, failed: true, completed: true } }).success).toBe(true);
+  });
+
   it("validates runtime:get-reviews responses and rejects credential leakage shapes", () => {
     const requestSchema = INVOKE_CHANNELS["runtime:get-reviews"].request;
     const schema = INVOKE_CHANNELS["runtime:get-reviews"].response;
@@ -146,6 +346,281 @@ describe("IPC contract", () => {
       ...valid,
       items: [{ ...valid.items[0], safeStatus: "Postgres failed at /home/matrix/home" }],
     }).success).toBe(false);
+  });
+
+  it("validates runtime:get-review-snapshot responses and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-review-snapshot"].request;
+    const schema = INVOKE_CHANNELS["runtime:get-review-snapshot"].response;
+    const valid = {
+      review: {
+        id: "rev_desktop_1",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        findings: { total: 1, high: 1, medium: 0, low: 0 },
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      files: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [
+              {
+                id: "hunk_rev_desktop_1_0_0",
+                oldStart: 42,
+                oldLines: 1,
+                newStart: 42,
+                newLines: 1,
+                heading: "Finding HIGH-1",
+                partial: true,
+              },
+            ],
+            findings: [
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 42,
+                summary: "Validate ownership before returning snapshots.",
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    };
+
+    expect(requestSchema.safeParse({ reviewId: "rev_desktop_1" }).success).toBe(true);
+    expect(requestSchema.safeParse({ reviewId: "../secret" }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      files: {
+        ...valid.files,
+        items: [{ ...valid.files.items[0], path: "/home/matrix/private/secret.ts" }],
+      },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:get-file-content requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-file-content"].request;
+    const schema = INVOKE_CHANNELS["runtime:get-file-content"].response;
+    const valid = {
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 37,
+        etag: "sha256_desktop_file",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      content: "export const safeRoute = true;\n",
+      encoding: "utf8",
+      truncated: false,
+      limitBytes: 65536,
+    };
+
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    }).success).toBe(true);
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+    }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      metadata: { ...valid.metadata, path: "/home/matrix/private/secret.ts" },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:browse-files requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:browse-files"].request;
+    const schema = INVOKE_CHANNELS["runtime:browse-files"].response;
+    const valid = {
+      directory: {
+        path: "packages",
+        kind: "directory",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      entries: {
+        items: [
+          {
+            path: "packages/gateway",
+            kind: "directory",
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    }).success).toBe(true);
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+    }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      entries: {
+        ...valid.entries,
+        items: [{ ...valid.entries.items[0], path: "/home/matrix/private" }],
+      },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:search-files requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:search-files"].request;
+    const schema = INVOKE_CHANNELS["runtime:search-files"].response;
+    const valid = {
+      matches: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            kind: "file",
+            sizeBytes: 37,
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      query: "routes",
+      limit: 20,
+    }).success).toBe(true);
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      query: "routes",
+    }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      matches: {
+        ...valid.matches,
+        items: [{ ...valid.matches.items[0], path: "/home/matrix/private/secret.ts" }],
+      },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:save-file-content requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:save-file-content"].request;
+    const schema = INVOKE_CHANNELS["runtime:save-file-content"].response;
+    const request = {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_desktop_file",
+      clientRequestId: "req_desktop_file_save",
+    };
+    const response = {
+      metadata: {
+        path: "packages/gateway/src/coding-agents/routes.ts",
+        kind: "file",
+        sizeBytes: 38,
+        etag: "sha256_desktop_file_next",
+        updatedAt: "2026-07-06T00:04:00.000Z",
+      },
+      encoding: "utf8",
+      writtenBytes: 38,
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, accessToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, path: "../system/config.json" }).success).toBe(false);
+    expect(schema.safeParse(response).success).toBe(true);
+    expect(schema.safeParse({ ...response, bearerToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...response,
+      metadata: { ...response.metadata, path: "/home/matrix/private/secret.ts" },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:prepare-source-commit requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:prepare-source-commit"].request;
+    const schema = INVOKE_CHANNELS["runtime:prepare-source-commit"].response;
+    const request = {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_desktop_prepare_commit",
+    };
+    const response = {
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef01234567",
+      branch: "feature/review-fix",
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, accessToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, paths: ["../system/config.json"] }).success).toBe(false);
+    expect(schema.safeParse(response).success).toBe(true);
+    expect(schema.safeParse({ ...response, bearerToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({ ...response, branch: "/home/matrix/private" }).success).toBe(false);
+  });
+
+  it("validates runtime:create-source-pull-request requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:create-source-pull-request"].request;
+    const schema = INVOKE_CHANNELS["runtime:create-source-pull-request"].response;
+    const request = {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #758",
+      body: "Review updates are ready.",
+      clientRequestId: "req_desktop_create_pr",
+    };
+    const response = {
+      status: "created",
+      number: 808,
+      url: "https://github.com/HamedMP/matrix-os/pull/808",
+      headBranch: "feature/review-fix",
+      baseBranch: "main",
+      safeMessage: "Pull request is ready for review.",
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, accessToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, title: "" }).success).toBe(false);
+    expect(schema.safeParse(response).success).toBe(true);
+    expect(schema.safeParse({ ...response, bearerToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({ ...response, url: "file:///home/matrix/private/secret" }).success).toBe(false);
   });
 
   it("validates auth:poll responses and rejects token leakage shapes", () => {
@@ -232,5 +707,7 @@ describe("IPC contract", () => {
       EVENT_CHANNELS["embed:state"].safeParse({ embedId: "e", state: "auth-required" }).success,
     ).toBe(true);
     expect(EVENT_CHANNELS["embed:state"].safeParse({ embedId: "e", state: "??" }).success).toBe(false);
+    expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "agents" }).success).toBe(true);
+    expect(EVENT_CHANNELS["menu:navigate"].safeParse({ kind: "terminals" }).success).toBe(true);
   });
 });

@@ -2,12 +2,15 @@ import * as fs from "node:fs";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { z } from "zod/v4";
 
 export interface OutboundMessage {
   id: string;
   channel: string;
   target: string;
+  ownerId?: string;
   content: string;
+  metadata?: Record<string, unknown>;
   createdAt: number;
   attempts: number;
   lastError?: string;
@@ -25,6 +28,27 @@ interface QueueOptions {
 }
 
 const QUEUE_FILE = "system/outbound-queue.json";
+const SAFE_QUEUE_OWNER_ID = /^[A-Za-z0-9_-]{1,256}$/;
+const QUEUE_METADATA_KEY = /^[A-Za-z0-9_.:-]{1,64}$/;
+const QueueMetadataValueSchema = z.union([
+  z.string().max(160),
+  z.number().finite(),
+  z.boolean(),
+  z.null(),
+]);
+const QueueMetadataSchema = z.record(z.string().regex(QUEUE_METADATA_KEY), QueueMetadataValueSchema);
+const OutboundMessageSchema = z.object({
+  id: z.string().min(1).max(128),
+  channel: z.string().min(1).max(32),
+  target: z.string().min(1).max(512),
+  ownerId: z.string().regex(SAFE_QUEUE_OWNER_ID).optional(),
+  content: z.string().max(16_384),
+  metadata: QueueMetadataSchema.optional(),
+  createdAt: z.number().finite(),
+  attempts: z.number().int().min(0).max(100),
+  lastError: z.string().max(512).optional(),
+}).strict();
+const OutboundMessagesSchema = z.array(OutboundMessageSchema).max(1000);
 const writeFileNow = fs.writeFileSync as (
   path: fs.PathOrFileDescriptor,
   data: string,
@@ -42,7 +66,12 @@ export function createOutboundQueue(
   function load(): OutboundMessage[] {
     if (!existsSync(filePath)) return [];
     try {
-      return JSON.parse(readFileSync(filePath, "utf-8"));
+      const parsed = OutboundMessagesSchema.safeParse(JSON.parse(readFileSync(filePath, "utf-8")));
+      if (!parsed.success) {
+        console.warn("[outbound-queue] Could not load queue: invalid queue file");
+        return [];
+      }
+      return parsed.data;
     } catch (err: unknown) {
       console.warn("[outbound-queue] Could not load queue:", err instanceof Error ? err.message : String(err));
       return [];
@@ -74,7 +103,9 @@ export function createOutboundQueue(
         id: randomUUID(),
         channel: msg.channel,
         target: msg.target,
+        ownerId: msg.ownerId,
         content: msg.content,
+        metadata: msg.metadata,
         createdAt: Date.now(),
         attempts: 0,
       };

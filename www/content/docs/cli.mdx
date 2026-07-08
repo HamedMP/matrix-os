@@ -134,6 +134,18 @@ Detach without stopping the session: press `Ctrl-\` twice quickly. Reconnect any
 If `matrix run -it`, `matrix shell new`, or `matrix shell attach` fails to start a session, run `matrix shell ls` and connect to an existing session rather than retrying the same create path.
 </Callout>
 
+### Paste screenshots while attached
+
+When you paste local image paths into `matrix shell attach`, the CLI copies those images into your Matrix computer before forwarding the prompt. This works even when the path is part of a larger question:
+
+```text
+"/var/folders/.../Screenshot 2026-07-08 at 10.31.00.png" what about this?
+```
+
+The attached session receives the same prompt with a Matrix-owned path under `~/projects/.matrix-terminal-pastes/` instead of the local macOS path. Up to five PNG, JPEG, GIF, or WebP images can be handled in one paste transaction, with a 10 MB limit per image.
+
+Image-only clipboard paste is best-effort on macOS when the terminal exposes a bracketed paste event and `pngpaste` is available. If the terminal sends no text and no paste boundary, the CLI cannot observe the paste and will not claim an image was sent. Missing, unreadable, unsupported, oversized, or failed uploads show a local retryable message and do not forward detected local image paths to the remote session.
+
 ## File sync
 
 The sync daemon mirrors a local folder against your Matrix home directory and runs as a background service.

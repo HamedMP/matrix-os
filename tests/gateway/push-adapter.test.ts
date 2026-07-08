@@ -18,16 +18,25 @@ describe("Push Notification Adapter", () => {
   });
 
   it("registers push tokens", () => {
-    adapter.registerToken("ExponentPushToken[abc123]", "ios");
+    adapter.registerToken("ExponentPushToken[abc123]", "ios", "owner_a");
     const tokens = adapter.getTokens();
     expect(tokens).toHaveLength(1);
     expect(tokens[0].token).toBe("ExponentPushToken[abc123]");
     expect(tokens[0].platform).toBe("ios");
+    expect(tokens[0].ownerId).toBe("owner_a");
   });
 
   it("removes push tokens", () => {
     adapter.registerToken("ExponentPushToken[abc123]", "ios");
     adapter.removeToken("ExponentPushToken[abc123]");
+    expect(adapter.getTokens()).toHaveLength(0);
+  });
+
+  it("does not remove another owner's push token", () => {
+    adapter.registerToken("ExponentPushToken[abc123]", "ios", "owner_a");
+    adapter.removeToken("ExponentPushToken[abc123]", "owner_b");
+    expect(adapter.getTokens()).toHaveLength(1);
+    adapter.removeToken("ExponentPushToken[abc123]", "owner_a");
     expect(adapter.getTokens()).toHaveLength(0);
   });
 
@@ -37,10 +46,45 @@ describe("Push Notification Adapter", () => {
     expect(adapter.getTokens()).toHaveLength(2);
   });
 
+  it("caps registered push tokens per owner without evicting another owner's device", () => {
+    let now = 1_000;
+    adapter = createPushAdapter({ now: () => now, maxRegisteredTokens: 2 });
+
+    adapter.registerToken("ExponentPushToken[oldest]", "ios", "owner_a");
+    now += 1;
+    adapter.registerToken("ExponentPushToken[middle]", "android", "owner_b");
+    now += 1;
+    adapter.registerToken("ExponentPushToken[newest]", "ios", "owner_a");
+    now += 1;
+    adapter.registerToken("ExponentPushToken[owner-a-latest]", "ios", "owner_a");
+
+    expect(adapter.getTokens()).toEqual([
+      expect.objectContaining({ token: "ExponentPushToken[middle]", ownerId: "owner_b" }),
+      expect.objectContaining({ token: "ExponentPushToken[newest]", ownerId: "owner_a" }),
+      expect.objectContaining({ token: "ExponentPushToken[owner-a-latest]", ownerId: "owner_a" }),
+    ]);
+  });
+
   it("does not duplicate tokens with same value", () => {
     adapter.registerToken("token1", "ios");
     adapter.registerToken("token1", "ios");
     expect(adapter.getTokens()).toHaveLength(1);
+  });
+
+  it("keeps the same push token registered separately per owner", () => {
+    adapter.registerToken("ExponentPushToken[shared]", "ios", "owner_a");
+    adapter.registerToken("ExponentPushToken[shared]", "ios", "owner_b");
+
+    expect(adapter.getTokens()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ token: "ExponentPushToken[shared]", ownerId: "owner_a" }),
+      expect.objectContaining({ token: "ExponentPushToken[shared]", ownerId: "owner_b" }),
+    ]));
+
+    adapter.removeToken("ExponentPushToken[shared]", "owner_a");
+
+    expect(adapter.getTokens()).toEqual([
+      expect.objectContaining({ token: "ExponentPushToken[shared]", ownerId: "owner_b" }),
+    ]);
   });
 
   it("stop clears all tokens", async () => {
@@ -62,12 +106,12 @@ describe("Push Notification Adapter", () => {
   it("send calls Expo Push API when tokens are registered", async () => {
     adapter.registerToken("ExponentPushToken[test]", "ios");
 
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
+      JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
-    );
+      },
+    ));
 
     await adapter.send({
       channelId: "push",
@@ -85,6 +129,211 @@ describe("Push Notification Adapter", () => {
     expect(body[0].to).toBe("ExponentPushToken[test]");
     expect(body[0].body).toBe("Test notification");
     expect(body[0].title).toBe("Matrix OS");
+  });
+
+  it("includes bounded reply metadata in the Expo push data payload", async () => {
+    adapter.registerToken("ExponentPushToken[test]", "ios");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
+      JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ));
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+      },
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body[0].data).toEqual({
+      category: "agent",
+      chatId: "coding-agents",
+      threadId: "thread_push_attention",
+      type: "message",
+    });
+  });
+
+  it("sends owner-scoped replies only to matching registered push tokens", async () => {
+    adapter.registerToken("ExponentPushToken[owner-a]", "ios", "owner_a");
+    adapter.registerToken("ExponentPushToken[owner-b]", "ios", "owner_b");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
+      JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ));
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      ownerId: "owner_a",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+      },
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body).toHaveLength(1);
+    expect(body[0].to).toBe("ExponentPushToken[owner-a]");
+  });
+
+  it("uses bounded cross-device fanout for active owner devices only", async () => {
+    let now = 1_000;
+    adapter = createPushAdapter({
+      now: () => now,
+      tokenTtlMs: 60_000,
+      maxFanoutTokens: 2,
+    });
+
+    adapter.registerToken("ExponentPushToken[stale]", "ios", "owner_a");
+    now += 30_000;
+    adapter.registerToken("ExponentPushToken[active-1]", "ios", "owner_a");
+    now += 1;
+    adapter.registerToken("ExponentPushToken[active-2]", "android", "owner_a");
+    now += 1;
+    adapter.registerToken("ExponentPushToken[active-3]", "ios", "owner_a");
+    adapter.registerToken("ExponentPushToken[other-owner]", "ios", "owner_b");
+    now = 61_001;
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1", status: "ok" }, { id: "2", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      ownerId: "owner_a",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_cross_device_policy",
+      },
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body.map((message: { to: string }) => message.to)).toEqual([
+      "ExponentPushToken[active-3]",
+      "ExponentPushToken[active-2]",
+    ]);
+  });
+
+  it("prefers the newest active owner devices when fanout is capped", async () => {
+    let now = 1_000;
+    adapter = createPushAdapter({
+      now: () => now,
+      maxFanoutTokens: 2,
+    });
+
+    adapter.registerToken("ExponentPushToken[active-1]", "ios", "owner_a");
+    now += 1;
+    adapter.registerToken("ExponentPushToken[active-2]", "android", "owner_a");
+    now += 1;
+    adapter.registerToken("ExponentPushToken[active-3]", "ios", "owner_a");
+    now += 1;
+    adapter.registerToken("ExponentPushToken[active-1]", "ios", "owner_a");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1", status: "ok" }, { id: "2", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      ownerId: "owner_a",
+      text: "Agent needs approval.",
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body.map((message: { to: string }) => message.to)).toEqual([
+      "ExponentPushToken[active-1]",
+      "ExponentPushToken[active-3]",
+    ]);
+  });
+
+  it("uses the injected clock for push rate limiting", async () => {
+    let now = 1_000;
+    adapter = createPushAdapter({ now: () => now });
+    adapter.registerToken("ExponentPushToken[owner-a]", "ios", "owner_a");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
+      JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ));
+
+    for (let i = 0; i < 30; i += 1) {
+      await adapter.send({
+        channelId: "push",
+        chatId: "coding-agents",
+        ownerId: "owner_a",
+        text: "Agent needs approval.",
+      });
+    }
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      ownerId: "owner_a",
+      text: "Agent needs approval.",
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(30);
+
+    now += 60_001;
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      ownerId: "owner_a",
+      text: "Agent needs approval.",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(31);
+  });
+
+  it("drops unsafe reply metadata before calling the Expo Push API", async () => {
+    adapter.registerToken("ExponentPushToken[test]", "ios");
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1", status: "ok" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await adapter.send({
+      channelId: "push",
+      chatId: "coding-agents",
+      text: "Agent needs approval.",
+      metadata: {
+        category: "agent",
+        threadId: "thread_push_attention",
+        unsafe: "/home/matrix/secret",
+        nested: { raw: "value" },
+        "bad key": "value",
+      },
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0][1]?.body as string);
+    expect(body[0].data).toEqual({
+      chatId: "coding-agents",
+      type: "message",
+    });
   });
 
   it("truncates long message bodies", async () => {

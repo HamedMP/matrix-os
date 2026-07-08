@@ -51,10 +51,9 @@ async function fetchConversation(
   id: string,
 ): Promise<ConversationFile | null> {
   try {
-    const res = await fetch(
-      `${GATEWAY_URL}/files/system/conversations/${id}.json`,
-      { signal: AbortSignal.timeout(10_000) },
-    );
+    const res = await fetch(`${GATEWAY_URL}/files/system/conversations/${id}.json`, {
+      signal: AbortSignal.timeout(10_000),
+    });
     if (res.ok) return res.json();
   } catch (err: unknown) {
     logConversationFetchError("[conversation] Failed to fetch conversation:", err);

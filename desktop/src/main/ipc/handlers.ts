@@ -6,7 +6,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { EmbedService } from "../embeds/embed-service";
 import type { LocalStore, LocalStoreKey } from "../persistence/local-store";
 import type { UpdateStatus } from "../updates";
-import type { CreateAgentThreadRequest, ReviewSummary, RuntimeSummary } from "@matrix-os/contracts";
+import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, CreateAgentThreadRequest, FileBrowseRequest, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchRequest, FileSearchResponse, FileWriteRequest, FileWriteResponse, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest, SourceControlPrepareCommitResponse } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 
@@ -27,12 +27,42 @@ export interface HandlerContext {
   onRuntimeChanged: (slot: string) => void;
   getUpdateStatus: () => UpdateStatus;
   fetchRuntimeSummary: () => Promise<RuntimeSummary>;
+  fetchNotificationPreferences: () => Promise<CodingAgentNotificationPreferences>;
+  updateNotificationPreferences: (
+    request: CodingAgentNotificationPreferencesUpdate,
+  ) => Promise<CodingAgentNotificationPreferences>;
   fetchReviewSummaries: (
     options: { cursor?: string },
   ) => Promise<{ items: ReviewSummary[]; hasMore: boolean; limit: number; nextCursor?: string }>;
+  fetchReviewSnapshot: (options: { reviewId: string }) => Promise<ReviewSnapshot>;
+  fetchFileBrowse: (request: FileBrowseRequest) => Promise<FileBrowseResponse>;
+  fetchFileSearch: (request: FileSearchRequest) => Promise<FileSearchResponse>;
+  fetchFileContent: (request: FileReadRequest) => Promise<FileReadResponse>;
+  saveFileContent: (request: FileWriteRequest) => Promise<FileWriteResponse>;
+  prepareSourceCommit: (
+    request: SourceControlPrepareCommitRequest,
+  ) => Promise<SourceControlPrepareCommitResponse>;
+  createSourcePullRequest: (
+    request: SourceControlCreatePullRequestRequest,
+  ) => Promise<SourceControlCreatePullRequestResponse>;
+  fetchThreadSnapshot: (
+    options: { threadId: string },
+  ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
+  submitApprovalDecision: (
+    request: InvokeRequest<"runtime:submit-approval-decision">,
+  ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
+  submitInputAnswer: (
+    request: InvokeRequest<"runtime:submit-input-answer">,
+  ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
   createAgentThread: (
     request: CreateAgentThreadRequest,
   ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
+  subscribeThreadEvents: (
+    request: InvokeRequest<"runtime:subscribe-thread-events">,
+  ) => Promise<void>;
+  unsubscribeThreadEvents: (
+    request: InvokeRequest<"runtime:unsubscribe-thread-events">,
+  ) => void;
 }
 
 type Handler<C extends InvokeChannel> = (
@@ -89,7 +119,27 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
   handle("runtime:get-summary", () => ctx.fetchRuntimeSummary());
+  handle("runtime:get-notification-preferences", () => ctx.fetchNotificationPreferences());
+  handle("runtime:update-notification-preferences", (request) => ctx.updateNotificationPreferences(request));
   handle("runtime:get-reviews", (request) => ctx.fetchReviewSummaries(request));
+  handle("runtime:get-review-snapshot", (request) => ctx.fetchReviewSnapshot(request));
+  handle("runtime:browse-files", (request) => ctx.fetchFileBrowse(request));
+  handle("runtime:search-files", (request) => ctx.fetchFileSearch(request));
+  handle("runtime:get-file-content", (request) => ctx.fetchFileContent(request));
+  handle("runtime:save-file-content", (request) => ctx.saveFileContent(request));
+  handle("runtime:prepare-source-commit", (request) => ctx.prepareSourceCommit(request));
+  handle("runtime:create-source-pull-request", (request) => ctx.createSourcePullRequest(request));
+  handle("runtime:get-thread-snapshot", (request) => ctx.fetchThreadSnapshot(request));
+  handle("runtime:subscribe-thread-events", async (request) => {
+    await ctx.subscribeThreadEvents(request);
+    return { ok: true };
+  });
+  handle("runtime:unsubscribe-thread-events", (request) => {
+    ctx.unsubscribeThreadEvents(request);
+    return { ok: true };
+  });
+  handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
+  handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
   handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
 
   handle("state:get", async ({ key }) => ({

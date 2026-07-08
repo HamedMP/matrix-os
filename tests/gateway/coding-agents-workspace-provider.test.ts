@@ -87,7 +87,7 @@ describe("coding agent workspace provider", () => {
       providerId: "codex",
       projectId: "repo-main",
       taskId: "task_abc123",
-      terminalSessionId: "term_sess_workspace_1",
+      terminalSessionId: "matrix-agent-workspace-1",
       status: "running",
       attention: "none",
     });
@@ -97,6 +97,51 @@ describe("coding agent workspace provider", () => {
       "terminal.bound",
       "assistant.text.delta",
     ]);
+  });
+
+  it("forwards structured review references to the workspace runtime session", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-workspace-provider-"));
+    const runtime = {
+      startSession: vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() })),
+      stopSession: vi.fn(async () => ({ ok: true, session: workspaceSession({ runtime: { type: "zellij", status: "exited" } }) })),
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [
+        createWorkspaceCodingAgentProvider({
+          providerId: "codex",
+          agent: "codex",
+          runtime,
+        }),
+      ],
+    });
+
+    await threads.createThread(ownerPrincipal, {
+      ...createBody,
+      clientRequestId: "req_workspace_attachment_1",
+      attachments: [
+        {
+          id: "review:rev_desktop_1:hunk:hunk_1",
+          kind: "structured_ref",
+          label: "Review hunk 1",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+        },
+      ],
+    });
+
+    expect(runtime.startSession).toHaveBeenCalledWith({
+      ownerScope: { type: "user", id: "owner_user" },
+      request: expect.objectContaining({
+        attachments: [
+          expect.objectContaining({
+            kind: "structured_ref",
+            label: "Review hunk 1",
+            path: "packages/gateway/src/coding-agents/routes.ts",
+          }),
+        ],
+      }),
+    });
   });
 
   it("maps workspace session startup failures to safe thread errors", async () => {

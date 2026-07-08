@@ -1,6 +1,16 @@
-import { readFile, stat } from "node:fs/promises";
-import { basename, extname, isAbsolute } from "node:path";
 import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "../protocol/shell.js";
+import {
+  createMacOsClipboardImageReader,
+  type ClipboardImageReader,
+} from "./clipboard-image.js";
+import {
+  createRichPasteRewriter,
+  createRichPasteUploadClient,
+  shouldProcessRichPasteText,
+  type RichPasteInputSegment,
+  type RichPasteRewriter,
+  type RichPasteUploadClient,
+} from "./rich-paste.js";
 
 export interface ShellClientOptions {
   gatewayUrl: string;
@@ -74,6 +84,12 @@ export interface ShellAttachOptions {
   reconnectBaseDelayMs?: number;
   reconnectMaxDelayMs?: number;
   WebSocketImpl?: new (url: string, options?: { headers?: Record<string, string> }) => AttachWebSocket;
+  richPaste?: {
+    enabled?: boolean;
+    rewriter?: RichPasteRewriter;
+    uploadClient?: RichPasteUploadClient;
+    clipboardReader?: ClipboardImageReader;
+  };
   noRichPaste?: boolean;
   cwd?: string;
 }
@@ -82,9 +98,9 @@ export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
 const BRACKETED_PASTE_OPEN = "\u001b[200~";
 const BRACKETED_PASTE_CLOSE = "\u001b[201~";
-const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
+const SHELL_ATTACH_MAX_PENDING_BRACKETED_PASTE_CHARS = 1024 * 1024;
+const BRACKETED_PASTE_INCOMPLETE_TIMEOUT_MS = 250;
 const SHELL_INPUT_FRAME_MAX_BYTES = 60_000;
-const TERMINAL_PASTE_ASSET_BODY_LIMIT = 10 * 1024 * 1024;
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 const RUN_RESPONSE_GRACE_MS = 30_000;
 const SHELL_ATTACH_HEARTBEAT_INTERVAL_MS = 20_000;
@@ -113,13 +129,8 @@ const SAFE_SHELL_SERVER_ERROR_CODES = new Set([
   "session_not_found",
   "zellij_failed",
 ]);
-const LOCAL_IMAGE_MIME_BY_EXTENSION = new Map([
-  [".png", "image/png"],
-  [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"],
-  [".gif", "image/gif"],
-  [".webp", "image/webp"],
-]);
+const RICH_PASTE_UPLOAD_FAILED_MESSAGE = "Image paste failed: upload did not complete.";
+const INCOMPLETE_BRACKETED_PASTE_MESSAGE = "Image paste failed: paste did not complete.";
 
 type MaybeTtyStream = NodeJS.ReadStream & {
   isTTY?: boolean;
@@ -340,52 +351,117 @@ function splitTerminalInputFrames(data: string): string[] {
   return frames;
 }
 
-function parseSingleLocalImagePath(raw: string): string | null {
-  let text = raw.replace(/\x1b\[200~/g, "").replace(/\x1b\[201~/g, "").trim();
-  if ((text.startsWith("\"") && text.endsWith("\"")) || (text.startsWith("'") && text.endsWith("'"))) {
-    text = text.slice(1, -1);
-  }
-  text = text.trim();
-  if (!text || !isAbsolute(text) || text.includes("\0")) {
-    return null;
-  }
-  const ext = extname(text).toLowerCase();
-  return LOCAL_IMAGE_MIME_BY_EXTENSION.has(ext) ? text : null;
+function createBracketedPasteStreamParser(options: {
+  onIncompletePaste?: () => void;
+  incompletePasteTimeoutMs?: number;
+} = {}) {
+  let pending = "";
+  let suppressedCloseMarkerTail = "";
+  let incompletePasteTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearIncompletePasteTimer = () => {
+    clearTimeout(incompletePasteTimer);
+    incompletePasteTimer = undefined;
+  };
+
+  const discardIncompletePaste = () => {
+    if (pending.startsWith(BRACKETED_PASTE_OPEN)) {
+      const closePrefixLength = longestSuffixPrefixLength(pending, BRACKETED_PASTE_CLOSE);
+      suppressedCloseMarkerTail = closePrefixLength > 0
+        ? BRACKETED_PASTE_CLOSE.slice(closePrefixLength)
+        : "";
+      options.onIncompletePaste?.();
+    }
+    pending = "";
+    clearIncompletePasteTimer();
+  };
+
+  const setPending = (value: string) => {
+    pending = value;
+    clearIncompletePasteTimer();
+    if (!pending.startsWith(BRACKETED_PASTE_OPEN)) {
+      return;
+    }
+    const timeoutMs = options.incompletePasteTimeoutMs ?? BRACKETED_PASTE_INCOMPLETE_TIMEOUT_MS;
+    if (timeoutMs < 1) {
+      return;
+    }
+    incompletePasteTimer = setTimeout(discardIncompletePaste, timeoutMs);
+    incompletePasteTimer.unref?.();
+  };
+
+  return {
+    push(chunk: string): RichPasteInputSegment[] {
+      let nextChunk = chunk;
+      if (suppressedCloseMarkerTail) {
+        if (suppressedCloseMarkerTail.startsWith(nextChunk)) {
+          suppressedCloseMarkerTail = suppressedCloseMarkerTail.slice(nextChunk.length);
+          return [];
+        }
+        if (nextChunk.startsWith(suppressedCloseMarkerTail)) {
+          nextChunk = nextChunk.slice(suppressedCloseMarkerTail.length);
+        }
+        suppressedCloseMarkerTail = "";
+      }
+
+      const input = pending + nextChunk;
+      setPending("");
+      const segments: RichPasteInputSegment[] = [];
+      let cursor = 0;
+
+      while (cursor < input.length) {
+        const start = input.indexOf(BRACKETED_PASTE_OPEN, cursor);
+        if (start === -1) {
+          const tail = input.slice(cursor);
+          const heldLength = longestSuffixPrefixLength(tail, BRACKETED_PASTE_OPEN);
+          const ready = tail.slice(0, tail.length - heldLength);
+          if (ready.length > 0) {
+            segments.push({ text: ready, observablePaste: false });
+          }
+          setPending(tail.slice(tail.length - heldLength));
+          break;
+        }
+
+        if (start > cursor) {
+          segments.push({ text: input.slice(cursor, start), observablePaste: false });
+        }
+
+        const contentStart = start + BRACKETED_PASTE_OPEN.length;
+        const end = input.indexOf(BRACKETED_PASTE_CLOSE, contentStart);
+        if (end === -1) {
+          setPending(input.slice(start));
+          break;
+        }
+
+        segments.push({
+          text: input.slice(contentStart, end),
+          observablePaste: true,
+        });
+        cursor = end + BRACKETED_PASTE_CLOSE.length;
+      }
+
+      if (pending.length > SHELL_ATTACH_MAX_PENDING_BRACKETED_PASTE_CHARS) {
+        discardIncompletePaste();
+      }
+
+      return segments;
+    },
+    reset() {
+      pending = "";
+      suppressedCloseMarkerTail = "";
+      clearIncompletePasteTimer();
+    },
+  };
 }
 
-function detectLocalImageMime(bytes: Uint8Array): string | null {
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a
-  ) return "image/png";
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  if (bytes.length >= 6) {
-    const header = String.fromCharCode(...bytes.slice(0, 6));
-    if (header === "GIF87a" || header === "GIF89a") return "image/gif";
+function longestSuffixPrefixLength(value: string, prefix: string): number {
+  const maxLength = Math.min(value.length, prefix.length - 1);
+  for (let length = maxLength; length > 0; length -= 1) {
+    if (prefix.startsWith(value.slice(value.length - length))) {
+      return length;
+    }
   }
-  if (bytes.length >= 12) {
-    const riff = String.fromCharCode(...bytes.slice(0, 4));
-    const webp = String.fromCharCode(...bytes.slice(8, 12));
-    if (riff === "RIFF" && webp === "WEBP") return "image/webp";
-  }
-  return null;
-}
-
-function isLocalFileAccessMiss(err: unknown): boolean {
-  const code = err instanceof Error && "code" in err ? (err as { code?: unknown }).code : undefined;
-  return code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM";
-}
-
-function bracketPasteData(data: string): string {
-  const capped = data.slice(0, SHELL_INPUT_FRAME_MAX_BYTES - BRACKETED_PASTE_OVERHEAD);
-  return `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
+  return 0;
 }
 
 export function createShellClient(options: ShellClientOptions): ShellClient {
@@ -604,6 +680,23 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         resetLocalInputModes,
       });
       const controlDropper = createUnsupportedTerminalControlDropper();
+      const bracketedPasteParser = createBracketedPasteStreamParser({
+        onIncompletePaste: () => {
+          errorOutput.write(`\r\n${INCOMPLETE_BRACKETED_PASTE_MESSAGE}\r\n`);
+        },
+      });
+      const richPasteEnabled = attachOptions.noRichPaste !== true && attachOptions.richPaste?.enabled !== false;
+      const richPasteRewriter: RichPasteRewriter | undefined = richPasteEnabled
+        ? attachOptions.richPaste?.rewriter ?? createRichPasteRewriter({
+          uploadClient: attachOptions.richPaste?.uploadClient ?? createRichPasteUploadClient({
+            gatewayUrl: base,
+            token: options.token,
+            fetch: fetchImpl,
+            cwd: attachOptions.cwd,
+          }),
+          clipboardReader: attachOptions.richPaste?.clipboardReader ?? createMacOsClipboardImageReader(),
+        })
+        : undefined;
       const heartbeatIntervalMs = attachOptions.heartbeatIntervalMs ?? SHELL_ATTACH_HEARTBEAT_INTERVAL_MS;
       const heartbeatTimeoutMs = attachOptions.heartbeatTimeoutMs ?? SHELL_ATTACH_HEARTBEAT_TIMEOUT_MS;
       const heartbeatMissesBeforeReconnect =
@@ -613,51 +706,6 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
       let pendingInput = "";
       let inputQueue = Promise.resolve();
       let queuedAsyncInputs = 0;
-
-      const uploadTerminalPasteAsset = async (filePath: string): Promise<string | null> => {
-        const ext = extname(filePath).toLowerCase();
-        const expectedMime = LOCAL_IMAGE_MIME_BY_EXTENSION.get(ext);
-        if (!expectedMime) {
-          return null;
-        }
-        let fileStat;
-        try {
-          fileStat = await stat(filePath);
-        } catch (err: unknown) {
-          if (isLocalFileAccessMiss(err)) {
-            return null;
-          }
-          throw err;
-        }
-        if (!fileStat.isFile() || fileStat.size < 1 || fileStat.size > TERMINAL_PASTE_ASSET_BODY_LIMIT) {
-          return null;
-        }
-        const bytes = await readFile(filePath);
-        if (detectLocalImageMime(bytes) !== expectedMime) {
-          return null;
-        }
-        const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        const pasteAssetPath = `${terminalSessionsPath}/${encodeURIComponent(name)}/paste-assets${
-          attachOptions.cwd ? `?${new URLSearchParams({ cwd: attachOptions.cwd }).toString()}` : ""
-        }`;
-        const payload = await request(pasteAssetPath, {
-          method: "POST",
-          headers: {
-            "Content-Type": expectedMime,
-            "X-Matrix-Filename": basename(filePath),
-          },
-          body,
-        }, 30_000);
-        if (
-          typeof payload === "object" &&
-          payload !== null &&
-          "terminalPath" in payload &&
-          typeof (payload as { terminalPath?: unknown }).terminalPath === "string"
-        ) {
-          return (payload as { terminalPath: string }).terminalPath;
-        }
-        throw Object.assign(new Error("Request failed"), { code: "invalid_response" });
-      };
 
       return new Promise<{ detached: boolean }>((resolve, reject) => {
         let settled = false;
@@ -690,6 +738,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           pendingInput = "";
           inputFilter.reset();
           controlDropper.reset();
+          bracketedPasteParser.reset();
           resetLocalInputModes();
           if (rawModeEnabled) {
             input.setRawMode?.(false);
@@ -881,39 +930,52 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             code: err instanceof Error && "code" in err ? (err as { code?: string }).code ?? "attach_failed" : "attach_failed",
           })));
         };
-        const processInput = (chunk: Buffer | string): Promise<void> | void => {
-          const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
-          if (rawModeEnabled && !everAttached && rawData.includes("\u0003")) {
-            detachLocal();
+        const sendInputFrame = (data: string, observablePaste: boolean): Promise<void> | void => {
+          const shouldRewrite = observablePaste
+            ? data.length === 0 || shouldProcessRichPasteText(data)
+            : shouldProcessRichPasteText(data);
+          if (!richPasteRewriter || !shouldRewrite) {
+            sendInputData(data);
             return;
           }
-          const droppedControls = controlDropper.filter(rawData);
-          if (!attachOptions.noRichPaste) {
-            const localImagePath = parseSingleLocalImagePath(droppedControls);
-            if (localImagePath) {
-              return uploadTerminalPasteAsset(localImagePath).then((terminalPath) => {
-                if (terminalPath) {
-                  sendInputData(bracketPasteData(terminalPath));
-                  return;
-                }
-                processPlainInput(droppedControls);
-              });
+          return richPasteRewriter.rewrite({
+            sessionName: name,
+            text: data,
+            observablePaste,
+          }).then((result) => {
+            if (settled) {
+              return;
             }
-          }
-          processPlainInput(droppedControls);
+            if (result.status === "failed") {
+              errorOutput.write(`\r\n${result.localMessage}\r\n`);
+              return;
+            }
+            sendInputData(result.outgoingText);
+          }).catch((err: unknown) => {
+            if (!settled) {
+              errorOutput.write(`\r\n${RICH_PASTE_UPLOAD_FAILED_MESSAGE}\r\n`);
+              errorOutput.write(`[debug] rich paste rewrite failed: ${err instanceof Error ? err.name : typeof err}\r\n`);
+            }
+          });
         };
-        const processPlainInput = (inputData: string) => {
-          const data = inputFilter.filter(inputData);
+        const processInputData = (data: string, observablePaste: boolean): Promise<void> | void => {
           let outbound = "";
+          const writes: Array<Promise<void>> = [];
+          const enqueueInputFrame = (frameData: string, frameObservablePaste: boolean) => {
+            const maybeWrite = sendInputFrame(frameData, frameObservablePaste);
+            if (maybeWrite) {
+              writes.push(maybeWrite);
+            }
+          };
           for (const char of data) {
             pendingInput += char;
             if (pendingInput === detachSequence) {
               pendingInput = "";
               if (outbound.length > 0) {
-                sendInputData(outbound);
+                enqueueInputFrame(outbound, false);
               }
               detachLocal();
-              return;
+              return writes.length > 0 ? Promise.all(writes).then(() => undefined) : undefined;
             }
             if (detachSequence.startsWith(pendingInput)) {
               continue;
@@ -923,9 +985,41 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
               pendingInput = pendingInput.slice(1);
             }
           }
-          if (outbound.length > 0) {
-            sendInputData(outbound);
+          if (outbound.length > 0 || observablePaste) {
+            enqueueInputFrame(outbound, observablePaste);
           }
+          return writes.length > 0 ? Promise.all(writes).then(() => undefined) : undefined;
+        };
+        const processInput = (chunk: Buffer | string): Promise<void> | void => {
+          const rawData = Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+          if (rawModeEnabled && !everAttached && rawData.includes("\u0003")) {
+            detachLocal();
+            return;
+          }
+          const droppedControls = controlDropper.filter(rawData);
+          const bracketedSegments = bracketedPasteParser.push(droppedControls);
+          if (bracketedSegments.length === 0) {
+            return;
+          }
+          let sequence: Promise<void> | undefined;
+          for (const segment of bracketedSegments) {
+            const runSegment = () => Promise.resolve(processInputData(
+              segment.observablePaste ? segment.text : inputFilter.filter(segment.text),
+              segment.observablePaste,
+            ));
+            if (sequence) {
+              sequence = sequence.then(runSegment);
+              continue;
+            }
+            const result = processInputData(
+              segment.observablePaste ? segment.text : inputFilter.filter(segment.text),
+              segment.observablePaste,
+            );
+            if (result) {
+              sequence = result;
+            }
+          }
+          return sequence;
         };
         const onInput = (chunk: Buffer | string) => {
           const run = () => {

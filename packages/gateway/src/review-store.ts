@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
+import { ReviewIdSchema } from "@matrix-os/contracts";
 import type { WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import type { ReviewLoopRecord } from "./review-loop.js";
@@ -11,7 +12,6 @@ type Failure = {
   error: WorkspaceError;
 };
 
-const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 const ListReviewsSchema = z.object({
   projectSlug: z.string().min(1).max(63).optional(),
   limit: z.number().int().min(1).max(100).optional(),

@@ -95,7 +95,13 @@ async function runMatrixCli(args: string[]) {
     }>((resolve, reject) => {
       const child = spawn(process.execPath, [bin, ...args], {
         cwd: process.cwd(),
-        env: { ...process.env, HOME: home, FORCE_COLOR: "0", NO_COLOR: "1" },
+        env: {
+          ...process.env,
+          HOME: home,
+          FORCE_COLOR: "0",
+          NO_COLOR: "1",
+          NODE_NO_WARNINGS: "1",
+        },
         stdio: ["ignore", "pipe", "pipe"],
       });
       const stdout: Buffer[] = [];

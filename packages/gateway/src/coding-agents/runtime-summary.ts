@@ -1,9 +1,11 @@
 import {
+  PreviewSessionSummarySchema,
   RuntimeSummarySchema,
   SafeDisplayStringSchema,
   TerminalSessionIdSchema,
   type AgentProviderSummary,
   type AgentThreadSummary,
+  type PreviewSessionSummary,
   type RuntimeSummary,
   type TerminalSessionSummary,
 } from "@matrix-os/contracts";
@@ -16,6 +18,7 @@ import type {
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
 
 const TERMINAL_SUMMARY_LIMIT = 20;
+const PREVIEW_SUMMARY_LIMIT = 50;
 
 export interface CodingAgentTerminalSession {
   name: string;
@@ -32,11 +35,23 @@ export interface CodingAgentTerminalSessionRegistry {
 }
 
 export interface CodingAgentRuntimeSummaryService {
-  getSummary(principal: RequestPrincipal): Promise<RuntimeSummary>;
+  getSummary(principal: RequestPrincipal, options?: CodingAgentRuntimeSummaryRequestOptions): Promise<RuntimeSummary>;
+}
+
+export interface CodingAgentRuntimeSummaryRequestOptions {
+  projectId?: string;
 }
 
 export interface CodingAgentThreadSummaryStore {
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
+  listAttentionThreads?(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
+}
+
+export interface CodingAgentPreviewSummaryStore {
+  listPreviewSessions(
+    principal: RequestPrincipal,
+    options?: CodingAgentRuntimeSummaryRequestOptions,
+  ): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }>;
 }
 
 export interface CodingAgentRuntimeSummaryOptions {
@@ -44,12 +59,18 @@ export interface CodingAgentRuntimeSummaryOptions {
   terminalRegistry?: CodingAgentTerminalSessionRegistry;
   agentCredentials?: Pick<AgentCredentialStatusService, "getStatus">;
   threads?: CodingAgentThreadSummaryStore;
+  previews?: CodingAgentPreviewSummaryStore;
   capabilities?: {
     workspace?: boolean;
     approvals?: boolean;
     review?: boolean;
+    preview?: boolean;
+    files?: boolean;
+    sourceControl?: boolean;
   };
+  providerIds?: readonly string[];
   terminalOwnerId?: string;
+  filesOwnerId?: string;
   now?: () => Date;
   runtime?: {
     id?: string;
@@ -74,6 +95,11 @@ function safeDisplayLabel(value: string, fallback: string): { label: string; san
 
 function canReadTerminalSessions(principal: RequestPrincipal, terminalOwnerId: string | undefined): boolean {
   if (terminalOwnerId) return principal.userId === terminalOwnerId;
+  return principal.source === "configured-container" || principal.source === "dev-default";
+}
+
+function canReadOwnerResource(principal: RequestPrincipal, ownerId: string | undefined): boolean {
+  if (ownerId) return principal.userId === ownerId;
   return principal.source === "configured-container" || principal.source === "dev-default";
 }
 
@@ -156,12 +182,15 @@ function kindForAgent(agent: AgentId): AgentProviderSummary["kind"] {
 async function readProviders(
   service: Pick<AgentCredentialStatusService, "getStatus"> | undefined,
   principal: RequestPrincipal,
+  providerIds: readonly string[] | undefined,
 ): Promise<AgentProviderSummary[]> {
   if (!service) return [];
   try {
     const status: AgentCredentialStatusResponse = await service.getStatus(principal.userId);
+    const registeredProviderIds = providerIds ? new Set(providerIds) : null;
     return status.agents
       .filter((agent) => agent.agent !== "hermes")
+      .filter((agent) => !registeredProviderIds || registeredProviderIds.has(agent.agent))
       .map(statusToProviderSummary);
   } catch (err: unknown) {
     console.warn("[coding-agents] provider summary unavailable:", err instanceof Error ? err.message : String(err));
@@ -179,6 +208,43 @@ async function readActiveThreads(
   } catch (err: unknown) {
     console.warn("[coding-agents] thread summary unavailable:", err instanceof Error ? err.message : String(err));
     return { items: [], hasMore: false, limit: 20 };
+  }
+}
+
+async function readAttentionThreads(
+  store: CodingAgentThreadSummaryStore | undefined,
+  principal: RequestPrincipal,
+): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }> {
+  if (!store?.listAttentionThreads) return { items: [], hasMore: false, limit: 20 };
+  try {
+    return await store.listAttentionThreads(principal);
+  } catch (err: unknown) {
+    console.warn("[coding-agents] attention summary unavailable:", err instanceof Error ? err.message : String(err));
+    return { items: [], hasMore: false, limit: 20 };
+  }
+}
+
+async function readPreviewSessions(
+  store: CodingAgentPreviewSummaryStore | undefined,
+  principal: RequestPrincipal,
+  options: CodingAgentRuntimeSummaryRequestOptions,
+): Promise<{ items: PreviewSessionSummary[]; hasMore: boolean; limit: number }> {
+  if (!store) return { items: [], hasMore: false, limit: PREVIEW_SUMMARY_LIMIT };
+  try {
+    const sessions = await store.listPreviewSessions(principal, options);
+    const parsed: PreviewSessionSummary[] = [];
+    for (const item of sessions.items.slice(0, PREVIEW_SUMMARY_LIMIT + 1)) {
+      const result = PreviewSessionSummarySchema.safeParse(item);
+      if (result.success) parsed.push(result.data);
+    }
+    return {
+      items: parsed.slice(0, PREVIEW_SUMMARY_LIMIT),
+      hasMore: sessions.hasMore || parsed.length > PREVIEW_SUMMARY_LIMIT,
+      limit: PREVIEW_SUMMARY_LIMIT,
+    };
+  } catch (err: unknown) {
+    console.warn("[coding-agents] preview summary unavailable:", err instanceof Error ? err.message : String(err));
+    return { items: [], hasMore: false, limit: PREVIEW_SUMMARY_LIMIT };
   }
 }
 
@@ -216,7 +282,10 @@ export function createCodingAgentRuntimeSummaryService(
   const nowFn = options.now ?? (() => new Date());
 
   return {
-    async getSummary(principal: RequestPrincipal): Promise<RuntimeSummary> {
+    async getSummary(
+      principal: RequestPrincipal,
+      summaryOptions: CodingAgentRuntimeSummaryRequestOptions = {},
+    ): Promise<RuntimeSummary> {
       const now = nowFn();
       const terminalSessions = readTerminalSessions(
         options.terminalRegistry,
@@ -225,12 +294,17 @@ export function createCodingAgentRuntimeSummaryService(
         principal,
         options.terminalOwnerId,
       );
-      const providers = await readProviders(options.agentCredentials, principal);
+      const providers = await readProviders(options.agentCredentials, principal, options.providerIds);
       const activeThreads = await readActiveThreads(options.threads, principal);
+      const attentionThreads = await readAttentionThreads(options.threads, principal);
+      const previewSessions = readPreviewSessions(options.previews, principal, summaryOptions);
       const threadsEnabled = Boolean(options.threads);
       const workspaceEnabled = threadsEnabled && options.capabilities?.workspace === true;
       const approvalsEnabled = threadsEnabled && options.capabilities?.approvals === true;
       const reviewEnabled = options.capabilities?.review === true;
+      const previewEnabled = Boolean(options.previews) && options.capabilities?.preview === true;
+      const filesEnabled = options.capabilities?.files === true && canReadOwnerResource(principal, options.filesOwnerId);
+      const sourceControlEnabled = options.capabilities?.sourceControl === true;
       const terminalEnabled = Boolean(options.terminalRegistry) &&
         canReadTerminalSessions(principal, options.terminalOwnerId);
 
@@ -249,12 +323,17 @@ export function createCodingAgentRuntimeSummaryService(
           capability({ id: "codingAgentsThreadCreate", enabled: threadsEnabled }),
           capability({ id: "codingAgentsApprovals", enabled: approvalsEnabled }),
           capability({ id: "codingAgentsReview", enabled: reviewEnabled }),
+          capability({ id: "codingAgentsPreview", enabled: previewEnabled }),
+          capability({ id: "codingAgentsFiles", enabled: filesEnabled }),
+          capability({ id: "codingAgentsSourceControl", enabled: sourceControlEnabled }),
           capability({ id: "codingAgentsNativeMobileTerminal", enabled: terminalEnabled }),
         ],
         providers,
         projects: { items: [], hasMore: false, limit: 20 },
         activeThreads,
+        attentionThreads,
         terminalSessions: await terminalSessions,
+        previewSessions: await previewSessions,
         recentActivity: { items: [], hasMore: false, limit: 30 },
         limits: {
           maxPromptBytes: 24_000,

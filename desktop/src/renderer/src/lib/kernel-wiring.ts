@@ -10,7 +10,8 @@ import {
 } from "../stores/board";
 import { useConnection } from "../stores/connection";
 import { useHermesChat } from "../stores/hermes-chat";
-import { useTabs } from "../stores/tabs";
+import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
+import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
 
 const KERNEL_CHAT_EVENT_TYPES = new Set([
@@ -35,6 +36,20 @@ function isTaskEvent(msg: KernelServerMessage): msg is BoardTaskEvent {
     typeof msg.taskId === "string" &&
     typeof msg.status === "string"
   );
+}
+
+function legacyThreadAttentionCount(): number {
+  return useThreads.getState().threads.reduce(
+    (sum, thread) => sum + (thread.unread || thread.status === "needs-attention" ? 1 : 0),
+    0,
+  );
+}
+
+function codingAgentAttentionCount(): number {
+  const attentionThreads = useCodingAgentWorkspace.getState().summary?.attentionThreads;
+  return attentionThreads
+    ? attentionThreads.hasMore ? 999 : attentionThreads.items.length
+    : 0;
 }
 
 export function getKernelSocket(): KernelSocket | null {
@@ -107,11 +122,8 @@ export function wireKernel(): () => void {
   });
 
   let lastBadge = -1;
-  const unsubscribeBadge = useThreads.subscribe((state) => {
-    const count = state.threads.reduce(
-      (sum, t) => sum + (t.unread || t.status === "needs-attention" ? 1 : 0),
-      0,
-    );
+  const updateBadge = () => {
+    const count = legacyThreadAttentionCount() + codingAgentAttentionCount();
     if (count !== lastBadge) {
       lastBadge = count;
       void invoke("badge:set", { count: Math.min(count, 999) }).catch((err: unknown) => {
@@ -121,12 +133,16 @@ export function wireKernel(): () => void {
         );
       });
     }
-  });
+  };
+  const unsubscribeBadge = useThreads.subscribe(updateBadge);
+  const unsubscribeCodingAgentBadge = useCodingAgentWorkspace.subscribe(updateBadge);
+  updateBadge();
 
   // Clicking a native notification focuses the thread in the Agents tab.
   const offNotificationClick = onEvent("notification:clicked", ({ threadId }) => {
     useThreads.getState().setActiveThread(threadId);
-    useTabs.getState().openTab({ kind: "agents", title: "Agents" });
+    useCodingAgentWorkspace.setState({ activeThreadId: threadId });
+    useTabs.getState().openTab(AGENTS_WORKSPACE_TAB_SPEC);
   });
 
   activeSocket.connect();
@@ -137,6 +153,7 @@ export function wireKernel(): () => void {
     cleaned = true;
     unsubscribeMessages();
     unsubscribeBadge();
+    unsubscribeCodingAgentBadge();
     offNotificationClick();
     activeSocket.dispose();
     if (socket === activeSocket) socket = null;

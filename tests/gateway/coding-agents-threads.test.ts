@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -149,7 +149,7 @@ describe("coding agent thread lifecycle", () => {
     });
   });
 
-  it("returns the first replay window after the cursor", async () => {
+  it("continues replay after a cursor from the current snapshot window", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
     const threads = createCodingAgentThreadStore({
       homePath,
@@ -169,9 +169,35 @@ describe("coding agent thread lifecycle", () => {
     const replay = await app.request(`/api/coding-agents/threads/${snapshot.thread.id}/events?cursor=${createdCursor}`);
     const replayBody = AgentThreadSnapshotSchema.parse(await replay.json());
 
-    expect(replayBody.events.items).toHaveLength(200);
-    expect(replayBody.events.items[0]).toMatchObject({ type: "thread.status" });
-    expect(replayBody.events.hasMore).toBe(true);
+    expect(replayBody.events.items).toHaveLength(199);
+    expect(replayBody.events.items[0]).toMatchObject({ type: "assistant.text.delta" });
+    expect(replayBody.events.hasMore).toBe(false);
+  });
+
+  it("returns the latest bounded event window for thread snapshots without a cursor", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex", deltaCount: 250 })],
+    });
+    const app = new Hono();
+    app.route("/api/coding-agents", createCodingAgentRoutes({
+      service: createCodingAgentRuntimeSummaryService({ homePath, now: () => baseNow }),
+      threads,
+      getPrincipal: () => ownerPrincipal,
+    }));
+
+    const created = await app.request(jsonRequest("/api/coding-agents/threads", createBody));
+    const snapshot = AgentThreadSnapshotSchema.parse(await created.json());
+
+    expect(snapshot.events.items).toHaveLength(200);
+    expect(snapshot.events.hasMore).toBe(true);
+    expect(snapshot.events.items.map((event) => event.type)).not.toContain("thread.created");
+    expect(snapshot.events.items.at(-1)).toMatchObject({
+      type: "assistant.text.delta",
+      delta: "Agent event 250.",
+    });
   });
 
   it("keeps thread ownership isolated and maps missing threads to safe errors", async () => {
@@ -404,6 +430,7 @@ describe("coding agent thread lifecycle", () => {
       ...createBody,
       clientRequestId: "req_create_after_duplicate_stop",
     });
+    const attention = await threads.listAttentionThreads(ownerPrincipal);
 
     expect(early).toEqual([]);
     expect(created.snapshot.thread).toMatchObject({
@@ -424,6 +451,88 @@ describe("coding agent thread lifecycle", () => {
       status: "running",
       attention: "none",
       terminalSessionId: "main",
+    });
+    expect(attention.items).toEqual([
+      expect.objectContaining({
+        id: created.snapshot.thread.id,
+        status: "failed",
+        attention: "failed",
+      }),
+    ]);
+    expect(attention.hasMore).toBe(false);
+  });
+
+  it("surfaces failed status-only threads in the attention list", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const provider: CodingAgentProviderAdapter = {
+      providerId: "codex",
+      startThread({ thread, now: providerNow, nextEventId }) {
+        return [
+          AgentThreadEventSchema.parse({
+            type: "thread.status",
+            eventId: nextEventId(),
+            threadId: thread.id,
+            occurredAt: providerNow().toISOString(),
+            status: "failed",
+          }),
+        ];
+      },
+    };
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [provider],
+    });
+
+    const created = await threads.createThread(ownerPrincipal, createBody);
+    const active = await threads.listThreads(ownerPrincipal);
+    const attention = await threads.listAttentionThreads(ownerPrincipal);
+
+    expect(created.snapshot.thread).toMatchObject({
+      status: "failed",
+      attention: "failed",
+    });
+    expect(active.items).toEqual([]);
+    expect(attention.items).toEqual([
+      expect.objectContaining({
+        id: created.snapshot.thread.id,
+        status: "failed",
+        attention: "failed",
+      }),
+    ]);
+  });
+
+  it("normalizes legacy failed threads with missing attention on read", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+    });
+    const created = await threads.createThread(ownerPrincipal, createBody);
+    const statePath = join(homePath, "system", "coding-agents", "threads.json");
+    const raw = JSON.parse(await readFile(statePath, "utf-8"));
+    raw.threads = raw.threads.map((thread: { id: string }) => (
+      thread.id === created.snapshot.thread.id
+        ? { ...thread, status: "failed", attention: "none" }
+        : thread
+    ));
+    await writeFile(statePath, JSON.stringify(raw), "utf-8");
+
+    const attention = await threads.listAttentionThreads(ownerPrincipal);
+    const snapshot = await threads.getThread(ownerPrincipal, created.snapshot.thread.id);
+
+    expect(attention.items).toEqual([
+      expect.objectContaining({
+        id: created.snapshot.thread.id,
+        status: "failed",
+        attention: "failed",
+      }),
+    ]);
+    expect(snapshot.thread).toMatchObject({
+      id: created.snapshot.thread.id,
+      status: "failed",
+      attention: "failed",
     });
   });
 

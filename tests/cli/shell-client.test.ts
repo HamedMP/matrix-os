@@ -10,8 +10,6 @@ import {
 } from "../../packages/sync-client/src/cli/shell-client.js";
 
 const LOCAL_TERMINAL_INPUT_RESET = "\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1006l\u001b[?1015l\u001b[?1004l\u001b[?2004l\u001b[>4;0m\u001b[<1u";
-const BRACKETED_PASTE_OPEN = "\u001b[200~";
-const BRACKETED_PASTE_CLOSE = "\u001b[201~";
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
 const roots: string[] = [];
 
@@ -762,7 +760,7 @@ describe("shell REST client", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(ControlledWebSocket.last?.sent.map((frame) => JSON.parse(frame))).toContainEqual({
       type: "input",
-      data: `${BRACKETED_PASTE_OPEN}/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png${BRACKETED_PASTE_CLOSE}`,
+      data: "\"/home/matrix/home/projects/.matrix-terminal-pastes/2026-07-07/upload.png\"",
     });
     expect(ControlledWebSocket.last?.sent.join("")).not.toContain(imagePath);
   });

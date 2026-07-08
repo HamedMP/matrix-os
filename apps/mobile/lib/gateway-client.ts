@@ -5,15 +5,53 @@ import {
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
 import {
+  AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
+  ApprovalDecisionRequestSchema,
+  ApprovalIdSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
   CursorSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
+  FileReadRequestSchema,
+  FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
+  RequestIdSchema,
+  ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  SafeClientErrorSchema,
+  SourceControlCreatePullRequestRequestSchema,
+  SourceControlCreatePullRequestResponseSchema,
+  SourceControlPrepareCommitRequestSchema,
+  SourceControlPrepareCommitResponseSchema,
+  ThreadIdSchema,
+  UserInputAnswerRequestSchema,
   type CreateAgentThreadRequest,
+  type AgentThreadEvent,
+  type CodingAgentNotificationPreferences,
+  type CodingAgentNotificationPreferencesUpdate,
+  type FileBrowseRequest,
+  type FileBrowseResponse,
+  type FileReadRequest,
+  type FileReadResponse,
+  type FileSearchRequest,
+  type FileSearchResponse,
+  type FileWriteRequest,
+  type FileWriteResponse,
+  type ReviewSnapshot,
   type RuntimeSummary,
+  type SourceControlCreatePullRequestRequest,
+  type SourceControlCreatePullRequestResponse,
+  type SourceControlPrepareCommitRequest,
+  type SourceControlPrepareCommitResponse,
   boundedListSchema,
 } from "@matrix-os/contracts";
-import type { z } from "zod/v4";
+import { z } from "zod/v4";
 
 function randomShellSuffix(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -81,15 +119,81 @@ export type CodingAgentRuntimeSummaryResult =
   | { ok: true; summary: RuntimeSummary }
   | { ok: false; error: "Runtime summary unavailable" };
 
+const CodingAgentNotificationPreferencesRouteResponseSchema = z.object({
+  preferences: CodingAgentNotificationPreferencesSchema,
+}).strict();
+
+export type CodingAgentNotificationPreferencesResult =
+  | { ok: true; preferences: CodingAgentNotificationPreferences }
+  | { ok: false; error: "Notification settings unavailable" };
+
+export type CodingAgentNotificationPreferencesUpdateResult =
+  | { ok: true; preferences: CodingAgentNotificationPreferences }
+  | { ok: false; error: "Notification settings could not be saved. Try again." };
+
 export type CodingAgentThreadCreateResult =
   | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
   | { ok: false; error: "Agent run could not be started. Try again." };
+
+export type CodingAgentThreadSnapshotResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Thread state unavailable" };
+
+export type CodingAgentApprovalDecisionResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Approval could not be sent. Try again." };
+
+export type CodingAgentInputAnswerResult =
+  | { ok: true; snapshot: z.infer<typeof AgentThreadSnapshotSchema> }
+  | { ok: false; error: "Input could not be sent. Try again." };
 
 const CodingAgentReviewListSchema = boundedListSchema(ReviewSummarySchema, 50);
 
 export type CodingAgentReviewsResult =
   | { ok: true; reviews: z.infer<typeof CodingAgentReviewListSchema> }
   | { ok: false; error: "Review state unavailable" };
+
+export type CodingAgentReviewSnapshotResult =
+  | { ok: true; snapshot: ReviewSnapshot }
+  | { ok: false; error: "Review details unavailable" };
+
+export type CodingAgentFileContentResult =
+  | { ok: true; file: FileReadResponse }
+  | { ok: false; error: "File content unavailable" };
+
+export type CodingAgentFileBrowseResult =
+  | { ok: true; browse: FileBrowseResponse }
+  | { ok: false; error: "File list unavailable" };
+
+export type CodingAgentFileSearchResult =
+  | { ok: true; search: FileSearchResponse }
+  | { ok: false; error: "File search unavailable" };
+
+export type CodingAgentFileSaveResult =
+  | { ok: true; file: FileWriteResponse }
+  | { ok: false; error: "File could not be saved. Refresh and try again." };
+
+export type CodingAgentSourceCommitResult =
+  | { ok: true; commit: SourceControlPrepareCommitResponse }
+  | { ok: false; error: "Source commit could not be prepared. Refresh and try again." };
+
+export type CodingAgentSourcePullRequestResult =
+  | { ok: true; pullRequest: SourceControlCreatePullRequestResponse }
+  | { ok: false; error: "Pull request could not be created. Refresh and try again." };
+
+export type CodingAgentThreadStreamStatus = "connecting" | "open" | "closed" | "error";
+
+export interface CodingAgentThreadEventSubscription {
+  detach(): void;
+}
+
+export interface CodingAgentThreadEventSubscriptionOptions {
+  threadId: string;
+  cursor?: string;
+  onEvent: (event: AgentThreadEvent) => void;
+  onStatus?: (status: CodingAgentThreadStreamStatus) => void;
+  onError?: (error: "Thread stream unavailable") => void;
+}
 
 type ClientMessage =
   | { type: "message"; text: string; sessionId?: string }
@@ -109,10 +213,37 @@ type ReactNativeWebSocketConstructor = new (
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 10_000;
+const SAFE_REVIEW_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const SECURE_TOKEN_TRANSPORT_ERROR =
   "Matrix OS Cloud requires HTTPS/WSS.";
 const CLEARTEXT_HOST_ERROR =
   "Self-hosted gateways with saved credentials require HTTPS/WSS unless they are local.";
+
+const ThreadStreamServerFrameSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("thread.stream.attached"),
+    threadId: ThreadIdSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.event"),
+    event: AgentThreadEventSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.replay.end"),
+    nextCursor: CursorSchema.optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("thread.stream.error"),
+    error: SafeClientErrorSchema,
+  }).strict(),
+  z.object({
+    type: z.literal("thread.stream.closing"),
+    reason: z.string().trim().min(1).max(64),
+  }).strict(),
+  z.object({ type: z.literal("pong") }).strict(),
+]);
+
+const WS_OPEN = 1;
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
@@ -381,6 +512,90 @@ export class GatewayClient {
     );
   }
 
+  async subscribeCodingAgentThreadEvents(
+    options: CodingAgentThreadEventSubscriptionOptions,
+  ): Promise<CodingAgentThreadEventSubscription | null> {
+    const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+    const parsedCursor = options.cursor ? CursorSchema.safeParse(options.cursor) : null;
+    if (!parsedThreadId.success || (parsedCursor && !parsedCursor.success)) {
+      options.onError?.("Thread stream unavailable");
+      return null;
+    }
+    const token = await this.getWsToken();
+    if (token) this.setWebSocketToken(token);
+    const params = new URLSearchParams();
+    if (token) params.set("token", token);
+    if (parsedCursor?.success) params.set("cursor", parsedCursor.data);
+    const query = params.toString();
+    const wsUrl = `${this.baseUrl.replace(/^http/, "ws")}/ws/coding-agents/thread/${encodeURIComponent(parsedThreadId.data)}${query ? `?${query}` : ""}`;
+    const WebSocketWithOptions = WebSocket as unknown as ReactNativeWebSocketConstructor;
+    const authorization = formatAuthorizationHeader(this.token);
+    const ws = new WebSocketWithOptions(
+      wsUrl,
+      [],
+      authorization
+        ? { headers: { Authorization: authorization } }
+        : undefined,
+    );
+    let detached = false;
+
+    ws.onopen = () => {
+      options.onStatus?.("open");
+    };
+
+    ws.onmessage = (event) => {
+      if (detached) return;
+      if (typeof event.data !== "string") return;
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(event.data);
+      } catch {
+        console.warn("[mobile] coding-agent thread stream sent invalid JSON");
+        return;
+      }
+      const frame = ThreadStreamServerFrameSchema.safeParse(parsedJson);
+      if (!frame.success) {
+        console.warn("[mobile] coding-agent thread stream sent invalid frame");
+        return;
+      }
+      if (frame.data.type === "thread.event") {
+        options.onEvent(frame.data.event);
+        return;
+      }
+      if (frame.data.type === "thread.stream.error") {
+        options.onError?.("Thread stream unavailable");
+      }
+    };
+
+    ws.onerror = () => {
+      options.onStatus?.("error");
+      options.onError?.("Thread stream unavailable");
+    };
+
+    ws.onclose = () => {
+      options.onStatus?.("closed");
+    };
+
+    options.onStatus?.("connecting");
+    return {
+      detach() {
+        detached = true;
+        if (ws.readyState === WS_OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: "detach" }));
+          } catch {
+            console.warn("[mobile] coding-agent thread stream detach failed");
+          }
+        }
+        try {
+          ws.close();
+        } catch {
+          console.warn("[mobile] coding-agent thread stream close failed");
+        }
+      },
+    };
+  }
+
   async healthCheck(): Promise<{ ok: boolean; data?: unknown; error?: string }> {
     try {
       const res = await this.fetchGateway("/health");
@@ -538,6 +753,55 @@ export class GatewayClient {
     }
   }
 
+  async getCodingAgentNotificationPreferences(): Promise<CodingAgentNotificationPreferencesResult> {
+    try {
+      const res = await this.fetchGateway("/api/coding-agents/notification-preferences");
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/notification-preferences unavailable", res.status);
+        return { ok: false, error: "Notification settings unavailable" };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/notification-preferences returned invalid payload");
+        return { ok: false, error: "Notification settings unavailable" };
+      }
+      return { ok: true, preferences: parsed.data.preferences };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/notification-preferences unavailable");
+      return { ok: false, error: "Notification settings unavailable" };
+    }
+  }
+
+  async updateCodingAgentNotificationPreferences(
+    request: CodingAgentNotificationPreferencesUpdate,
+  ): Promise<CodingAgentNotificationPreferencesUpdateResult> {
+    try {
+      const parsedRequest = CodingAgentNotificationPreferencesUpdateSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/notification-preferences", {
+        method: "PUT",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/notification-preferences update unavailable", res.status);
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      const body = await res.json();
+      const parsed = CodingAgentNotificationPreferencesRouteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/notification-preferences update returned invalid payload");
+        return { ok: false, error: "Notification settings could not be saved. Try again." };
+      }
+      return { ok: true, preferences: parsed.data.preferences };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/notification-preferences update unavailable");
+      return { ok: false, error: "Notification settings could not be saved. Try again." };
+    }
+  }
+
   async createCodingAgentThread(
     request: CreateAgentThreadRequest,
   ): Promise<CodingAgentThreadCreateResult> {
@@ -560,6 +824,116 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/coding-agents/threads unavailable");
       return { ok: false, error: "Agent run could not be started. Try again." };
+    }
+  }
+
+  async getCodingAgentThreadSnapshot(
+    options: { threadId: string },
+  ): Promise<CodingAgentThreadSnapshotResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      if (!parsedThreadId.success) {
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      const res = await this.fetchGateway(`/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable", res.status);
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId returned invalid payload");
+        return { ok: false, error: "Thread state unavailable" };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/threads/:threadId unavailable");
+      return { ok: false, error: "Thread state unavailable" };
+    }
+  }
+
+  async submitCodingAgentApprovalDecision(options: {
+    threadId: string;
+    approvalId: string;
+    decision: unknown;
+    correlationId: string;
+    clientRequestId: string;
+  }): Promise<CodingAgentApprovalDecisionResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      const parsedApprovalId = ApprovalIdSchema.safeParse(options.approvalId);
+      const parsedBody = ApprovalDecisionRequestSchema.safeParse({
+        decision: options.decision,
+        correlationId: options.correlationId,
+        clientRequestId: options.clientRequestId,
+      });
+      if (!parsedThreadId.success || !parsedApprovalId.success || !parsedBody.success) {
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      const res = await this.fetchGateway(
+        `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/approvals/${encodeURIComponent(parsedApprovalId.data)}/decision`,
+        {
+          method: "POST",
+          body: JSON.stringify(parsedBody.data),
+        },
+      );
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable", res.status);
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision returned invalid payload");
+        return { ok: false, error: "Approval could not be sent. Try again." };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/threads/:threadId/approvals/:approvalId/decision unavailable");
+      return { ok: false, error: "Approval could not be sent. Try again." };
+    }
+  }
+
+  async submitCodingAgentInputAnswer(options: {
+    threadId: string;
+    inputRequestId: string;
+    answer: string;
+    correlationId: string;
+    clientRequestId: string;
+  }): Promise<CodingAgentInputAnswerResult> {
+    try {
+      const parsedThreadId = ThreadIdSchema.safeParse(options.threadId);
+      const parsedInputRequestId = RequestIdSchema.safeParse(options.inputRequestId);
+      const parsedBody = UserInputAnswerRequestSchema.safeParse({
+        answer: options.answer,
+        correlationId: options.correlationId,
+        clientRequestId: options.clientRequestId,
+      });
+      if (!parsedThreadId.success || !parsedInputRequestId.success || !parsedBody.success) {
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      const res = await this.fetchGateway(
+        `/api/coding-agents/threads/${encodeURIComponent(parsedThreadId.data)}/inputs/${encodeURIComponent(parsedInputRequestId.data)}/answer`,
+        {
+          method: "POST",
+          body: JSON.stringify(parsedBody.data),
+        },
+      );
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable", res.status);
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      const body = await res.json();
+      const parsed = AgentThreadSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer returned invalid payload");
+        return { ok: false, error: "Input could not be sent. Try again." };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch {
+      console.warn("[mobile] /api/coding-agents/threads/:threadId/inputs/:inputRequestId/answer unavailable");
+      return { ok: false, error: "Input could not be sent. Try again." };
     }
   }
 
@@ -588,6 +962,225 @@ export class GatewayClient {
     } catch {
       console.warn("[mobile] /api/coding-agents/reviews unavailable");
       return { ok: false, error: "Review state unavailable" };
+    }
+  }
+
+  async getCodingAgentReviewSnapshot(
+    options: { reviewId: string },
+  ): Promise<CodingAgentReviewSnapshotResult> {
+    try {
+      if (!SAFE_REVIEW_REFERENCE.test(options.reviewId) || options.reviewId.includes("..")) {
+        return { ok: false, error: "Review details unavailable" };
+      }
+      const res = await this.fetchGateway(`/api/coding-agents/reviews/${encodeURIComponent(options.reviewId)}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/reviews/:reviewId unavailable", res.status);
+        return { ok: false, error: "Review details unavailable" };
+      }
+      const body = await res.json();
+      const parsed = ReviewSnapshotSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/reviews/:reviewId returned invalid payload");
+        return { ok: false, error: "Review details unavailable" };
+      }
+      return { ok: true, snapshot: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/reviews/:reviewId ${reason}`);
+      return { ok: false, error: "Review details unavailable" };
+    }
+  }
+
+  async getCodingAgentFileContent(
+    request: FileReadRequest,
+  ): Promise<CodingAgentFileContentResult> {
+    try {
+      const parsedRequest = FileReadRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File content unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+        path: parsedRequest.data.path,
+      });
+      const res = await this.fetchGateway(`/api/coding-agents/files/read?${query.toString()}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/files/read unavailable", res.status);
+        return { ok: false, error: "File content unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileReadResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/files/read returned invalid payload");
+        return { ok: false, error: "File content unavailable" };
+      }
+      return { ok: true, file: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/files/read ${reason}`);
+      return { ok: false, error: "File content unavailable" };
+    }
+  }
+
+  async browseCodingAgentFiles(
+    request: FileBrowseRequest,
+  ): Promise<CodingAgentFileBrowseResult> {
+    try {
+      const parsedRequest = FileBrowseRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File list unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+      });
+      if (parsedRequest.data.path) {
+        query.set("path", parsedRequest.data.path);
+      }
+      query.set("limit", String(parsedRequest.data.limit));
+      const res = await this.fetchGateway(`/api/coding-agents/files/browse?${query.toString()}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/files/browse unavailable", res.status);
+        return { ok: false, error: "File list unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileBrowseResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/files/browse returned invalid payload");
+        return { ok: false, error: "File list unavailable" };
+      }
+      return { ok: true, browse: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/files/browse ${reason}`);
+      return { ok: false, error: "File list unavailable" };
+    }
+  }
+
+  async searchCodingAgentFiles(
+    request: FileSearchRequest,
+  ): Promise<CodingAgentFileSearchResult> {
+    try {
+      const parsedRequest = FileSearchRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File search unavailable" };
+      }
+      const query = new URLSearchParams({
+        projectId: parsedRequest.data.projectId,
+        worktreeId: parsedRequest.data.worktreeId,
+      });
+      if (parsedRequest.data.path) {
+        query.set("path", parsedRequest.data.path);
+      }
+      query.set("query", parsedRequest.data.query);
+      query.set("limit", String(parsedRequest.data.limit));
+      const res = await this.fetchGateway(`/api/coding-agents/files/search?${query.toString()}`);
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/files/search unavailable", res.status);
+        return { ok: false, error: "File search unavailable" };
+      }
+      const body = await res.json();
+      const parsed = FileSearchResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/files/search returned invalid payload");
+        return { ok: false, error: "File search unavailable" };
+      }
+      return { ok: true, search: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/files/search ${reason}`);
+      return { ok: false, error: "File search unavailable" };
+    }
+  }
+
+  async saveCodingAgentFileContent(
+    request: FileWriteRequest,
+  ): Promise<CodingAgentFileSaveResult> {
+    try {
+      const parsedRequest = FileWriteRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/files/write", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/files/write unavailable");
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = FileWriteResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/files/write returned invalid payload");
+        return { ok: false, error: "File could not be saved. Refresh and try again." };
+      }
+      return { ok: true, file: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/files/write ${reason}`);
+      return { ok: false, error: "File could not be saved. Refresh and try again." };
+    }
+  }
+
+  async prepareCodingAgentSourceCommit(
+    request: SourceControlPrepareCommitRequest,
+  ): Promise<CodingAgentSourceCommitResult> {
+    try {
+      const parsedRequest = SourceControlPrepareCommitRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/source-control/prepare-commit", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/source-control/prepare-commit unavailable");
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = SourceControlPrepareCommitResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/source-control/prepare-commit returned invalid payload");
+        return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+      }
+      return { ok: true, commit: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/source-control/prepare-commit ${reason}`);
+      return { ok: false, error: "Source commit could not be prepared. Refresh and try again." };
+    }
+  }
+
+  async createCodingAgentSourcePullRequest(
+    request: SourceControlCreatePullRequestRequest,
+  ): Promise<CodingAgentSourcePullRequestResult> {
+    try {
+      const parsedRequest = SourceControlCreatePullRequestRequestSchema.safeParse(request);
+      if (!parsedRequest.success) {
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      const res = await this.fetchGateway("/api/coding-agents/source-control/pull-requests", {
+        method: "POST",
+        body: JSON.stringify(parsedRequest.data),
+      });
+      if (!res.ok) {
+        console.warn("[mobile] /api/coding-agents/source-control/pull-requests unavailable");
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      const body = await res.json();
+      const parsed = SourceControlCreatePullRequestResponseSchema.safeParse(body);
+      if (!parsed.success) {
+        console.warn("[mobile] /api/coding-agents/source-control/pull-requests returned invalid payload");
+        return { ok: false, error: "Pull request could not be created. Refresh and try again." };
+      }
+      return { ok: true, pullRequest: parsed.data };
+    } catch (err: unknown) {
+      const reason = err instanceof Error && err.name === "AbortError" ? "aborted" : "unavailable";
+      console.warn(`[mobile] /api/coding-agents/source-control/pull-requests ${reason}`);
+      return { ok: false, error: "Pull request could not be created. Refresh and try again." };
     }
   }
 

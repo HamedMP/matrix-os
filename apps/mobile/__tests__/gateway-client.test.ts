@@ -3,8 +3,151 @@ import {
   DEFAULT_GATEWAY_FETCH_TIMEOUT_MS,
   assertSecureTokenTransport,
 } from "../lib/gateway-client";
-import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
+import type { AgentThreadEvent, CreateAgentThreadRequest } from "@matrix-os/contracts";
 import { jsonResponse } from "./mobile-shell-test-utils";
+
+function reviewSnapshotPayload(id = "rev_mobile_1") {
+  return {
+    review: {
+      id,
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      status: "reviewing",
+      pullRequestNumber: 757,
+      round: 1,
+      maxRounds: 3,
+      reviewer: "codex",
+      implementer: "claude",
+      findings: {
+        total: 1,
+        high: 1,
+        medium: 0,
+        low: 0,
+      },
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    },
+    files: {
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          partial: true,
+          hunks: [],
+          findings: [
+            {
+              id: "HIGH-1",
+              severity: "high",
+              line: 42,
+              summary: "Validate ownership before returning snapshots.",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      limit: 100,
+    },
+    partial: true,
+    safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+    updatedAt: "2026-07-06T00:00:00.000Z",
+  };
+}
+
+function fileReadPayload() {
+  return {
+    metadata: {
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      kind: "file",
+      sizeBytes: 37,
+      etag: "sha256_mobile_file",
+      updatedAt: "2026-07-06T00:03:00.000Z",
+    },
+    content: "export const safeRoute = true;\n",
+    encoding: "utf8",
+    truncated: false,
+    limitBytes: 65536,
+  };
+}
+
+function fileBrowsePayload() {
+  return {
+    directory: {
+      path: "packages",
+      kind: "directory",
+      updatedAt: "2026-07-06T00:03:00.000Z",
+    },
+    entries: {
+      items: [
+        {
+          path: "packages/gateway",
+          kind: "directory",
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+        {
+          path: "packages/README.md",
+          kind: "file",
+          sizeBytes: 24,
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+  };
+}
+
+function fileSearchPayload() {
+  return {
+    matches: {
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          kind: "file",
+          sizeBytes: 37,
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+  };
+}
+
+function fileWritePayload() {
+  return {
+    metadata: {
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      kind: "file",
+      sizeBytes: 38,
+      etag: "sha256_mobile_file_next",
+      updatedAt: "2026-07-06T00:04:00.000Z",
+    },
+    encoding: "utf8",
+    writtenBytes: 38,
+  };
+}
+
+function sourceCommitPayload() {
+  return {
+    status: "committed",
+    commitSha: "0123456789abcdef0123456789abcdef01234567",
+    branch: "feature/review-fix",
+    changedFileCount: 1,
+    safeMessage: "Changes were committed.",
+  };
+}
+
+function sourcePullRequestPayload() {
+  return {
+    status: "created",
+    number: 808,
+    url: "https://github.com/HamedMP/matrix-os/pull/808",
+    headBranch: "feature/review-fix",
+    baseBranch: "main",
+    safeMessage: "Pull request is ready for review.",
+  };
+}
 
 describe("GatewayClient", () => {
   it("initializes with disconnected state", () => {
@@ -150,6 +293,109 @@ describe("GatewayClient", () => {
     global.WebSocket = OriginalWebSocket;
   });
 
+  it("subscribes to bounded coding-agent thread stream events", async () => {
+    const OriginalWebSocket = global.WebSocket;
+    const events: AgentThreadEvent[] = [];
+    type StreamSocketMock = {
+      readyState: number;
+      sent: string[];
+      closed: boolean;
+      send: jest.Mock;
+      close: jest.Mock;
+      onopen: (() => void) | null;
+      onmessage: ((event: { data: string }) => void) | null;
+      onerror: (() => void) | null;
+      onclose: (() => void) | null;
+    };
+    const sockets: StreamSocketMock[] = [];
+    const webSocketMock = jest.fn().mockImplementation(() => {
+      let socket!: StreamSocketMock;
+      socket = {
+        readyState: 0,
+        sent: [],
+        closed: false,
+        send: jest.fn((frame: string) => socket.sent.push(frame)),
+        close: jest.fn(() => {
+          socket.closed = true;
+          socket.readyState = 3;
+        }),
+        onopen: null,
+        onmessage: null,
+        onerror: null,
+        onclose: null,
+      };
+      sockets.push(socket);
+      return socket;
+    });
+    global.WebSocket = {
+      OPEN: 1,
+      CLOSED: 3,
+    } as typeof WebSocket;
+    global.WebSocket = webSocketMock as unknown as typeof WebSocket;
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      token: "stream-token",
+      expiresAt: Date.now() + 300_000,
+    }));
+
+    const client = new GatewayClient("https://app.matrix-os.com", "clerk-token");
+    const subscription = await client.subscribeCodingAgentThreadEvents({
+      threadId: "thread_mobile",
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(subscription).not.toBeNull();
+    expect(webSocketMock).toHaveBeenCalledWith(
+      "wss://app.matrix-os.com/ws/coding-agents/thread/thread_mobile?token=stream-token",
+      [],
+      { headers: { Authorization: "Bearer clerk-token" } },
+    );
+
+    sockets[0]!.readyState = 1;
+    sockets[0]!.onopen?.();
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "thread.stream.attached", threadId: "thread_mobile" }) });
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "thread.event",
+        event: {
+          eventId: "evt_stream_mobile_1",
+          threadId: "thread_mobile",
+          type: "assistant.text.delta",
+          messageId: "msg_mobile_1",
+          delta: "Checking /home/matrix/secret and token_sk_live_123.",
+          occurredAt: "2026-07-06T00:02:00.000Z",
+        },
+      }),
+    });
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "thread.event",
+        event: {
+          eventId: "../unsafe",
+          threadId: "thread_mobile",
+          type: "assistant.text.delta",
+          messageId: "msg_mobile_1",
+          delta: "unsafe",
+          occurredAt: "2026-07-06T00:02:00.000Z",
+        },
+      }),
+    });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "thread.replay.end", nextCursor: "evt_stream_mobile_1" }) });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      eventId: "evt_stream_mobile_1",
+      threadId: "thread_mobile",
+      type: "assistant.text.delta",
+    });
+
+    subscription?.detach();
+    expect(sockets[0]!.sent.map((frame) => JSON.parse(frame))).toContainEqual({ type: "detach" });
+    expect(sockets[0]!.closed).toBe(true);
+
+    fetchMock.mockRestore();
+    global.WebSocket = OriginalWebSocket;
+  });
+
   it("fetches installed apps from the gateway", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse([
         {
@@ -202,9 +448,19 @@ describe("GatewayClient", () => {
         hasMore: false,
         limit: 20,
       },
+      attentionThreads: {
+        items: [],
+        hasMore: false,
+        limit: 20,
+      },
       terminalSessions: {
         items: [],
         limit: 20,
+        hasMore: false,
+      },
+      previewSessions: {
+        items: [],
+        limit: 50,
         hasMore: false,
       },
       recentActivity: {
@@ -234,6 +490,204 @@ describe("GatewayClient", () => {
       }),
       signal: expect.any(Object),
     }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches coding agent thread snapshots with the existing auth header", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_mobile",
+        providerId: "codex",
+        title: "Repair mobile route",
+        status: "running",
+        attention: "none",
+        terminalSessionId: "matrix-abc1234",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:01:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            eventId: "evt_mobile_1",
+            threadId: "thread_mobile",
+            type: "thread.status",
+            status: "running",
+            occurredAt: "2026-07-06T00:01:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentThreadSnapshot({ threadId: "thread_mobile" })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/coding-agents/threads/thread_mobile", expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "Content-Type": "application/json",
+      }),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches and updates coding agent notification preferences with the existing auth header", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ preferences: { attentionPush: { approval: true, input: true, failed: false, completed: true } } }))
+      .mockResolvedValueOnce(jsonResponse({ preferences: { attentionPush: { approval: true, input: true, failed: true, completed: true } } }));
+
+    try {
+      const client = new GatewayClient("http://localhost:4000", "token");
+      await expect(client.getCodingAgentNotificationPreferences()).resolves.toEqual({
+        ok: true,
+        preferences: { attentionPush: { approval: true, input: true, failed: false, completed: true } },
+      });
+      await expect(client.updateCodingAgentNotificationPreferences({ attentionPush: { approval: true, input: true, failed: true, completed: true } })).resolves.toEqual({
+        ok: true,
+        preferences: { attentionPush: { approval: true, input: true, failed: true, completed: true } },
+      });
+      expect(fetchMock).toHaveBeenNthCalledWith(1, "http://localhost:4000/api/coding-agents/notification-preferences", expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }));
+      expect(fetchMock).toHaveBeenNthCalledWith(2, "http://localhost:4000/api/coding-agents/notification-preferences", expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true, completed: true } }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }));
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("submits coding agent approval decisions with the existing auth header", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_mobile",
+        providerId: "codex",
+        title: "Repair mobile route",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:02:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            eventId: "evt_mobile_approval_resolved",
+            threadId: "thread_mobile",
+            type: "approval.resolved",
+            approvalId: "appr_mobile_1",
+            decision: "approve",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.submitCodingAgentApprovalDecision({
+      threadId: "thread_mobile",
+      approvalId: "appr_mobile_1",
+      decision: "approve",
+      correlationId: "corr_mobile_1",
+      clientRequestId: "req_mobile_approval_1",
+    })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/threads/thread_mobile/approvals/appr_mobile_1/decision",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      decision: "approve",
+      correlationId: "corr_mobile_1",
+      clientRequestId: "req_mobile_approval_1",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("submits coding agent input answers with the existing auth header", async () => {
+    const snapshot = {
+      thread: {
+        id: "thread_mobile",
+        providerId: "codex",
+        title: "Repair mobile route",
+        status: "running",
+        attention: "none",
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      events: {
+        items: [
+          {
+            eventId: "evt_mobile_input_answered",
+            threadId: "thread_mobile",
+            type: "user_input.answered",
+            requestId: "req_mobile_prompt_1",
+            correlationId: "corr_input_mobile_1",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 200,
+      },
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.submitCodingAgentInputAnswer({
+      threadId: "thread_mobile",
+      inputRequestId: "req_mobile_prompt_1",
+      answer: "Run the focused mobile thread test.",
+      correlationId: "corr_input_mobile_1",
+      clientRequestId: "req_mobile_input_1",
+    })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/threads/thread_mobile/inputs/req_mobile_prompt_1/answer",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      answer: "Run the focused mobile thread test.",
+      correlationId: "corr_input_mobile_1",
+      clientRequestId: "req_mobile_input_1",
+    });
 
     fetchMock.mockRestore();
   });
@@ -341,6 +795,512 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("fetches coding agent review snapshots with the existing auth header", async () => {
+    const snapshot = {
+      review: {
+        id: "rev_mobile_1",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        findings: {
+          total: 1,
+          high: 1,
+          medium: 0,
+          low: 0,
+        },
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      files: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [],
+            findings: [
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 42,
+                summary: "Validate ownership before returning snapshots.",
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentReviewSnapshot({ reviewId: "rev_mobile_1" })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/api/coding-agents/reviews/rev_mobile_1", expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer token",
+        "Content-Type": "application/json",
+      }),
+      signal: expect.any(Object),
+    }));
+
+    fetchMock.mockRestore();
+  });
+
+  it("accepts contract-valid review references when fetching snapshots", async () => {
+    const snapshot = {
+      ...reviewSnapshotPayload(),
+      review: {
+        ...reviewSnapshotPayload().review,
+        id: "rev_mobile:round.2",
+      },
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(snapshot));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentReviewSnapshot({ reviewId: "rev_mobile:round.2" })).resolves.toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/reviews/rev_mobile%3Around.2",
+      expect.any(Object),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile review details error for invalid gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      review: {
+        id: "rev_mobile_1",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      files: {
+        items: [
+          {
+            path: "/home/matrix/private/secret.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentReviewSnapshot({ reviewId: "rev_mobile_1" })).resolves.toEqual({
+      ok: false,
+      error: "Review details unavailable",
+    });
+    await expect(client.getCodingAgentReviewSnapshot({ reviewId: "../secret" })).resolves.toEqual({
+      ok: false,
+      error: "Review details unavailable",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches coding agent file content with the existing auth header", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(fileReadPayload()));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    })).resolves.toEqual({
+      ok: true,
+      file: fileReadPayload(),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/files/read?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages%2Fgateway%2Fsrc%2Fcoding-agents%2Froutes.ts",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches coding agent file browse entries with the existing auth header", async () => {
+    const payload = fileBrowsePayload();
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(payload));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    })).resolves.toEqual({
+      ok: true,
+      browse: payload,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/files/browse?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages&limit=20",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches coding agent file search results with the existing auth header", async () => {
+    const payload = fileSearchPayload();
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(payload));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      query: "routes",
+      limit: 20,
+    })).resolves.toEqual({
+      ok: true,
+      search: payload,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/files/search?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages&query=routes&limit=20",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns safe mobile file browse and search errors for invalid inputs or payloads", async () => {
+    const browseFetch = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...fileBrowsePayload(),
+      entries: {
+        ...fileBrowsePayload().entries,
+        items: [{ path: "/home/matrix/private/secret.ts", kind: "file" }],
+      },
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      limit: 20,
+    })).resolves.toEqual({ ok: false, error: "File list unavailable" });
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    })).resolves.toEqual({ ok: false, error: "File list unavailable" });
+
+    browseFetch.mockRestore();
+
+    const searchFetch = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      matches: {
+        items: [{ path: "/home/matrix/private/secret.ts", kind: "file" }],
+        hasMore: false,
+        limit: 20,
+      },
+    }));
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      query: "routes",
+      limit: 20,
+    })).resolves.toEqual({ ok: false, error: "File search unavailable" });
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "routes",
+      limit: 20,
+    })).resolves.toEqual({ ok: false, error: "File search unavailable" });
+
+    searchFetch.mockRestore();
+  });
+
+  it("returns a safe mobile file content error for invalid gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...fileReadPayload(),
+      metadata: {
+        ...fileReadPayload().metadata,
+        path: "/home/matrix/private/secret.ts",
+      },
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+    })).resolves.toEqual({
+      ok: false,
+      error: "File content unavailable",
+    });
+    await expect(client.getCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+    })).resolves.toEqual({
+      ok: false,
+      error: "File content unavailable",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("saves coding agent file content with existing auth and safe validation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(fileWritePayload()));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.saveCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_mobile_file",
+      clientRequestId: "req_mobile_file_save",
+    })).resolves.toEqual({
+      ok: true,
+      file: fileWritePayload(),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/files/write",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          content: "export const safeRoute = false;\n",
+          encoding: "utf8",
+          baseEtag: "sha256_mobile_file",
+          clientRequestId: "req_mobile_file_save",
+        }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("prepares coding agent source commits with existing auth and safe validation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(sourceCommitPayload()));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.prepareCodingAgentSourceCommit({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_mobile_prepare_commit",
+    })).resolves.toEqual({
+      ok: true,
+      commit: sourceCommitPayload(),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/source-control/prepare-commit",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          message: "fix: update reviewed files",
+          paths: ["packages/gateway/src/coding-agents/routes.ts"],
+          clientRequestId: "req_mobile_prepare_commit",
+        }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("creates coding agent source pull requests with existing auth and safe validation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(sourcePullRequestPayload()));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createCodingAgentSourcePullRequest({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #759",
+      body: "Review updates are ready.",
+      clientRequestId: "req_mobile_create_pr",
+    })).resolves.toEqual({
+      ok: true,
+      pullRequest: sourcePullRequestPayload(),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/source-control/pull-requests",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          title: "fix: apply review updates for PR #759",
+          body: "Review updates are ready.",
+          clientRequestId: "req_mobile_create_pr",
+        }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile file save error for invalid requests and gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...fileWritePayload(),
+      metadata: {
+        ...fileWritePayload().metadata,
+        path: "/home/matrix/private/secret.ts",
+      },
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.saveCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages/gateway/src/coding-agents/routes.ts",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_mobile_file",
+      clientRequestId: "req_mobile_file_save",
+    })).resolves.toEqual({
+      ok: false,
+      error: "File could not be saved. Refresh and try again.",
+    });
+    await expect(client.saveCodingAgentFileContent({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      content: "export const safeRoute = false;\n",
+      encoding: "utf8",
+      baseEtag: "sha256_mobile_file",
+      clientRequestId: "req_mobile_file_save",
+    })).resolves.toEqual({
+      ok: false,
+      error: "File could not be saved. Refresh and try again.",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile source-control error for invalid requests and gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...sourceCommitPayload(),
+      branch: "/home/matrix/private",
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.prepareCodingAgentSourceCommit({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_mobile_prepare_commit",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Source commit could not be prepared. Refresh and try again.",
+    });
+    await expect(client.prepareCodingAgentSourceCommit({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["../system/config.json"],
+      clientRequestId: "req_mobile_prepare_commit",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Source commit could not be prepared. Refresh and try again.",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile source-control pull request error for invalid requests and gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...sourcePullRequestPayload(),
+      url: "file:///home/matrix/private/secret",
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.createCodingAgentSourcePullRequest({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "fix: apply review updates for PR #759",
+      body: "Review updates are ready.",
+      clientRequestId: "req_mobile_create_pr",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Pull request could not be created. Refresh and try again.",
+    });
+    await expect(client.createCodingAgentSourcePullRequest({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      title: "",
+      body: "Review updates are ready.",
+      clientRequestId: "req_mobile_create_pr",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Pull request could not be created. Refresh and try again.",
+    });
+
+    fetchMock.mockRestore();
+  });
+
   it("returns a safe mobile thread create error for invalid gateway payloads", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
       thread: {
@@ -359,6 +1319,36 @@ describe("GatewayClient", () => {
     })).resolves.toEqual({
       ok: false,
       error: "Agent run could not be started. Try again.",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns safe mobile action errors for invalid approval and input payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ token: "/home/matrix/secret" }))
+      .mockResolvedValueOnce(jsonResponse({ token: "sk_live_secret" }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.submitCodingAgentApprovalDecision({
+      threadId: "thread_mobile",
+      approvalId: "appr_mobile_1",
+      decision: "approve",
+      correlationId: "corr_mobile_1",
+      clientRequestId: "req_mobile_approval_1",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Approval could not be sent. Try again.",
+    });
+    await expect(client.submitCodingAgentInputAnswer({
+      threadId: "thread_mobile",
+      inputRequestId: "req_mobile_prompt_1",
+      answer: "Proceed.",
+      correlationId: "corr_mobile_1",
+      clientRequestId: "req_mobile_input_1",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Input could not be sent. Try again.",
     });
 
     fetchMock.mockRestore();

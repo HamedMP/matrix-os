@@ -134,6 +134,7 @@ export interface CodingAgentThreadStoreOptions {
 export interface CodingAgentThreadStore {
   createThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   listThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
+  listAttentionThreads(principal: RequestPrincipal): Promise<{ items: AgentThreadSummary[]; hasMore: boolean; limit: number }>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string): Promise<AgentThreadSnapshot>;
   submitApproval(
@@ -230,7 +231,11 @@ function statePath(homePath: string): string {
 async function readState(homePath: string): Promise<StoredThreadState> {
   try {
     const raw = await readFile(statePath(homePath), "utf-8");
-    return StoredThreadStateSchema.parse(JSON.parse(raw));
+    const parsed = StoredThreadStateSchema.parse(JSON.parse(raw));
+    return {
+      ...parsed,
+      threads: parsed.threads.map(normalizeThreadAttention),
+    };
   } catch (err: unknown) {
     if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
       return emptyState();
@@ -258,7 +263,7 @@ function genericTitle(): string {
 function applyEvent(thread: StoredThread, event: AgentThreadEvent): StoredThread {
   const updatedAt = event.occurredAt;
   if (event.type === "thread.status") {
-    return { ...thread, status: event.status, updatedAt };
+    return normalizeThreadAttention({ ...thread, status: event.status, updatedAt });
   }
   if (event.type === "thread.completed") {
     return {
@@ -292,14 +297,16 @@ function snapshotFor(thread: StoredThread, allEvents: AgentThreadEvent[], cursor
   if (cursor && cursorIndex < 0) {
     throw new CodingAgentThreadError("thread_not_found", "Thread cursor not found");
   }
-  const startIndex = cursor ? cursorIndex + 1 : 0;
+  const startIndex = cursor ? cursorIndex + 1 : Math.max(0, eventsForThread.length - EVENT_REPLAY_LIMIT);
   const window = eventsForThread.slice(startIndex, startIndex + EVENT_REPLAY_LIMIT);
   return AgentThreadSnapshotSchema.parse({
     thread: stripOwner(thread),
     events: {
       items: window,
-      hasMore: eventsForThread.length - Math.max(0, startIndex) > window.length,
-      nextCursor: window.at(-1)?.eventId,
+      hasMore: cursor
+        ? eventsForThread.length - Math.max(0, startIndex) > window.length
+        : startIndex > 0,
+      nextCursor: cursor ? window.at(-1)?.eventId : undefined,
       limit: EVENT_REPLAY_LIMIT,
     },
   });
@@ -345,8 +352,22 @@ function activeThread(thread: StoredThread): boolean {
   return !["completed", "failed", "aborted", "archived"].includes(thread.status);
 }
 
+function normalizeThreadAttention(thread: StoredThread): StoredThread {
+  if (thread.status === "failed") return { ...thread, attention: "failed" };
+  if (thread.status === "waiting_for_approval") return { ...thread, attention: "approval_required" };
+  if (thread.status === "waiting_for_input") return { ...thread, attention: "input_required" };
+  if (["queued", "starting", "running", "completed", "aborted", "archived"].includes(thread.status)) {
+    return { ...thread, attention: "none" };
+  }
+  return thread;
+}
+
 function terminalThread(thread: StoredThread): boolean {
   return !activeThread(thread);
+}
+
+function attentionThread(thread: StoredThread): boolean {
+  return thread.attention !== "none" && thread.status !== "archived";
 }
 
 function stoppedRuntimeStatus(
@@ -684,6 +705,17 @@ export function createCodingAgentThreadStore(options: CodingAgentThreadStoreOpti
       const state = await readState(options.homePath);
       const ownerThreads = state.threads
         .filter((thread) => thread.ownerId === principal.userId && activeThread(thread))
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      return {
+        items: ownerThreads.slice(0, THREAD_LIST_LIMIT).map(stripOwner),
+        hasMore: ownerThreads.length > THREAD_LIST_LIMIT,
+        limit: THREAD_LIST_LIMIT,
+      };
+    },
+    async listAttentionThreads(principal) {
+      const state = await readState(options.homePath);
+      const ownerThreads = state.threads
+        .filter((thread) => thread.ownerId === principal.userId && attentionThread(thread))
         .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
       return {
         items: ownerThreads.slice(0, THREAD_LIST_LIMIT).map(stripOwner),

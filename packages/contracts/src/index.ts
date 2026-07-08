@@ -68,6 +68,7 @@ export const ApprovalIdSchema = prefixedId("appr_");
 export const RequestIdSchema = prefixedId("req_");
 export const CorrelationIdSchema = prefixedId("corr_");
 export const TerminalSessionIdSchema = referenceId(128);
+export const ReviewIdSchema = referenceId(128);
 export const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/, "Invalid worktree id");
 export const CursorSchema = referenceId(160);
 export const IsoTimestampSchema = z.string().regex(ISO_DATETIME, "Invalid ISO timestamp");
@@ -110,6 +111,9 @@ export const RuntimeCapabilityIdSchema = z.enum([
   "codingAgentsThreadCreate",
   "codingAgentsApprovals",
   "codingAgentsReview",
+  "codingAgentsPreview",
+  "codingAgentsFiles",
+  "codingAgentsSourceControl",
   "codingAgentsNativeMobileTerminal",
 ]);
 
@@ -133,6 +137,26 @@ export const RuntimeLimitsSchema = z.object({
   maxTerminalInputBytes: z.number().int().min(1).max(256 * 1024),
   maxListItems: z.number().int().min(1).max(200),
 }).strict();
+
+export const CodingAgentAttentionNotificationKindSchema = z.enum(["approval", "input", "failed", "completed"]);
+
+export const CodingAgentNotificationPreferencesSchema = z.object({
+  attentionPush: z.object({
+    approval: z.boolean(),
+    input: z.boolean(),
+    failed: z.boolean(),
+    completed: z.boolean().default(true),
+  }).strict(),
+}).strict();
+
+export const CodingAgentNotificationPreferencesUpdateSchema = CodingAgentNotificationPreferencesSchema;
+
+export type CodingAgentAttentionNotificationKind =
+  z.infer<typeof CodingAgentAttentionNotificationKindSchema>;
+export type CodingAgentNotificationPreferences =
+  z.infer<typeof CodingAgentNotificationPreferencesSchema>;
+export type CodingAgentNotificationPreferencesUpdate =
+  z.infer<typeof CodingAgentNotificationPreferencesUpdateSchema>;
 
 export const ProviderKindSchema = z.enum(["claude", "codex", "opencode", "cursor", "custom"]);
 export const ProviderAvailabilitySchema = z.enum([
@@ -208,6 +232,8 @@ export const AgentAttachmentSchema = z.object({
   mimeType: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9.+/-]+$/).optional(),
   sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
 }).strict();
+
+export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
 
 export const CreateAgentThreadRequestSchema = z.object({
   providerId: ProviderIdSchema,
@@ -395,7 +421,7 @@ export const AgentThreadEventSchema = z.discriminatedUnion("type", [
   }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("review.ready"),
-    reviewId: referenceId(128),
+    reviewId: ReviewIdSchema,
     summary: z.object({
       changedFileCount: z.number().int().min(0).max(10_000),
       additions: z.number().int().min(0).max(1_000_000),
@@ -423,6 +449,8 @@ export const AgentThreadSnapshotSchema = z.object({
   thread: AgentThreadSummarySchema,
   events: boundedListSchema(AgentThreadEventSchema, 200),
 }).strict();
+
+export type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 
 export const TerminalStatusSchema = z.enum(["starting", "running", "idle", "exited", "stale", "unavailable"]);
 
@@ -521,6 +549,17 @@ export const ProjectSummarySchema = z.object({
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
 
+export const PreviewSessionSummarySchema = z.object({
+  id: referenceId(128),
+  projectId: ProjectIdSchema.optional(),
+  label: SafeDisplayStringSchema,
+  status: z.enum(["starting", "running", "failed", "stopped", "unknown"]),
+  origin: z.string().url().max(2048).optional(),
+  updatedAt: IsoTimestampSchema.optional(),
+}).strict();
+
+export type PreviewSessionSummary = z.infer<typeof PreviewSessionSummarySchema>;
+
 export const ActivityEventSummarySchema = z.object({
   id: EventIdSchema,
   kind: z.enum(["thread", "terminal", "provider", "runtime", "review", "preview"]),
@@ -534,7 +573,17 @@ export const RuntimeSummarySchema = z.object({
   providers: z.array(AgentProviderSummarySchema).max(20),
   projects: boundedListSchema(ProjectSummarySchema, 50),
   activeThreads: boundedListSchema(AgentThreadSummarySchema, 50),
+  attentionThreads: boundedListSchema(AgentThreadSummarySchema, 50).default({
+    items: [],
+    hasMore: false,
+    limit: 20,
+  }),
   terminalSessions: boundedListSchema(TerminalSessionSummarySchema, 50),
+  previewSessions: boundedListSchema(PreviewSessionSummarySchema, 50).default({
+    items: [],
+    hasMore: false,
+    limit: 50,
+  }),
   recentActivity: boundedListSchema(ActivityEventSummarySchema, 100),
   limits: RuntimeLimitsSchema,
   serverTime: IsoTimestampSchema,
@@ -643,6 +692,183 @@ export const FileMetadataSchema = z.object({
   etag: referenceId(160).optional(),
   updatedAt: IsoTimestampSchema.optional(),
 }).strict();
+export type FileMetadata = z.infer<typeof FileMetadataSchema>;
+export const FileReadRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  path: FilePathSchema,
+}).strict();
+export const FileReadResponseSchema = z.object({
+  metadata: FileMetadataSchema.extend({
+    kind: z.literal("file"),
+    sizeBytes: z.number().int().min(0).max(100 * 1024 * 1024),
+    etag: referenceId(160),
+    updatedAt: IsoTimestampSchema,
+  }),
+  content: z.string()
+    .max(65_536)
+    .refine((value) => byteLength(value) <= 65_536, { message: "File content exceeds byte limit" }),
+  encoding: z.literal("utf8"),
+  truncated: z.boolean(),
+  limitBytes: z.number().int().min(1).max(65_536),
+}).strict();
+export type FileReadRequest = z.infer<typeof FileReadRequestSchema>;
+export type FileReadResponse = z.infer<typeof FileReadResponseSchema>;
+
+const FileListLimitSchema = z.coerce.number().int().min(1).max(100).default(50);
+
+export const FileBrowseRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  path: FilePathSchema.optional(),
+  limit: FileListLimitSchema,
+}).strict();
+export const FileBrowseResponseSchema = z.object({
+  directory: FileMetadataSchema.extend({
+    kind: z.literal("directory"),
+    path: FilePathSchema.optional(),
+  }),
+  entries: boundedListSchema(FileMetadataSchema, 100),
+}).strict();
+export type FileBrowseRequest = z.infer<typeof FileBrowseRequestSchema>;
+export type FileBrowseResponse = z.infer<typeof FileBrowseResponseSchema>;
+
+export const FileSearchRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  path: FilePathSchema.optional(),
+  query: boundedText(80, 256),
+  limit: FileListLimitSchema,
+}).strict();
+export const FileSearchResponseSchema = z.object({
+  matches: boundedListSchema(FileMetadataSchema, 100),
+}).strict();
+export type FileSearchRequest = z.infer<typeof FileSearchRequestSchema>;
+export type FileSearchResponse = z.infer<typeof FileSearchResponseSchema>;
+
+const FileContentSchema = z.string()
+  .max(65_536)
+  .refine((value) => byteLength(value) <= 65_536, { message: "File content exceeds byte limit" });
+
+export const FileWriteRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  path: FilePathSchema,
+  content: FileContentSchema,
+  encoding: z.literal("utf8"),
+  baseEtag: referenceId(160).nullable(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+export const FileWriteResponseSchema = z.object({
+  metadata: FileMetadataSchema.extend({
+    kind: z.literal("file"),
+    sizeBytes: z.number().int().min(0).max(65_536),
+    etag: referenceId(160),
+    updatedAt: IsoTimestampSchema,
+  }),
+  encoding: z.literal("utf8"),
+  writtenBytes: z.number().int().min(0).max(65_536),
+}).strict();
+export type FileWriteRequest = z.infer<typeof FileWriteRequestSchema>;
+export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
+
+const SourceControlCommitShaSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i, "Invalid commit sha");
+const SourceControlCommitMessageSchema = z.string()
+  .min(1)
+  .max(4096)
+  .refine((value) => value.trim().length > 0, { message: "Commit message is required" })
+  .refine((value) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value), {
+    message: "Commit message contains unsupported characters",
+  });
+const SourceControlBranchSchema = z.string()
+  .min(1)
+  .max(1024)
+  .refine((value) => value === "detached" || (
+    !value.startsWith("/") &&
+    !value.endsWith("/") &&
+    !value.includes("//") &&
+    !value.includes("..") &&
+    !value.includes("@{") &&
+    !value.endsWith(".lock") &&
+    !/[~^:?*[\]\\\s\u0000-\u001F\u007F]/.test(value)
+  ), { message: "Invalid branch name" });
+const SourceControlPullRequestTitleSchema = z.string()
+  .min(1)
+  .max(256)
+  .refine((value) => value.trim().length > 0, { message: "Pull request title is required" })
+  .refine((value) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value), {
+    message: "Pull request title contains unsupported characters",
+  });
+const SourceControlPullRequestBodySchema = z.string()
+  .max(16_384)
+  .refine((value) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value), {
+    message: "Pull request body contains unsupported characters",
+  });
+const GitHubPullRequestUrlSchema = z.string()
+  .url()
+  .max(512)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:"
+        && url.hostname === "github.com"
+        && /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*\/?$/.test(url.pathname);
+    } catch (_err: unknown) {
+      return false;
+    }
+  }, { message: "Invalid pull request URL" });
+
+export const SourceControlPrepareCommitRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  message: SourceControlCommitMessageSchema,
+  paths: z.array(FilePathSchema).min(1).max(100).optional(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+export const SourceControlPrepareCommitResponseSchema = z.object({
+  status: z.literal("committed"),
+  commitSha: SourceControlCommitShaSchema,
+  branch: SourceControlBranchSchema,
+  changedFileCount: z.number().int().min(1).max(1000),
+  safeMessage: SafeDisplayStringSchema,
+}).strict();
+
+export const SourceControlCreatePullRequestRequestSchema = z.object({
+  projectId: ProjectIdSchema.refine((value) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(value), {
+    message: "Invalid project id",
+  }),
+  worktreeId: WorktreeIdSchema,
+  title: SourceControlPullRequestTitleSchema,
+  body: SourceControlPullRequestBodySchema.optional(),
+  baseBranch: SourceControlBranchSchema.optional(),
+  draft: z.boolean().optional(),
+  clientRequestId: RequestIdSchema,
+}).strict();
+
+export const SourceControlCreatePullRequestResponseSchema = z.object({
+  status: z.enum(["created", "existing"]),
+  number: z.number().int().min(1).max(1_000_000_000),
+  url: GitHubPullRequestUrlSchema,
+  headBranch: SourceControlBranchSchema,
+  baseBranch: SourceControlBranchSchema,
+  safeMessage: SafeDisplayStringSchema,
+}).strict();
+
+export type SourceControlPrepareCommitRequest = z.infer<typeof SourceControlPrepareCommitRequestSchema>;
+export type SourceControlPrepareCommitResponse = z.infer<typeof SourceControlPrepareCommitResponseSchema>;
+export type SourceControlCreatePullRequestRequest = z.infer<typeof SourceControlCreatePullRequestRequestSchema>;
+export type SourceControlCreatePullRequestResponse = z.infer<typeof SourceControlCreatePullRequestResponseSchema>;
 
 export const ReviewFileDiffSchema = z.object({
   path: FilePathSchema,
@@ -652,8 +878,55 @@ export const ReviewFileDiffSchema = z.object({
   partial: z.boolean(),
 }).strict();
 
-export const ReviewSummarySchema = z.object({
+const ReviewDiffLineNumberSchema = z.number().int().min(1).max(1_000_000);
+const ReviewDiffLineContentSchema = z.string()
+  .max(1_000)
+  .refine((value) => byteLength(value) <= 4_000, { message: "Diff line exceeds byte limit" });
+
+export const ReviewDiffLineSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("context"),
+    oldLine: ReviewDiffLineNumberSchema,
+    newLine: ReviewDiffLineNumberSchema,
+    content: ReviewDiffLineContentSchema,
+  }).strict(),
+  z.object({
+    kind: z.literal("add"),
+    newLine: ReviewDiffLineNumberSchema,
+    content: ReviewDiffLineContentSchema,
+  }).strict(),
+  z.object({
+    kind: z.literal("remove"),
+    oldLine: ReviewDiffLineNumberSchema,
+    content: ReviewDiffLineContentSchema,
+  }).strict(),
+]);
+
+export const ReviewDiffHunkSchema = z.object({
   id: referenceId(128),
+  oldStart: z.number().int().min(0).max(1_000_000),
+  oldLines: z.number().int().min(0).max(1_000_000),
+  newStart: z.number().int().min(0).max(1_000_000),
+  newLines: z.number().int().min(0).max(1_000_000),
+  heading: SafeDisplayStringSchema.optional(),
+  partial: z.boolean(),
+  lines: z.array(ReviewDiffLineSchema).max(120).optional(),
+}).strict();
+
+export const ReviewFindingSummarySchema = z.object({
+  id: referenceId(128),
+  severity: z.enum(["high", "medium", "low"]),
+  line: z.number().int().min(1).max(1_000_000),
+  summary: SafeDisplayStringSchema,
+}).strict();
+
+export const ReviewSnapshotFileSchema = ReviewFileDiffSchema.extend({
+  hunks: z.array(ReviewDiffHunkSchema).max(100),
+  findings: z.array(ReviewFindingSummarySchema).max(100).optional(),
+}).strict();
+
+export const ReviewSummarySchema = z.object({
+  id: ReviewIdSchema,
   projectId: ProjectIdSchema,
   worktreeId: WorktreeIdSchema,
   status: z.enum([
@@ -685,10 +958,12 @@ export const ReviewSummarySchema = z.object({
 
 export type ReviewSummary = z.infer<typeof ReviewSummarySchema>;
 
-export const PreviewSessionSummarySchema = z.object({
-  id: referenceId(128),
-  label: SafeDisplayStringSchema,
-  status: z.enum(["starting", "running", "failed", "stopped", "unknown"]),
-  origin: z.string().url().max(2048).optional(),
-  updatedAt: IsoTimestampSchema.optional(),
+export const ReviewSnapshotSchema = z.object({
+  review: ReviewSummarySchema,
+  files: boundedListSchema(ReviewSnapshotFileSchema, 100),
+  partial: z.boolean(),
+  safeNotice: SafeDisplayStringSchema.optional(),
+  updatedAt: IsoTimestampSchema,
 }).strict();
+
+export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
