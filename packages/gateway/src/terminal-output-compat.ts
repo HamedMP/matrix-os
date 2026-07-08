@@ -149,6 +149,9 @@ function rewriteSgr(
     if (colorGroupLength > 0) {
       const group = params.slice(index, index + colorGroupLength);
       applyColorGroupToState(group, colorState);
+      if (reverseSnapshot.current) {
+        applyColorGroupToState(group, reverseSnapshot.current);
+      }
       pending.push(...group);
       index += colorGroupLength - 1;
       continue;
@@ -165,7 +168,7 @@ function rewriteSgr(
     }
     if (param === "7") {
       flushPending();
-      reverseSnapshot.current = cloneColorState(colorState);
+      reverseSnapshot.current ??= cloneColorState(colorState);
       colorState.foreground = foregroundParams;
       colorState.background = backgroundParams;
       output.push(`\x1b[${rgbSgr(38, foreground)};${rgbSgr(48, reverseBackground)}m`);
@@ -184,6 +187,9 @@ function rewriteSgr(
       continue;
     }
     applyColorParamToState(param, colorState);
+    if (reverseSnapshot.current) {
+      applyColorParamToState(param, reverseSnapshot.current);
+    }
     pending.push(param);
   }
 

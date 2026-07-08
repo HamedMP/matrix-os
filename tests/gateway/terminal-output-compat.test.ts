@@ -59,6 +59,14 @@ describe("terminal output compatibility stream", () => {
     );
   });
 
+  it("preserves colors set in the same SGR as reverse video", () => {
+    const stream = createTerminalOutputCompatStream({ sessionName: "codex-backend" });
+
+    expect(stream.write("\x1b[7;32mselected\x1b[27mstill green")).toBe(
+      "\x1b[38;2;214;216;221;48;2;48;54;61m\x1b[32mselected\x1b[32;49mstill green",
+    );
+  });
+
   it("tracks color state before manual Codex detection activates", () => {
     const stream = createTerminalOutputCompatStream({ sessionName: "main" });
 
