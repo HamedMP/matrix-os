@@ -201,6 +201,7 @@ export default function AgentThreadRoute() {
 
   const { thread, events } = state.snapshot;
   const terminalSessionId = thread.terminalSessionId ?? "No terminal bound";
+  const attention = threadAttentionCopy(thread.attention);
   const resolvedApprovalIds = new Set(events.items
     .filter((event): event is Extract<AgentThreadEvent, { type: "approval.resolved" }> => event.type === "approval.resolved")
     .map((event) => event.approvalId));
@@ -233,6 +234,15 @@ export default function AgentThreadRoute() {
         </View>
         {events.hasMore ? (
           <Text style={styles.body}>Older activity is available from the runtime.</Text>
+        ) : null}
+        {attention ? (
+          <View style={styles.attentionBanner}>
+            <Ionicons name={attention.icon} size={16} color={theme.colors.moss} />
+            <View style={styles.attentionText}>
+              <Text style={styles.attentionTitle}>{attention.title}</Text>
+              <Text style={styles.attentionDetail}>{attention.detail}</Text>
+            </View>
+          </View>
         ) : null}
         {state.error ? (
           <Text style={styles.inlineError}>{state.error}</Text>
@@ -455,6 +465,31 @@ function describeThreadEvent(event: AgentThreadEvent): { icon: keyof typeof Ioni
   }
 }
 
+function threadAttentionCopy(attention?: string): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } | null {
+  switch (attention) {
+    case "approval_required":
+      return {
+        icon: "shield-checkmark-outline",
+        title: "Approval needed",
+        detail: "Review the request and choose a safe decision.",
+      };
+    case "input_required":
+      return {
+        icon: "create-outline",
+        title: "Input needed",
+        detail: "Answer the prompt to keep this run moving.",
+      };
+    case "failed":
+      return {
+        icon: "warning-outline",
+        title: "Run failed",
+        detail: "Open the thread activity or start a follow-up run.",
+      };
+    default:
+      return null;
+  }
+}
+
 function capitalize(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
@@ -615,6 +650,33 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 13,
     color: theme.colors.moss,
+  },
+  attentionBanner: {
+    marginTop: theme.spacing.sm,
+    borderRadius: 12,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    padding: theme.spacing.md,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing.sm,
+  },
+  attentionText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  attentionTitle: {
+    fontFamily: theme.fonts.sansSemiBold,
+    fontSize: 13,
+    color: theme.colors.foreground,
+  },
+  attentionDetail: {
+    fontFamily: theme.fonts.sans,
+    fontSize: 12,
+    color: theme.colors.mutedForeground,
   },
   timeline: {
     marginTop: theme.spacing.lg,

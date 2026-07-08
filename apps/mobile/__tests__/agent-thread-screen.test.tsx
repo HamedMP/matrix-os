@@ -74,6 +74,17 @@ function threadSnapshotFixture() {
   };
 }
 
+function attentionThreadSnapshotFixture(attention: "approval_required" | "input_required" | "failed") {
+  return {
+    ...threadSnapshotFixture(),
+    thread: {
+      ...threadSnapshotFixture().thread,
+      status: attention === "failed" ? "failed" : attention === "approval_required" ? "waiting_for_approval" : "waiting_for_input",
+      attention,
+    },
+  };
+}
+
 function approvalRequestedSnapshotFixture() {
   const snapshot = threadSnapshotFixture();
   return {
@@ -342,6 +353,29 @@ describe("AgentThreadRoute", () => {
     }));
     expect(await screen.findByText("Approval resolved")).toBeTruthy();
     expect(screen.queryByText("Run the focused mobile thread test command.")).toBeNull();
+  });
+
+  it.each([
+    ["approval_required", "Approval needed", "Review the request and choose a safe decision."],
+    ["input_required", "Input needed", "Answer the prompt to keep this run moving."],
+    ["failed", "Run failed", "Open the thread activity or start a follow-up run."],
+  ] as const)("renders a safe attention banner for %s", async (attention, title, detail) => {
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: attentionThreadSnapshotFixture(attention),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText(title)).toBeTruthy();
+    expect(screen.getByText(detail)).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret|stack trace/i)).toBeNull();
   });
 
   it("submits a user input answer and applies the returned thread snapshot", async () => {
