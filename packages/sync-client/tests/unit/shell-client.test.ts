@@ -42,6 +42,13 @@ async function waitForFakeSocketCount(expectedCount: number): Promise<void> {
   }
 }
 
+function sentInputData(): string[] {
+  return FakeWebSocket.last?.sent
+    .map((frame) => JSON.parse(frame) as { type?: unknown; data?: unknown })
+    .filter((frame) => frame.type === "input" && typeof frame.data === "string")
+    .map((frame) => frame.data as string) ?? [];
+}
+
 describe("createShellClient attachSession", () => {
   beforeEach(() => {
     FakeWebSocket.last = null;
@@ -243,6 +250,137 @@ describe("createShellClient attachSession", () => {
       type: "input",
       data: "remote paste text",
     }));
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
+  it("keeps later input queued behind an in-flight rich paste rewrite", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+
+    let finishRewrite!: (value: {
+      status: "rewritten";
+      outgoingText: string;
+      assets: [];
+    }) => void;
+    const rewritePromise = new Promise<{
+      status: "rewritten";
+      outgoingText: string;
+      assets: [];
+    }>((resolve) => {
+      finishRewrite = resolve;
+    });
+    const rewriter = {
+      rewrite: vi.fn(() => rewritePromise),
+    };
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+    const attach = client.attachSession("main", {
+      input,
+      output: new PassThrough(),
+      WebSocketImpl: FakeWebSocket as never,
+      richPaste: { rewriter },
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.write("/var/folders/t5/screen.png");
+    input.write("\r");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+
+    expect(sentInputData()).toEqual([]);
+
+    finishRewrite({
+      status: "rewritten",
+      outgoingText: "/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/screen.png",
+      assets: [],
+    });
+    const deadline = Date.now() + 250;
+    while (sentInputData().length < 2) {
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1);
+      });
+    }
+
+    expect(sentInputData()).toEqual([
+      "/home/matrix/home/projects/.matrix-terminal-pastes/main/2026-07-08/screen.png",
+      "\r",
+    ]);
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
+    await expect(attach).resolves.toEqual({ detached: false });
+  });
+
+  it("buffers bracketed paste markers split across stdin chunks", async () => {
+    const input = new PassThrough() as PassThrough & {
+      isTTY: true;
+      rows: number;
+      columns: number;
+      setRawMode: ReturnType<typeof vi.fn>;
+      pause: ReturnType<typeof vi.fn>;
+    };
+    input.isTTY = true;
+    input.rows = 24;
+    input.columns = 80;
+    input.setRawMode = vi.fn();
+    input.pause = vi.fn();
+
+    const rewriter = {
+      rewrite: vi.fn(async () => ({
+        status: "rewritten" as const,
+        outgoingText: "remote paste text",
+        assets: [],
+      })),
+    };
+    const client = createShellClient({
+      gatewayUrl: "https://matrix.example",
+      token: "token-123",
+      timeoutMs: 100,
+    });
+    const attach = client.attachSession("main", {
+      input,
+      output: new PassThrough(),
+      WebSocketImpl: FakeWebSocket as never,
+      richPaste: { rewriter },
+    });
+
+    FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
+    input.write("\u001b[200~");
+    input.write("/var/folders/t5/screen.png");
+    input.write(" what about this?\u001b[201~");
+
+    const deadline = Date.now() + 250;
+    while (!FakeWebSocket.last?.sent.some((frame) => frame.includes("remote paste text"))) {
+      if (Date.now() > deadline) break;
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1);
+      });
+    }
+
+    expect(rewriter.rewrite).toHaveBeenCalledWith({
+      sessionName: "main",
+      text: "/var/folders/t5/screen.png what about this?",
+      observablePaste: true,
+    });
+    expect(sentInputData()).toEqual(["remote paste text"]);
+    expect(FakeWebSocket.last?.sent.join("\n")).not.toContain("\u001b[200~");
+    expect(FakeWebSocket.last?.sent.join("\n")).not.toContain("\u001b[201~");
 
     FakeWebSocket.last?.emit("message", JSON.stringify({ type: "exit" }));
     await expect(attach).resolves.toEqual({ detached: false });

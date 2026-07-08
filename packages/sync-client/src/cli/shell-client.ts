@@ -7,7 +7,7 @@ import {
   createRichPasteRewriter,
   createRichPasteUploadClient,
   shouldProcessRichPasteText,
-  splitBracketedPasteInput,
+  type RichPasteInputSegment,
   type RichPasteRewriter,
   type RichPasteUploadClient,
 } from "./rich-paste.js";
@@ -96,6 +96,9 @@ export interface ShellAttachOptions {
 
 export const SHELL_ATTACH_MAX_QUEUED_BYTES = 65_536;
 export { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ };
+const BRACKETED_PASTE_OPEN = "\u001b[200~";
+const BRACKETED_PASTE_CLOSE = "\u001b[201~";
+const SHELL_ATTACH_MAX_PENDING_BRACKETED_PASTE_CHARS = 1024 * 1024;
 const SHELL_INPUT_FRAME_MAX_BYTES = 60_000;
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60 * 1000;
 const RUN_RESPONSE_GRACE_MS = 30_000;
@@ -346,6 +349,69 @@ function splitTerminalInputFrames(data: string): string[] {
   return frames;
 }
 
+function createBracketedPasteStreamParser() {
+  let pending = "";
+
+  return {
+    push(chunk: string): RichPasteInputSegment[] {
+      const input = pending + chunk;
+      pending = "";
+      const segments: RichPasteInputSegment[] = [];
+      let cursor = 0;
+
+      while (cursor < input.length) {
+        const start = input.indexOf(BRACKETED_PASTE_OPEN, cursor);
+        if (start === -1) {
+          const tail = input.slice(cursor);
+          const heldLength = longestSuffixPrefixLength(tail, BRACKETED_PASTE_OPEN);
+          const ready = tail.slice(0, tail.length - heldLength);
+          if (ready.length > 0) {
+            segments.push({ text: ready, observablePaste: false });
+          }
+          pending = tail.slice(tail.length - heldLength);
+          break;
+        }
+
+        if (start > cursor) {
+          segments.push({ text: input.slice(cursor, start), observablePaste: false });
+        }
+
+        const contentStart = start + BRACKETED_PASTE_OPEN.length;
+        const end = input.indexOf(BRACKETED_PASTE_CLOSE, contentStart);
+        if (end === -1) {
+          pending = input.slice(start);
+          break;
+        }
+
+        segments.push({
+          text: input.slice(contentStart, end),
+          observablePaste: true,
+        });
+        cursor = end + BRACKETED_PASTE_CLOSE.length;
+      }
+
+      if (pending.length > SHELL_ATTACH_MAX_PENDING_BRACKETED_PASTE_CHARS) {
+        pending = "";
+      }
+
+      return segments;
+    },
+    reset() {
+      pending = "";
+    },
+  };
+}
+
+function longestSuffixPrefixLength(value: string, prefix: string): number {
+  const maxLength = Math.min(value.length, prefix.length - 1);
+  for (let length = maxLength; length > 0; length -= 1) {
+    if (prefix.startsWith(value.slice(value.length - length))) {
+      return length;
+    }
+  }
+  return 0;
+}
+
 export function createShellClient(options: ShellClientOptions): ShellClient {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -562,6 +628,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         resetLocalInputModes,
       });
       const controlDropper = createUnsupportedTerminalControlDropper();
+      const bracketedPasteParser = createBracketedPasteStreamParser();
       const richPasteEnabled = attachOptions.noRichPaste !== true && attachOptions.richPaste?.enabled !== false;
       const richPasteRewriter: RichPasteRewriter | undefined = richPasteEnabled
         ? attachOptions.richPaste?.rewriter ?? createRichPasteRewriter({
@@ -615,6 +682,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           pendingInput = "";
           inputFilter.reset();
           controlDropper.reset();
+          bracketedPasteParser.reset();
           resetLocalInputModes();
           if (rawModeEnabled) {
             input.setRawMode?.(false);
@@ -872,18 +940,29 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             return;
           }
           const droppedControls = controlDropper.filter(rawData);
-          const bracketedSegments = splitBracketedPasteInput(droppedControls);
-          if (bracketedSegments) {
-            let sequence = Promise.resolve();
-            for (const segment of bracketedSegments) {
-              sequence = sequence.then(() => Promise.resolve(processInputData(
-                segment.observablePaste ? segment.text : inputFilter.filter(segment.text),
-                segment.observablePaste,
-              )));
-            }
-            return sequence;
+          const bracketedSegments = bracketedPasteParser.push(droppedControls);
+          if (bracketedSegments.length === 0) {
+            return;
           }
-          return processInputData(inputFilter.filter(droppedControls), false);
+          let sequence: Promise<void> | undefined;
+          for (const segment of bracketedSegments) {
+            const runSegment = () => Promise.resolve(processInputData(
+              segment.observablePaste ? segment.text : inputFilter.filter(segment.text),
+              segment.observablePaste,
+            ));
+            if (sequence) {
+              sequence = sequence.then(runSegment);
+              continue;
+            }
+            const result = processInputData(
+              segment.observablePaste ? segment.text : inputFilter.filter(segment.text),
+              segment.observablePaste,
+            );
+            if (result) {
+              sequence = result;
+            }
+          }
+          return sequence;
         };
         const onInput = (chunk: Buffer | string) => {
           const run = () => {
