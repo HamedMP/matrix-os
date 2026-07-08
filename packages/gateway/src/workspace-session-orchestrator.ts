@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentAttachment } from "@matrix-os/contracts";
 import type {
   WorkspaceSessionView,
   createAgentSessionManager,
@@ -38,6 +39,7 @@ export interface StartWorkspaceSessionRequest {
   kind: "shell" | "agent";
   agent?: SupportedAgent;
   prompt?: string;
+  attachments?: AgentAttachment[];
   mode?: "default" | "plan" | "review" | "full_access";
   approvalPolicy?: "untrusted" | "on_request" | "on_failure" | "never";
   sandboxMode?: "read_only" | "workspace_write" | "full_access";

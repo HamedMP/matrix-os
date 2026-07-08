@@ -6,7 +6,7 @@
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Desktop and mobile review details render changed-file counts and selectable hunk coordinate metadata. Full file content, raw diff lines, follow-up actions, and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Desktop and mobile review details render changed-file counts and selectable hunk coordinate metadata. Desktop can seed the existing agent composer from a selected review hunk using bounded prompt context and a `structured_ref` attachment. Full file content, raw diff lines, mobile follow-up actions, and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -128,6 +128,7 @@ Workspace provider behavior:
 
 - Starts deterministic workspace agent sessions through `WorkspaceSessionOrchestrator`.
 - Passes through prompt, project, task, worktree, mode, approval policy, sandbox mode, and zellij runtime preference.
+- Passes bounded `structured_ref` attachments into the runtime launch prompt as safe reference metadata so review follow-up runs can inspect the selected file/hunk without client-side diff contents.
 - Binds coding-agent threads to canonical `terminalSessionId` from the workspace session.
 - Aborts through the deterministic workspace session id.
 - Keeps provider startup failures safe in the returned thread snapshot.
@@ -207,6 +208,7 @@ Current behavior:
 - Read-only dashboard renders providers, active threads, and terminals.
 - When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the trusted main-process IPC route and renders project, PR, round, status, and high-severity count.
 - Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, and safe finding summaries. They do not render raw diff lines or file contents.
+- When thread creation is enabled, selecting a review hunk can seed the existing desktop composer with bounded review metadata and a `structured_ref` attachment for the target file/hunk; the normal trusted `runtime:create-thread` IPC path performs the mutation.
 - Safe generic error state if the runtime summary is unavailable.
 - Safe generic review error state if review summaries are unavailable; review failures do not drop the runtime summary dashboard.
 - No provider credentials or bearer tokens are exposed to the renderer.
@@ -257,7 +259,7 @@ Relevant existing browser shell paths:
 
 Open follow-up: decide whether a browser-shell coding-agent entry belongs in Canvas, Developer mode, or both after desktop/mobile read-only shells settle.
 
-Public docs note: public docs remain deferred for these review-summary/snapshot slices because the cross-shell review flow still lacks full file diffs and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
+Public docs note: public docs remain deferred for these review-summary/snapshot/follow-up slices because the cross-shell review flow still lacks full file diffs, mobile follow-up actions, and preview integration. Update `www/content/docs/` when the file/review/preview surfaces become stable in desktop, mobile, or browser shell navigation.
 
 ## Feature Flags
 

@@ -3,7 +3,10 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import AgentWorkspace from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
+import AgentWorkspace, {
+  clearComposerLaunchContext,
+  mergeComposerSeed,
+} from "../../desktop/src/renderer/src/features/coding-agents/AgentWorkspace";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
@@ -261,6 +264,371 @@ describe("AgentWorkspace", () => {
     fireEvent.click(hunk);
     expect(hunk.getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByText(/export const|function create|raw diff/i)).toBeNull();
+  });
+
+  it("seeds the desktop composer with structured review hunk follow-up context", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      if (channel === "runtime:create-thread") {
+        return Promise.resolve({
+          thread: {
+            id: "thread_review_followup",
+            providerId: "codex",
+            title: "Follow up on review hunk",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+
+    const hunk = await screen.findByRole("button", {
+      name: /Select hunk 2 in packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    });
+    fireEvent.click(hunk);
+    fireEvent.click(screen.getByRole("button", { name: "Ask agent about selected hunk" }));
+
+    const prompt = screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement;
+    expect(prompt.value).toContain("PR #758");
+    expect(prompt.value).toContain("packages/gateway/src/coding-agents/routes.ts");
+    expect(prompt.value).toContain("@@ -88,1 +93,2 @@");
+    expect(prompt.value).not.toMatch(/export const|function create|raw diff/i);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({
+          prompt: expect.stringContaining("Please follow up on this review hunk"),
+          attachments: [
+            expect.objectContaining({
+              kind: "structured_ref",
+              label: expect.stringContaining("Review hunk"),
+              path: "packages/gateway/src/coding-agents/routes.ts",
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
+  it("preserves existing desktop composer text when seeding review hunk follow-up context", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByLabelText("Agent run prompt");
+    fireEvent.change(screen.getByLabelText("Agent run prompt"), {
+      target: { value: "Keep my existing investigation notes." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+
+    const hunk = await screen.findByRole("button", {
+      name: /Select hunk 1 in packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    });
+    fireEvent.click(hunk);
+    fireEvent.click(screen.getByRole("button", { name: "Ask agent about selected hunk" }));
+
+    const prompt = screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement;
+    expect(prompt.value).toContain("Keep my existing investigation notes.");
+    expect(prompt.value).toContain("Please follow up on this review hunk.");
+  });
+
+  it("leaves the desktop composer unchanged when a required follow-up reference cannot fit", () => {
+    const currentAttachments = Array.from({ length: 8 }, (_, index) => ({
+      id: `file_${index}`,
+      kind: "file" as const,
+      label: `Existing file ${index}`,
+      path: `packages/example/${index}.ts`,
+    }));
+
+    const draft = mergeComposerSeed(
+      {
+        providerId: "codex",
+        prompt: "Existing draft",
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+        attachments: currentAttachments,
+      },
+      {
+        providerId: "codex",
+        prompt: "Seeded review prompt",
+        mode: "default",
+        approvalPolicy: "on_request",
+        sandboxMode: "workspace_write",
+        projectId: "matrix-os",
+        attachments: [
+          {
+            id: "review:rev_desktop_1:hunk:hunk_2",
+            kind: "structured_ref",
+            label: "Review hunk 2",
+            path: "packages/gateway/src/coding-agents/routes.ts",
+          },
+        ],
+      },
+    );
+
+    expect(draft.attachments).toHaveLength(8);
+    expect(draft.attachments?.map((attachment) => attachment.id)).toEqual(currentAttachments.map((attachment) => attachment.id));
+    expect(draft.prompt).toBe("Existing draft");
+    expect(draft.projectId).toBeUndefined();
+  });
+
+  it("preserves user attachments when clearing failed desktop follow-up launch context", () => {
+    const cleaned = clearComposerLaunchContext({
+      providerId: "codex",
+      prompt: "Retry with my attached file.",
+      mode: "default",
+      approvalPolicy: "on_request",
+      sandboxMode: "workspace_write",
+      projectId: "matrix-os",
+      attachments: [
+        {
+          id: "file_existing_1",
+          kind: "file",
+          label: "Existing file",
+          path: "packages/example/existing.ts",
+        },
+        {
+          id: "review:rev_desktop_1:hunk:hunk_2",
+          kind: "structured_ref",
+          label: "Review hunk 2",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+        },
+      ],
+    });
+
+    expect(cleaned.projectId).toBeUndefined();
+    expect(cleaned.attachments).toEqual([
+      expect.objectContaining({
+        id: "file_existing_1",
+        kind: "file",
+      }),
+    ]);
+  });
+
+  it("clears seeded review project context after a desktop follow-up run starts", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      if (channel === "runtime:create-thread") {
+        return Promise.resolve({
+          thread: {
+            id: "thread_review_followup",
+            providerId: "codex",
+            title: "Follow up on review hunk",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    const hunk = await screen.findByRole("button", {
+      name: /Select hunk 1 in packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    });
+    fireEvent.click(hunk);
+    fireEvent.click(screen.getByRole("button", { name: "Ask agent about selected hunk" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith(
+        "runtime:create-thread",
+        expect.objectContaining({ projectId: "matrix-os" }),
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText("Agent run prompt"), {
+      target: { value: "Start an unrelated desktop run." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => {
+      const createCalls = vi.mocked(window.operator.invoke).mock.calls
+        .filter(([channel]) => channel === "runtime:create-thread");
+      expect(createCalls).toHaveLength(2);
+      expect(createCalls[1]?.[1]).toEqual(expect.not.objectContaining({ projectId: "matrix-os" }));
+    });
+  });
+
+  it("clears seeded review project context after a desktop follow-up start fails", async () => {
+    let createCount = 0;
+    let rejectFirstCreate: (reason?: unknown) => void = () => undefined;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      if (channel === "runtime:create-thread") {
+        createCount += 1;
+        if (createCount === 1) {
+          return new Promise((_, reject) => {
+            rejectFirstCreate = reject;
+          });
+        }
+        return Promise.resolve({
+          thread: {
+            id: "thread_unrelated_after_failure",
+            providerId: "codex",
+            title: "Unrelated desktop run",
+            status: "queued",
+            attention: "none",
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+          },
+          events: {
+            items: [],
+            hasMore: false,
+            limit: 200,
+          },
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    const hunk = await screen.findByRole("button", {
+      name: /Select hunk 1 in packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    });
+    fireEvent.click(hunk);
+    fireEvent.click(screen.getByRole("button", { name: "Ask agent about selected hunk" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    fireEvent.change(screen.getByLabelText("Agent run prompt"), {
+      target: { value: "Start an unrelated desktop run after a failed follow-up." },
+    });
+    rejectFirstCreate(new Error("provider failed at /home/matrix/private token secret"));
+
+    expect(await screen.findByText("Agent run could not be started. Try again.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start run" }));
+
+    await waitFor(() => {
+      const createCalls = vi.mocked(window.operator.invoke).mock.calls
+        .filter(([channel]) => channel === "runtime:create-thread");
+      expect(createCalls).toHaveLength(2);
+      expect(createCalls[0]?.[1]).toEqual(expect.objectContaining({
+        projectId: "matrix-os",
+        attachments: [expect.objectContaining({ kind: "structured_ref" })],
+      }));
+      expect(createCalls[1]?.[1]).toEqual(expect.not.objectContaining({ projectId: "matrix-os" }));
+      expect(createCalls[1]?.[1]).toEqual(expect.not.objectContaining({ attachments: expect.anything() }));
+    });
+  });
+
+  it("keeps a seeded desktop follow-up draft across runtime summary refreshes", async () => {
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    const hunk = await screen.findByRole("button", {
+      name: /Select hunk 2 in packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    });
+    fireEvent.click(hunk);
+    fireEvent.click(screen.getByRole("button", { name: "Ask agent about selected hunk" }));
+
+    const prompt = screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement;
+    expect(prompt.value).toContain("PR #758");
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toContain("PR #758");
+    });
+    expect((screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement).value).toContain("@@ -88,1 +93,2 @@");
+  });
+
+  it("uses refreshed review hunk data when reseeding desktop follow-up context", async () => {
+    const refreshedSnapshot = {
+      ...reviewSnapshotFixture(),
+      files: {
+        ...reviewSnapshotFixture().files,
+        items: reviewSnapshotFixture().files.items.map((file) => ({
+          ...file,
+          hunks: file.hunks.map((hunk, hunkIndex) => hunkIndex === 1
+            ? {
+                ...hunk,
+                oldStart: 120,
+                oldLines: 4,
+                newStart: 130,
+                newLines: 6,
+              }
+            : hunk),
+        })),
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ threadCreate: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") {
+        const calls = vi.mocked(window.operator.invoke).mock.calls
+          .filter(([candidate]) => candidate === "runtime:get-review-snapshot");
+        return Promise.resolve(calls.length === 1 ? reviewSnapshotFixture() : refreshedSnapshot);
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    const reviewButton = screen.getByRole("button", { name: /Open review PR #758/i });
+    fireEvent.click(reviewButton);
+    const hunk = await screen.findByRole("button", {
+      name: /Select hunk 2 in packages\/gateway\/src\/coding-agents\/routes\.ts/i,
+    });
+    fireEvent.click(hunk);
+    fireEvent.click(reviewButton);
+    expect(await screen.findByText("@@ -120,4 +130,6 @@")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ask agent about selected hunk" }));
+
+    const prompt = screen.getByLabelText("Agent run prompt") as HTMLTextAreaElement;
+    expect(prompt.value).toContain("@@ -120,4 +130,6 @@");
+    expect(prompt.value).not.toContain("@@ -88,1 +93,2 @@");
   });
 
   it("keeps hunk selection scoped to the file when hunk ids collide", async () => {

@@ -152,6 +152,66 @@ describe("agent-session-manager", () => {
     expect(record.ownerId).toBe("user_a");
   });
 
+  it("includes bounded structured attachments in the agent launch prompt", async () => {
+    const { manager, agentLauncher } = createManager();
+
+    await manager.startSession({
+      kind: "agent",
+      agent: "codex",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "Please follow up on this review hunk.",
+      attachments: [
+        {
+          id: "review:rev_desktop_1:hunk:hunk_1",
+          kind: "structured_ref",
+          label: "Review hunk 1",
+          path: "packages/gateway/src/coding-agents/routes.ts",
+        },
+      ],
+    });
+
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("Please follow up on this review hunk."),
+    }));
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("[structured_ref] Review hunk 1: packages/gateway/src/coding-agents/routes.ts"),
+    }));
+    expect(agentLauncher.buildLaunch).not.toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringMatching(/export const|function create|raw diff/i),
+    }));
+  });
+
+  it("keeps structured references when the launch prompt is near the prompt bound", async () => {
+    const { manager, agentLauncher } = createManager();
+    const maxPrompt = "x".repeat(100_000);
+
+    await manager.startSession({
+      kind: "agent",
+      agent: "codex",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: maxPrompt,
+      attachments: [
+        {
+          id: "review:rev_desktop_1:hunk:hunk_2",
+          kind: "structured_ref",
+          label: "Review hunk 2",
+          path: "packages/gateway/src/agent-session-manager.ts",
+        },
+      ],
+    });
+
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("[structured_ref] Review hunk 2: packages/gateway/src/agent-session-manager.ts"),
+    }));
+    const launchPrompt = vi.mocked(agentLauncher.buildLaunch).mock.calls.at(-1)?.[0].prompt;
+    expect(launchPrompt).toBeDefined();
+    expect(launchPrompt?.length).toBeLessThanOrEqual(100_000);
+  });
+
   it("rejects competing write sessions before launching a runtime", async () => {
     const { manager, worktreeManager, zellijRuntime } = createManager();
     await worktreeManager.acquireLease({

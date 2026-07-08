@@ -126,6 +126,7 @@ export function createWorkspaceCodingAgentProvider(
           kind: "agent",
           agent,
           prompt: request.prompt,
+          attachments: request.attachments,
           projectSlug: request.projectId,
           taskId: request.taskId,
           worktreeId: request.worktreeId,

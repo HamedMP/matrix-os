@@ -210,6 +210,8 @@ export const AgentAttachmentSchema = z.object({
   sizeBytes: z.number().int().min(0).max(5 * 1024 * 1024).optional(),
 }).strict();
 
+export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+
 export const CreateAgentThreadRequestSchema = z.object({
   providerId: ProviderIdSchema,
   prompt: boundedText(24_000, 96 * 1024),
