@@ -633,6 +633,10 @@ describe("AgentThreadRoute", () => {
       MOBILE_SHELL_STATE_STORAGE_KEY,
       expect.stringContaining('"lastActiveTerminalSessionId":"matrix-abc1234"'),
     );
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith(
+      MOBILE_SHELL_STATE_STORAGE_KEY,
+      expect.stringContaining('"terminalHandoffSessionId":"matrix-abc1234"'),
+    );
     expect(mockRouterPush).toHaveBeenCalledWith("/terminal");
   });
 
