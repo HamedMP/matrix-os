@@ -225,6 +225,44 @@ export const CreateAgentThreadRequestSchema = z.object({
 
 export type CreateAgentThreadRequest = z.infer<typeof CreateAgentThreadRequestSchema>;
 
+export const AgentThreadComposerDraftSchema = z.object({
+  providerId: ProviderIdSchema.optional(),
+  prompt: z.string()
+    .max(24_000)
+    .refine((value) => byteLength(value) <= 96 * 1024, { message: "Prompt exceeds byte limit" })
+    .default(""),
+  projectId: ProjectIdSchema.optional(),
+  taskId: TaskIdSchema.optional(),
+  terminalSessionId: TerminalSessionIdSchema.optional(),
+  worktreeId: WorktreeIdSchema.optional(),
+  mode: AgentModeSchema.optional(),
+  approvalPolicy: ApprovalPolicySchema.optional(),
+  sandboxMode: SandboxModeSchema.optional(),
+  attachments: z.array(AgentAttachmentSchema).max(8).optional(),
+}).strict();
+
+export type AgentThreadComposerDraft = z.infer<typeof AgentThreadComposerDraftSchema>;
+
+export const AgentThreadComposerIssueCodeSchema = z.enum([
+  "thread_create_unavailable",
+  "provider_required",
+  "provider_unavailable",
+  "prompt_required",
+  "mode_unsupported",
+  "invalid_request",
+]);
+
+export const AgentThreadComposerIssueSchema = z.object({
+  code: AgentThreadComposerIssueCodeSchema,
+  safeMessage: SafeDisplayStringSchema,
+}).strict();
+
+export type AgentThreadComposerIssue = z.infer<typeof AgentThreadComposerIssueSchema>;
+
+export type AgentThreadComposerBuildResult =
+  | { ok: true; request: CreateAgentThreadRequest }
+  | { ok: false; issues: AgentThreadComposerIssue[] };
+
 export const AgentThreadSummarySchema = z.object({
   id: ThreadIdSchema,
   providerId: ProviderIdSchema,
@@ -503,6 +541,99 @@ export const RuntimeSummarySchema = z.object({
 }).strict();
 
 export type RuntimeSummary = z.infer<typeof RuntimeSummarySchema>;
+
+function runtimeCapabilityEnabled(summary: RuntimeSummary, id: z.infer<typeof RuntimeCapabilityIdSchema>): boolean {
+  return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+}
+
+function providerReady(provider: AgentProviderSummary): boolean {
+  return provider.availability === "available" &&
+    provider.installStatus === "installed" &&
+    provider.authStatus === "authenticated";
+}
+
+function defaultComposerProvider(summary: RuntimeSummary): AgentProviderSummary | undefined {
+  return summary.providers.find(providerReady) ?? summary.providers[0];
+}
+
+function composerIssue(code: z.infer<typeof AgentThreadComposerIssueCodeSchema>, safeMessage: string): AgentThreadComposerIssue {
+  return AgentThreadComposerIssueSchema.parse({ code, safeMessage });
+}
+
+export function defaultAgentThreadComposerDraft(summaryInput: RuntimeSummary): AgentThreadComposerDraft {
+  const summary = RuntimeSummarySchema.parse(summaryInput);
+  const provider = defaultComposerProvider(summary);
+  return AgentThreadComposerDraftSchema.parse({
+    providerId: provider?.id,
+    prompt: "",
+    mode: provider?.defaultMode ?? "default",
+    approvalPolicy: "on_request",
+    sandboxMode: "workspace_write",
+  });
+}
+
+export function buildCreateAgentThreadRequestFromComposer(input: {
+  draft: unknown;
+  summary: RuntimeSummary;
+  clientRequestId: string;
+}): AgentThreadComposerBuildResult {
+  const summary = RuntimeSummarySchema.parse(input.summary);
+  const draftResult = AgentThreadComposerDraftSchema.safeParse(input.draft);
+  const clientRequestId = RequestIdSchema.safeParse(input.clientRequestId);
+  if (!draftResult.success || !clientRequestId.success) {
+    return {
+      ok: false,
+      issues: [composerIssue("invalid_request", "Agent run could not be started. Check the inputs and try again.")],
+    };
+  }
+
+  const draft = draftResult.data;
+  const providerId = draft.providerId ?? defaultComposerProvider(summary)?.id;
+  const provider = providerId
+    ? summary.providers.find((candidate) => candidate.id === providerId)
+    : undefined;
+  const mode = draft.mode ?? provider?.defaultMode ?? "default";
+  const issues: AgentThreadComposerIssue[] = [];
+
+  if (!runtimeCapabilityEnabled(summary, "codingAgentsThreadCreate")) {
+    issues.push(composerIssue("thread_create_unavailable", "Agent runs are not available on this runtime yet."));
+  }
+  if (draft.prompt.trim().length === 0) {
+    issues.push(composerIssue("prompt_required", "Enter a prompt before starting an agent run."));
+  }
+  if (!providerId) {
+    issues.push(composerIssue("provider_required", "Choose an agent provider before starting a run."));
+  } else if (!provider || !providerReady(provider)) {
+    issues.push(composerIssue("provider_unavailable", "Selected provider is not ready. Choose another provider or finish setup."));
+  }
+  if (provider && !provider.supportedModes.includes(mode)) {
+    issues.push(composerIssue("mode_unsupported", "Selected mode is not supported by this provider."));
+  }
+  if (issues.length > 0) {
+    return { ok: false, issues };
+  }
+
+  const request = CreateAgentThreadRequestSchema.safeParse({
+    providerId,
+    prompt: draft.prompt,
+    projectId: draft.projectId,
+    taskId: draft.taskId,
+    terminalSessionId: draft.terminalSessionId,
+    worktreeId: draft.worktreeId,
+    mode,
+    approvalPolicy: draft.approvalPolicy ?? "on_request",
+    sandboxMode: draft.sandboxMode ?? "workspace_write",
+    attachments: draft.attachments,
+    clientRequestId: clientRequestId.data,
+  });
+  if (!request.success) {
+    return {
+      ok: false,
+      issues: [composerIssue("invalid_request", "Agent run could not be started. Check the inputs and try again.")],
+    };
+  }
+  return { ok: true, request: request.data };
+}
 
 export const FilePathSchema = safeRelativePath();
 export const FileMetadataSchema = z.object({
