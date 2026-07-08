@@ -413,4 +413,42 @@ describe("TerminalScreen", () => {
     );
     expect(gatewayClient.createTerminalSession).not.toHaveBeenCalled();
   });
+
+  it("does not fall back to another running session when an explicit terminal handoff is stale", async () => {
+    const AVAILABLE = "matrix-1a2b3c4";
+    global.WebSocket = { OPEN: 1, CLOSED: 3 } as typeof WebSocket;
+    const socket = new MockTerminalSocket();
+    jest.mocked(AsyncStorage.getItem).mockResolvedValue(JSON.stringify({
+      mode: "terminal",
+      lastActiveTerminalSessionId: SESSION_ID,
+      terminalHandoffSessionId: SESSION_ID,
+      updatedAt: "2026-05-13T00:00:00.000Z",
+    }));
+    jest.mocked(AsyncStorage.setItem).mockResolvedValue();
+    const gatewayClient = {
+      getTerminalSessions: jest.fn().mockResolvedValue([
+        { sessionId: AVAILABLE, cwd: "/home/matrix/home/projects", state: "running", visualStatus: "running" },
+      ]),
+      createTerminalSession: jest.fn().mockResolvedValue(AVAILABLE),
+      getWsToken: jest.fn().mockResolvedValue("ws-token"),
+      setWebSocketToken: jest.fn(),
+      openTerminalWebSocket: jest.fn(() => socket as unknown as WebSocket),
+      deleteTerminalSession: jest.fn().mockResolvedValue(true),
+    };
+    jest.mocked(useGateway).mockReturnValue({
+      client: gatewayClient as unknown as GatewayClient,
+      connectionState: "connected",
+      gateway: null,
+      setGateway: jest.fn(),
+      unreadCount: 0,
+      incrementUnread: jest.fn(),
+      clearUnread: jest.fn(),
+    });
+
+    render(<TerminalScreen />);
+
+    expect(await screen.findByText("Terminal unavailable")).toBeTruthy();
+    expect(gatewayClient.openTerminalWebSocket).not.toHaveBeenCalledWith("ws-token", AVAILABLE, undefined);
+    expect(gatewayClient.createTerminalSession).not.toHaveBeenCalled();
+  });
 });
