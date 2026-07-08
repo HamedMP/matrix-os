@@ -1,6 +1,6 @@
 # Current State: Coding Agent Shells
 
-**Branch stack**: implementation checkpoint merged to `main` through PR #863 (`87bc72d0fdd9067fcec395c479de80fcaccfe641`)
+**Branch stack**: implementation checkpoint merged to `main` through PR #866 (`545ab794be9983c66ca0010ec44bc6b880e9c1a1`)
 **Updated**: 2026-07-08
 **Scope**: Inventory for the coding-agent desktop/mobile shell work. This file records the current Matrix-native route, contract, client, and regression-test state so later slices keep gateway/runtime as source of truth and keep desktop/mobile as thin shells.
 
@@ -281,6 +281,7 @@ Focused tests:
 - `tests/desktop/kernel-wiring.test.ts`
 - `tests/desktop/agent-section.test.tsx`
 - `tests/desktop/command-palette.test.tsx`
+- `tests/e2e/desktop/operator.e2e.test.ts`
 
 ## Mobile Shell State
 
@@ -424,6 +425,13 @@ Desktop typecheck:
 
 ```bash
 pnpm --filter desktop run typecheck
+```
+
+Desktop operator e2e smoke:
+
+```bash
+bun run build:desktop
+xvfb-run -a bun run test:e2e tests/e2e/desktop/operator.e2e.test.ts
 ```
 
 Repo gates:

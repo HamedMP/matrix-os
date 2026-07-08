@@ -1,10 +1,10 @@
 # Completion Audit: Coding Agent Shells
 
-**Audited commit**: `87bc72d0fdd9067fcec395c479de80fcaccfe641`
+**Audited commit**: `545ab794be9983c66ca0010ec44bc6b880e9c1a1`
 **Date**: 2026-07-08
 **Scope**: Evidence review for the Matrix OS coding-agent desktop, mobile, browser, and gateway shell implementation checkpoint.
 
-This audit records current evidence. It does not mark the full rollout complete while device smoke and broader cross-shell validation remain outstanding.
+This audit records current evidence through the desktop operator smoke checkpoint. It does not mark the full rollout complete while device smoke and broader cross-shell validation remain outstanding.
 
 ## Evidence Matrix
 
@@ -47,9 +47,17 @@ Focused local validation on `87bc72d0fdd9067fcec395c479de80fcaccfe641` also pass
 - `pnpm exec vitest run tests/desktop/coding-agent-runtime-client.test.ts tests/desktop/coding-agent-thread-stream.test.ts tests/desktop/coding-agent-workspace.test.tsx tests/desktop/ipc-contract.test.ts`
 - `pnpm --filter matrix-os-mobile exec jest __tests__/agents-screen.test.tsx __tests__/agent-thread-screen.test.tsx __tests__/agents-preview-screen.test.tsx __tests__/agent-workspace-state.test.ts __tests__/gateway-client.test.ts --runInBand`
 
+The desktop operator smoke checkpoint in PR #866 added and passed focused PR validation:
+
+- `bun run build:desktop`
+- `pnpm --filter desktop run typecheck`
+- `xvfb-run -a bun run test:e2e tests/e2e/desktop/operator.e2e.test.ts`
+
+That automated desktop smoke covers the stubbed sign-in/device-auth flow, project board hydration, canonical terminal attach and echo, the current Agents workspace summary and create path, the Terminal Shells workspace, Apps, Settings, Chat, and hosted-shell detach behavior.
+
 ## Remaining Validation
 
-- Run manual desktop smoke for sign-in, runtime switch, settings, menu/palette entry points, terminal attach, review/file/preview paths, and notification click-through.
+- Run manual desktop smoke against a real Matrix computer for runtime switch, menu/palette entry points, review/file/preview paths, notification click-through, non-stub provider setup, and cross-shell terminal binding. The automated desktop operator smoke now covers sign-in, project board, terminal attach, current Agents workspace create, Terminal, Apps, Settings, Chat, and hosted-shell detach through the stub gateway.
 - Run manual mobile SDK 57 device smoke for chat, mission control, terminal, apps, agents workspace, thread detail, review/file/preview paths, approvals/input, notification tap routing, offline/reconnect state, and persisted safe references.
 - Keep `docs/dev/coding-agent-shells.md`, `www/content/docs/coding-agents.mdx`, and this audit synchronized when provider/runtime behavior changes.
 
