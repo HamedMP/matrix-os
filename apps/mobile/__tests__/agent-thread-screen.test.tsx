@@ -970,8 +970,8 @@ describe("AgentThreadRoute", () => {
     expect(await screen.findByText("Activity timeline")).toBeTruthy();
     expect(screen.getByText("Assistant update")).toBeTruthy();
     expect(screen.getByText("Text update received")).toBeTruthy();
-    expect(screen.getByText("Tool started")).toBeTruthy();
     expect(screen.getByText("Read source")).toBeTruthy();
+    expect(screen.getByText("Running")).toBeTruthy();
     expect(screen.getByText("File updated")).toBeTruthy();
     expect(screen.getByText("Updated file")).toBeTruthy();
     expect(screen.getByText("Review ready")).toBeTruthy();
@@ -979,6 +979,183 @@ describe("AgentThreadRoute", () => {
     expect(screen.getByText("Thread needs attention")).toBeTruthy();
     expect(screen.getByText("Refresh the thread or check the runtime.")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|leaked|\.ssh|id_rsa/i)).toBeNull();
+  });
+
+  it("groups bounded tool activity without exposing raw tool output", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_tool_started",
+            threadId: "thread_mobile",
+            type: "tool.started",
+            toolCallId: "tool_mobile_grouped",
+            displayName: "Run focused tests",
+            kind: "command",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_tool_output",
+            threadId: "thread_mobile",
+            type: "tool.output",
+            toolCallId: "tool_mobile_grouped",
+            text: "stdout leaked /home/matrix/private and token_sk_live_123",
+            truncated: true,
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+          {
+            eventId: "evt_mobile_tool_completed",
+            threadId: "thread_mobile",
+            type: "tool.completed",
+            toolCallId: "tool_mobile_grouped",
+            outcome: "success",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Run focused tests")).toBeTruthy();
+    expect(screen.getByText("Completed successfully, partial output received")).toBeTruthy();
+    expect(screen.queryByText("Tool started")).toBeNull();
+    expect(screen.queryByText("Tool output")).toBeNull();
+    expect(screen.queryByText("Tool completed")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|stdout leaked/i)).toBeNull();
+  });
+
+  it("keeps grouped tool outcomes ordered after interleaved events", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_interleaved_tool_started",
+            threadId: "thread_mobile",
+            type: "tool.started",
+            toolCallId: "tool_mobile_interleaved",
+            displayName: "Run tests",
+            kind: "command",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_interleaved_file",
+            threadId: "thread_mobile",
+            type: "file.changed",
+            path: "apps/mobile/app/agents/[threadId].tsx",
+            changeKind: "updated",
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+          {
+            eventId: "evt_mobile_interleaved_tool_completed",
+            threadId: "thread_mobile",
+            type: "tool.completed",
+            toolCallId: "tool_mobile_interleaved",
+            outcome: "success",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Run tests")).toBeTruthy();
+    const textValues = rendered.UNSAFE_queryAllByType(Text)
+      .map((node) => node.props.children)
+      .filter((value): value is string => typeof value === "string");
+    expect(textValues.indexOf("File updated")).toBeLessThan(textValues.indexOf("Completed successfully, no output received"));
+  });
+
+  it("keeps grouped tool completion anchored before late output", async () => {
+    const snapshot = {
+      ...threadSnapshotFixture(),
+      events: {
+        ...threadSnapshotFixture().events,
+        items: [
+          ...threadSnapshotFixture().events.items,
+          {
+            eventId: "evt_mobile_late_output_tool_started",
+            threadId: "thread_mobile",
+            type: "tool.started",
+            toolCallId: "tool_mobile_late_output",
+            displayName: "Run checks",
+            kind: "command",
+            occurredAt: "2026-07-06T00:02:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_late_output_tool_completed",
+            threadId: "thread_mobile",
+            type: "tool.completed",
+            toolCallId: "tool_mobile_late_output",
+            outcome: "success",
+            occurredAt: "2026-07-06T00:02:30.000Z",
+          },
+          {
+            eventId: "evt_mobile_late_output_file",
+            threadId: "thread_mobile",
+            type: "file.changed",
+            path: "apps/mobile/app/agents/[threadId].tsx",
+            changeKind: "updated",
+            occurredAt: "2026-07-06T00:03:00.000Z",
+          },
+          {
+            eventId: "evt_mobile_late_output_tool_output",
+            threadId: "thread_mobile",
+            type: "tool.output",
+            toolCallId: "tool_mobile_late_output",
+            text: "late stdout leaked token_sk_live_123",
+            occurredAt: "2026-07-06T00:03:30.000Z",
+          },
+        ],
+      },
+    };
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot,
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Run checks")).toBeTruthy();
+    expect(screen.getByText("Completed successfully, output received")).toBeTruthy();
+    const textValues = rendered.UNSAFE_queryAllByType(Text)
+      .map((node) => node.props.children)
+      .filter((value): value is string => typeof value === "string");
+    expect(textValues.indexOf("Completed successfully, output received")).toBeLessThan(textValues.indexOf("File updated"));
+    expect(screen.queryByText(/token|late stdout/i)).toBeNull();
   });
 
   it("renders a generic thread error without exposing raw gateway details", async () => {
