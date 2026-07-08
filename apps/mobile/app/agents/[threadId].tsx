@@ -24,6 +24,7 @@ export default function AgentThreadRoute() {
   const threadId = typeof params.threadId === "string" ? params.threadId : "thread";
   const { client } = useGateway();
   const requestGeneration = useRef(0);
+  const scrollViewRef = useRef<ScrollView | null>(null);
   const [state, setState] = useState<AgentThreadRouteState>({
     status: "loading",
     snapshot: null,
@@ -190,6 +191,10 @@ export default function AgentThreadRoute() {
     });
   }, [router]);
 
+  const jumpToLatestActivity = useCallback(() => {
+    scrollViewRef.current?.scrollToEnd({ animated: true });
+  }, []);
+
   if (state.status === "loading") {
     return (
       <View style={styles.centered}>
@@ -223,6 +228,7 @@ export default function AgentThreadRoute() {
 
   return (
     <ScrollView
+      ref={scrollViewRef}
       style={styles.container}
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
@@ -307,7 +313,17 @@ export default function AgentThreadRoute() {
       </View>
       {events.items.length > 0 ? (
         <View style={styles.timeline}>
-          <Text style={styles.sectionTitle}>Activity timeline</Text>
+          <View style={styles.timelineHeader}>
+            <Text style={styles.sectionTitle}>Activity timeline</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Jump to latest activity"
+              onPress={jumpToLatestActivity}
+              style={styles.timelineJumpButton}
+            >
+              <Ionicons name="arrow-down-circle-outline" size={18} color={theme.colors.forest} />
+            </Pressable>
+          </View>
           {timelineItems.map((item) => item.kind === "assistant" ? (
             <AssistantTimelineItem key={item.key} events={item.events} />
           ) : item.kind === "tool" ? (
@@ -1169,6 +1185,22 @@ const styles = StyleSheet.create((theme, rt) => ({
   timeline: {
     marginTop: theme.spacing.lg,
     gap: theme.spacing.md,
+  },
+  timelineHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing.sm,
+  },
+  timelineJumpButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
   sectionTitle: {
     fontFamily: theme.fonts.sansSemiBold,
