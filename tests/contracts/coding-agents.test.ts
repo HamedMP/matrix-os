@@ -173,6 +173,14 @@ describe("coding agent contracts", () => {
         correlationId: "corr_1",
       },
     }).type).toBe("approval.requested");
+    expect(AgentThreadEventSchema.parse({
+      type: "user_input.answered",
+      eventId: "evt_answered",
+      threadId: "thread_1",
+      occurredAt: now,
+      requestId: "req_answer",
+      correlationId: "corr_answer",
+    }).type).toBe("user_input.answered");
     expect(AgentThreadSnapshotSchema.parse({
       thread: {
         id: "thread_1",
