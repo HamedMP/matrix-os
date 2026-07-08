@@ -205,7 +205,7 @@ describe("CommandPalette", () => {
 
   it("opens provider setup actions in a foreground terminal from the command palette", async () => {
     const openTab = vi.fn();
-    const post = vi.fn().mockResolvedValue({ name: "matrix-setup-codex" });
+    const post = vi.fn().mockResolvedValue({ name: "matrix-setup-codex-a1b2c3" });
     useTabs.setState({ openTab });
     useConnection.setState({
       api: {
@@ -261,15 +261,219 @@ describe("CommandPalette", () => {
 
     await waitFor(() => {
       expect(post).toHaveBeenCalledWith("/api/terminal/sessions", {
-        name: "matrix-setup-codex",
+        name: expect.stringMatching(/^matrix-setup-codex-[a-z0-9]{6}$/),
         cwd: "projects",
         cmd: "npm install -g --prefix \"$MATRIX_NODE_PREFIX\" @openai/codex@latest",
       });
     });
     expect(openTab).toHaveBeenCalledWith({
       kind: "terminal",
-      sessionName: "matrix-setup-codex",
+      sessionName: "matrix-setup-codex-a1b2c3",
       title: "Install Codex",
     });
+  });
+
+  it("uses distinct setup session names for similar provider setup actions", async () => {
+    const openTab = vi.fn();
+    const post = vi.fn()
+      .mockResolvedValueOnce({ name: "matrix-setup-codex-alp-111111" })
+      .mockResolvedValueOnce({ name: "matrix-setup-codex-alp-222222" });
+    useTabs.setState({ openTab });
+    useConnection.setState({
+      api: {
+        get: vi.fn(),
+        post,
+      } as never,
+    });
+    useCodingAgentWorkspace.setState({
+      summary: {
+        target: {
+          id: "runtime-local",
+          label: "Local Matrix",
+          status: "available",
+        },
+        serverTime: "2026-07-07T00:00:00.000Z",
+        capabilities: [{ id: "codingAgentsDesktopWorkspace", enabled: true }],
+        limits: {
+          maxPromptBytes: 16384,
+          maxAttachmentCount: 8,
+          maxTerminalInputBytes: 4096,
+          maxListItems: 50,
+        },
+        providers: [
+          {
+            id: "codex-alpha-long-provider-one",
+            displayName: "Codex One",
+            kind: "codex",
+            availability: "setup_required",
+            installStatus: "missing",
+            authStatus: "missing",
+            supportedModes: ["default"],
+            defaultMode: "default",
+            setupActions: [
+              {
+                id: "setup",
+                kind: "foreground_terminal",
+                label: "Install Codex One",
+                command: "echo setup-one",
+              },
+            ],
+          },
+          {
+            id: "codex-alpha-long-provider-two",
+            displayName: "Codex Two",
+            kind: "codex",
+            availability: "setup_required",
+            installStatus: "missing",
+            authStatus: "missing",
+            supportedModes: ["default"],
+            defaultMode: "default",
+            setupActions: [
+              {
+                id: "setup",
+                kind: "foreground_terminal",
+                label: "Install Codex Two",
+                command: "echo setup-two",
+              },
+            ],
+          },
+        ],
+        projects: { items: [], hasMore: false, limit: 20 },
+        activeThreads: { items: [], hasMore: false, limit: 20 },
+        attentionThreads: { items: [], hasMore: false, limit: 20 },
+        terminals: { items: [], hasMore: false, limit: 20 },
+      },
+    });
+
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Install Codex One"));
+    fireEvent.click(screen.getByText("Install Codex Two"));
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledTimes(2);
+    });
+    const firstName = (post.mock.calls[0]![1] as { name: string }).name;
+    const secondName = (post.mock.calls[1]![1] as { name: string }).name;
+    expect(firstName).not.toBe(secondName);
+    expect(firstName).toMatch(/^matrix-setup-[a-z0-9-]{1,18}$/);
+    expect(secondName).toMatch(/^matrix-setup-[a-z0-9-]{1,18}$/);
+  });
+
+  it("keeps the palette open with a generic error when provider setup cannot create a terminal", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const post = vi.fn().mockRejectedValue(new Error("gateway failed at /home/matrix with token secret"));
+    useConnection.setState({
+      api: {
+        get: vi.fn(),
+        post,
+      } as never,
+    });
+    useCodingAgentWorkspace.setState({
+      summary: {
+        target: {
+          id: "runtime-local",
+          label: "Local Matrix",
+          status: "available",
+        },
+        serverTime: "2026-07-07T00:00:00.000Z",
+        capabilities: [{ id: "codingAgentsDesktopWorkspace", enabled: true }],
+        limits: {
+          maxPromptBytes: 16384,
+          maxAttachmentCount: 8,
+          maxTerminalInputBytes: 4096,
+          maxListItems: 50,
+        },
+        providers: [
+          {
+            id: "codex",
+            displayName: "Codex",
+            kind: "codex",
+            availability: "setup_required",
+            installStatus: "missing",
+            authStatus: "missing",
+            supportedModes: ["default"],
+            defaultMode: "default",
+            setupActions: [
+              {
+                id: "codex",
+                kind: "foreground_terminal",
+                label: "Install Codex",
+                command: "echo setup",
+              },
+            ],
+          },
+        ],
+        projects: { items: [], hasMore: false, limit: 20 },
+        activeThreads: { items: [], hasMore: false, limit: 20 },
+        attentionThreads: { items: [], hasMore: false, limit: 20 },
+        terminals: { items: [], hasMore: false, limit: 20 },
+      },
+    });
+
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Install Codex"));
+
+    expect(await screen.findByText("Could not open setup terminal. Try again from Terminal.")).toBeTruthy();
+    expect(screen.getByLabelText("Command palette")).toBeTruthy();
+    expect(screen.queryByText("/home/matrix")).toBeNull();
+    expect(screen.queryByText("token secret")).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith("[palette] Failed to open provider setup terminal:", "Error");
+  });
+
+  it("keeps disconnected provider setup actions visible with a recovery error", async () => {
+    const openTab = vi.fn();
+    useTabs.setState({ openTab });
+    useConnection.setState({ api: null });
+    useCodingAgentWorkspace.setState({
+      summary: {
+        target: {
+          id: "runtime-local",
+          label: "Local Matrix",
+          status: "offline",
+        },
+        serverTime: "2026-07-07T00:00:00.000Z",
+        capabilities: [{ id: "codingAgentsDesktopWorkspace", enabled: true }],
+        limits: {
+          maxPromptBytes: 16384,
+          maxAttachmentCount: 8,
+          maxTerminalInputBytes: 4096,
+          maxListItems: 50,
+        },
+        providers: [
+          {
+            id: "codex",
+            displayName: "Codex",
+            kind: "codex",
+            availability: "setup_required",
+            installStatus: "missing",
+            authStatus: "missing",
+            supportedModes: ["default"],
+            defaultMode: "default",
+            setupActions: [
+              {
+                id: "codex",
+                kind: "foreground_terminal",
+                label: "Install Codex",
+                command: "echo setup",
+              },
+            ],
+          },
+        ],
+        projects: { items: [], hasMore: false, limit: 20 },
+        activeThreads: { items: [], hasMore: false, limit: 20 },
+        attentionThreads: { items: [], hasMore: false, limit: 20 },
+        terminals: { items: [], hasMore: false, limit: 20 },
+      },
+    });
+
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Install Codex"));
+
+    expect(screen.getByText("Connect to your Matrix computer before opening setup.")).toBeTruthy();
+    expect(screen.getByLabelText("Command palette")).toBeTruthy();
+    expect(openTab).not.toHaveBeenCalled();
   });
 });
