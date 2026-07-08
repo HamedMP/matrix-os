@@ -4,6 +4,12 @@
 // session with sequence-numbered output; scripted kernel stream.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
+import {
+  AgentThreadSnapshotSchema,
+  RuntimeSummarySchema,
+  type AgentThreadSnapshot,
+  type RuntimeSummary,
+} from "@matrix-os/contracts";
 
 export interface StubGateway {
   url: string;
@@ -14,10 +20,12 @@ export interface StubGateway {
     tokenRequests: number;
     terminalInputs: string[];
     kernelMessages: Array<Record<string, unknown>>;
+    codingAgentCreates: Array<Record<string, unknown>>;
   };
 }
 
 const TOKEN = "stub-token-1";
+const NOW = "2026-07-08T00:00:00.000Z";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
@@ -77,12 +85,155 @@ const TASKS = [
   },
 ];
 
+function codingAgentThread(prompt = "Fix the failing auth tests"): AgentThreadSnapshot["thread"] {
+  return {
+    id: "thread_operator_1",
+    providerId: "codex",
+    title: prompt.slice(0, 120),
+    status: "completed",
+    attention: "completed",
+    projectId: "matrix-os",
+    terminalSessionId: "matrix-task-1",
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+export function codingAgentSnapshot(prompt = "Fix the failing auth tests"): AgentThreadSnapshot {
+  const thread = codingAgentThread(prompt);
+  return AgentThreadSnapshotSchema.parse({
+    thread,
+    events: {
+      items: [
+        {
+          type: "thread.created",
+          eventId: "evt_operator_created",
+          threadId: thread.id,
+          occurredAt: NOW,
+          thread,
+        },
+        {
+          type: "assistant.text.delta",
+          eventId: "evt_operator_text",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_operator_1",
+          delta: "Done - all tests pass.",
+        },
+        {
+          type: "assistant.text.completed",
+          eventId: "evt_operator_text_done",
+          threadId: thread.id,
+          occurredAt: NOW,
+          messageId: "msg_operator_1",
+        },
+        {
+          type: "terminal.bound",
+          eventId: "evt_operator_terminal",
+          threadId: thread.id,
+          occurredAt: NOW,
+          terminalSessionId: "matrix-task-1",
+        },
+        {
+          type: "thread.completed",
+          eventId: "evt_operator_completed",
+          threadId: thread.id,
+          occurredAt: NOW,
+          outcome: "completed",
+        },
+      ],
+      hasMore: false,
+      limit: 200,
+    },
+  });
+}
+
+export function codingAgentSummary(): RuntimeSummary {
+  return RuntimeSummarySchema.parse({
+    runtime: {
+      id: "rt_operator",
+      label: "Operator stub",
+      status: "available",
+      channel: "dev",
+      ownerHandle: "neo",
+    },
+    capabilities: [
+      { id: "codingAgentsRuntimeSummary", enabled: true },
+      { id: "codingAgentsDesktopWorkspace", enabled: true },
+      { id: "codingAgentsThreadCreate", enabled: true },
+      { id: "codingAgentsNativeMobileTerminal", enabled: true },
+    ],
+    providers: [
+      {
+        id: "codex",
+        displayName: "Codex",
+        kind: "codex",
+        availability: "available",
+        installStatus: "installed",
+        authStatus: "authenticated",
+        supportedModes: ["default", "plan"],
+        defaultMode: "default",
+        setupActions: [],
+        lastCheckedAt: NOW,
+      },
+    ],
+    projects: {
+      items: [{ id: "matrix-os", label: "Matrix OS", status: "available", updatedAt: NOW }],
+      hasMore: false,
+      limit: 50,
+    },
+    activeThreads: {
+      items: [codingAgentThread()],
+      hasMore: false,
+      limit: 50,
+    },
+    attentionThreads: {
+      items: [],
+      hasMore: false,
+      limit: 50,
+    },
+    terminalSessions: {
+      items: [
+        {
+          id: "matrix-task-1",
+          name: "Matrix shell",
+          status: "running",
+          attachable: true,
+          cwdLabel: "matrix-os",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      hasMore: false,
+      limit: 50,
+    },
+    previewSessions: {
+      items: [],
+      hasMore: false,
+      limit: 50,
+    },
+    recentActivity: {
+      items: [],
+      hasMore: false,
+      limit: 100,
+    },
+    limits: {
+      maxPromptBytes: 96 * 1024,
+      maxAttachmentCount: 8,
+      maxTerminalInputBytes: 64 * 1024,
+      maxListItems: 50,
+    },
+    serverTime: NOW,
+  });
+}
+
 export async function startStubGateway(): Promise<StubGateway> {
   const state: StubGateway["state"] = {
     deviceCodeRequests: 0,
     tokenRequests: 0,
     terminalInputs: [],
     kernelMessages: [],
+    codingAgentCreates: [],
   };
 
   const server: Server = createServer((req, res) => {
@@ -186,6 +337,44 @@ export async function startStubGateway(): Promise<StubGateway> {
     }
     if (path === "/api/terminal/sessions") {
       json(res, 200, { sessions: [{ name: "matrix-task-1", status: "active" }] });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/auth/ws-token") {
+      json(res, 200, {
+        token: "stub-ws-token",
+        expiresAt: Date.now() + 60_000,
+      });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/summary") {
+      json(res, 200, codingAgentSummary());
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/notification-preferences") {
+      json(res, 200, {
+        preferences: {
+          attentionPush: {
+            approval: true,
+            input: true,
+            failed: true,
+            completed: true,
+          },
+        },
+      });
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/reviews") {
+      json(res, 200, { items: [], hasMore: false, limit: 50 });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/coding-agents/threads") {
+      const body = await readBody(req);
+      state.codingAgentCreates.push(body);
+      json(res, 201, codingAgentSnapshot(typeof body.prompt === "string" ? body.prompt : undefined));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/coding-agents/threads/thread_operator_1") {
+      json(res, 200, codingAgentSnapshot());
       return;
     }
     if (path === "/api/sessions") {
