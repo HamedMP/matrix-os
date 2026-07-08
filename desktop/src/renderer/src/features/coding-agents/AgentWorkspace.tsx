@@ -1,8 +1,9 @@
-import { Bot, ClipboardCheck, GitBranch, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
+import { Bot, ChevronRight, ClipboardCheck, FileText, GitBranch, Play, RefreshCw, Server, SquareTerminal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   defaultAgentThreadComposerDraft,
   type AgentThreadComposerDraft,
+  type ReviewSnapshot,
   type ReviewSummary,
   type RuntimeSummary,
 } from "@matrix-os/contracts";
@@ -26,6 +27,7 @@ const STATUS_COLOR: Record<string, string> = {
   unknown: "var(--text-tertiary)",
 };
 const DEFAULT_STATUS_COLOR = "var(--text-tertiary)";
+type ReviewDetailStatus = "idle" | "loading" | "ready" | "error";
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
@@ -331,21 +333,32 @@ function ReviewList() {
   const reviewsStatus = useCodingAgentWorkspace((s) => s.reviewsStatus);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
   const reviewsError = useCodingAgentWorkspace((s) => s.reviewsError);
+  const selectedReviewId = useCodingAgentWorkspace((s) => s.selectedReviewId);
+  const reviewSnapshotStatus = useCodingAgentWorkspace((s) => s.reviewSnapshotStatus);
+  const reviewSnapshot = useCodingAgentWorkspace((s) => s.reviewSnapshot);
+  const reviewSnapshotError = useCodingAgentWorkspace((s) => s.reviewSnapshotError);
+  const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
   const items = reviews?.items ?? [];
 
   return (
     <Section title="Review" count={items.length}>
-      <div className="grid gap-2">
+      <div className="grid gap-3">
         {reviewsStatus === "error" ? (
           <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
             {reviewsError ?? "Review state unavailable"}
           </p>
         ) : null}
         {items.map((review) => (
-          <article
+          <button
             key={review.id}
-            className="flex items-center justify-between gap-3 rounded-md border p-3"
-            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}
+            type="button"
+            aria-label={`Open review PR #${review.pullRequestNumber}`}
+            className="no-drag flex min-h-[68px] w-full items-center justify-between gap-3 rounded-md border p-3 text-left transition-colors duration-100 hover:brightness-105"
+            onClick={() => void selectReview(review.id)}
+            style={{
+              borderColor: selectedReviewId === review.id ? "var(--accent)" : "var(--border-subtle)",
+              background: "var(--bg-surface)",
+            }}
           >
             <div className="flex min-w-0 items-center gap-2">
               <ClipboardCheck size={15} style={{ color: "var(--text-tertiary)" }} />
@@ -366,8 +379,14 @@ function ReviewList() {
                 </p>
               ) : null}
             </div>
-          </article>
+            <ChevronRight size={15} style={{ color: "var(--text-tertiary)" }} />
+          </button>
         ))}
+        <ReviewSnapshotPanel
+          status={reviewSnapshotStatus}
+          snapshot={reviewSnapshot}
+          error={reviewSnapshotError}
+        />
         {reviewsStatus !== "error" && reviewsStatus !== "loading" && items.length === 0 ? (
           <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             No reviews.
@@ -375,6 +394,90 @@ function ReviewList() {
         ) : null}
       </div>
     </Section>
+  );
+}
+
+function ReviewSnapshotPanel({
+  status,
+  snapshot,
+  error,
+}: {
+  status: ReviewDetailStatus;
+  snapshot: ReviewSnapshot | null;
+  error: string | null;
+}) {
+  if (status === "idle") return null;
+  if (status === "loading") {
+    return (
+      <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+        Loading review details...
+      </p>
+    );
+  }
+  if (status === "error") {
+    return (
+      <p className="rounded-md border p-3 text-sm" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>
+        {error ?? "Review details unavailable"}
+      </p>
+    );
+  }
+  if (!snapshot) return null;
+
+  return (
+    <article className="grid gap-3 rounded-md border p-3" style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)" }}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+            {`PR #${snapshot.review.pullRequestNumber} review details`}
+          </h3>
+          <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+            {`${snapshot.files.items.length} files${snapshot.partial ? " - partial" : ""}`}
+          </p>
+        </div>
+        <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-secondary)" }}>
+          {reviewStatusLabel(snapshot.review.status)}
+        </span>
+      </div>
+      {snapshot.safeNotice ? (
+        <p className="rounded-md border px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
+          {snapshot.safeNotice}
+        </p>
+      ) : null}
+      <div className="grid gap-2">
+        {snapshot.files.items.map((file) => (
+          <div
+            key={file.path}
+            className="grid gap-2 rounded-md border px-3 py-2"
+            style={{ borderColor: "var(--border-subtle)", background: "var(--bg-overlay)" }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <FileText size={14} style={{ color: "var(--text-tertiary)" }} />
+                <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>
+                  {file.path}
+                </span>
+              </div>
+              <span className="shrink-0 text-xs capitalize" style={{ color: "var(--text-tertiary)" }}>
+                {file.status}
+              </span>
+            </div>
+            {file.findings?.length ? (
+              <div className="grid gap-1">
+                {file.findings.map((finding) => (
+                  <p key={finding.id} className="text-xs" style={{ color: finding.severity === "high" ? "var(--danger)" : "var(--text-secondary)" }}>
+                    {finding.summary}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+                No findings in this file.
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </article>
   );
 }
 

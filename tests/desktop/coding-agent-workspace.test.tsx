@@ -117,6 +117,47 @@ function reviewsFixture() {
   };
 }
 
+function reviewSnapshotFixture() {
+  return {
+    review: reviewsFixture().items[0],
+    files: {
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          partial: true,
+          hunks: [
+            {
+              id: "hunk_rev_desktop_1_0_0",
+              oldStart: 42,
+              oldLines: 1,
+              newStart: 42,
+              newLines: 1,
+              heading: "Finding HIGH-1",
+              partial: true,
+            },
+          ],
+          findings: [
+            {
+              id: "HIGH-1",
+              severity: "high",
+              line: 42,
+              summary: "Validate ownership before returning snapshots.",
+            },
+          ],
+        },
+      ],
+      hasMore: false,
+      limit: 100,
+    },
+    partial: true,
+    safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+    updatedAt: "2026-07-06T00:02:00.000Z",
+  };
+}
+
 describe("AgentWorkspace", () => {
   beforeEach(() => {
     useCodingAgentWorkspace.setState({
@@ -126,6 +167,10 @@ describe("AgentWorkspace", () => {
       reviewsStatus: "idle",
       reviews: null,
       reviewsError: null,
+      selectedReviewId: null,
+      reviewSnapshotStatus: "idle",
+      reviewSnapshot: null,
+      reviewSnapshotError: null,
       createStatus: "idle",
       createError: null,
       activeThreadId: null,
@@ -141,6 +186,7 @@ describe("AgentWorkspace", () => {
       invoke: vi.fn((channel: string) => {
         if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
         if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+        if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
         return Promise.reject(new Error("unexpected channel"));
       }),
       on: vi.fn(() => () => undefined),
@@ -174,6 +220,21 @@ describe("AgentWorkspace", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-reviews", {});
   });
 
+  it("loads a read-only review snapshot when a review is selected", async () => {
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-review-snapshot", {
+      reviewId: "rev_desktop_1",
+    });
+    expect(await screen.findByText("packages/gateway/src/coding-agents/routes.ts")).toBeTruthy();
+    expect(screen.getByText("Validate ownership before returning snapshots.")).toBeTruthy();
+    expect(screen.getByText("Diff content is not available yet. Showing bounded review findings.")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
   it("shows a generic safe review error without dropping the runtime summary", async () => {
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
@@ -188,6 +249,86 @@ describe("AgentWorkspace", () => {
     await screen.findByText("Primary");
     expect(await screen.findByText("Review state unavailable")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("clears loaded review details when review summaries become unavailable", async () => {
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    expect(await screen.findByText("Validate ownership before returning snapshots.")).toBeTruthy();
+
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") {
+        return Promise.reject(new Error("review store failed at /home/matrix/private token secret"));
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    expect(await screen.findByText("Review state unavailable")).toBeTruthy();
+    expect(screen.queryByText("Validate ownership before returning snapshots.")).toBeNull();
+    expect(screen.queryByText("packages/gateway/src/coding-agents/routes.ts")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("clears loaded review details when runtime summary refresh fails", async () => {
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    expect(await screen.findByText("Validate ownership before returning snapshots.")).toBeTruthy();
+
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") {
+        return Promise.reject(new Error("summary failed at /home/matrix/private token secret"));
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("Validate ownership before returning snapshots.")).toBeNull();
+    });
+    expect(screen.queryByText("packages/gateway/src/coding-agents/routes.ts")).toBeNull();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("does not restore an in-flight review snapshot after refresh removes the review", async () => {
+    let resolveSnapshot: (value: unknown) => void = () => undefined;
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") {
+        return new Promise((resolve) => {
+          resolveSnapshot = resolve;
+        });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    expect(await screen.findByText("Loading review details...")).toBeTruthy();
+
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve({ items: [], hasMore: false, limit: 50 });
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Refresh agent workspace" }));
+    await screen.findByText("No reviews.");
+
+    resolveSnapshot(reviewSnapshotFixture());
+
+    await waitFor(() => {
+      expect(screen.queryByText("Validate ownership before returning snapshots.")).toBeNull();
+    });
+    expect(screen.queryByText("packages/gateway/src/coding-agents/routes.ts")).toBeNull();
   });
 
   it("creates a thread from the desktop composer and focuses the new thread", async () => {

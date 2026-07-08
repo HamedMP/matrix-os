@@ -7,6 +7,7 @@ import {
   AgentThreadSnapshotSchema,
   CreateAgentThreadRequestSchema,
   CursorSchema,
+  ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
   boundedListSchema,
@@ -16,6 +17,7 @@ const Empty = z.object({}).strict();
 
 const Ok = z.object({ ok: z.boolean() }).strict();
 const EmbedStateSchema = z.enum(["loading", "ready", "auth-required", "failed"]);
+const ReviewIdSchema = z.string().regex(/^rev_[A-Za-z0-9_-]{1,128}$/);
 
 const ProfileSchema = z
   .object({
@@ -109,6 +111,10 @@ export const INVOKE_CHANNELS = {
   "runtime:get-reviews": {
     request: z.object({ cursor: CursorSchema.optional() }).strict(),
     response: boundedListSchema(ReviewSummarySchema, 50),
+  },
+  "runtime:get-review-snapshot": {
+    request: z.object({ reviewId: ReviewIdSchema }).strict(),
+    response: ReviewSnapshotSchema,
   },
   "runtime:create-thread": {
     request: CreateAgentThreadRequestSchema,

@@ -38,6 +38,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     getUpdateStatus: vi.fn(() => "disabled"),
     fetchRuntimeSummary: vi.fn(),
     fetchReviewSummaries: vi.fn(),
+    fetchReviewSnapshot: vi.fn(),
     createAgentThread: vi.fn(),
     ...overrides,
   } as unknown as HandlerContext;
@@ -206,6 +207,63 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-reviews")).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-reviews")).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("returns a coding agent review snapshot through a strict trusted-core IPC channel", async () => {
+    const snapshot = {
+      review: {
+        id: "rev_desktop_1",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        findings: { total: 1, high: 1, medium: 0, low: 0 },
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      files: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [],
+            findings: [
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 42,
+                summary: "Validate ownership before returning snapshots.",
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    };
+    const fetchReviewSnapshot = vi.fn().mockResolvedValue(snapshot);
+    const harness = makeHarness({ fetchReviewSnapshot } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-review-snapshot", { reviewId: "rev_desktop_1" })).resolves.toEqual(snapshot);
+    expect(fetchReviewSnapshot).toHaveBeenCalledWith({ reviewId: "rev_desktop_1" });
+  });
+
+  it("maps review snapshot failures to a generic IPC error", async () => {
+    const fetchReviewSnapshot = vi
+      .fn()
+      .mockRejectedValue(new Error("Postgres failed at /home/matrix/home with token secret"));
+    const harness = makeHarness({ fetchReviewSnapshot } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:get-review-snapshot", { reviewId: "rev_desktop_1" })).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:get-review-snapshot", { reviewId: "rev_desktop_1" })).rejects.not.toThrow("/home/matrix");
   });
 
   it("creates agent threads through trusted-core IPC without exposing credentials", async () => {

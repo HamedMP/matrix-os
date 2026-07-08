@@ -14,6 +14,7 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
       "runtime:select",
@@ -145,6 +146,73 @@ describe("IPC contract", () => {
     expect(schema.safeParse({
       ...valid,
       items: [{ ...valid.items[0], safeStatus: "Postgres failed at /home/matrix/home" }],
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:get-review-snapshot responses and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:get-review-snapshot"].request;
+    const schema = INVOKE_CHANNELS["runtime:get-review-snapshot"].response;
+    const valid = {
+      review: {
+        id: "rev_desktop_1",
+        projectId: "matrix-os",
+        worktreeId: "wt_abc123def456",
+        status: "reviewing",
+        pullRequestNumber: 757,
+        round: 1,
+        maxRounds: 3,
+        reviewer: "codex",
+        implementer: "claude",
+        findings: { total: 1, high: 1, medium: 0, low: 0 },
+        updatedAt: "2026-07-06T00:00:00.000Z",
+      },
+      files: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            status: "modified",
+            additions: 0,
+            deletions: 0,
+            partial: true,
+            hunks: [
+              {
+                id: "hunk_rev_desktop_1_0_0",
+                oldStart: 42,
+                oldLines: 1,
+                newStart: 42,
+                newLines: 1,
+                heading: "Finding HIGH-1",
+                partial: true,
+              },
+            ],
+            findings: [
+              {
+                id: "HIGH-1",
+                severity: "high",
+                line: 42,
+                summary: "Validate ownership before returning snapshots.",
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        limit: 100,
+      },
+      partial: true,
+      safeNotice: "Diff content is not available yet. Showing bounded review findings.",
+      updatedAt: "2026-07-06T00:00:00.000Z",
+    };
+
+    expect(requestSchema.safeParse({ reviewId: "rev_desktop_1" }).success).toBe(true);
+    expect(requestSchema.safeParse({ reviewId: "../secret" }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      files: {
+        ...valid.files,
+        items: [{ ...valid.files.items[0], path: "/home/matrix/private/secret.ts" }],
+      },
     }).success).toBe(false);
   });
 
