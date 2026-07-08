@@ -41,6 +41,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     fetchReviewSnapshot: vi.fn(),
     fetchFileContent: vi.fn(),
     saveFileContent: vi.fn(),
+    prepareSourceCommit: vi.fn(),
     fetchThreadSnapshot: vi.fn(),
     submitApprovalDecision: vi.fn(),
     submitInputAnswer: vi.fn(),
@@ -381,6 +382,55 @@ describe("registerIpcHandlers", () => {
       encoding: "utf8",
       baseEtag: "sha256_desktop_file",
       clientRequestId: "req_desktop_file_save",
+    })).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("prepares a source-control commit through a strict trusted-core IPC channel", async () => {
+    const prepared = {
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef01234567",
+      branch: "feature/review-fix",
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    };
+    const prepareSourceCommit = vi.fn().mockResolvedValue(prepared);
+    const harness = makeHarness({ prepareSourceCommit } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:prepare-source-commit", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_desktop_prepare_commit",
+    })).resolves.toEqual(prepared);
+    expect(prepareSourceCommit).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_desktop_prepare_commit",
+    });
+  });
+
+  it("maps source-control commit failures to a generic IPC error", async () => {
+    const prepareSourceCommit = vi
+      .fn()
+      .mockRejectedValue(new Error("git failed in /home/matrix/home/projects/private token"));
+    const harness = makeHarness({ prepareSourceCommit } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:prepare-source-commit", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_desktop_prepare_commit",
+    })).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:prepare-source-commit", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_desktop_prepare_commit",
     })).rejects.not.toThrow("/home/matrix");
   });
 

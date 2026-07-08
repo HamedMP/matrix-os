@@ -84,6 +84,16 @@ function fileWritePayload() {
   };
 }
 
+function sourceCommitPayload() {
+  return {
+    status: "committed",
+    commitSha: "0123456789abcdef0123456789abcdef01234567",
+    branch: "feature/review-fix",
+    changedFileCount: 1,
+    safeMessage: "Changes were committed.",
+  };
+}
+
 describe("GatewayClient", () => {
   it("initializes with disconnected state", () => {
     const client = new GatewayClient("http://localhost:4000");
@@ -922,6 +932,42 @@ describe("GatewayClient", () => {
     fetchMock.mockRestore();
   });
 
+  it("prepares coding agent source commits with existing auth and safe validation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(sourceCommitPayload()));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.prepareCodingAgentSourceCommit({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_mobile_prepare_commit",
+    })).resolves.toEqual({
+      ok: true,
+      commit: sourceCommitPayload(),
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/source-control/prepare-commit",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          message: "fix: update reviewed files",
+          paths: ["packages/gateway/src/coding-agents/routes.ts"],
+          clientRequestId: "req_mobile_prepare_commit",
+        }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
   it("returns a safe mobile file save error for invalid requests and gateway payloads", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
       ...fileWritePayload(),
@@ -955,6 +1001,37 @@ describe("GatewayClient", () => {
     })).resolves.toEqual({
       ok: false,
       error: "File could not be saved. Refresh and try again.",
+    });
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns a safe mobile source-control error for invalid requests and gateway payloads", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...sourceCommitPayload(),
+      branch: "/home/matrix/private",
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.prepareCodingAgentSourceCommit({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_mobile_prepare_commit",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Source commit could not be prepared. Refresh and try again.",
+    });
+    await expect(client.prepareCodingAgentSourceCommit({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["../system/config.json"],
+      clientRequestId: "req_mobile_prepare_commit",
+    })).resolves.toEqual({
+      ok: false,
+      error: "Source commit could not be prepared. Refresh and try again.",
     });
 
     fetchMock.mockRestore();

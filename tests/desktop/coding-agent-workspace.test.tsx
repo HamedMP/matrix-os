@@ -14,9 +14,10 @@ import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 function summaryFixture({
   threadCreate = false,
   files = false,
+  sourceControl = false,
   threadTerminalSessionId,
   terminalSessionName = "matrix-abc1234",
-}: { threadCreate?: boolean; files?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
+}: { threadCreate?: boolean; files?: boolean; sourceControl?: boolean; threadTerminalSessionId?: string; terminalSessionName?: string } = {}) {
   return {
     runtime: {
       id: "rt_primary",
@@ -40,6 +41,12 @@ function summaryFixture({
       ...(files
         ? [{
             id: "codingAgentsFiles",
+            enabled: true,
+          }]
+        : []),
+      ...(sourceControl
+        ? [{
+            id: "codingAgentsSourceControl",
             enabled: true,
           }]
         : []),
@@ -275,6 +282,14 @@ function reviewSnapshotFixture() {
     safeNotice: "Diff content is not available yet. Showing bounded review findings.",
     updatedAt: "2026-07-06T00:02:00.000Z",
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
 }
 
 function fileReadFixture() {
@@ -1350,6 +1365,104 @@ describe("AgentWorkspace", () => {
     expect((screen.getByLabelText("Edit file packages/gateway/src/coding-agents/routes.ts") as HTMLTextAreaElement).value)
       .toBe("export const safeRoute = false;\n");
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("prepares a source-control commit for reviewed files through trusted IPC", async () => {
+    const prepared = {
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef01234567",
+      branch: "feature/review-fix",
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ sourceControl: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
+      if (channel === "runtime:prepare-source-commit") return Promise.resolve(prepared);
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    await screen.findByText("matrix-os");
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #758/i }));
+    await screen.findByText("packages/gateway/src/coding-agents/routes.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Prepare commit for review PR #758" }));
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:prepare-source-commit", expect.objectContaining({
+        projectId: "matrix-os",
+        worktreeId: "wt_desktop_1",
+        paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      }));
+    });
+    const commitCall = vi.mocked(window.operator.invoke).mock.calls.find(([channel]) => channel === "runtime:prepare-source-commit");
+    expect(commitCall?.[1]).toEqual(expect.objectContaining({
+      message: expect.stringMatching(/review/i),
+      clientRequestId: expect.stringMatching(/^req_desktop_/),
+    }));
+    expect(JSON.stringify(commitCall?.[1])).not.toMatch(/token|bearer|secret/i);
+    expect(await screen.findByText("Commit prepared")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("ignores stale desktop commit completions after another review opens the same worktree", async () => {
+    const commitResult = deferred<{
+      status: "committed";
+      commitSha: string;
+      branch: string;
+      changedFileCount: number;
+      safeMessage: string;
+    }>();
+    const secondReview = {
+      ...reviewsFixture().items[0],
+      id: "rev_desktop_2",
+      pullRequestNumber: 759,
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    };
+    const reviews = {
+      ...reviewsFixture(),
+      items: [reviewsFixture().items[0], secondReview],
+    };
+    const firstSnapshot = reviewSnapshotFixture();
+    const secondSnapshot = {
+      ...reviewSnapshotFixture(),
+      review: secondReview,
+      updatedAt: "2026-07-06T00:05:00.000Z",
+    };
+
+    window.operator.invoke = vi.fn((channel: string, request?: unknown) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture({ sourceControl: true }));
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviews);
+      if (channel === "runtime:get-review-snapshot") {
+        return Promise.resolve((request as { reviewId?: string }).reviewId === "rev_desktop_2" ? secondSnapshot : firstSnapshot);
+      }
+      if (channel === "runtime:prepare-source-commit") return commitResult.promise;
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    render(<AgentWorkspace />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Open review PR #758/i }));
+    await screen.findByText("PR #758 review details");
+    fireEvent.click(screen.getByRole("button", { name: "Prepare commit for review PR #758" }));
+    fireEvent.click(screen.getByRole("button", { name: /Open review PR #759/i }));
+    await screen.findByText("PR #759 review details");
+
+    await act(async () => {
+      commitResult.resolve({
+        status: "committed",
+        commitSha: "0123456789abcdef0123456789abcdef01234567",
+        branch: "feature/review-fix",
+        changedFileCount: 1,
+        safeMessage: "Changes were committed.",
+      });
+      await commitResult.promise;
+    });
+
+    expect(screen.queryByText("Commit prepared")).toBeNull();
+    expect(screen.queryByText(/Source commit could not be prepared/i)).toBeNull();
   });
 
   it("ignores stale desktop save completions after another worktree opens the same path", async () => {

@@ -19,6 +19,7 @@ describe("IPC contract", () => {
       "runtime:get-thread-snapshot",
       "runtime:get-file-content",
       "runtime:save-file-content",
+      "runtime:prepare-source-commit",
       "runtime:get-review-snapshot",
       "runtime:get-reviews",
       "runtime:get-summary",
@@ -418,6 +419,32 @@ describe("IPC contract", () => {
       ...response,
       metadata: { ...response.metadata, path: "/home/matrix/private/secret.ts" },
     }).success).toBe(false);
+  });
+
+  it("validates runtime:prepare-source-commit requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:prepare-source-commit"].request;
+    const schema = INVOKE_CHANNELS["runtime:prepare-source-commit"].response;
+    const request = {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_desktop_prepare_commit",
+    };
+    const response = {
+      status: "committed",
+      commitSha: "0123456789abcdef0123456789abcdef01234567",
+      branch: "feature/review-fix",
+      changedFileCount: 1,
+      safeMessage: "Changes were committed.",
+    };
+
+    expect(requestSchema.safeParse(request).success).toBe(true);
+    expect(requestSchema.safeParse({ ...request, accessToken: "secret" }).success).toBe(false);
+    expect(requestSchema.safeParse({ ...request, paths: ["../system/config.json"] }).success).toBe(false);
+    expect(schema.safeParse(response).success).toBe(true);
+    expect(schema.safeParse({ ...response, bearerToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({ ...response, branch: "/home/matrix/private" }).success).toBe(false);
   });
 
   it("validates auth:poll responses and rejects token leakage shapes", () => {

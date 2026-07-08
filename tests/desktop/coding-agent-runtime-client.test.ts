@@ -3,6 +3,7 @@ import {
   fetchCodingAgentFileContent,
   fetchCodingAgentThreadSnapshot,
   fetchCodingAgentReviewSnapshot,
+  prepareCodingAgentSourceCommit,
   saveCodingAgentFileContent,
   submitCodingAgentApprovalDecision,
   submitCodingAgentInputAnswer,
@@ -76,6 +77,16 @@ function fileReadBody() {
     encoding: "utf8",
     truncated: false,
     limitBytes: 65536,
+  };
+}
+
+function sourceCommitBody() {
+  return {
+    status: "committed",
+    commitSha: "0123456789abcdef0123456789abcdef01234567",
+    branch: "feature/review-fix",
+    changedFileCount: 1,
+    safeMessage: "Changes were committed.",
   };
 }
 
@@ -404,6 +415,40 @@ describe("coding agent desktop runtime client", () => {
     expect(saved.metadata.etag).toBe("sha256_desktop_file_next");
   });
 
+  it("prepares a source-control commit with bearer auth and validates safe output", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify(sourceCommitBody()), { status: 201 }));
+
+    const commit = await prepareCodingAgentSourceCommit(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_desktop_prepare_commit",
+    }, fetchFn);
+
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://runtime.test/api/coding-agents/source-control/prepare-commit",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer desktop-token",
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({
+          projectId: "matrix-os",
+          worktreeId: "wt_abc123def456",
+          message: "fix: update reviewed files",
+          paths: ["packages/gateway/src/coding-agents/routes.ts"],
+          clientRequestId: "req_desktop_prepare_commit",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(commit.commitSha).toBe(sourceCommitBody().commitSha);
+    expect(JSON.stringify(commit)).not.toMatch(/token|bearer|secret|\/home\/matrix/i);
+  });
+
   it("rejects unsafe or malformed review snapshot responses with a generic error", async () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...snapshotBody(),
@@ -469,5 +514,27 @@ describe("coding agent desktop runtime client", () => {
       baseEtag: "sha256_desktop_file",
       clientRequestId: "req_desktop_file_save",
     }, fetchFn)).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("rejects unsafe source-control commit requests and responses with generic errors", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...sourceCommitBody(),
+      branch: "/home/matrix/private",
+    }), { status: 201 }));
+
+    await expect(prepareCodingAgentSourceCommit(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["packages/gateway/src/coding-agents/routes.ts"],
+      clientRequestId: "req_desktop_prepare_commit",
+    }, fetchFn)).rejects.toThrow("source commit unavailable");
+    await expect(prepareCodingAgentSourceCommit(auth(), {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      message: "fix: update reviewed files",
+      paths: ["../system/config.json"],
+      clientRequestId: "req_desktop_prepare_commit",
+    }, fetchFn)).rejects.toThrow("source commit unavailable");
   });
 });
