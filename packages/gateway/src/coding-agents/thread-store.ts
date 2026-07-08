@@ -292,14 +292,16 @@ function snapshotFor(thread: StoredThread, allEvents: AgentThreadEvent[], cursor
   if (cursor && cursorIndex < 0) {
     throw new CodingAgentThreadError("thread_not_found", "Thread cursor not found");
   }
-  const startIndex = cursor ? cursorIndex + 1 : 0;
+  const startIndex = cursor ? cursorIndex + 1 : Math.max(0, eventsForThread.length - EVENT_REPLAY_LIMIT);
   const window = eventsForThread.slice(startIndex, startIndex + EVENT_REPLAY_LIMIT);
   return AgentThreadSnapshotSchema.parse({
     thread: stripOwner(thread),
     events: {
       items: window,
-      hasMore: eventsForThread.length - Math.max(0, startIndex) > window.length,
-      nextCursor: window.at(-1)?.eventId,
+      hasMore: cursor
+        ? eventsForThread.length - Math.max(0, startIndex) > window.length
+        : startIndex > 0,
+      nextCursor: cursor ? window.at(-1)?.eventId : undefined,
       limit: EVENT_REPLAY_LIMIT,
     },
   });

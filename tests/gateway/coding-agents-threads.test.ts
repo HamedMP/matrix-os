@@ -149,7 +149,7 @@ describe("coding agent thread lifecycle", () => {
     });
   });
 
-  it("returns the first replay window after the cursor", async () => {
+  it("continues replay after a cursor from the current snapshot window", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
     const threads = createCodingAgentThreadStore({
       homePath,
@@ -169,9 +169,35 @@ describe("coding agent thread lifecycle", () => {
     const replay = await app.request(`/api/coding-agents/threads/${snapshot.thread.id}/events?cursor=${createdCursor}`);
     const replayBody = AgentThreadSnapshotSchema.parse(await replay.json());
 
-    expect(replayBody.events.items).toHaveLength(200);
-    expect(replayBody.events.items[0]).toMatchObject({ type: "thread.status" });
-    expect(replayBody.events.hasMore).toBe(true);
+    expect(replayBody.events.items).toHaveLength(199);
+    expect(replayBody.events.items[0]).toMatchObject({ type: "assistant.text.delta" });
+    expect(replayBody.events.hasMore).toBe(false);
+  });
+
+  it("returns the latest bounded event window for thread snapshots without a cursor", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-threads-"));
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      now: () => baseNow,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex", deltaCount: 250 })],
+    });
+    const app = new Hono();
+    app.route("/api/coding-agents", createCodingAgentRoutes({
+      service: createCodingAgentRuntimeSummaryService({ homePath, now: () => baseNow }),
+      threads,
+      getPrincipal: () => ownerPrincipal,
+    }));
+
+    const created = await app.request(jsonRequest("/api/coding-agents/threads", createBody));
+    const snapshot = AgentThreadSnapshotSchema.parse(await created.json());
+
+    expect(snapshot.events.items).toHaveLength(200);
+    expect(snapshot.events.hasMore).toBe(true);
+    expect(snapshot.events.items.map((event) => event.type)).not.toContain("thread.created");
+    expect(snapshot.events.items.at(-1)).toMatchObject({
+      type: "assistant.text.delta",
+      delta: "Agent event 250.",
+    });
   });
 
   it("keeps thread ownership isolated and maps missing threads to safe errors", async () => {
