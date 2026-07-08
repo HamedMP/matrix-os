@@ -18,6 +18,18 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 30;
 const MAX_PUSH_METADATA_KEYS = 10;
+const DEFAULT_MAX_REGISTERED_TOKENS = 16;
+const DEFAULT_MAX_REGISTERED_OWNERS = 2_048;
+const DEFAULT_MAX_FANOUT_TOKENS = 32;
+const DEFAULT_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+export interface PushAdapterOptions {
+  now?: () => number;
+  maxRegisteredTokens?: number;
+  maxRegisteredOwners?: number;
+  maxFanoutTokens?: number;
+  tokenTtlMs?: number;
+}
 
 const PushDataValueSchema = z.union([
   z.string().max(160),
@@ -26,6 +38,11 @@ const PushDataValueSchema = z.union([
   z.null(),
 ]);
 const PushMetadataSchema = z.record(z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/), PushDataValueSchema);
+
+function clampInteger(value: number | undefined, fallback: number, min: number, max: number): number {
+  if (!Number.isFinite(value) || value === undefined) return fallback;
+  return Math.max(min, Math.min(Math.floor(value), max));
+}
 
 function safePushData(reply: ChannelReply): Record<string, unknown> {
   const parsed = PushMetadataSchema.safeParse(reply.metadata ?? {});
@@ -43,18 +60,96 @@ export function createPushAdapter(): ChannelAdapter & {
   registerToken(token: string, platform: string, ownerId?: string): void;
   removeToken(token: string, ownerId?: string): void;
   getTokens(): PushToken[];
+};
+export function createPushAdapter(options: PushAdapterOptions): ChannelAdapter & {
+  registerToken(token: string, platform: string, ownerId?: string): void;
+  removeToken(token: string, ownerId?: string): void;
+  getTokens(): PushToken[];
+};
+export function createPushAdapter(options: PushAdapterOptions = {}): ChannelAdapter & {
+  registerToken(token: string, platform: string, ownerId?: string): void;
+  removeToken(token: string, ownerId?: string): void;
+  getTokens(): PushToken[];
 } {
   const tokens: Map<string, PushToken> = new Map();
   const sendTimestamps: number[] = [];
   let messageHandler: (msg: ChannelMessage) => void = () => {};
+  const now = options.now ?? (() => Date.now());
+  const maxRegisteredTokens = clampInteger(options.maxRegisteredTokens, DEFAULT_MAX_REGISTERED_TOKENS, 1, 64);
+  const maxRegisteredOwners = clampInteger(options.maxRegisteredOwners, DEFAULT_MAX_REGISTERED_OWNERS, 1, 2_048);
+  const maxFanoutTokens = clampInteger(options.maxFanoutTokens, DEFAULT_MAX_FANOUT_TOKENS, 1, 256);
+  const tokenTtlMs = clampInteger(options.tokenTtlMs, DEFAULT_TOKEN_TTL_MS, 60_000, 90 * 24 * 60 * 60 * 1000);
+
+  function ownerKey(ownerId: string | undefined): string {
+    return ownerId ?? "__anonymous__";
+  }
 
   function tokenKey(token: string, ownerId: string | undefined): string {
     return JSON.stringify([ownerId ?? null, token]);
   }
 
+  function sweepExpiredTokens(currentTime = now()): void {
+    const cutoff = currentTime - tokenTtlMs;
+    for (const [key, registered] of tokens) {
+      if (registered.registeredAt < cutoff) tokens.delete(key);
+    }
+  }
+
+  function ownerExists(ownerId: string | undefined): boolean {
+    for (const registered of tokens.values()) {
+      if (registered.ownerId === ownerId) return true;
+    }
+    return false;
+  }
+
+  function ownerCount(): number {
+    const ownerKeys = new Set<string>();
+    for (const registered of tokens.values()) {
+      ownerKeys.add(ownerKey(registered.ownerId));
+      if (ownerKeys.size >= maxRegisteredOwners) break;
+    }
+    return ownerKeys.size;
+  }
+
+  function canRegisterOwner(ownerId: string | undefined): boolean {
+    return ownerExists(ownerId) || ownerCount() < maxRegisteredOwners;
+  }
+
+  function evictOldestTokensForOwner(ownerId: string | undefined): void {
+    while (Array.from(tokens.values()).filter((registered) => registered.ownerId === ownerId).length > maxRegisteredTokens) {
+      let oldestKey: string | null = null;
+      let oldestRegisteredAt = Number.POSITIVE_INFINITY;
+      for (const [key, registered] of tokens) {
+        if (registered.ownerId !== ownerId) continue;
+        if (registered.registeredAt < oldestRegisteredAt) {
+          oldestKey = key;
+          oldestRegisteredAt = registered.registeredAt;
+        }
+      }
+      if (!oldestKey) break;
+      tokens.delete(oldestKey);
+    }
+  }
+
+  function activeTokensForOwner(ownerId: string | undefined): string[] {
+    sweepExpiredTokens();
+    const newestByToken = new Map<string, PushToken>();
+    for (const registered of tokens.values()) {
+      if (ownerId !== undefined && registered.ownerId !== ownerId) continue;
+      const previous = newestByToken.get(registered.token);
+      if (!previous || registered.registeredAt > previous.registeredAt) {
+        newestByToken.set(registered.token, registered);
+      }
+    }
+    return Array.from(newestByToken.values())
+      .sort((a, b) => b.registeredAt - a.registeredAt)
+      .slice(0, maxFanoutTokens)
+      .map((registered) => registered.token);
+  }
+
   function isRateLimited(): boolean {
-    const now = Date.now();
-    const cutoff = now - RATE_LIMIT_WINDOW_MS;
+    const currentTime = now();
+    const cutoff = currentTime - RATE_LIMIT_WINDOW_MS;
     while (sendTimestamps.length > 0 && sendTimestamps[0] < cutoff) {
       sendTimestamps.shift();
     }
@@ -108,7 +203,10 @@ export function createPushAdapter(): ChannelAdapter & {
     id: "push",
 
     registerToken(token: string, platform: string, ownerId?: string) {
-      tokens.set(tokenKey(token, ownerId), { token, platform, ownerId, registeredAt: Date.now() });
+      sweepExpiredTokens();
+      if (!canRegisterOwner(ownerId)) return;
+      tokens.set(tokenKey(token, ownerId), { token, platform, ownerId, registeredAt: now() });
+      evictOldestTokensForOwner(ownerId);
     },
 
     removeToken(token: string, ownerId?: string) {
@@ -122,6 +220,7 @@ export function createPushAdapter(): ChannelAdapter & {
     },
 
     getTokens(): PushToken[] {
+      sweepExpiredTokens();
       return Array.from(tokens.values());
     },
 
@@ -136,12 +235,9 @@ export function createPushAdapter(): ChannelAdapter & {
     async send(reply: ChannelReply) {
       if (isRateLimited()) return;
 
-      sendTimestamps.push(Date.now());
+      sendTimestamps.push(now());
 
-      const allTokens = Array.from(tokens.values())
-        .filter((token) => reply.ownerId === undefined || token.ownerId === reply.ownerId)
-        .map((t) => t.token);
-      const uniqueTokens = Array.from(new Set(allTokens));
+      const uniqueTokens = activeTokensForOwner(reply.ownerId);
       if (uniqueTokens.length === 0) return;
 
       await sendPush(uniqueTokens, "Matrix OS", reply.text, safePushData(reply));
