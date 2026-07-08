@@ -356,6 +356,7 @@ function createBracketedPasteStreamParser(options: {
   incompletePasteTimeoutMs?: number;
 } = {}) {
   let pending = "";
+  let suppressedCloseMarkerTail = "";
   let incompletePasteTimer: ReturnType<typeof setTimeout> | undefined;
 
   const clearIncompletePasteTimer = () => {
@@ -365,6 +366,10 @@ function createBracketedPasteStreamParser(options: {
 
   const discardIncompletePaste = () => {
     if (pending.startsWith(BRACKETED_PASTE_OPEN)) {
+      const closePrefixLength = longestSuffixPrefixLength(pending, BRACKETED_PASTE_CLOSE);
+      suppressedCloseMarkerTail = closePrefixLength > 0
+        ? BRACKETED_PASTE_CLOSE.slice(closePrefixLength)
+        : "";
       options.onIncompletePaste?.();
     }
     pending = "";
@@ -387,7 +392,19 @@ function createBracketedPasteStreamParser(options: {
 
   return {
     push(chunk: string): RichPasteInputSegment[] {
-      const input = pending + chunk;
+      let nextChunk = chunk;
+      if (suppressedCloseMarkerTail) {
+        if (suppressedCloseMarkerTail.startsWith(nextChunk)) {
+          suppressedCloseMarkerTail = suppressedCloseMarkerTail.slice(nextChunk.length);
+          return [];
+        }
+        if (nextChunk.startsWith(suppressedCloseMarkerTail)) {
+          nextChunk = nextChunk.slice(suppressedCloseMarkerTail.length);
+        }
+        suppressedCloseMarkerTail = "";
+      }
+
+      const input = pending + nextChunk;
       setPending("");
       const segments: RichPasteInputSegment[] = [];
       let cursor = 0;
@@ -431,6 +448,7 @@ function createBracketedPasteStreamParser(options: {
     },
     reset() {
       pending = "";
+      suppressedCloseMarkerTail = "";
       clearIncompletePasteTimer();
     },
   };

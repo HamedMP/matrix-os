@@ -426,9 +426,9 @@ describe("createShellClient attachSession", () => {
       });
 
       FakeWebSocket.last?.emit("message", JSON.stringify({ type: "attached" }));
-      input.write("\u001b[200~/var/folders/t5/screen.png");
+      input.write("\u001b[200~/var/folders/t5/screen.png\u001b[201");
       await vi.advanceTimersByTimeAsync(300);
-      input.write("pwd\r");
+      input.write("~pwd\r");
 
       expect(errors.join("")).toContain("Image paste failed: paste did not complete.");
       expect(rewriter.rewrite).not.toHaveBeenCalled();
