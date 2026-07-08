@@ -1,7 +1,7 @@
 import { Command } from "cmdk";
 import { useEffect, useState } from "react";
-import type { AgentProviderSummary, ReviewSummary, SafeSetupAction } from "@matrix-os/contracts";
-import { Bot, ClipboardCheck, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
+import type { AgentProviderSummary, AgentThreadSummary, ReviewSummary, SafeSetupAction } from "@matrix-os/contracts";
+import { Bot, ClipboardCheck, GitBranch, Home, Kanban, LayoutGrid, MessageSquarePlus, PanelsTopLeft, Plus, Settings, Sparkles, SquareTerminal } from "lucide-react";
 import { appIconUrl, useApps } from "../../stores/apps";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -16,6 +16,7 @@ import type { ApiClient } from "../../lib/api";
 const EMPTY_REVIEWS: ReviewSummary[] = [];
 const EMPTY_PROVIDERS: AgentProviderSummary[] = [];
 const MAX_PALETTE_REVIEWS = 10;
+const MAX_PALETTE_THREADS = 20;
 const MAX_PALETTE_SETUP_ACTIONS = 10;
 const TERMINAL_REVIEW_STATUSES: ReviewSummary["status"][] = ["approved", "converged", "stopped"];
 const SESSION_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,30}$/;
@@ -51,6 +52,19 @@ function paletteReviewCommands(reviews: ReviewSummary[]): ReviewSummary[] {
       return a.id.localeCompare(b.id);
     })
     .slice(0, MAX_PALETTE_REVIEWS);
+}
+
+function paletteThreadCommands(summary: { activeThreads: { items: AgentThreadSummary[] }; attentionThreads: { items: AgentThreadSummary[] } } | null): AgentThreadSummary[] {
+  if (!summary) return [];
+  const commands: AgentThreadSummary[] = [];
+  const seen = new Set<string>();
+  for (const thread of [...summary.attentionThreads.items, ...summary.activeThreads.items]) {
+    if (seen.has(thread.id)) continue;
+    seen.add(thread.id);
+    commands.push(thread);
+    if (commands.length >= MAX_PALETTE_THREADS) break;
+  }
+  return commands;
 }
 
 function safeSessionSegment(value: string): string {
@@ -141,6 +155,7 @@ export default function CommandPalette() {
   const summary = useCodingAgentWorkspace((s) => s.summary);
   const reviews = useCodingAgentWorkspace((s) => s.reviews);
   const selectReview = useCodingAgentWorkspace((s) => s.selectReview);
+  const loadThreadSnapshot = useCodingAgentWorkspace((s) => s.loadThreadSnapshot);
   const api = useConnection((s) => s.api);
   const platformHost = useConnection((s) => s.platformHost);
 
@@ -162,6 +177,7 @@ export default function CommandPalette() {
   const cards = activeSlug ? (cardsByProject[activeSlug] ?? []) : [];
   const otherTabs = tabs.filter((t) => t.id !== activeTabId);
   const reviewCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteReviewCommands(reviews?.items ?? EMPTY_REVIEWS) : EMPTY_REVIEWS;
+  const threadCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? paletteThreadCommands(summary) : [];
   const setupCommands = CODING_AGENTS_DESKTOP_WORKSPACE ? providerSetupCommands(summary?.providers ?? EMPTY_PROVIDERS) : [];
 
   const run = (fn: () => void) => {
@@ -298,6 +314,24 @@ export default function CommandPalette() {
                     run(() => {
                       openTab({ kind: "agents", title: "Agents" });
                       void selectReview(review.id);
+                    })
+                  }
+                />
+              ))}
+            </Command.Group>
+          ) : null}
+
+          {threadCommands.length > 0 ? (
+            <Command.Group heading="Threads" style={{ color: "var(--text-tertiary)" }}>
+              {threadCommands.map((thread) => (
+                <PaletteItem
+                  key={thread.id}
+                  icon={<GitBranch size={14} />}
+                  label={`Open thread ${thread.title}`}
+                  onSelect={() =>
+                    run(() => {
+                      openTab({ kind: "agents", title: "Agents" });
+                      void loadThreadSnapshot(thread.id);
                     })
                   }
                 />
