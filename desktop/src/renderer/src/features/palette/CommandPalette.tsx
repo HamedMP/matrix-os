@@ -7,7 +7,7 @@ import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
 import { useShellSessions } from "../../stores/shell-sessions";
-import { useTabs } from "../../stores/tabs";
+import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 import { useUi } from "../../stores/ui";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
@@ -271,7 +271,7 @@ export default function CommandPalette() {
                 run(() => {
                   if (CODING_AGENTS_DESKTOP_WORKSPACE) {
                     if (canRequestAgentComposerFocus(summary)) requestComposerFocus();
-                    openTab({ kind: "agents", title: "Agents" });
+                    openTab(AGENTS_WORKSPACE_TAB_SPEC);
                     return;
                   }
                   setComposerOpen(true);
@@ -279,7 +279,7 @@ export default function CommandPalette() {
               }
             />
             {CODING_AGENTS_DESKTOP_WORKSPACE ? (
-              <PaletteItem icon={<Bot size={14} />} label="Open Agents" onSelect={() => run(() => openTab({ kind: "agents", title: "Agents" }))} />
+              <PaletteItem icon={<Bot size={14} />} label="Open Agents" onSelect={() => run(() => openTab(AGENTS_WORKSPACE_TAB_SPEC))} />
             ) : null}
             {setupCommands.map((setup) => (
               <PaletteItem
@@ -332,7 +332,7 @@ export default function CommandPalette() {
                   label={`Open review PR #${review.pullRequestNumber}`}
                   onSelect={() =>
                     run(() => {
-                      openTab({ kind: "agents", title: "Agents" });
+                      openTab(AGENTS_WORKSPACE_TAB_SPEC);
                       void selectReview(review.id);
                     })
                   }
@@ -350,7 +350,7 @@ export default function CommandPalette() {
                   label={`Open thread ${thread.title}`}
                   onSelect={() =>
                     run(() => {
-                      openTab({ kind: "agents", title: "Agents" });
+                      openTab(AGENTS_WORKSPACE_TAB_SPEC);
                       void loadThreadSnapshot(thread.id);
                     })
                   }

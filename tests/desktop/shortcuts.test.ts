@@ -3,11 +3,14 @@ import {
   handleCycleTabShortcut,
   handleCloseTabShortcut,
   handleMenuNavigate,
+  handleNewAgentRunShortcut,
   handleTerminalFocusShortcut,
   isTerminalFocusShortcut,
 } from "@desktop/renderer/src/features/mission-control/shortcuts";
 import { useBoard } from "@desktop/renderer/src/stores/board";
+import { useCodingAgentWorkspace } from "@desktop/renderer/src/stores/coding-agent-workspace";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
+import { useUi } from "@desktop/renderer/src/stores/ui";
 
 describe("handleCloseTabShortcut", () => {
   it("prevents the native window close even when the active tab is not closable", () => {
@@ -143,6 +146,79 @@ describe("handleTerminalFocusShortcut", () => {
   });
 });
 
+describe("handleNewAgentRunShortcut", () => {
+  beforeEach(() => {
+    useCodingAgentWorkspace.setState({
+      summary: null,
+      composerFocusRequestId: 0,
+    });
+    useTabs.setState({ tabs: [], activeTabId: null });
+    useUi.setState({
+      composerOpen: false,
+      paletteOpen: false,
+    });
+  });
+
+  it("routes desktop new-run shortcuts to the coding-agent workspace composer", () => {
+    const preventDefault = vi.fn();
+    const focusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
+
+    handleNewAgentRunShortcut(
+      { preventDefault },
+      useUi.getState(),
+      useTabs.getState(),
+      useCodingAgentWorkspace.getState(),
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(useTabs.getState().tabs[0]).toMatchObject({
+      kind: "agents",
+      slug: "agents",
+      title: "Agents",
+    });
+    expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId + 1);
+    expect(useUi.getState().composerOpen).toBe(false);
+  });
+
+  it("focuses the existing Agents workspace tab on repeated new-run shortcuts", () => {
+    const preventDefault = vi.fn();
+
+    handleNewAgentRunShortcut(
+      { preventDefault },
+      useUi.getState(),
+      useTabs.getState(),
+      useCodingAgentWorkspace.getState(),
+    );
+    const firstTabId = useTabs.getState().activeTabId;
+    handleNewAgentRunShortcut(
+      { preventDefault },
+      useUi.getState(),
+      useTabs.getState(),
+      useCodingAgentWorkspace.getState(),
+    );
+
+    expect(useTabs.getState().tabs).toHaveLength(1);
+    expect(useTabs.getState().activeTabId).toBe(firstTabId);
+  });
+
+  it("keeps the legacy composer open when desktop workspace routing is disabled", () => {
+    const preventDefault = vi.fn();
+    useUi.setState({ composerOpen: true });
+
+    handleNewAgentRunShortcut(
+      { preventDefault },
+      useUi.getState(),
+      useTabs.getState(),
+      useCodingAgentWorkspace.getState(),
+      { desktopWorkspaceEnabled: false },
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().composerOpen).toBe(true);
+    expect(useTabs.getState().tabs).toEqual([]);
+  });
+});
+
 describe("handleMenuNavigate", () => {
   beforeEach(() => {
     useBoard.setState({
@@ -174,6 +250,7 @@ describe("handleMenuNavigate", () => {
 
     expect(useTabs.getState().tabs[0]).toMatchObject({
       kind: "agents",
+      slug: "agents",
       title: "Agents",
     });
   });

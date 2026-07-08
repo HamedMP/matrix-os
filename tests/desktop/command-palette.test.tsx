@@ -150,6 +150,7 @@ describe("CommandPalette", () => {
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "agents",
+      slug: "agents",
       title: "Agents",
     });
   });
@@ -165,6 +166,7 @@ describe("CommandPalette", () => {
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "agents",
+      slug: "agents",
       title: "Agents",
     });
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId + 1);
@@ -183,6 +185,7 @@ describe("CommandPalette", () => {
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "agents",
+      slug: "agents",
       title: "Agents",
     });
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(focusRequestId);
@@ -223,6 +226,7 @@ describe("CommandPalette", () => {
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "agents",
+      slug: "agents",
       title: "Agents",
     });
     expect(selectReview).toHaveBeenCalledWith("rev_desktop_1");
@@ -251,6 +255,7 @@ describe("CommandPalette", () => {
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "agents",
+      slug: "agents",
       title: "Agents",
     });
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
@@ -303,6 +308,7 @@ describe("CommandPalette", () => {
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "agents",
+      slug: "agents",
       title: "Agents",
     });
     expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_duplicate");
@@ -356,6 +362,7 @@ describe("CommandPalette", () => {
 
     expect(openTab).toHaveBeenCalledWith({
       kind: "agents",
+      slug: "agents",
       title: "Agents",
     });
     expect(selectReview).toHaveBeenCalledWith("rev_recent");

@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import { onEvent } from "../../lib/operator";
+import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { useBoard } from "../../stores/board";
-import { useTabs } from "../../stores/tabs";
+import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
+import { AGENTS_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 
 interface CloseTabShortcutState {
@@ -20,6 +22,20 @@ interface TerminalFocusShortcutState {
   tabs: Array<{ id: string; kind: string }>;
   focusTab(id: string): void;
   openTab(spec: { kind: "terminals"; title: string }): void;
+}
+
+interface NewAgentRunShortcutUiState {
+  composerOpen: boolean;
+  setComposerOpen(open: boolean): void;
+}
+
+interface NewAgentRunShortcutTabsState {
+  openTab(spec: typeof AGENTS_WORKSPACE_TAB_SPEC): void;
+}
+
+interface NewAgentRunShortcutWorkspaceState {
+  summary: { capabilities: Array<{ id: string; enabled: boolean }> } | null;
+  requestComposerFocus(): void;
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -41,7 +57,7 @@ export function handleMenuNavigate(kind: string): void {
     return;
   }
   if (kind === "agents") {
-    useTabs.getState().openTab({ kind: "agents", title: "Agents" });
+    useTabs.getState().openTab(AGENTS_WORKSPACE_TAB_SPEC);
     return;
   }
   if (kind === "terminals") {
@@ -108,6 +124,28 @@ export function handleTerminalFocusShortcut(
   tabs.openTab({ kind: "terminals", title: "Terminal" });
 }
 
+function canRequestAgentComposerFocus(summary: NewAgentRunShortcutWorkspaceState["summary"]): boolean {
+  if (!summary) return true;
+  return summary.capabilities.some((capability) => capability.id === "codingAgentsThreadCreate" && capability.enabled);
+}
+
+export function handleNewAgentRunShortcut(
+  event: Pick<KeyboardEvent, "preventDefault">,
+  ui: NewAgentRunShortcutUiState,
+  tabs: NewAgentRunShortcutTabsState,
+  workspace: NewAgentRunShortcutWorkspaceState,
+  options: { desktopWorkspaceEnabled?: boolean } = {},
+): void {
+  event.preventDefault();
+  const desktopWorkspaceEnabled = options.desktopWorkspaceEnabled ?? CODING_AGENTS_DESKTOP_WORKSPACE;
+  if (desktopWorkspaceEnabled) {
+    if (canRequestAgentComposerFocus(workspace.summary)) workspace.requestComposerFocus();
+    tabs.openTab(AGENTS_WORKSPACE_TAB_SPEC);
+    return;
+  }
+  ui.setComposerOpen(true);
+}
+
 export function useGlobalShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -122,8 +160,7 @@ export function useGlobalShortcuts(): void {
         return;
       }
       if (meta && key === "j") {
-        e.preventDefault();
-        ui.setComposerOpen(!ui.composerOpen);
+        handleNewAgentRunShortcut(e, ui, tabs, useCodingAgentWorkspace.getState());
         return;
       }
       if (meta && key === "p") {
@@ -173,7 +210,9 @@ export function useGlobalShortcuts(): void {
     const offAction = onEvent("menu:action", ({ action }) => {
       const ui = useUi.getState();
       if (action === "new-task") ui.setCreateTaskOpen(true);
-      if (action === "new-thread") ui.setComposerOpen(true);
+      if (action === "new-thread") {
+        handleNewAgentRunShortcut({ preventDefault: () => undefined }, ui, useTabs.getState(), useCodingAgentWorkspace.getState());
+      }
       if (action === "palette") ui.setPaletteOpen(!ui.paletteOpen);
       if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
     });
