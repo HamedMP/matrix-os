@@ -17,8 +17,10 @@ type TerminalOpenError = "Terminal session unavailable. Try again.";
 type ThreadActionError =
   | "Approval could not be sent. Try again."
   | "Input could not be sent. Try again.";
+type AssistantTimelineEvent = Extract<AgentThreadEvent, { type: "assistant.text.delta" | "assistant.text.completed" }>;
 type ToolTimelineEvent = Extract<AgentThreadEvent, { type: "tool.started" | "tool.output" | "tool.completed" }>;
 type TimelineItem =
+  | { kind: "assistant"; key: string; events: AssistantTimelineEvent[]; order: number }
   | { kind: "event"; event: AgentThreadEvent; order: number }
   | { kind: "tool"; key: string; events: ToolTimelineEvent[]; order: number };
 
@@ -371,7 +373,9 @@ export default function AgentThreadRoute() {
       {events.items.length > 0 ? (
         <View style={styles.timeline}>
           <Text style={styles.sectionTitle}>Activity timeline</Text>
-          {timelineItems.map((item) => item.kind === "tool" ? (
+          {timelineItems.map((item) => item.kind === "assistant" ? (
+            <AssistantTimelineItem key={item.key} events={item.events} />
+          ) : item.kind === "tool" ? (
             <ToolTimelineItem key={item.key} events={item.events} />
           ) : (
             <ThreadEventItem
@@ -395,9 +399,25 @@ export default function AgentThreadRoute() {
 }
 
 function createTimelineItems(events: AgentThreadEvent[]): TimelineItem[] {
+  const assistantGroups = new Map<string, AssistantTimelineEvent[]>();
   const toolGroups = new Map<string, ToolTimelineEvent[]>();
   const items: TimelineItem[] = [];
   for (const [order, event] of events.entries()) {
+    if (isAssistantTimelineEvent(event)) {
+      const group = assistantGroups.get(event.messageId);
+      if (group) {
+        group.push(event);
+        const item = items.find((candidate) => candidate.kind === "assistant" && candidate.key === `assistant:${event.messageId}`);
+        if (item && (event.type === "assistant.text.completed" || !group.some((assistantEvent) => assistantEvent.type === "assistant.text.completed"))) {
+          item.order = order;
+        }
+        continue;
+      }
+      const eventsForMessage = [event];
+      assistantGroups.set(event.messageId, eventsForMessage);
+      items.push({ kind: "assistant", key: `assistant:${event.messageId}`, events: eventsForMessage, order });
+      continue;
+    }
     if (isToolTimelineEvent(event)) {
       const group = toolGroups.get(event.toolCallId);
       if (group) {
@@ -416,6 +436,10 @@ function createTimelineItems(events: AgentThreadEvent[]): TimelineItem[] {
     items.push({ kind: "event", event, order });
   }
   return items.sort((a, b) => a.order - b.order);
+}
+
+function isAssistantTimelineEvent(event: AgentThreadEvent): event is AssistantTimelineEvent {
+  return event.type === "assistant.text.delta" || event.type === "assistant.text.completed";
 }
 
 function isToolTimelineEvent(event: AgentThreadEvent): event is ToolTimelineEvent {
@@ -646,6 +670,36 @@ function ThreadEventItem({
       </View>
     </View>
   );
+}
+
+function AssistantTimelineItem({ events }: { events: AssistantTimelineEvent[] }) {
+  const { theme } = useUnistyles();
+  const copy = describeAssistantTimeline(events);
+  return (
+    <View style={styles.eventRow}>
+      <View style={styles.eventIcon}>
+        <Ionicons name={copy.icon} size={14} color={theme.colors.moss} />
+      </View>
+      <View style={styles.eventText}>
+        <Text style={styles.eventTitle}>{copy.title}</Text>
+        <Text selectable style={styles.eventDetail}>{copy.detail}</Text>
+      </View>
+    </View>
+  );
+}
+
+function describeAssistantTimeline(events: AssistantTimelineEvent[]): { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string } {
+  const deltas = events.filter((event): event is Extract<AssistantTimelineEvent, { type: "assistant.text.delta" }> => event.type === "assistant.text.delta");
+  const completed = events.some((event) => event.type === "assistant.text.completed");
+  if (deltas.length === 1 && !completed) {
+    return { icon: "chatbubble-ellipses-outline", title: "Assistant update", detail: "Text update received" };
+  }
+  const updates = `${deltas.length} ${deltas.length === 1 ? "text update" : "text updates"} received`;
+  return {
+    icon: completed ? "checkmark-circle-outline" : "chatbubble-ellipses-outline",
+    title: completed ? "Assistant message" : "Assistant updates",
+    detail: completed ? `${updates}, complete` : updates,
+  };
 }
 
 function ToolTimelineItem({ events }: { events: ToolTimelineEvent[] }) {
