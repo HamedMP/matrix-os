@@ -9,8 +9,12 @@ import {
   AgentThreadSnapshotSchema,
   CreateAgentThreadRequestSchema,
   CursorSchema,
+  FileBrowseRequestSchema,
+  FileBrowseResponseSchema,
   FileReadRequestSchema,
   FileReadResponseSchema,
+  FileSearchRequestSchema,
+  FileSearchResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ReviewSnapshotSchema,
@@ -128,6 +132,14 @@ export const INVOKE_CHANNELS = {
   "runtime:get-review-snapshot": {
     request: z.object({ reviewId: ReviewIdSchema }).strict(),
     response: ReviewSnapshotSchema,
+  },
+  "runtime:browse-files": {
+    request: FileBrowseRequestSchema,
+    response: FileBrowseResponseSchema,
+  },
+  "runtime:search-files": {
+    request: FileSearchRequestSchema,
+    response: FileSearchResponseSchema,
   },
   "runtime:get-file-content": {
     request: FileReadRequestSchema,

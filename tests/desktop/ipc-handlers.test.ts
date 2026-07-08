@@ -39,6 +39,8 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     fetchRuntimeSummary: vi.fn(),
     fetchReviewSummaries: vi.fn(),
     fetchReviewSnapshot: vi.fn(),
+    fetchFileBrowse: vi.fn(),
+    fetchFileSearch: vi.fn(),
     fetchFileContent: vi.fn(),
     saveFileContent: vi.fn(),
     prepareSourceCommit: vi.fn(),
@@ -276,6 +278,112 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-review-snapshot", { reviewId: "rev_desktop_1" })).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-review-snapshot", { reviewId: "rev_desktop_1" })).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("returns coding agent file browse entries through a strict trusted-core IPC channel", async () => {
+    const browse = {
+      directory: {
+        path: "packages",
+        kind: "directory",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      entries: {
+        items: [
+          {
+            path: "packages/gateway",
+            kind: "directory",
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    const fetchFileBrowse = vi.fn().mockResolvedValue(browse);
+    const harness = makeHarness({ fetchFileBrowse } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:browse-files", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    })).resolves.toEqual(browse);
+    expect(fetchFileBrowse).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    });
+  });
+
+  it("maps file browse failures to a generic IPC error", async () => {
+    const fetchFileBrowse = vi
+      .fn()
+      .mockRejectedValue(new Error("EACCES: /home/matrix/home/projects/private token"));
+    const harness = makeHarness({ fetchFileBrowse } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:browse-files", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+    })).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:browse-files", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+    })).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("returns coding agent file search results through a strict trusted-core IPC channel", async () => {
+    const search = {
+      matches: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            kind: "file",
+            sizeBytes: 37,
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+    const fetchFileSearch = vi.fn().mockResolvedValue(search);
+    const harness = makeHarness({ fetchFileSearch } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:search-files", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      query: "routes",
+      limit: 20,
+    })).resolves.toEqual(search);
+    expect(fetchFileSearch).toHaveBeenCalledWith({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      query: "routes",
+      limit: 20,
+    });
+  });
+
+  it("maps file search failures to a generic IPC error", async () => {
+    const fetchFileSearch = vi
+      .fn()
+      .mockRejectedValue(new Error("search failed in /home/matrix/home/projects/private token"));
+    const harness = makeHarness({ fetchFileSearch } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:search-files", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "routes",
+    })).rejects.toThrow("internal error");
+    await expect(harness.invoke("runtime:search-files", {
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "routes",
+    })).rejects.not.toThrow("/home/matrix");
   });
 
   it("returns coding agent file content through a strict trusted-core IPC channel", async () => {

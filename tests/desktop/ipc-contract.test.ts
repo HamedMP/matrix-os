@@ -17,6 +17,8 @@ describe("IPC contract", () => {
       "runtime:submit-approval-decision",
       "runtime:submit-input-answer",
       "runtime:get-thread-snapshot",
+      "runtime:browse-files",
+      "runtime:search-files",
       "runtime:get-file-content",
       "runtime:save-file-content",
       "runtime:prepare-source-commit",
@@ -383,6 +385,91 @@ describe("IPC contract", () => {
     expect(schema.safeParse({
       ...valid,
       metadata: { ...valid.metadata, path: "/home/matrix/private/secret.ts" },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:browse-files requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:browse-files"].request;
+    const schema = INVOKE_CHANNELS["runtime:browse-files"].response;
+    const valid = {
+      directory: {
+        path: "packages",
+        kind: "directory",
+        updatedAt: "2026-07-06T00:03:00.000Z",
+      },
+      entries: {
+        items: [
+          {
+            path: "packages/gateway",
+            kind: "directory",
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    }).success).toBe(true);
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+    }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      entries: {
+        ...valid.entries,
+        items: [{ ...valid.entries.items[0], path: "/home/matrix/private" }],
+      },
+    }).success).toBe(false);
+  });
+
+  it("validates runtime:search-files requests and rejects credential leakage shapes", () => {
+    const requestSchema = INVOKE_CHANNELS["runtime:search-files"].request;
+    const schema = INVOKE_CHANNELS["runtime:search-files"].response;
+    const valid = {
+      matches: {
+        items: [
+          {
+            path: "packages/gateway/src/coding-agents/routes.ts",
+            kind: "file",
+            sizeBytes: 37,
+            updatedAt: "2026-07-06T00:03:00.000Z",
+          },
+        ],
+        hasMore: false,
+        limit: 20,
+      },
+    };
+
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      query: "routes",
+      limit: 20,
+    }).success).toBe(true);
+    expect(requestSchema.safeParse({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      query: "routes",
+    }).success).toBe(false);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, accessToken: "secret" }).success).toBe(false);
+    expect(schema.safeParse({
+      matches: {
+        ...valid.matches,
+        items: [{ ...valid.matches.items[0], path: "/home/matrix/private/secret.ts" }],
+      },
     }).success).toBe(false);
   });
 

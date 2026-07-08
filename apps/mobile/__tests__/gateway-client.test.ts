@@ -70,6 +70,50 @@ function fileReadPayload() {
   };
 }
 
+function fileBrowsePayload() {
+  return {
+    directory: {
+      path: "packages",
+      kind: "directory",
+      updatedAt: "2026-07-06T00:03:00.000Z",
+    },
+    entries: {
+      items: [
+        {
+          path: "packages/gateway",
+          kind: "directory",
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+        {
+          path: "packages/README.md",
+          kind: "file",
+          sizeBytes: 24,
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+  };
+}
+
+function fileSearchPayload() {
+  return {
+    matches: {
+      items: [
+        {
+          path: "packages/gateway/src/coding-agents/routes.ts",
+          kind: "file",
+          sizeBytes: 37,
+          updatedAt: "2026-07-06T00:03:00.000Z",
+        },
+      ],
+      hasMore: false,
+      limit: 20,
+    },
+  };
+}
+
 function fileWritePayload() {
   return {
     metadata: {
@@ -871,6 +915,112 @@ describe("GatewayClient", () => {
     );
 
     fetchMock.mockRestore();
+  });
+
+  it("fetches coding agent file browse entries with the existing auth header", async () => {
+    const payload = fileBrowsePayload();
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(payload));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    })).resolves.toEqual({
+      ok: true,
+      browse: payload,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/files/browse?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages&limit=20",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("fetches coding agent file search results with the existing auth header", async () => {
+    const payload = fileSearchPayload();
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse(payload));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      query: "routes",
+      limit: 20,
+    })).resolves.toEqual({
+      ok: true,
+      search: payload,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/api/coding-agents/files/search?projectId=matrix-os&worktreeId=wt_abc123def456&path=packages&query=routes&limit=20",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+        }),
+        signal: expect.any(Object),
+      }),
+    );
+
+    fetchMock.mockRestore();
+  });
+
+  it("returns safe mobile file browse and search errors for invalid inputs or payloads", async () => {
+    const browseFetch = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      ...fileBrowsePayload(),
+      entries: {
+        ...fileBrowsePayload().entries,
+        items: [{ path: "/home/matrix/private/secret.ts", kind: "file" }],
+      },
+    }));
+
+    const client = new GatewayClient("http://localhost:4000", "token");
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      limit: 20,
+    })).resolves.toEqual({ ok: false, error: "File list unavailable" });
+    await expect(client.browseCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "packages",
+      limit: 20,
+    })).resolves.toEqual({ ok: false, error: "File list unavailable" });
+
+    browseFetch.mockRestore();
+
+    const searchFetch = jest.spyOn(global, "fetch").mockResolvedValueOnce(jsonResponse({
+      matches: {
+        items: [{ path: "/home/matrix/private/secret.ts", kind: "file" }],
+        hasMore: false,
+        limit: 20,
+      },
+    }));
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      path: "../system/config.json",
+      query: "routes",
+      limit: 20,
+    })).resolves.toEqual({ ok: false, error: "File search unavailable" });
+    await expect(client.searchCodingAgentFiles({
+      projectId: "matrix-os",
+      worktreeId: "wt_abc123def456",
+      query: "routes",
+      limit: 20,
+    })).resolves.toEqual({ ok: false, error: "File search unavailable" });
+
+    searchFetch.mockRestore();
   });
 
   it("returns a safe mobile file content error for invalid gateway payloads", async () => {
