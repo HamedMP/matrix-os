@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
+import { ReviewIdSchema, type CodingAgentNotificationPreferences, type CodingAgentNotificationPreferencesUpdate, type FileBrowseResponse, type FileReadRequest, type FileReadResponse, type FileSearchResponse, type FileWriteRequest, type PreviewSessionSummary, type ReviewSnapshot, type ReviewSummary, type RuntimeSummary, type SourceControlCreatePullRequestRequest, type SourceControlCreatePullRequestResponse, type SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
@@ -173,6 +173,12 @@ function nextSourceCommitRequestId(): string {
 
 function capabilityEnabled(summary: RuntimeSummary, id: string): boolean {
   return summary.capabilities.some((capability) => capability.id === id && capability.enabled);
+}
+
+function routedReviewIdParam(value: string | string[] | undefined): string | null {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  const parsed = ReviewIdSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
 }
 
 function timestampMs(value: string): number {
@@ -362,6 +368,8 @@ function ReviewDiffLines({ lines }: { lines: ReviewSnapshotLine[] }) {
 export default function AgentsScreen() {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const routeParams = useLocalSearchParams<{ reviewId?: string | string[] }>();
+  const routedReviewId = routedReviewIdParam(routeParams.reviewId);
   const { client, connectionState } = useGateway();
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
   const [notificationPreferencesState, setNotificationPreferencesState] = useState<NotificationPreferencesState>(INITIAL_NOTIFICATION_PREFERENCES_STATE);
@@ -379,6 +387,7 @@ export default function AgentsScreen() {
   const notificationPreferenceSaveActiveRef = useRef(false);
   const pendingNotificationPreferencePatchRef = useRef<Partial<CodingAgentNotificationPreferences["attentionPush"]>>({});
   const reviewSnapshotGeneration = useRef(0);
+  const routedReviewIdRef = useRef<string | null>(null);
   const fileContentGeneration = useRef(0);
   const selectedReviewIdRef = useRef<string | null>(null);
   const selectedFileReferenceRef = useRef<FileReference | null>(null);
@@ -442,6 +451,14 @@ export default function AgentsScreen() {
       error: "Review details unavailable",
     });
   }, [clearFileContent, client]);
+
+  useEffect(() => {
+    if (!client || !routedReviewId) return;
+    if (state.status !== "ready" || !capabilityEnabled(state.summary, "codingAgentsReview")) return;
+    if (routedReviewIdRef.current === routedReviewId) return;
+    routedReviewIdRef.current = routedReviewId;
+    void loadReviewSnapshot(routedReviewId);
+  }, [client, loadReviewSnapshot, routedReviewId, state]);
 
   const loadFileContent = useCallback(async (request: FileReadRequest) => {
     selectedFileReferenceRef.current = request;

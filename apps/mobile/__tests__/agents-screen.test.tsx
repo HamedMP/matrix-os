@@ -12,8 +12,10 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 }));
 
 const mockRouterPush = jest.fn();
+const mockSearchParams: { reviewId?: string | string[] } = {};
 
 jest.mock("expo-router", () => ({
+  useLocalSearchParams: () => mockSearchParams,
   useRouter: () => ({
     push: mockRouterPush,
   }),
@@ -550,6 +552,7 @@ function deferred<T>() {
 describe("AgentsScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete mockSearchParams.reviewId;
     jest.mocked(AsyncStorage.getItem).mockResolvedValue(null);
     jest.mocked(AsyncStorage.setItem).mockResolvedValue();
   });
@@ -1034,6 +1037,68 @@ describe("AgentsScreen", () => {
     expect(await screen.findByText("packages/gateway/src/coding-agents/routes.ts")).toBeTruthy();
     expect(screen.getByText("Validate ownership before returning snapshots.")).toBeTruthy();
     expect(screen.getByText("Diff content is not available yet. Showing bounded review findings.")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("hydrates a routed review snapshot from a bounded review id", async () => {
+    mockSearchParams.reviewId = "rev_mobile_2";
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsWithTwoWorktreesFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn(({ reviewId }: { reviewId: string }) => Promise.resolve({
+        ok: true,
+        snapshot: reviewId === "rev_mobile_2" ? reviewSnapshotForSecondWorktreeFixture() : reviewSnapshotFixture(),
+      })),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(await screen.findByText("Review")).toBeTruthy();
+    await waitFor(() => {
+      expect(client.getCodingAgentReviewSnapshot).toHaveBeenCalledWith({ reviewId: "rev_mobile_2" });
+    });
+    expect(await screen.findByText("PR #760 review details")).toBeTruthy();
+    expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("ignores invalid routed review ids", async () => {
+    mockSearchParams.reviewId = "/home/matrix/token_sk_live_123";
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentReviewSnapshot: jest.fn().mockResolvedValue({
+        ok: true,
+        snapshot: reviewSnapshotFixture(),
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    expect(await screen.findByText("Review")).toBeTruthy();
+    await waitFor(() => {
+      expect(client.getCodingAgentReviews).toHaveBeenCalledWith();
+    });
+    expect(client.getCodingAgentReviewSnapshot).not.toHaveBeenCalled();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
   });
 

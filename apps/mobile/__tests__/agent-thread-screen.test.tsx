@@ -1080,6 +1080,13 @@ describe("AgentThreadRoute", () => {
     expect(screen.getByText("Updated file")).toBeTruthy();
     expect(screen.getByText("Review ready")).toBeTruthy();
     expect(screen.getByText("2 files changed, +12 -4, partial")).toBeTruthy();
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText("Open review from thread"));
+    });
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: "/agents",
+      params: { reviewId: "rev_mobile_1" },
+    });
     expect(screen.getByText("Thread needs attention")).toBeTruthy();
     expect(screen.getByText("Refresh the thread or check the runtime.")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|leaked|\.ssh|id_rsa/i)).toBeNull();
