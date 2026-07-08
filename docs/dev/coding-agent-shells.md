@@ -91,6 +91,8 @@ Client UI must disable duplicate submission while a decision is in flight and re
 
 Coding-agent attention notifications are gateway-owned. Thread events for approval requests, user-input requests, and failed runs may emit safe push-channel payloads with generic copy plus a bounded thread id. The bridge deduplicates owner/thread/kind notifications in a capped TTL registry and checks owner notification preferences before sending. Missing preferences default to enabled; corrupt or unavailable preferences must fail closed for push delivery and log details server-side only.
 
+Desktop and mobile may expose controls for approval, input, and failed-run attention push preferences. Desktop must route reads and writes through trusted main-process IPC so bearer credentials stay out of the renderer. Mobile must use the authenticated gateway client and keep preference state transient; do not persist notification preference payloads in AsyncStorage. Preference updates are full replacements validated with `CodingAgentNotificationPreferencesUpdateSchema`.
+
 ## Client State Rules
 
 Desktop renderer stores may cache selected IDs, panel state, and validated summaries. They must not cache credentials, raw provider errors, terminal output, file contents beyond the current read-only render state, or unbounded transcripts.

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, RefreshControl, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import type { FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
+import type { CodingAgentNotificationPreferences, CodingAgentNotificationPreferencesUpdate, FileBrowseResponse, FileReadRequest, FileReadResponse, FileSearchResponse, FileWriteRequest, PreviewSessionSummary, ReviewSnapshot, ReviewSummary, RuntimeSummary, SourceControlCreatePullRequestRequest, SourceControlCreatePullRequestResponse, SourceControlPrepareCommitRequest } from "@matrix-os/contracts";
 import { useGateway } from "@/app/_layout";
 import { CODING_AGENTS_MOBILE_WORKSPACE } from "@/lib/feature-flags";
 
@@ -21,6 +21,13 @@ type ReviewState =
   | { status: "error"; reviews: null; error: "Review state unavailable" };
 
 const INITIAL_REVIEW_STATE: ReviewState = { status: "idle", reviews: null, error: null };
+
+type NotificationPreferencesState =
+  | { status: "idle"; preferences: null; error: null }
+  | { status: "loading"; preferences: null; error: null }
+  | { status: "ready"; preferences: CodingAgentNotificationPreferences; error: null }
+  | { status: "saving"; preferences: CodingAgentNotificationPreferences; error: null }
+  | { status: "error"; preferences: CodingAgentNotificationPreferences | null; error: "Notification settings unavailable" | "Notification settings could not be saved. Try again." };
 
 type ReviewSnapshotState =
   | { status: "idle"; selectedReviewId: null; snapshot: null; error: null }
@@ -86,6 +93,19 @@ const INITIAL_REVIEW_SNAPSHOT_STATE: ReviewSnapshotState = {
   snapshot: null,
   error: null,
 };
+
+const INITIAL_NOTIFICATION_PREFERENCES_STATE: NotificationPreferencesState = {
+  status: "idle",
+  preferences: null,
+  error: null,
+};
+
+type NotificationPreferenceKey = keyof CodingAgentNotificationPreferences["attentionPush"];
+const NOTIFICATION_TOGGLES: { key: NotificationPreferenceKey; label: string; detail: string }[] = [
+  { key: "approval", label: "Approval alerts", detail: "Approval-required runs" },
+  { key: "input", label: "Input request alerts", detail: "Runs waiting for a response" },
+  { key: "failed", label: "Failed run alerts", detail: "Runs that need recovery" },
+];
 
 const INITIAL_FILE_CONTENT_STATE: FileContentState = {
   status: "idle",
@@ -216,6 +236,7 @@ export default function AgentsScreen() {
   const router = useRouter();
   const { client } = useGateway();
   const [state, setState] = useState<ScreenState>(INITIAL_STATE);
+  const [notificationPreferencesState, setNotificationPreferencesState] = useState<NotificationPreferencesState>(INITIAL_NOTIFICATION_PREFERENCES_STATE);
   const [reviewState, setReviewState] = useState<ReviewState>(INITIAL_REVIEW_STATE);
   const [reviewSnapshotState, setReviewSnapshotState] = useState<ReviewSnapshotState>(INITIAL_REVIEW_SNAPSHOT_STATE);
   const [fileContentState, setFileContentState] = useState<FileContentState>(INITIAL_FILE_CONTENT_STATE);
@@ -224,6 +245,10 @@ export default function AgentsScreen() {
   const [sourcePullRequestState, setSourcePullRequestState] = useState<SourcePullRequestState>(INITIAL_SOURCE_PULL_REQUEST_STATE);
   const [refreshing, setRefreshing] = useState(false);
   const requestGeneration = useRef(0);
+  const notificationPreferencesGeneration = useRef(0);
+  const notificationPreferencesRef = useRef<CodingAgentNotificationPreferences | null>(null);
+  const notificationPreferenceSaveActiveRef = useRef(false);
+  const pendingNotificationPreferencePatchRef = useRef<Partial<CodingAgentNotificationPreferences["attentionPush"]>>({});
   const reviewSnapshotGeneration = useRef(0);
   const fileContentGeneration = useRef(0);
   const selectedReviewIdRef = useRef<string | null>(null);
@@ -484,19 +509,138 @@ export default function AgentsScreen() {
     clearReviewSnapshot();
   }, [clearReviewSnapshot, client, loadReviewSnapshot]);
 
+  const loadNotificationPreferences = useCallback(async () => {
+    const generation = notificationPreferencesGeneration.current + 1;
+    notificationPreferencesGeneration.current = generation;
+    if (!client || typeof client.getCodingAgentNotificationPreferences !== "function") {
+      setNotificationPreferencesState({
+        status: "error",
+        preferences: null,
+        error: "Notification settings unavailable",
+      });
+      return;
+    }
+    setNotificationPreferencesState((current) => (
+      current.preferences ? current : { status: "loading", preferences: null, error: null }
+    ));
+    const result = await client.getCodingAgentNotificationPreferences();
+    if (generation !== notificationPreferencesGeneration.current) return;
+    if (result.ok) {
+      notificationPreferencesRef.current = result.preferences;
+      setNotificationPreferencesState({ status: "ready", preferences: result.preferences, error: null });
+      return;
+    }
+    setNotificationPreferencesState({
+      status: "error",
+      preferences: null,
+      error: "Notification settings unavailable",
+    });
+  }, [client]);
+
+  const flushNotificationPreferenceUpdates = useCallback(async () => {
+    if (
+      !client
+      || typeof client.getCodingAgentNotificationPreferences !== "function"
+      || typeof client.updateCodingAgentNotificationPreferences !== "function"
+      || notificationPreferenceSaveActiveRef.current
+    ) {
+      return;
+    }
+    notificationPreferenceSaveActiveRef.current = true;
+    try {
+      while (Object.keys(pendingNotificationPreferencePatchRef.current).length > 0) {
+        const patch = pendingNotificationPreferencePatchRef.current;
+        pendingNotificationPreferencePatchRef.current = {};
+        const previous = notificationPreferencesRef.current;
+        if (!previous) {
+          pendingNotificationPreferencePatchRef.current = {};
+          setNotificationPreferencesState({
+            status: "error",
+            preferences: null,
+            error: "Notification settings could not be saved. Try again.",
+          });
+          return;
+        }
+        setNotificationPreferencesState({
+          status: "saving",
+          preferences: previous,
+          error: null,
+        });
+        const latest = await client.getCodingAgentNotificationPreferences();
+        if (!latest.ok) {
+          setNotificationPreferencesState({
+            status: "error",
+            preferences: previous,
+            error: "Notification settings could not be saved. Try again.",
+          });
+          return;
+        }
+        const request: CodingAgentNotificationPreferencesUpdate = {
+          attentionPush: {
+            ...latest.preferences.attentionPush,
+            ...patch,
+          },
+        };
+        const result = await client.updateCodingAgentNotificationPreferences(request);
+        if (!result.ok) {
+          setNotificationPreferencesState({
+            status: "error",
+            preferences: previous,
+            error: "Notification settings could not be saved. Try again.",
+          });
+          return;
+        }
+        notificationPreferencesRef.current = result.preferences;
+        setNotificationPreferencesState({ status: "ready", preferences: result.preferences, error: null });
+      }
+    } finally {
+      notificationPreferenceSaveActiveRef.current = false;
+    }
+    if (Object.keys(pendingNotificationPreferencePatchRef.current).length > 0) {
+      void flushNotificationPreferenceUpdates();
+    }
+  }, [client]);
+
+  const updateNotificationPreferences = useCallback((
+    request: { attentionPush: Partial<CodingAgentNotificationPreferences["attentionPush"]> },
+  ) => {
+    const previous = notificationPreferencesRef.current;
+    if (!previous) return;
+    pendingNotificationPreferencePatchRef.current = {
+      ...pendingNotificationPreferencePatchRef.current,
+      ...request.attentionPush,
+    };
+    const optimistic = {
+      ...previous,
+      attentionPush: {
+        ...previous.attentionPush,
+        ...request.attentionPush,
+      },
+    };
+    notificationPreferencesRef.current = optimistic;
+    setNotificationPreferencesState({
+      status: "saving",
+      preferences: optimistic,
+      error: null,
+    });
+    void flushNotificationPreferenceUpdates();
+  }, [flushNotificationPreferenceUpdates]);
+
   useEffect(() => {
     setState((current) => (current.summary ? current : INITIAL_STATE));
     void loadSummary();
-  }, [loadSummary]);
+    void loadNotificationPreferences();
+  }, [loadNotificationPreferences, loadSummary]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await loadSummary();
+      await loadNotificationPreferences();
     } finally {
       setRefreshing(false);
     }
-  }, [loadSummary]);
+  }, [loadNotificationPreferences, loadSummary]);
 
   const selectReview = useCallback((reviewId: string) => {
     void loadReviewSnapshot(reviewId);
@@ -554,6 +698,42 @@ export default function AgentsScreen() {
           </Pressable>
         ) : null}
       </View>
+
+      <Section title="Notifications" count={NOTIFICATION_TOGGLES.length}>
+        <View style={styles.notificationPanel}>
+          {NOTIFICATION_TOGGLES.map((item) => {
+            const preferences = notificationPreferencesState.preferences;
+            const disabled = notificationPreferencesState.status === "loading"
+              || notificationPreferencesState.status === "saving"
+              || !preferences;
+            return (
+              <View key={item.key} style={styles.notificationRow}>
+                <View style={styles.notificationText}>
+                  <Text style={styles.rowTitle}>{item.label}</Text>
+                  <Text style={styles.rowSubtitle}>{item.detail}</Text>
+                </View>
+                <Switch
+                  accessibilityLabel={item.label}
+                  accessibilityRole="switch"
+                  value={Boolean(preferences?.attentionPush[item.key])}
+                  disabled={disabled}
+                  onValueChange={(value) => {
+                    if (!preferences) return;
+                    void updateNotificationPreferences({
+                      attentionPush: { [item.key]: value },
+                    });
+                  }}
+                  trackColor={{ false: theme.colors.border, true: theme.colors.moss }}
+                  thumbColor={theme.colors.background}
+                />
+              </View>
+            );
+          })}
+          {notificationPreferencesState.error ? (
+            <Text style={styles.notificationError}>{notificationPreferencesState.error}</Text>
+          ) : null}
+        </View>
+      </Section>
 
       <Section title="Providers" count={summary.providers.length}>
         {summary.providers.length === 0 ? <EmptyText>No providers are ready.</EmptyText> : null}
@@ -1542,6 +1722,35 @@ const styles = StyleSheet.create((theme, rt) => ({
     fontFamily: theme.fonts.sansSemiBold,
     fontSize: 13,
     color: theme.colors.background,
+  },
+  notificationPanel: {
+    borderRadius: 14,
+    borderCurve: "continuous" as const,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    overflow: "hidden",
+  },
+  notificationRow: {
+    minHeight: 56,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderBottomWidth: 1,
+    borderColor: theme.colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing.md,
+  },
+  notificationText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  notificationError: {
+    padding: theme.spacing.sm,
+    fontFamily: theme.fonts.sans,
+    fontSize: 12,
+    color: theme.colors.destructive,
   },
   title: {
     fontFamily: theme.fonts.displaySemiBold,

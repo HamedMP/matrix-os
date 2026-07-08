@@ -1,5 +1,7 @@
 import {
   AgentThreadSnapshotSchema,
+  CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
   FileBrowseRequestSchema,
   FileBrowseResponseSchema,
   FileReadRequestSchema,
@@ -16,6 +18,8 @@ import {
   SourceControlPrepareCommitRequestSchema,
   SourceControlPrepareCommitResponseSchema,
   type ApprovalDecisionRequest,
+  type CodingAgentNotificationPreferences,
+  type CodingAgentNotificationPreferencesUpdate,
   type CreateAgentThreadRequest,
   type FileBrowseRequest,
   type FileBrowseResponse,
@@ -35,10 +39,11 @@ import {
   type UserInputAnswerRequest,
   boundedListSchema,
 } from "@matrix-os/contracts";
-import type { z } from "zod/v4";
+import { z } from "zod/v4";
 import type { AuthService } from "../auth/auth-service";
 
 const RUNTIME_SUMMARY_TIMEOUT_MS = 10_000;
+const NOTIFICATION_PREFERENCES_TIMEOUT_MS = 10_000;
 const REVIEW_SUMMARY_TIMEOUT_MS = 10_000;
 const REVIEW_SNAPSHOT_TIMEOUT_MS = 10_000;
 const FILE_BROWSE_TIMEOUT_MS = 10_000;
@@ -55,6 +60,9 @@ type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 const ReviewSummaryListSchema = boundedListSchema(ReviewSummarySchema, 50);
 type ReviewSummaryList = z.infer<typeof ReviewSummaryListSchema>;
+const NotificationPreferencesResponseSchema = z.object({
+  preferences: CodingAgentNotificationPreferencesSchema,
+}).strict();
 
 function buildSummaryUrl(origin: string, runtimeSlot: string): string {
   const url = new URL("/api/coding-agents/summary", origin);
@@ -93,6 +101,74 @@ export async function fetchCodingAgentRuntimeSummary(
     throw new Error("runtime summary unavailable");
   }
   return parsed.data;
+}
+
+export async function fetchCodingAgentNotificationPreferences(
+  auth: AuthService,
+  fetchFn: FetchFn = fetch,
+): Promise<CodingAgentNotificationPreferences> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("notification settings unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/notification-preferences", auth.getGatewayOrigin());
+  const res = await fetchFn(url.toString(), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(NOTIFICATION_PREFERENCES_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("notification settings unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = NotificationPreferencesResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("notification settings unavailable");
+  }
+  return parsed.data.preferences;
+}
+
+export async function updateCodingAgentNotificationPreferences(
+  auth: AuthService,
+  request: CodingAgentNotificationPreferencesUpdate,
+  fetchFn: FetchFn = fetch,
+): Promise<CodingAgentNotificationPreferences> {
+  const token = auth.getToken();
+  if (!token) {
+    throw new Error("notification settings unavailable");
+  }
+
+  const parsedRequest = CodingAgentNotificationPreferencesUpdateSchema.safeParse(request);
+  if (!parsedRequest.success) {
+    throw new Error("notification settings unavailable");
+  }
+
+  const url = new URL("/api/coding-agents/notification-preferences", auth.getGatewayOrigin());
+  const res = await fetchFn(url.toString(), {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(parsedRequest.data),
+    signal: AbortSignal.timeout(NOTIFICATION_PREFERENCES_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error("notification settings unavailable");
+  }
+
+  const body = await res.json();
+  const parsed = NotificationPreferencesResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error("notification settings unavailable");
+  }
+  return parsed.data.preferences;
 }
 
 export async function createCodingAgentThread(

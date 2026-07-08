@@ -482,6 +482,51 @@ describe("AgentsScreen", () => {
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
   });
 
+  it("hydrates and updates notification preferences", async () => {
+    const client = {
+      getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({
+        ok: true,
+        summary: summaryFixture(),
+      }),
+      getCodingAgentReviews: jest.fn().mockResolvedValue({
+        ok: true,
+        reviews: reviewsFixture(),
+      }),
+      getCodingAgentNotificationPreferences: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          preferences: { attentionPush: { approval: true, input: true, failed: false } },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          preferences: { attentionPush: { approval: false, input: true, failed: false } },
+        }),
+      updateCodingAgentNotificationPreferences: jest.fn().mockResolvedValue({
+        ok: true,
+        preferences: { attentionPush: { approval: false, input: true, failed: true } },
+      }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    render(<AgentsScreen />);
+
+    const failedSwitch = await screen.findByRole("switch", { name: "Failed run alerts" });
+    expect(failedSwitch.props.value).toBe(false);
+
+    fireEvent(failedSwitch, "valueChange", true);
+
+    await waitFor(() => {
+      expect(client.updateCodingAgentNotificationPreferences).toHaveBeenCalledWith({
+        attentionPush: { approval: false, input: true, failed: true },
+      });
+    });
+    expect((await screen.findByRole("switch", { name: "Failed run alerts" })).props.value).toBe(true);
+    expect(screen.queryByText(/token|bearer|secret|\/home\/matrix/i)).toBeNull();
+  });
+
   it("opens a mobile thread detail route from active threads", async () => {
     const client = {
       getCodingAgentRuntimeSummary: jest.fn().mockResolvedValue({

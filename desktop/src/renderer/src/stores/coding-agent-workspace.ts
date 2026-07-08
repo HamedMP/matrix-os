@@ -3,6 +3,8 @@ import {
   type ApprovalDecisionRequest,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
+  type CodingAgentNotificationPreferences,
+  type CodingAgentNotificationPreferencesUpdate,
   type FileReadRequest,
   type FileReadResponse,
   type FileWriteRequest,
@@ -24,10 +26,12 @@ type FileReadStatus = "idle" | "loading" | "ready" | "error";
 type FileWriteStatus = "idle" | "saving" | "saved" | "error";
 type SourceCommitStatus = "idle" | "preparing" | "prepared" | "error";
 type SourcePullRequestStatus = "idle" | "creating" | "ready" | "error";
+type NotificationPreferencesStatus = "idle" | "loading" | "ready" | "saving" | "error";
 type CreateStatus = "idle" | "submitting";
 type ActionStatus = "idle" | "submitting";
 type AgentThreadSnapshotEvent = AgentThreadSnapshot["events"]["items"][number];
 type FileReference = Pick<FileReadRequest, "projectId" | "worktreeId" | "path">;
+type AttentionPushPreferences = CodingAgentNotificationPreferences["attentionPush"];
 type ReviewSummaryList = {
   items: ReviewSummary[];
   hasMore: boolean;
@@ -39,6 +43,9 @@ interface CodingAgentWorkspaceState {
   status: WorkspaceStatus;
   summary: RuntimeSummary | null;
   error: string | null;
+  notificationPreferencesStatus: NotificationPreferencesStatus;
+  notificationPreferences: CodingAgentNotificationPreferences | null;
+  notificationPreferencesError: string | null;
   reviewsStatus: ReviewStatus;
   reviews: ReviewSummaryList | null;
   reviewsError: string | null;
@@ -76,6 +83,8 @@ interface CodingAgentWorkspaceState {
   inputActionErrors: Record<string, string>;
   activeThreadId: string | null;
   refresh: () => Promise<void>;
+  loadNotificationPreferences: () => Promise<void>;
+  updateNotificationPreferences: (request: { attentionPush: Partial<AttentionPushPreferences> }) => Promise<void>;
   selectReview: (reviewId: string) => Promise<void>;
   loadFileContent: (request: FileReadRequest) => Promise<void>;
   saveFileContent: (request: Omit<FileWriteRequest, "encoding" | "clientRequestId">) => Promise<void>;
@@ -102,6 +111,9 @@ let reviewsSeq = 0;
 let reviewSnapshotSeq = 0;
 let fileReadSeq = 0;
 let threadSnapshotSeq = 0;
+let notificationPreferencesSeq = 0;
+let notificationPreferencesSaveActive = false;
+let pendingNotificationPreferencePatch: Partial<AttentionPushPreferences> = {};
 let createRequestSeq = 0;
 let actionRequestSeq = 0;
 
@@ -233,10 +245,57 @@ export function codingAgentInputActionKey(threadId: string, inputRequestId: stri
   return `${threadId}:${inputRequestId}`;
 }
 
+async function flushNotificationPreferenceUpdates(): Promise<void> {
+  if (notificationPreferencesSaveActive) return;
+  notificationPreferencesSaveActive = true;
+  try {
+    while (Object.keys(pendingNotificationPreferencePatch).length > 0) {
+      const patch = pendingNotificationPreferencePatch;
+      pendingNotificationPreferencePatch = {};
+      const previous = useCodingAgentWorkspace.getState().notificationPreferences;
+      useCodingAgentWorkspace.setState({
+        notificationPreferencesStatus: "saving",
+        notificationPreferencesError: null,
+      });
+      try {
+        const latest = await invoke("runtime:get-notification-preferences", {});
+        const preferences = await invoke("runtime:update-notification-preferences", {
+          attentionPush: {
+            ...latest.attentionPush,
+            ...patch,
+          },
+        } satisfies CodingAgentNotificationPreferencesUpdate);
+        useCodingAgentWorkspace.setState({
+          notificationPreferencesStatus: "ready",
+          notificationPreferences: preferences,
+          notificationPreferencesError: null,
+        });
+      } catch {
+        console.warn("[coding-agents] notification preferences update failed");
+        pendingNotificationPreferencePatch = {};
+        useCodingAgentWorkspace.setState({
+          notificationPreferencesStatus: "error",
+          notificationPreferences: previous,
+          notificationPreferencesError: "Notification settings could not be saved. Try again.",
+        });
+        return;
+      }
+    }
+  } finally {
+    notificationPreferencesSaveActive = false;
+  }
+  if (Object.keys(pendingNotificationPreferencePatch).length > 0) {
+    await flushNotificationPreferenceUpdates();
+  }
+}
+
 export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set) => ({
   status: "idle",
   summary: null,
   error: null,
+  notificationPreferencesStatus: "idle",
+  notificationPreferences: null,
+  notificationPreferencesError: null,
   reviewsStatus: "idle",
   reviews: null,
   reviewsError: null,
@@ -351,6 +410,51 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         ...clearThreadSnapshotState(),
       });
     }
+  },
+
+  loadNotificationPreferences: async () => {
+    const seq = ++notificationPreferencesSeq;
+    set((state) => ({
+      notificationPreferencesStatus: state.notificationPreferences ? "ready" : "loading",
+      notificationPreferencesError: null,
+    }));
+    try {
+      const preferences = await invoke("runtime:get-notification-preferences", {});
+      if (seq !== notificationPreferencesSeq) return;
+      set({
+        notificationPreferencesStatus: "ready",
+        notificationPreferences: preferences,
+        notificationPreferencesError: null,
+      });
+    } catch {
+      console.warn("[coding-agents] notification preferences refresh failed");
+      if (seq !== notificationPreferencesSeq) return;
+      set({
+        notificationPreferencesStatus: "error",
+        notificationPreferencesError: "Notification settings unavailable",
+      });
+    }
+  },
+
+  updateNotificationPreferences: async (request) => {
+    pendingNotificationPreferencePatch = {
+      ...pendingNotificationPreferencePatch,
+      ...request.attentionPush,
+    };
+    set((state) => ({
+      notificationPreferencesStatus: "saving",
+      notificationPreferences: state.notificationPreferences
+        ? {
+            ...state.notificationPreferences,
+            attentionPush: {
+              ...state.notificationPreferences.attentionPush,
+              ...request.attentionPush,
+            },
+          }
+        : state.notificationPreferences,
+      notificationPreferencesError: null,
+    }));
+    await flushNotificationPreferenceUpdates();
   },
 
   selectReview: async (reviewId) => {

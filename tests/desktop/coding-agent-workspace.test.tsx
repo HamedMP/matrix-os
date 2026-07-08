@@ -673,6 +673,9 @@ describe("AgentWorkspace", () => {
       invoke: vi.fn((channel: string) => {
         if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
         if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+        if (channel === "runtime:get-notification-preferences") {
+          return Promise.resolve({ attentionPush: { approval: true, input: true, failed: true } });
+        }
         if (channel === "runtime:get-review-snapshot") return Promise.resolve(reviewSnapshotFixture());
         if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
         return Promise.reject(new Error("unexpected channel"));
@@ -695,6 +698,39 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("Fix settings route")).toBeTruthy();
     expect(screen.getByText("matrix-abc1234")).toBeTruthy();
     expect(window.operator.invoke).toHaveBeenCalledWith("runtime:get-summary", {});
+  });
+
+  it("hydrates and updates notification preferences through trusted IPC", async () => {
+    let preferenceReads = 0;
+    window.operator.invoke = vi.fn((channel: string, payload?: unknown) => {
+      if (channel === "runtime:get-summary") return Promise.resolve(summaryFixture());
+      if (channel === "runtime:get-reviews") return Promise.resolve(reviewsFixture());
+      if (channel === "runtime:get-notification-preferences") {
+        preferenceReads += 1;
+        return Promise.resolve(preferenceReads === 1
+          ? { attentionPush: { approval: true, input: true, failed: false } }
+          : { attentionPush: { approval: false, input: true, failed: false } });
+      }
+      if (channel === "runtime:update-notification-preferences") {
+        return Promise.resolve({ attentionPush: { approval: false, input: true, failed: true } });
+      }
+      return Promise.reject(new Error(`unexpected channel ${channel}`));
+    });
+
+    render(<AgentWorkspace />);
+
+    const failedToggle = await screen.findByRole("checkbox", { name: "Failed run alerts" });
+    expect((failedToggle as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(failedToggle);
+
+    await waitFor(() => {
+      expect(window.operator.invoke).toHaveBeenCalledWith("runtime:update-notification-preferences", {
+        attentionPush: { approval: false, input: true, failed: true },
+      });
+    });
+    expect((await screen.findByRole("checkbox", { name: "Failed run alerts" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByText(/token|bearer|secret|\/home\/matrix/i)).toBeNull();
   });
 
   it("marks the active coding-agent thread as current in the thread list", async () => {
