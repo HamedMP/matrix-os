@@ -21,6 +21,7 @@ import {
   submitCodingAgentInputAnswer,
   updateCodingAgentNotificationPreferences,
 } from "./coding-agents/runtime-summary-client";
+import { createCodingAgentThreadEventStreamer } from "./coding-agents/thread-event-stream";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
@@ -37,6 +38,7 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
+let closeCodingAgentThreadEvents: (() => void) | null = null;
 
 function isMatrixOsDeepLink(value: string): boolean {
   try {
@@ -217,6 +219,11 @@ if (!gotLock) {
           }).show();
         },
       });
+      const codingAgentThreadEvents = createCodingAgentThreadEventStreamer({
+        auth,
+        emit: sendEvent,
+      });
+      closeCodingAgentThreadEvents = () => codingAgentThreadEvents.closeAll();
 
       registerIpcHandlers(ipcMain, {
         auth,
@@ -240,6 +247,7 @@ if (!gotLock) {
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
+          codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
         },
         getUpdateStatus: () => updater.status(),
@@ -255,6 +263,8 @@ if (!gotLock) {
         prepareSourceCommit: (request) => prepareCodingAgentSourceCommit(auth, request),
         createSourcePullRequest: (request) => createCodingAgentSourcePullRequest(auth, request),
         fetchThreadSnapshot: (options) => fetchCodingAgentThreadSnapshot(auth, options),
+        subscribeThreadEvents: (request) => codingAgentThreadEvents.subscribe(request),
+        unsubscribeThreadEvents: ({ threadId }) => codingAgentThreadEvents.unsubscribe(threadId),
         submitApprovalDecision: ({ threadId, approvalId, decision, clientRequestId, correlationId }) =>
           submitCodingAgentApprovalDecision(auth, {
             threadId,
@@ -293,6 +303,7 @@ if (!gotLock) {
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
+          codingAgentThreadEvents.closeAll();
           mainWindow = null;
         });
       };
@@ -320,6 +331,8 @@ if (!gotLock) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;
     }
+    closeCodingAgentThreadEvents?.();
+    closeCodingAgentThreadEvents = null;
   });
 
   app.on("window-all-closed", () => {

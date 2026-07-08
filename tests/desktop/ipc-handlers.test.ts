@@ -46,6 +46,8 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     prepareSourceCommit: vi.fn(),
     createSourcePullRequest: vi.fn(),
     fetchThreadSnapshot: vi.fn(),
+    subscribeThreadEvents: vi.fn(),
+    unsubscribeThreadEvents: vi.fn(),
     submitApprovalDecision: vi.fn(),
     submitInputAnswer: vi.fn(),
     createAgentThread: vi.fn(),
@@ -642,6 +644,34 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("runtime:get-thread-snapshot", { threadId: "thread_desktop_1" })).rejects.toThrow("internal error");
     await expect(harness.invoke("runtime:get-thread-snapshot", { threadId: "thread_desktop_1" })).rejects.not.toThrow("/home/matrix");
+  });
+
+  it("subscribes and unsubscribes desktop thread streams through trusted-core IPC", async () => {
+    const subscribeThreadEvents = vi.fn().mockResolvedValue(undefined);
+    const unsubscribeThreadEvents = vi.fn();
+    const harness = makeHarness({
+      subscribeThreadEvents,
+      unsubscribeThreadEvents,
+    } as Partial<HandlerContext>);
+
+    await expect(harness.invoke("runtime:subscribe-thread-events", {
+      threadId: "thread_desktop_1",
+      cursor: "evt_approval_1",
+    })).resolves.toEqual({ ok: true });
+    await expect(harness.invoke("runtime:unsubscribe-thread-events", {
+      threadId: "thread_desktop_1",
+    })).resolves.toEqual({ ok: true });
+
+    expect(subscribeThreadEvents).toHaveBeenCalledWith({
+      threadId: "thread_desktop_1",
+      cursor: "evt_approval_1",
+    });
+    expect(unsubscribeThreadEvents).toHaveBeenCalledWith({
+      threadId: "thread_desktop_1",
+    });
+    await expect(harness.invoke("runtime:subscribe-thread-events", {
+      threadId: "../secret",
+    })).rejects.toThrow("invalid request");
   });
 
   it("submits approval decisions through trusted-core IPC without exposing credentials", async () => {

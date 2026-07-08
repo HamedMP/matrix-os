@@ -87,6 +87,12 @@ Approval and input requests are gateway-owned lifecycle events.
 
 Client UI must disable duplicate submission while a decision is in flight and recover by rehydrating the thread snapshot on failure. User-facing errors should be generic and recovery-oriented.
 
+Desktop thread streams are owned by the trusted main process. The renderer asks
+for `runtime:subscribe-thread-events`, receives only validated
+`runtime:thread-event` payloads, and never receives bearer credentials or WS
+tokens. Runtime switches and window shutdown must close active desktop stream
+subscriptions.
+
 ## Attention Notifications
 
 Coding-agent attention notifications are gateway-owned. Thread events for approval requests, user-input requests, and failed runs may emit safe push-channel payloads with generic copy plus a bounded thread id. The bridge deduplicates owner/thread/kind notifications in a capped TTL registry and checks owner notification preferences before sending. Missing preferences default to enabled; corrupt or unavailable preferences must fail closed for push delivery and log details server-side only.
@@ -171,9 +177,10 @@ Checks:
 
 1. Fetch the thread snapshot over HTTP first; the snapshot is the recovery path when a stream is stale.
 2. Confirm replay cursors are bounded and the reducer deduplicates by event id.
-3. Confirm the WebSocket authenticates before success, validates frame shapes, and reports a safe replay gap when history is no longer available.
-4. Confirm approval and input decisions use bounded `clientRequestId` values and are idempotent.
-5. If one shell stays stale, force a thread snapshot refresh before asking the user to repeat the action.
+3. Confirm desktop streams are opened by the main process through a short-lived WS token, while mobile streams use the authenticated gateway client.
+4. Confirm the WebSocket authenticates before success, validates frame shapes, and reports a safe replay gap when history is no longer available.
+5. Confirm approval and input decisions use bounded `clientRequestId` values and are idempotent.
+6. If one shell stays stale, force a thread snapshot refresh before asking the user to repeat the action.
 
 ### Terminal Binding Recovery
 

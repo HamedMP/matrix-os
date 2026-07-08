@@ -870,6 +870,114 @@ describe("AgentWorkspace", () => {
     expect(screen.getByText("approve")).toBeTruthy();
   });
 
+  it("subscribes through trusted IPC and applies live thread events", async () => {
+    const listeners: Record<string, (payload: unknown) => void> = {};
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      if (channel === "runtime:subscribe-thread-events") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    window.operator.on = vi.fn((channel: string, callback: (payload: unknown) => void) => {
+      listeners[channel] = callback;
+      return () => {
+        delete listeners[channel];
+      };
+    });
+
+    await useCodingAgentWorkspace.getState().loadThreadSnapshot("thread_alpha");
+
+    expect(window.operator.invoke).toHaveBeenCalledWith("runtime:subscribe-thread-events", {
+      threadId: "thread_alpha",
+      cursor: "evt_approval_desktop_1",
+    });
+
+    listeners["runtime:thread-event"]?.({
+      threadId: "thread_alpha",
+      event: {
+        type: "approval.resolved",
+        eventId: "evt_approval_desktop_stream",
+        threadId: "thread_alpha",
+        occurredAt: "2026-07-06T00:05:00.000Z",
+        approvalId: "appr_desktop_1",
+        decision: "approve",
+      },
+    });
+
+    const state = useCodingAgentWorkspace.getState();
+    expect(state.threadSnapshot?.thread.status).toBe("running");
+    expect(state.threadSnapshot?.thread.attention).toBe("none");
+    expect(state.threadSnapshot?.events.items.map((event) => event.eventId)).toContain("evt_approval_desktop_stream");
+  });
+
+  it("does not let older replayed stream events regress a newer thread snapshot", async () => {
+    const listeners: Record<string, (payload: unknown) => void> = {};
+    const completedSnapshot = {
+      ...threadSnapshotFixture(),
+      thread: {
+        ...threadSnapshotFixture().thread,
+        status: "completed",
+        attention: "completed",
+        updatedAt: "2026-07-06T00:08:00.000Z",
+      },
+    };
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(completedSnapshot);
+      if (channel === "runtime:subscribe-thread-events") return Promise.resolve({ ok: true });
+      return Promise.reject(new Error("unexpected channel"));
+    });
+    window.operator.on = vi.fn((channel: string, callback: (payload: unknown) => void) => {
+      listeners[channel] = callback;
+      return () => undefined;
+    });
+    await useCodingAgentWorkspace.getState().loadThreadSnapshot("thread_alpha");
+
+    listeners["runtime:thread-event"]?.({
+      threadId: "thread_alpha",
+      event: {
+        type: "approval.resolved",
+        eventId: "evt_approval_desktop_1",
+        threadId: "thread_alpha",
+        occurredAt: "2026-07-06T00:04:00.000Z",
+        approvalId: "appr_desktop_1",
+        decision: "approve",
+      },
+    });
+
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.status).toBe("completed");
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.attention).toBe("completed");
+  });
+
+  it("keeps live stream events that arrive while a snapshot load is settling", async () => {
+    const listeners: Record<string, (payload: unknown) => void> = {};
+    window.operator.on = vi.fn((channel: string, callback: (payload: unknown) => void) => {
+      listeners[channel] = callback;
+      return () => undefined;
+    });
+    window.operator.invoke = vi.fn((channel: string) => {
+      if (channel === "runtime:get-thread-snapshot") return Promise.resolve(threadSnapshotFixture());
+      if (channel === "runtime:subscribe-thread-events") {
+        listeners["runtime:thread-event"]?.({
+          threadId: "thread_alpha",
+          event: {
+            type: "thread.completed",
+            eventId: "evt_desktop_completed_live",
+            threadId: "thread_alpha",
+            occurredAt: "2026-07-06T00:07:00.000Z",
+            outcome: "completed",
+          },
+        });
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error("unexpected channel"));
+    });
+
+    await useCodingAgentWorkspace.getState().loadThreadSnapshot("thread_alpha");
+
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.thread.status).toBe("completed");
+    expect(useCodingAgentWorkspace.getState().threadSnapshot?.events.items.map((event) => event.eventId))
+      .toContain("evt_desktop_completed_live");
+  });
+
   it("removes a resolved approval thread from the desktop attention summary", async () => {
     window.operator.invoke = vi.fn((channel: string) => {
       if (channel === "runtime:submit-approval-decision") return Promise.resolve(resolvedAttentionApprovalSnapshotFixture());
