@@ -94,7 +94,7 @@ Mobile approval and input action handling lives in `apps/mobile/lib/agent-thread
 
 Desktop thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId`, plus `tool.started`, `tool.output`, and `tool.completed` events by bounded `toolCallId`, for readability. Grouped rows must render only safe counts, display metadata, output presence/truncation, and completion state; never render raw assistant text, raw tool output, message ids, or tool call ids.
 
-Mobile thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId` for readability. Grouped rows must render only update counts and completion state; never render raw assistant text or message ids.
+Mobile thread timelines may group `assistant.text.delta` and `assistant.text.completed` events by bounded `messageId` for readability. Grouped rows may render a capped assistant text preview only when the joined deltas pass local safe-display filtering; otherwise they must fall back to update counts and completion state. Never render message ids or sensitive-looking assistant text.
 
 Mobile thread timelines may group `tool.started`, `tool.output`, and `tool.completed` events by `toolCallId` for readability. Grouped rows must render only safe tool display metadata, coarse output presence/truncation, and completion outcome; never render raw tool output text.
 
