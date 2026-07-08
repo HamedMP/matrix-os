@@ -6,7 +6,7 @@
 
 ## Summary
 
-The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Full file content and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated diff and preview shell UI is not yet integrated.
+The stack currently has shared contracts, a gateway runtime summary read model, read-only desktop and mobile workspaces behind flags, thread create/replay/abort/event streaming, provider adapters, a workspace-backed provider, approval/input route handling, a read-only coding-agent review summary route/client contract, desktop/mobile read-only review summary panels, and a read-only coding-agent review snapshot route with bounded file metadata from safe owner worktree diffs plus findings fallback metadata. Desktop review details render changed-file counts and selectable hunk coordinate metadata. Full file content, raw diff lines, mobile hunk navigation, follow-up actions, and preview coding-agent surfaces are contract-only or existing workspace routes; dedicated preview shell UI is not yet integrated.
 
 Current source-of-truth boundaries:
 
@@ -206,6 +206,7 @@ Current behavior:
 
 - Read-only dashboard renders providers, active threads, and terminals.
 - When the runtime advertises `codingAgentsReview`, the dashboard fetches bounded review summaries through the trusted main-process IPC route and renders project, PR, round, status, and high-severity count.
+- Review snapshot details render bounded file paths, additions/deletions, partial markers, selectable hunk coordinate metadata, and safe finding summaries. They do not render raw diff lines or file contents.
 - Safe generic error state if the runtime summary is unavailable.
 - Safe generic review error state if review summaries are unavailable; review failures do not drop the runtime summary dashboard.
 - No provider credentials or bearer tokens are exposed to the renderer.
