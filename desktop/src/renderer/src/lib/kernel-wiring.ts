@@ -46,7 +46,10 @@ function legacyThreadAttentionCount(): number {
 }
 
 function codingAgentAttentionCount(): number {
-  return useCodingAgentWorkspace.getState().summary?.attentionThreads.items.length ?? 0;
+  const attentionThreads = useCodingAgentWorkspace.getState().summary?.attentionThreads;
+  return attentionThreads
+    ? attentionThreads.hasMore ? 999 : attentionThreads.items.length
+    : 0;
 }
 
 export function getKernelSocket(): KernelSocket | null {

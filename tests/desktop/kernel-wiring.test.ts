@@ -151,4 +151,24 @@ describe("kernel wiring", () => {
 
     cleanup();
   });
+
+  it("uses the desktop badge cap for truncated coding-agent attention summaries", () => {
+    const cleanup = wireKernel();
+    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
+    const summary = codingAgentAttentionSummaryFixture();
+
+    useCodingAgentWorkspace.setState({
+      summary: {
+        ...summary,
+        attentionThreads: {
+          ...summary.attentionThreads,
+          hasMore: true,
+        },
+      },
+    });
+
+    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 999 });
+
+    cleanup();
+  });
 });
