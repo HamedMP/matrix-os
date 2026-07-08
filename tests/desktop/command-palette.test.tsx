@@ -9,6 +9,7 @@ vi.mock("../../desktop/src/renderer/src/lib/feature-flags", () => ({
 }));
 
 import CommandPalette from "../../desktop/src/renderer/src/features/palette/CommandPalette";
+import type { AgentThreadSummary, RuntimeSummary } from "../../packages/contracts/src/index";
 import { useApps } from "../../desktop/src/renderer/src/stores/apps";
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -17,6 +18,47 @@ import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-se
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
+
+function threadSummary(id: string, overrides: Partial<AgentThreadSummary> = {}): AgentThreadSummary {
+  return {
+    id,
+    providerId: "codex",
+    title: `Thread ${id}`,
+    status: "running",
+    attention: "none",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function runtimeSummaryWithThreads(options: {
+  activeThreads?: AgentThreadSummary[];
+  attentionThreads?: AgentThreadSummary[];
+} = {}): RuntimeSummary {
+  return {
+    runtime: {
+      id: "runtime-local",
+      label: "Local Matrix",
+      status: "available",
+    },
+    serverTime: "2026-07-07T00:00:00.000Z",
+    capabilities: [{ id: "codingAgentsDesktopWorkspace", enabled: true }],
+    limits: {
+      maxPromptBytes: 16384,
+      maxAttachmentCount: 8,
+      maxTerminalInputBytes: 4096,
+      maxListItems: 50,
+    },
+    providers: [],
+    projects: { items: [], hasMore: false, limit: 20 },
+    activeThreads: { items: options.activeThreads ?? [], hasMore: false, limit: 20 },
+    attentionThreads: { items: options.attentionThreads ?? [], hasMore: false, limit: 20 },
+    terminalSessions: { items: [], hasMore: false, limit: 20 },
+    previewSessions: { items: [], hasMore: false, limit: 20 },
+    recentActivity: { items: [], hasMore: false, limit: 20 },
+  };
+}
 
 describe("CommandPalette", () => {
   beforeEach(() => {
@@ -43,6 +85,7 @@ describe("CommandPalette", () => {
       reviewsError: null,
       selectedReviewId: null,
       selectReview: vi.fn().mockResolvedValue(undefined),
+      loadThreadSnapshot: vi.fn().mockResolvedValue(undefined),
     });
     useConnection.setState({
       status: "signed-in",
@@ -148,6 +191,86 @@ describe("CommandPalette", () => {
       title: "Agents",
     });
     expect(selectReview).toHaveBeenCalledWith("rev_desktop_1");
+  });
+
+  it("opens loaded coding-agent threads from the command palette", async () => {
+    const openTab = vi.fn();
+    const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
+    useTabs.setState({ openTab });
+    useCodingAgentWorkspace.setState({
+      summary: runtimeSummaryWithThreads({
+        activeThreads: [
+          threadSummary("thread_alpha", {
+            title: "Fix settings route",
+            projectId: "matrix-os",
+            updatedAt: "2026-07-07T00:04:00.000Z",
+          }),
+        ],
+      }),
+      loadThreadSnapshot,
+    });
+
+    render(<CommandPalette />);
+
+    fireEvent.click(screen.getByText("Open thread Fix settings route"));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "agents",
+      title: "Agents",
+    });
+    expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_alpha");
+  });
+
+  it("dedupes attention and active thread commands before applying the palette cap", async () => {
+    const openTab = vi.fn();
+    const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
+    useTabs.setState({ openTab });
+    useCodingAgentWorkspace.setState({
+      summary: runtimeSummaryWithThreads({
+        attentionThreads: [
+          threadSummary("thread_attention", {
+            title: "Review deploy approval",
+            status: "waiting_for_approval",
+            attention: "approval_required",
+            updatedAt: "2026-07-07T00:06:00.000Z",
+          }),
+          threadSummary("thread_duplicate", {
+            title: "Shared urgent thread",
+            status: "waiting_for_input",
+            attention: "input_required",
+            updatedAt: "2026-07-07T00:05:00.000Z",
+          }),
+        ],
+        activeThreads: [
+          threadSummary("thread_duplicate", {
+            title: "Shared active thread",
+            updatedAt: "2026-07-07T00:04:00.000Z",
+          }),
+          ...Array.from({ length: 20 }, (_, index) =>
+            threadSummary(`thread_active_${index}`, {
+              title: `Active thread ${index}`,
+              updatedAt: `2026-07-07T00:${String(index).padStart(2, "0")}:00.000Z`,
+            }),
+          ),
+        ],
+      }),
+      loadThreadSnapshot,
+    });
+
+    render(<CommandPalette />);
+
+    expect(screen.getByText("Open thread Review deploy approval")).toBeTruthy();
+    expect(screen.getByText("Open thread Shared urgent thread")).toBeTruthy();
+    expect(screen.queryByText("Open thread Shared active thread")).toBeNull();
+    expect(screen.queryByText("Open thread Active thread 18")).toBeNull();
+
+    fireEvent.click(screen.getByText("Open thread Shared urgent thread"));
+
+    expect(openTab).toHaveBeenCalledWith({
+      kind: "agents",
+      title: "Agents",
+    });
+    expect(loadThreadSnapshot).toHaveBeenCalledWith("thread_duplicate");
   });
 
   it("prioritizes current reviews before slicing loaded command-palette reviews", async () => {
