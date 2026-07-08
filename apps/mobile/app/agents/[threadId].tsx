@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, AppState, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { AgentThreadEvent, AgentThreadSnapshot, AgentThreadSummary, ApprovalDecisionRequest } from "@matrix-os/contracts";
@@ -112,6 +112,17 @@ export default function AgentThreadRoute() {
     return () => {
       cancelled = true;
       clearTimeout(timer);
+    };
+  }, [loadSnapshot]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        void loadSnapshot();
+      }
+    });
+    return () => {
+      subscription?.remove?.();
     };
   }, [loadSnapshot]);
 

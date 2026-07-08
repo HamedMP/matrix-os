@@ -17,7 +17,7 @@ jest.mock("expo-router", () => ({
 
 import React from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Text } from "react-native";
+import { AppState, Text } from "react-native";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import AgentThreadRoute from "../app/agents/[threadId]";
 import { useGateway } from "@/app/_layout";
@@ -1029,6 +1029,47 @@ describe("AgentThreadRoute", () => {
     expect(screen.getByText("Repair mobile route")).toBeTruthy();
     expect(screen.getByText("2 events")).toBeTruthy();
     expect(screen.queryByText(/home\/matrix|token|secret/i)).toBeNull();
+  });
+
+  it("refreshes pending attention when the app resumes to the foreground", async () => {
+    let appStateChange: ((state: string) => void) | null = null;
+    const removeAppStateListener = jest.fn();
+    const addEventListenerSpy = jest.spyOn(AppState, "addEventListener").mockImplementation((event, listener) => {
+      if (event === "change") {
+        appStateChange = listener as (state: string) => void;
+      }
+      return { remove: removeAppStateListener };
+    });
+    const client = {
+      getCodingAgentThreadSnapshot: jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: approvalRequestedSnapshotFixture(),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          snapshot: approvalRequestedAndResolvedSnapshotFixture(),
+        }),
+    };
+    useGatewayMock.mockReturnValue(gatewayContext({
+      client: client as unknown as GatewayClient,
+      connectionState: "connected",
+    }));
+
+    const rendered = render(<AgentThreadRoute />);
+
+    expect(await screen.findByText("Approval needed")).toBeTruthy();
+    await act(async () => {
+      appStateChange?.("background");
+      appStateChange?.("active");
+    });
+
+    expect(await screen.findByText("Approval resolved")).toBeTruthy();
+    expect(client.getCodingAgentThreadSnapshot).toHaveBeenCalledTimes(2);
+
+    rendered.unmount();
+    expect(removeAppStateListener).toHaveBeenCalled();
+    addEventListenerSpy.mockRestore();
   });
 
   it("ignores stale thread refresh responses that resolve after newer snapshots", async () => {

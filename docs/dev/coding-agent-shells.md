@@ -87,6 +87,8 @@ Approval and input requests are gateway-owned lifecycle events.
 
 Client UI must disable duplicate submission while a decision is in flight and recover by rehydrating the thread snapshot on failure. User-facing errors should be generic and recovery-oriented.
 
+Mobile thread detail should rehydrate its current bounded thread snapshot when the app returns to the foreground so pending approval and input state reconciles with decisions made from other shells. This refresh must use the authenticated gateway client and must not persist approval payloads, input text, transcripts, or terminal output.
+
 Desktop thread streams are owned by the trusted main process. The renderer asks
 for `runtime:subscribe-thread-events`, receives only validated
 `runtime:thread-event` payloads, and never receives bearer credentials or WS
