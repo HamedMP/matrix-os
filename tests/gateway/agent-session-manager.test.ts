@@ -111,6 +111,7 @@ describe("agent-session-manager", () => {
       worktreeId,
       pr: 42,
       prompt: "fix tests; rm -rf /",
+      mode: "review",
       sandbox: { enabled: true },
     });
 
@@ -137,6 +138,7 @@ describe("agent-session-manager", () => {
     expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({
       agent: "codex",
       prompt: "fix tests; rm -rf /",
+      mode: "review",
       cwd: join(homePath, "projects", "repo", "worktrees", worktreeId),
     }));
     expect(zellijRuntime.start).toHaveBeenCalledWith(expect.objectContaining({

@@ -164,6 +164,60 @@ describe("agent-launcher", () => {
     expect(launch.args.at(-1)).toBe("--help");
   });
 
+  it("applies explicit Codex approval and read-only sandbox settings", () => {
+    const launch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "review only",
+      approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "read-only", writableRoots: ["/tmp/ignored"] },
+    });
+
+    expect(launch.args).toEqual([
+      "--ask-for-approval",
+      "on-request",
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "--",
+      "review only",
+    ]);
+  });
+
+  it("maps Codex review and plan modes into launch controls", () => {
+    const reviewLaunch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "check this PR",
+      mode: "review",
+      sandbox: { enabled: true, mode: "read-only" },
+    });
+
+    expect(reviewLaunch.args).toEqual([
+      "--ask-for-approval",
+      "never",
+      "exec",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "review",
+      "--",
+      "check this PR",
+    ]);
+
+    const planLaunch = buildAgentLaunch({
+      agent: "codex",
+      cwd: "/home/matrixos/home/projects/repo",
+      prompt: "add a dashboard",
+      mode: "plan",
+      sandbox: { enabled: true, mode: "workspace-write" },
+    });
+
+    expect(planLaunch.args.at(-1)).toContain("Plan the work first");
+    expect(planLaunch.args.at(-1)).toContain("add a dashboard");
+  });
+
   it("requires Codex sandbox metadata unless explicitly overridden", () => {
     expect(() => buildAgentLaunch({
       agent: "codex",

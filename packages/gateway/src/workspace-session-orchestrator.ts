@@ -38,6 +38,9 @@ export interface StartWorkspaceSessionRequest {
   kind: "shell" | "agent";
   agent?: SupportedAgent;
   prompt?: string;
+  mode?: "default" | "plan" | "review" | "full_access";
+  approvalPolicy?: "untrusted" | "on_request" | "on_failure" | "never";
+  sandboxMode?: "read_only" | "workspace_write" | "full_access";
   runtimePreference?: "zellij";
   adminSandboxOverride?: boolean;
 }
@@ -82,7 +85,18 @@ async function resolveCodexSandbox(options: {
       sandboxStatus: preflight.sandboxStatus,
     };
   }
-  return { ok: true, sandbox: preflight.sandbox };
+  if (options.request.sandboxMode === "read_only" && preflight.sandbox?.enabled) {
+    return { ok: true, sandbox: { ...preflight.sandbox, mode: "read-only", writableRoots: [] } };
+  }
+  if (options.request.sandboxMode === "full_access" && preflight.sandbox?.enabled) {
+    return { ok: true, sandbox: { ...preflight.sandbox, mode: "danger-full-access", writableRoots: [] } };
+  }
+  return {
+    ok: true,
+    sandbox: preflight.sandbox?.enabled
+      ? { ...preflight.sandbox, mode: "workspace-write" }
+      : preflight.sandbox,
+  };
 }
 
 export function createWorkspaceSessionOrchestrator(options: {

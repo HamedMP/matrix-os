@@ -37,6 +37,10 @@ import { createWorkspaceRoutes } from "./workspace-routes.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createAgentLauncher } from "./agent-launcher.js";
+import { createAgentSessionManager } from "./agent-session-manager.js";
+import { createAgentSandbox } from "./agent-sandbox.js";
+import { createWorktreeManager } from "./worktree-manager.js";
+import { createWorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
 import { createZellijRuntime } from "./zellij-runtime.js";
 import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
@@ -91,8 +95,9 @@ import { createAgentCredentialStatusService } from "./onboarding/agent-credentia
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
-import { createCodingAgentThreadStore, createFakeCodingAgentProvider } from "./coding-agents/thread-store.js";
+import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter } from "./coding-agents/thread-store.js";
 import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
+import { createWorkspaceCodingAgentProvider } from "./coding-agents/workspace-provider.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -464,10 +469,34 @@ export async function createGateway(config: GatewayConfig) {
       };
     },
   });
-  const codingAgentThreadStore = process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1"
+  const codingAgentProviders: CodingAgentProviderAdapter[] = [];
+  if (process.env.MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER === "1") {
+    const codingAgentWorktreeManager = createWorktreeManager({ homePath });
+    const codingAgentLauncher = createAgentLauncher({ cwd: homePath, runtimeHome: homePath });
+    const codingAgentSessionManager = createAgentSessionManager({
+      homePath,
+      worktreeManager: codingAgentWorktreeManager,
+      agentLauncher: codingAgentLauncher,
+      zellijRuntime: workspaceZellijRuntime,
+    });
+    const codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+      worktreeManager: codingAgentWorktreeManager,
+      agentSessionManager: codingAgentSessionManager,
+      agentSandbox: createAgentSandbox({ homePath }),
+      sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    });
+    codingAgentProviders.push(createWorkspaceCodingAgentProvider({
+      providerId: "codex",
+      agent: "codex",
+      runtime: codingAgentWorkspaceRuntime,
+    }));
+  } else if (process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1") {
+    codingAgentProviders.push(createFakeCodingAgentProvider({ providerId: "codex" }));
+  }
+  const codingAgentThreadStore = codingAgentProviders.length > 0
     ? createCodingAgentThreadStore({
       homePath,
-      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+      providers: codingAgentProviders,
     })
     : undefined;
   const codingAgentThreadStream = codingAgentThreadStore
