@@ -91,6 +91,7 @@ import { createAgentCredentialStatusService } from "./onboarding/agent-credentia
 import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
 import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
 import { createCodingAgentRoutes } from "./coding-agents/routes.js";
+import { createCodingAgentThreadStore, createFakeCodingAgentProvider } from "./coding-agents/thread-store.js";
 import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
 import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
@@ -462,10 +463,17 @@ export async function createGateway(config: GatewayConfig) {
       };
     },
   });
+  const codingAgentThreadStore = process.env.MATRIX_CODING_AGENTS_FAKE_PROVIDER === "1"
+    ? createCodingAgentThreadStore({
+      homePath,
+      providers: [createFakeCodingAgentProvider({ providerId: "codex" })],
+    })
+    : undefined;
   const codingAgentRuntimeSummaryService = createCodingAgentRuntimeSummaryService({
     homePath,
     terminalRegistry: zellijShellRegistry,
     agentCredentials: agentCredentialService,
+    threads: codingAgentThreadStore,
     terminalOwnerId: process.env.MATRIX_USER_ID,
   });
   const integrationCapabilityService = createIntegrationCapabilityService({
@@ -1482,7 +1490,10 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
-  app.route("/api/coding-agents", createCodingAgentRoutes({ service: codingAgentRuntimeSummaryService }));
+  app.route("/api/coding-agents", createCodingAgentRoutes({
+    service: codingAgentRuntimeSummaryService,
+    threads: codingAgentThreadStore,
+  }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
     audit: agentActionAuditService,
