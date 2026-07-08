@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import {
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
+  AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   CodingAgentNotificationPreferencesSchema,
   CodingAgentNotificationPreferencesUpdateSchema,
@@ -22,6 +23,7 @@ import {
   ReviewSnapshotSchema,
   ReviewSummarySchema,
   RuntimeSummarySchema,
+  SafeClientErrorSchema,
   SourceControlCreatePullRequestRequestSchema,
   SourceControlCreatePullRequestResponseSchema,
   SourceControlPrepareCommitRequestSchema,
@@ -171,6 +173,14 @@ export const INVOKE_CHANNELS = {
     request: z.object({ threadId: ThreadIdSchema }).strict(),
     response: AgentThreadSnapshotSchema,
   },
+  "runtime:subscribe-thread-events": {
+    request: z.object({ threadId: ThreadIdSchema, cursor: CursorSchema.optional() }).strict(),
+    response: Ok,
+  },
+  "runtime:unsubscribe-thread-events": {
+    request: z.object({ threadId: ThreadIdSchema }).strict(),
+    response: Ok,
+  },
   "runtime:submit-approval-decision": {
     request: z
       .object({
@@ -297,6 +307,14 @@ export const EVENT_CHANNELS = {
     })
     .strict(),
   "notification:clicked": z.object({ threadId: z.string().min(1).max(128) }).strict(),
+  "runtime:thread-event": z.object({
+    threadId: ThreadIdSchema,
+    event: AgentThreadEventSchema,
+  }).strict(),
+  "runtime:thread-stream-error": z.object({
+    threadId: ThreadIdSchema,
+    error: SafeClientErrorSchema,
+  }).strict(),
   "update:available": z.object({ version: z.string().max(64) }).strict(),
   "update:ready": z.object({ version: z.string().max(64) }).strict(),
   "window:focus-changed": z.object({ focused: z.boolean() }).strict(),

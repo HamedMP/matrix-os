@@ -1,5 +1,7 @@
 import {
   buildCreateAgentThreadRequestFromComposer,
+  type AgentThreadEvent,
+  type AgentThreadSummary,
   type ApprovalDecisionRequest,
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
@@ -18,7 +20,7 @@ import {
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
 import { create } from "zustand";
-import { invoke } from "../lib/operator";
+import { invoke, onEvent } from "../lib/operator";
 
 type WorkspaceStatus = "idle" | "loading" | "ready" | "error";
 type ReviewStatus = "idle" | "loading" | "ready" | "error";
@@ -116,6 +118,8 @@ let notificationPreferencesSaveActive = false;
 let pendingNotificationPreferencePatch: Partial<AttentionPushPreferences> = {};
 let createRequestSeq = 0;
 let actionRequestSeq = 0;
+let activeThreadEventSubscription: (() => void) | null = null;
+let activeThreadEventSubscriptionId: string | null = null;
 
 function clearReviewSelectionState() {
   reviewSnapshotSeq += 1;
@@ -237,6 +241,129 @@ function reconcileSummaryThread(
   };
 }
 
+function attentionForThreadStatus(status: AgentThreadSummary["status"]): AgentThreadSummary["attention"] {
+  switch (status) {
+    case "waiting_for_approval":
+      return "approval_required";
+    case "waiting_for_input":
+      return "input_required";
+    case "failed":
+      return "failed";
+    case "completed":
+      return "completed";
+    default:
+      return "none";
+  }
+}
+
+function reduceThreadSummaryEvent(
+  thread: AgentThreadSummary,
+  event: AgentThreadEvent,
+): AgentThreadSummary {
+  if (event.threadId !== thread.id) return thread;
+  const updatedAt = latestIsoTimestamp(thread.updatedAt, event.occurredAt);
+  switch (event.type) {
+    case "thread.status":
+      return { ...thread, status: event.status, attention: attentionForThreadStatus(event.status), updatedAt };
+    case "approval.requested":
+      return { ...thread, status: "waiting_for_approval", attention: "approval_required", updatedAt };
+    case "approval.resolved":
+      return { ...thread, status: "running", attention: "none", updatedAt };
+    case "user_input.requested":
+      return { ...thread, status: "waiting_for_input", attention: "input_required", updatedAt };
+    case "user_input.answered":
+      return { ...thread, status: "running", attention: "none", updatedAt };
+    case "thread.error":
+      return { ...thread, status: "failed", attention: "failed", updatedAt };
+    case "thread.completed":
+      return {
+        ...thread,
+        status: event.outcome,
+        attention: event.outcome === "completed" ? "completed" : event.outcome === "failed" ? "failed" : "none",
+        updatedAt,
+      };
+    default:
+      return { ...thread, updatedAt };
+  }
+}
+
+function latestIsoTimestamp(a: string, b: string): string {
+  return a.localeCompare(b) >= 0 ? a : b;
+}
+
+function mergeLiveThreadEvent(
+  current: AgentThreadSnapshot,
+  event: AgentThreadEvent,
+): AgentThreadSnapshot {
+  if (event.threadId !== current.thread.id) return current;
+  const existing = new Map(current.events.items.map((item) => [item.eventId, item]));
+  existing.set(event.eventId, event);
+  const limit = current.events.limit;
+  const items = Array.from(existing.values())
+    .sort(compareThreadEvents)
+    .slice(-limit);
+  return {
+    ...current,
+    thread: event.occurredAt.localeCompare(current.thread.updatedAt) >= 0
+      ? reduceThreadSummaryEvent(current.thread, event)
+      : current.thread,
+    events: {
+      ...current.events,
+      items,
+    },
+  };
+}
+
+function detachActiveThreadEventStream(): void {
+  const threadId = activeThreadEventSubscriptionId;
+  activeThreadEventSubscription?.();
+  activeThreadEventSubscription = null;
+  activeThreadEventSubscriptionId = null;
+  if (!threadId) return;
+  void invoke("runtime:unsubscribe-thread-events", { threadId }).catch(() => {
+    console.warn("[coding-agents] thread stream detach failed");
+  });
+}
+
+function attachActiveThreadEventStream(snapshot: AgentThreadSnapshot): void {
+  const threadId = snapshot.thread.id;
+  if (activeThreadEventSubscriptionId === threadId) return;
+  detachActiveThreadEventStream();
+  activeThreadEventSubscriptionId = threadId;
+  const detachEventListener = onEvent("runtime:thread-event", (payload) => {
+    if (payload.threadId !== activeThreadEventSubscriptionId) return;
+    useCodingAgentWorkspace.setState((state) => {
+      if (state.activeThreadId !== payload.threadId || state.threadSnapshot?.thread.id !== payload.threadId) return {};
+      const threadSnapshot = mergeLiveThreadEvent(state.threadSnapshot, payload.event);
+      return {
+        threadSnapshot,
+        threadSnapshotError: null,
+        summary: state.summary ? reconcileSummaryThread(state.summary, threadSnapshot.thread) : state.summary,
+      };
+    });
+  });
+  const detachErrorListener = onEvent("runtime:thread-stream-error", (payload) => {
+    if (payload.threadId !== activeThreadEventSubscriptionId) return;
+    void useCodingAgentWorkspace.getState().loadThreadSnapshot(payload.threadId);
+  });
+  activeThreadEventSubscription = () => {
+    detachEventListener();
+    detachErrorListener();
+  };
+  const cursor = snapshot.events.nextCursor ?? snapshot.events.items.at(-1)?.eventId;
+  void invoke("runtime:subscribe-thread-events", {
+    threadId,
+    ...(cursor ? { cursor } : {}),
+  }).catch(() => {
+    console.warn("[coding-agents] thread stream unavailable");
+    if (activeThreadEventSubscriptionId === threadId) {
+      activeThreadEventSubscription?.();
+      activeThreadEventSubscription = null;
+      activeThreadEventSubscriptionId = null;
+    }
+  });
+}
+
 export function codingAgentApprovalActionKey(threadId: string, approvalId: string): string {
   return `${threadId}:${approvalId}`;
 }
@@ -342,10 +469,14 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
     try {
       const summary = await invoke("runtime:get-summary", {});
       if (seq !== refreshSeq) return;
+      const activeThreadId = useCodingAgentWorkspace.getState().activeThreadId;
+      const activeThreadStillPresent = activeThreadId
+        ? summaryIncludesThread(summary, activeThreadId)
+        : true;
+      if (!activeThreadStillPresent) {
+        detachActiveThreadEventStream();
+      }
       set((state) => {
-        const activeThreadStillPresent = state.activeThreadId
-          ? summaryIncludesThread(summary, state.activeThreadId)
-          : true;
         return {
           status: "ready",
           summary,
@@ -679,6 +810,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
 
   loadThreadSnapshot: async (threadId) => {
     const seq = ++threadSnapshotSeq;
+    detachActiveThreadEventStream();
     set((state) => ({
       activeThreadId: threadId,
       threadSnapshotStatus: state.threadSnapshot?.thread.id === threadId ? "ready" : "loading",
@@ -694,9 +826,11 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         threadSnapshot: snapshot,
         threadSnapshotError: null,
       });
+      attachActiveThreadEventStream(snapshot);
     } catch {
       console.warn("[coding-agents] thread snapshot refresh failed");
       if (seq !== threadSnapshotSeq) return;
+      detachActiveThreadEventStream();
       set({
         activeThreadId: threadId,
         threadSnapshotStatus: "error",

@@ -14,6 +14,8 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "runtime:create-thread",
+      "runtime:subscribe-thread-events",
+      "runtime:unsubscribe-thread-events",
       "runtime:get-notification-preferences",
       "runtime:update-notification-preferences",
       "runtime:submit-approval-decision",
@@ -42,6 +44,52 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("validates trusted desktop thread stream IPC without credential fields", () => {
+    const subscribeSchema = INVOKE_CHANNELS["runtime:subscribe-thread-events"].request;
+    const unsubscribeSchema = INVOKE_CHANNELS["runtime:unsubscribe-thread-events"].request;
+    const eventSchema = EVENT_CHANNELS["runtime:thread-event"];
+    const errorSchema = EVENT_CHANNELS["runtime:thread-stream-error"];
+    const event = {
+      threadId: "thread_desktop_1",
+      event: {
+        type: "approval.resolved",
+        eventId: "evt_approval_2",
+        threadId: "thread_desktop_1",
+        occurredAt: "2026-07-06T00:02:00.000Z",
+        approvalId: "appr_desktop_1",
+        decision: "approve",
+      },
+    };
+
+    expect(subscribeSchema.safeParse({ threadId: "thread_desktop_1", cursor: "evt_approval_1" }).success).toBe(true);
+    expect(subscribeSchema.safeParse({ threadId: "../secret" }).success).toBe(false);
+    expect(subscribeSchema.safeParse({ threadId: "thread_desktop_1", bearerToken: "secret" }).success).toBe(false);
+    expect(unsubscribeSchema.safeParse({ threadId: "thread_desktop_1" }).success).toBe(true);
+    expect(unsubscribeSchema.safeParse({ threadId: "thread_desktop_1", accessToken: "secret" }).success).toBe(false);
+    expect(eventSchema.safeParse(event).success).toBe(true);
+    expect(eventSchema.safeParse({ ...event, token: "secret" }).success).toBe(false);
+    expect(eventSchema.safeParse({
+      ...event,
+      event: { ...event.event, providerSecret: "secret" },
+    }).success).toBe(false);
+    expect(errorSchema.safeParse({
+      threadId: "thread_desktop_1",
+      error: {
+        code: "stream_unavailable",
+        safeMessage: "Thread stream unavailable",
+        retryable: true,
+      },
+    }).success).toBe(true);
+    expect(errorSchema.safeParse({
+      threadId: "thread_desktop_1",
+      error: {
+        code: "raw_provider_error",
+        safeMessage: "/home/matrix/secret token failed",
+        retryable: true,
+      },
+    }).success).toBe(false);
   });
 
   it("validates runtime:create-thread requests and rejects credential leakage shapes", () => {

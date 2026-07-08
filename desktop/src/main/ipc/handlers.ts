@@ -57,6 +57,12 @@ export interface HandlerContext {
   createAgentThread: (
     request: CreateAgentThreadRequest,
   ) => Promise<z.infer<typeof AgentThreadSnapshotSchema>>;
+  subscribeThreadEvents: (
+    request: InvokeRequest<"runtime:subscribe-thread-events">,
+  ) => Promise<void>;
+  unsubscribeThreadEvents: (
+    request: InvokeRequest<"runtime:unsubscribe-thread-events">,
+  ) => void;
 }
 
 type Handler<C extends InvokeChannel> = (
@@ -124,6 +130,14 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:prepare-source-commit", (request) => ctx.prepareSourceCommit(request));
   handle("runtime:create-source-pull-request", (request) => ctx.createSourcePullRequest(request));
   handle("runtime:get-thread-snapshot", (request) => ctx.fetchThreadSnapshot(request));
+  handle("runtime:subscribe-thread-events", async (request) => {
+    await ctx.subscribeThreadEvents(request);
+    return { ok: true };
+  });
+  handle("runtime:unsubscribe-thread-events", (request) => {
+    ctx.unsubscribeThreadEvents(request);
+    return { ok: true };
+  });
   handle("runtime:submit-approval-decision", (request) => ctx.submitApprovalDecision(request));
   handle("runtime:submit-input-answer", (request) => ctx.submitInputAnswer(request));
   handle("runtime:create-thread", (request) => ctx.createAgentThread(request));
