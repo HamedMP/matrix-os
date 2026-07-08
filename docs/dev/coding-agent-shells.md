@@ -113,6 +113,119 @@ Use this checklist for every coding-agent shell PR:
 - Terminal/session behavior reuses canonical Matrix terminal primitives.
 - No new embedded persistence is introduced.
 
+## Operator Runbook
+
+Use this section when a coding-agent shell surface is enabled but a user cannot continue work from desktop or mobile. Keep support notes public-safe: do not paste customer identifiers, bearer tokens, provider credentials, private hostnames, VPS IPs, or raw provider output into GitHub, docs, or PR comments.
+
+### Provider Setup Failure
+
+Symptoms:
+
+- The workspace shows a provider as missing, setup required, auth required, or unavailable.
+- Starting a thread returns a generic setup or provider-unavailable message.
+- The foreground setup terminal exits before the provider becomes available.
+
+Checks:
+
+1. Confirm the runtime summary is reachable through the authenticated gateway route and that `providers` contains the affected provider with a safe install/auth state.
+2. Confirm the provider setup action opens a foreground terminal session instead of a hidden background job.
+3. Confirm the user completed the provider's own CLI login flow inside the Matrix computer, not by pasting credentials into chat or docs.
+4. Confirm the provider registry returns a generic client state while logging detailed setup failure server-side.
+5. If the setup action repeatedly fails, leave the thread or provider in a recoverable setup-required state and record a follow-up with sanitized evidence.
+
+Do not fix provider setup by moving credentials into desktop renderer state, mobile storage, shell query params, or PR comments.
+
+### Runtime Offline Or Unavailable
+
+Symptoms:
+
+- Desktop or mobile shows an unavailable runtime summary.
+- Thread, review, file, or preview panels show empty safe fallback states.
+- A runtime switch leaves stale thread or terminal references visible.
+
+Checks:
+
+1. Verify the selected Matrix computer is the intended runtime before inspecting shell UI state.
+2. Check the authenticated `/api/coding-agents/summary` path from the gateway side and confirm failures map to `SafeClientErrorSchema`.
+3. Rehydrate the shell from gateway state after runtime switch; do not rely on persisted desktop/mobile references as source of truth.
+4. Confirm stale thread, terminal, review, and preview references are dropped or rendered as recoverable.
+5. Confirm user-visible messages do not include provider raw errors, stack traces, filesystem paths, private hostnames, VPS IPs, or database errors.
+
+### Thread Or Event Stream Recovery
+
+Symptoms:
+
+- A thread detail opens but misses recent events.
+- Mobile or desktop shows duplicated deltas after reconnect.
+- Approval or input resolution appears stuck in one shell.
+
+Checks:
+
+1. Fetch the thread snapshot over HTTP first; the snapshot is the recovery path when a stream is stale.
+2. Confirm replay cursors are bounded and the reducer deduplicates by event id.
+3. Confirm the WebSocket authenticates before success, validates frame shapes, and reports a safe replay gap when history is no longer available.
+4. Confirm approval and input decisions use bounded `clientRequestId` values and are idempotent.
+5. If one shell stays stale, force a thread snapshot refresh before asking the user to repeat the action.
+
+### Terminal Binding Recovery
+
+Symptoms:
+
+- A thread shows a terminal reference that no longer attaches.
+- Mobile opens Terminal but the bound session is gone.
+- Desktop and mobile disagree about whether a terminal is running.
+
+Checks:
+
+1. Treat the canonical terminal/session registry as source of truth.
+2. If a bound session is missing or exited, render a recoverable stale state and refresh the runtime summary.
+3. Do not create a coding-agent-only terminal model or duplicate terminal persistence.
+4. Confirm detach does not terminate the process and terminate does update summaries.
+5. Confirm mobile did not persist terminal output or replay buffers.
+
+### Review, File, And Diff Recovery
+
+Symptoms:
+
+- A review snapshot is partial.
+- A selected file cannot be opened.
+- Large diffs are truncated or hunk lines are missing.
+
+Checks:
+
+1. Partial review snapshots are expected for large, binary, moved, unsafe, or unavailable files.
+2. File reads must stay inside the validated owner worktree root and reject traversal and symlinks.
+3. The UI should show changed-file metadata and recovery copy instead of raw paths or command output.
+4. Follow-up prompts should carry structured references, not full file contents or unbounded diffs.
+5. Mobile must reload file content from the gateway and must not persist file bytes.
+
+### Preview Recovery
+
+Symptoms:
+
+- A preview row appears without an open action.
+- A preview from another project appears missing.
+- Opening a preview fails after a runtime or project switch.
+
+Checks:
+
+1. Project-scoped preview requests should be filtered before gateway list bounds are applied.
+2. HTTPS origins may open directly; local HTTP origins should remain status-only unless the shell can safely attach to the local runtime.
+3. Preview summaries must not include paths, query strings, tokens, internal hostnames, or provider logs.
+4. Runtime or project switches should clear stale preview rows before new data loads.
+5. If a preview is stale, refresh the runtime summary rather than trusting a persisted client reference.
+
+### Mobile Validation
+
+Before enabling a mobile coding-agent shell change broadly:
+
+1. Run the touched mobile Jest tests and `pnpm --filter matrix-os-mobile exec tsc --noEmit`.
+2. When the slice touches shared shell, gateway, or contract behavior, also run the matching gateway Vitest tests, shell typecheck, and the shell/mobile readiness tests listed in `docs/dev/mobile-shell.md`.
+3. Confirm mobile persisted state contains only bounded UI references.
+4. Open the Agents workspace, thread detail, approval/input controls, review/file detail, preview route, and bound terminal route in a dev client when the slice touches those surfaces.
+5. Confirm Chat, Apps, Terminal, and Settings tabs still open.
+6. Keep the existing terminal fallback. Do not land native terminal replacement behavior without separate device validation.
+
 ## Validation Commands
 
 Run the smallest focused tests for the touched surface, then the shared gates that apply:
@@ -120,11 +233,14 @@ Run the smallest focused tests for the touched surface, then the shared gates th
 ```bash
 pnpm exec vitest run tests/contracts/coding-agents.test.ts tests/gateway/coding-agents-summary.test.ts
 pnpm --filter desktop run typecheck
-pnpm --filter matrix-os-mobile run test
+pnpm --dir apps/mobile exec jest --runInBand
 pnpm --filter matrix-os-mobile exec tsc --noEmit
+bun run test tests/shell/terminal-app-component.test.tsx tests/shell/mobile-shell.test.tsx tests/shell/mobile-canvas.test.tsx tests/shell/user-button-hydration.test.tsx tests/shell/app-launch.test.ts tests/shell/app-viewer-slug.test.ts
+bun run test tests/gateway/terminal-ws.test.ts
+pnpm --dir shell exec tsc --noEmit
 bun run check:patterns
 bun run typecheck
 git diff --check
 ```
 
-For mobile-only changes, prefer the mobile Jest command for touched tests first. For gateway routes/services/contracts, use focused Vitest tests before broad typecheck.
+For mobile-only changes, prefer the mobile Jest command for touched tests first. For shared shell, gateway, or contract changes, keep the shell/mobile readiness commands in the block. For gateway routes/services/contracts, use focused Vitest tests before broad typecheck.
